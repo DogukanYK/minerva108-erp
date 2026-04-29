@@ -83,6 +83,7 @@
     td.td-muted { color: #6b7280; font-size: 0.85rem; }
     .badge-count { display: inline-flex; align-items: center; gap: 0.3rem; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; background: rgba(44,44,115,0.07); color: var(--navy); }
     .badge-yield { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; background: rgba(184,150,90,0.12); color: #7a5c1e; }
+    .badge-fire  { display: inline-block; padding: 3px 8px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; background: #fff7ed; color: #c2410c; margin-left: 4px; }
     .btn-icon { width: 30px; height: 30px; border-radius: 6px; border: none; display: inline-flex; align-items: center; justify-content: center; font-size: 0.85rem; cursor: pointer; transition: background 0.15s; }
     .btn-icon-delete { background: #fff1f1; color: #dc2626; }
     .btn-icon-delete:hover { background: #fee2e2; }
@@ -118,6 +119,49 @@
     .btn-remove-row:hover { background: #fee2e2; }
     .empty-ingredients { padding: 1rem; text-align: center; color: #9ca3af; font-size: 0.85rem; border: 1.5px dashed #e5e7eb; border-radius: 8px; }
 
+    /* ══ COST BADGES ══ */
+    .badge-cost {
+      display: inline-block; padding: 3px 10px; border-radius: 20px;
+      font-size: 0.75rem; font-weight: 700;
+      background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;
+    }
+    .badge-cost-zero {
+      background: #f9fafb; color: #9ca3af; border: 1px solid #e5e7eb;
+    }
+
+    /* ══ DETAIL MODAL — COST SUMMARY ══ */
+    .cost-summary-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;
+    }
+    @media (max-width: 540px) { .cost-summary-grid { grid-template-columns: 1fr; } }
+    .cost-card {
+      background: #f9f7f3; border-radius: 10px; padding: 1.1rem 1.4rem;
+      border: 1.5px solid #f0ece4;
+    }
+    .cost-card-total { border-left: 4px solid var(--navy); }
+    .cost-card-unit  { border-left: 4px solid #22c55e; }
+    .cost-card-label {
+      font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #6b7280; margin-bottom: 0.35rem;
+    }
+    .cost-card-value {
+      font-family: 'Playfair Display', serif; font-size: 1.55rem; font-weight: 700;
+      line-height: 1.15;
+    }
+    .cost-card-total .cost-card-value { color: var(--navy); }
+    .cost-card-unit  .cost-card-value { color: #15803d; }
+    .cost-card-sub { font-size: 0.76rem; color: #9ca3af; margin-top: 0.3rem; }
+    .cost-fire-note {
+      background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px;
+      padding: 0.55rem 0.9rem; font-size: 0.82rem; color: #c2410c;
+      display: flex; align-items: center; gap: 0.4rem; margin-bottom: 1rem;
+    }
+    .cost-no-price {
+      background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
+      padding: 0.55rem 0.9rem; font-size: 0.82rem; color: #92400e;
+      display: flex; align-items: center; gap: 0.4rem; margin-bottom: 1rem;
+    }
+
     /* ══ TOAST ══ */
     #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
     .toast-msg { min-width: 260px; max-width: 360px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
@@ -147,6 +191,7 @@
       <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
       <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
       <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+      <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
     </nav>
     <div class="sidebar-footer"><p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p></div>
   </aside>
@@ -192,15 +237,16 @@
             <thead>
               <tr>
                 <th style="width:60px; padding-left:1.1rem;">ID</th>
-                <th class="sortable" data-col="name">Reçete Adı <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="name">Reçete / Ürün Adı <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="target_item_name">Hedef Ürün <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="ingredient_count">Bileşen Sayısı <span class="sort-icon"></span></th>
-                <th class="sortable" data-col="expected_yield">Beklenen Verim <span class="sort-icon"></span></th>
-                <th style="width:80px; text-align:center;">İşlemler</th>
+                <th class="sortable" data-col="expected_yield">Üretim Miktarı <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="unit_cost">Birim Maliyet <span class="sort-icon"></span></th>
+                <th style="width:96px; text-align:center;">İşlemler</th>
               </tr>
             </thead>
             <tbody id="recipesBody">
-              <tr><td colspan="6"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+              <tr><td colspan="7"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -223,33 +269,28 @@
         <div class="modal-body">
           <form id="addRecipeForm" novalidate>
 
-            <!-- Reçete Adı -->
-            <div class="row g-3 mb-1">
-              <div class="col-12">
-                <label class="form-label-sm">Reçete Adı *</label>
-                <input type="text" class="form-control" id="recipeName" placeholder="Örn: Argan Yağlı Krem Formülü" required />
-              </div>
-            </div>
-
-            <!-- Hedef Ürün + Verim + Fire -->
+            <!-- Hedef Ürün + Üretim Miktarı + Fire -->
             <div class="row g-3 mt-0">
-              <div class="col-12 col-md-5">
+              <div class="col-12 col-md-6">
                 <label class="form-label-sm">Hedef Ürün * <small style="color:#9ca3af;font-weight:400;">(Bitmiş Ürün)</small></label>
                 <select class="form-select" id="recipeTargetItem" onchange="onTargetItemChange()">
                   <option value="">— Ürün seçiniz —</option>
                 </select>
               </div>
               <div class="col-7 col-md-4">
-                <label class="form-label-sm">Beklenen Verim <small style="color:#9ca3af;font-weight:400;">(manuel giriş)</small></label>
+                <label class="form-label-sm">Hedeflenen Üretim Miktarı <small style="color:#9ca3af;font-weight:400;">(net çıktı)</small></label>
                 <div class="input-group">
                   <input type="number" class="form-control" id="recipeYield" min="0.01" step="0.01" placeholder="Örn: 500" />
                   <span class="input-group-text" id="yieldUnitAddon" style="background:#f3f0ea;border:1.5px solid #e5e7eb;color:#6b7280;font-size:0.82rem;min-width:44px;justify-content:center;">—</span>
                 </div>
-                <small id="yieldHelper" style="display:block;margin-top:4px;font-family:'Jost',sans-serif;font-size:0.78rem;color:#6b7280;"></small>
               </div>
-              <div class="col-5 col-md-3">
-                <label class="form-label-sm">Fire Oranı (%)</label>
+              <div class="col-5 col-md-2">
+                <label class="form-label-sm">Fire (%)</label>
                 <input type="number" class="form-control" id="recipeWaste" min="0" max="100" step="0.1" placeholder="0" value="0" oninput="calculateYield()" />
+              </div>
+              <!-- Gross-input preview banner — shown below the row -->
+              <div class="col-12" id="yieldHelperRow" style="margin-top:-4px;padding-top:0;">
+                <small id="yieldHelper" style="display:block;font-family:'Jost',sans-serif;font-size:0.79rem;color:#6b7280;min-height:1.1em;"></small>
               </div>
             </div>
 
@@ -277,7 +318,29 @@
       </div>
     </div>
   </div>
-  <!-- /MODAL -->
+  <!-- /MODAL: YENİ REÇETE -->
+
+  <!-- ════ MODAL: REÇETe MALİYET ANALİZİ ════ -->
+  <div class="modal fade" id="detailModal" tabindex="-1" aria-labelledby="detailModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="detailModalLabel">—</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body" id="detailModalBody" style="padding:1.5rem;">
+          <div style="text-align:center;padding:3rem;color:#9ca3af;">
+            <i class="bi bi-hourglass-split" style="font-size:2rem;display:block;margin-bottom:0.5rem;"></i>
+            Yükleniyor…
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" data-bs-dismiss="modal">Kapat</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- /MODAL: MALİYET ANALİZİ -->
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
@@ -302,31 +365,55 @@
       return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    /* ── Currency formatter ── */
+    function fmtCurrency(val) {
+      if (val === null || val === undefined) return '—';
+      return parseFloat(val).toLocaleString('tr-TR', {
+        minimumFractionDigits: 2, maximumFractionDigits: 2
+      }) + ' ₺';
+    }
+
     /* ── Render table ── */
     function renderTable(data) {
       const tbody = document.getElementById('recipesBody');
       if (!data.length) {
-        tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">
+        tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">
           <i class="bi bi-journal-text"></i>
           <p>Henüz reçete yok. Yeni reçete ekleyerek başlayın.</p>
         </div></td></tr>`;
         document.getElementById('tableInfo').textContent = '0 reçete';
         return;
       }
-      tbody.innerHTML = data.map(r => `
-        <tr data-id="${r.id}">
+      tbody.innerHTML = data.map(r => {
+        const hasCost    = r.unit_cost > 0;
+        const costBadge  = hasCost
+          ? `<span class="badge-cost">${fmtCurrency(r.unit_cost)} / ${r.target_item_unit || 'birim'}</span>`
+          : `<span class="badge-cost-zero">Fiyat girilmedi</span>`;
+        return `
+        <tr data-id="${r.id}" style="cursor:pointer;" onclick="openDetailModal(${r.id})">
           <td class="td-id" style="padding-left:1.1rem;">#${r.id}</td>
           <td class="td-name">${escHtml(r.name)}</td>
           <td class="td-muted">${escHtml(r.target_item_name) || '—'}</td>
           <td><span class="badge-count"><i class="bi bi-boxes"></i> ${r.ingredient_count}</span></td>
-          <td><span class="badge-yield">${r.expected_yield} ml/gr</span></td>
-          <td style="text-align:center;">
+          <td>
+            <span class="badge-yield">${r.expected_yield} ${r.target_item_unit || 'ml/gr'}</span>
+            ${r.waste_percentage > 0
+              ? `<span class="badge-fire">🔥 %${r.waste_percentage} fire</span>`
+              : ''}
+          </td>
+          <td>${costBadge}</td>
+          <td style="text-align:center;" onclick="event.stopPropagation()">
+            <button class="btn-icon" onclick="openDetailModal(${r.id})" title="Maliyet Analizi"
+              style="background:#f0fdf4;color:#15803d;margin-right:4px;">
+              <i class="bi bi-bar-chart-line"></i>
+            </button>
             ${['SuperAdmin','LabLead'].includes(USER_ROLE) ? `
             <button class="btn-icon btn-icon-delete" onclick="deleteRecipe(${r.id}, '${escHtml(r.name)}')" title="Sil">
               <i class="bi bi-trash3"></i>
             </button>` : ''}
           </td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
       document.getElementById('tableInfo').textContent = `${data.length} reçete listeleniyor`;
     }
 
@@ -421,28 +508,46 @@
       return opts;
     }
 
-    /* ── Verim hesaplama (Fire sadece Hammadde'ye uygulanır) ── */
+    /* ── Brüt Girdi Hesaplama ──────────────────────────────────────────────
+       Fire EKLEMELI çalışır: brüt = net × (1 + fire% / 100)
+       Örnek: 50ml hammadde + %10 fire → stoktan 55ml düşülür.
+       Ambalaj bileşenlerine fire uygulanmaz.
+    ── */
     function calculateYield() {
-      let hammaddeTotal = 0;
-      let ambalajTotal  = 0;
+      let hammaddeNet = 0;
+      let ambalajNet  = 0;
       document.querySelectorAll('.ingredient-row').forEach(row => {
         const sel = row.querySelector('.ing-item');
         const qty = parseFloat(row.querySelector('.ing-qty').value);
         if (!sel || isNaN(qty) || qty <= 0) return;
         const cat = sel.options[sel.selectedIndex]?.dataset?.category || '';
-        if (cat === 'Ambalaj') ambalajTotal += qty;
-        else hammaddeTotal += qty;
+        if (cat === 'Ambalaj') ambalajNet += qty;
+        else hammaddeNet += qty;
       });
-      const total  = hammaddeTotal + ambalajTotal;
+
       const helper = document.getElementById('yieldHelper');
-      if (total <= 0) { helper.innerHTML = ''; return; }
-      const waste = parseFloat(document.getElementById('recipeWaste').value) || 0;
-      const netHammadde = parseFloat((hammaddeTotal * (1 - waste / 100)).toFixed(4));
-      const unit  = document.getElementById('yieldUnitAddon').textContent.trim();
-      const u     = (unit && unit !== '—') ? ' ' + unit : '';
-      let html = `Hammadde: <strong>${parseFloat(hammaddeTotal.toFixed(4))}${u}</strong>`;
-      if (ambalajTotal > 0) html += ` &nbsp;+&nbsp; Ambalaj: <strong>${parseFloat(ambalajTotal.toFixed(4))}</strong> (fire hesabı dışı)`;
-      if (waste > 0) html += ` &nbsp;|&nbsp; %${waste} Fire Sonrası Net Hammadde: <strong style="color:#15803d;">${netHammadde}${u}</strong>`;
+      if (hammaddeNet <= 0 && ambalajNet <= 0) { helper.innerHTML = ''; return; }
+
+      const waste        = parseFloat(document.getElementById('recipeWaste').value) || 0;
+      // ADDITIVE: net + (net × waste%) = net × (1 + waste/100) → brüt stok tüketimi
+      const hammaddeGross = parseFloat((hammaddeNet * (1 + waste / 100)).toFixed(4));
+      const unit          = document.getElementById('yieldUnitAddon').textContent.trim();
+      const u             = (unit && unit !== '—') ? ' ' + unit : '';
+
+      let html = `<i class="bi bi-box-arrow-in-down" style="margin-right:3px;"></i>`;
+      html += `Hammadde toplamı: <strong>${parseFloat(hammaddeNet.toFixed(4))}${u}</strong>`;
+
+      if (ambalajNet > 0) {
+        html += ` &nbsp;+&nbsp; Ambalaj: <strong>${parseFloat(ambalajNet.toFixed(4))}</strong>`
+              + ` <span style="color:#9ca3af;">(fire dışı)</span>`;
+      }
+
+      if (waste > 0) {
+        html += ` &nbsp;→&nbsp; <strong style="color:#c2410c;">+%${waste} fire</strong>`
+              + ` &nbsp;=&nbsp; Brüt Girdi: <strong style="color:#15803d;">${hammaddeGross}${u}</strong>`
+              + ` <span style="color:#9ca3af;font-size:0.76rem;">(stoktan bu kadar düşülür)</span>`;
+      }
+
       helper.innerHTML = html;
     }
 
@@ -489,13 +594,16 @@
 
     /* ── Kaydet ── */
     document.getElementById('saveRecipeBtn').addEventListener('click', async function () {
-      const name         = document.getElementById('recipeName').value.trim();
-      const targetItemId = parseInt(document.getElementById('recipeTargetItem').value);
+      // Reçete adı artık manuel girilmez — hedef ürünün adına otomatik eşitlenir.
+      const targetSel    = document.getElementById('recipeTargetItem');
+      const targetItemId = parseInt(targetSel.value);
       const yieldVal     = parseFloat(document.getElementById('recipeYield').value);
+      const wasteVal     = parseFloat(document.getElementById('recipeWaste').value) || 0;
 
-      if (!name)                       { showToast('Reçete adı zorunludur.'); return; }
-      if (!targetItemId)               { showToast('Lütfen bir hedef ürün seçiniz.'); return; }
-      if (!yieldVal || yieldVal <= 0)  { showToast('Verim hesaplanabilmesi için en az bir hammadde miktarı giriniz.'); return; }
+      if (!targetItemId) { showToast('Lütfen bir hedef ürün seçiniz.'); return; }
+      if (!yieldVal || yieldVal <= 0) {
+        showToast('Hedeflenen üretim miktarı sıfırdan büyük olmalıdır.'); return;
+      }
 
       const rows = document.querySelectorAll('.ingredient-row');
       if (!rows.length) { showToast('En az bir hammadde eklemelisiniz.'); return; }
@@ -515,7 +623,12 @@
         const res = await fetch('/api/recipes', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, target_item_id: targetItemId, expected_yield: yieldVal, ingredients }),
+          body: JSON.stringify({
+            target_item_id:   targetItemId,
+            expected_yield:   yieldVal,
+            waste_percentage: wasteVal,
+            ingredients,
+          }),
         });
         const data = await res.json();
         if (!res.ok) { showToast(data.detail || 'Kayıt başarısız.'); return; }
@@ -536,6 +649,133 @@
         showToast('Reçete silindi.', 'success');
         loadRecipes();
       } catch { showToast('Silme işlemi sırasında hata oluştu.'); }
+    }
+
+    /* ── Maliyet Analizi Detay Modalı ── */
+    let _detailModalInstance = null;
+
+    async function openDetailModal(id) {
+      if (!_detailModalInstance) {
+        _detailModalInstance = new bootstrap.Modal(document.getElementById('detailModal'));
+      }
+
+      // Reset to loading state then open
+      document.getElementById('detailModalLabel').innerHTML = '&nbsp;';
+      document.getElementById('detailModalBody').innerHTML = `
+        <div style="text-align:center;padding:3rem;color:#9ca3af;">
+          <i class="bi bi-hourglass-split" style="font-size:2rem;display:block;margin-bottom:0.5rem;"></i>
+          Yükleniyor…
+        </div>`;
+      _detailModalInstance.show();
+
+      try {
+        const res = await fetch(`/api/recipes/${id}`);
+        if (!res.ok) throw new Error('not found');
+        const r = await res.json();
+
+        // ── Modal title ──
+        document.getElementById('detailModalLabel').innerHTML =
+          `<i class="bi bi-bar-chart-line" style="margin-right:0.4rem;color:var(--gold);"></i>`
+          + escHtml(r.name)
+          + ` <small style="color:#9ca3af;font-weight:400;font-size:0.78rem;margin-left:0.3rem;">— Maliyet Analizi</small>`;
+
+        // ── Cost summary cards ──
+        const hasAnyCost = r.total_cost > 0;
+        const missingPriceWarning = !hasAnyCost
+          ? `<div class="cost-no-price">
+               <i class="bi bi-exclamation-circle-fill"></i>
+               Bileşenlerin birim fiyatı girilmemiş — maliyet hesaplanamıyor.
+               <a href="/items" style="margin-left:auto;color:#92400e;font-weight:600;white-space:nowrap;">Ürünlere Git →</a>
+             </div>`
+          : '';
+
+        const fireNote = r.waste_percentage > 0
+          ? `<div class="cost-fire-note">
+               <i class="bi bi-fire"></i>
+               Maliyetler <strong>%${r.waste_percentage} fire payı</strong> dahil brüt girdi üzerinden hesaplanmıştır.
+             </div>`
+          : '';
+
+        const summaryHtml = `
+          <div class="cost-summary-grid">
+            <div class="cost-card cost-card-total">
+              <div class="cost-card-label"><i class="bi bi-layers" style="margin-right:4px;"></i>Toplam Parti Maliyeti</div>
+              <div class="cost-card-value">${hasAnyCost ? fmtCurrency(r.total_cost) : '—'}</div>
+              <div class="cost-card-sub">${r.expected_yield} ${r.target_item_unit || 'birim'} üretim için</div>
+            </div>
+            <div class="cost-card cost-card-unit">
+              <div class="cost-card-label"><i class="bi bi-tag" style="margin-right:4px;"></i>Birim Maliyet</div>
+              <div class="cost-card-value">${hasAnyCost ? fmtCurrency(r.unit_cost) : '—'}</div>
+              <div class="cost-card-sub">1 ${r.target_item_unit || 'birim'} başına</div>
+            </div>
+          </div>
+          ${missingPriceWarning}
+          ${fireNote}`;
+
+        // ── Ingredient breakdown table ──
+        const ingRows = (r.ingredients || []).map(ing => {
+          const grossCell = ing.is_ambalaj
+            ? `<span style="color:#9ca3af;">${ing.gross_qty} ${ing.unit} <small style="font-size:0.7rem;">(fire dışı)</small></span>`
+            : (r.waste_percentage > 0
+                ? `<strong style="color:#c2410c;">${ing.gross_qty} ${ing.unit}</strong>`
+                : `${ing.gross_qty} ${ing.unit}`);
+
+          const lineStyle = ing.line_cost > 0 ? 'color:#1f2937;font-weight:700;' : 'color:#9ca3af;';
+          return `
+            <tr style="border-bottom:1px solid #f3f0ea;">
+              <td style="padding:0.65rem 1rem;">
+                <div style="font-weight:600;font-size:0.87rem;color:#1f2937;">${escHtml(ing.item_name)}</div>
+                ${ing.is_ambalaj
+                  ? '<div style="font-size:0.7rem;color:#92400e;margin-top:1px;">📦 Ambalaj</div>'
+                  : '<div style="font-size:0.7rem;color:#1e3a5f;margin-top:1px;">🧪 Hammadde</div>'}
+              </td>
+              <td style="padding:0.65rem 1rem;text-align:right;font-size:0.85rem;color:#6b7280;">${ing.quantity} ${ing.unit}</td>
+              <td style="padding:0.65rem 1rem;text-align:right;font-size:0.85rem;">${grossCell}</td>
+              <td style="padding:0.65rem 1rem;text-align:right;font-size:0.85rem;color:#6b7280;">
+                ${ing.cost_price > 0 ? fmtCurrency(ing.cost_price) : '<span style="color:#d1d5db;">—</span>'}
+              </td>
+              <td style="padding:0.65rem 1rem;text-align:right;font-size:0.88rem;${lineStyle}">
+                ${ing.line_cost > 0 ? fmtCurrency(ing.line_cost) : '<span style="color:#d1d5db;">—</span>'}
+              </td>
+            </tr>`;
+        }).join('');
+
+        const thStyle = 'padding:0.6rem 1rem;font-size:0.67rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;white-space:nowrap;';
+        const breakdownHtml = `
+          <div style="overflow-x:auto;border-radius:10px;border:1.5px solid #f0ece4;">
+            <table style="width:100%;border-collapse:collapse;">
+              <thead>
+                <tr style="background:#f9f7f3;border-bottom:2px solid #f0ece4;">
+                  <th style="${thStyle}">Bileşen</th>
+                  <th style="${thStyle}text-align:right;">Net Miktar</th>
+                  <th style="${thStyle}text-align:right;">Brüt Girdi</th>
+                  <th style="${thStyle}text-align:right;">Birim Fiyat</th>
+                  <th style="${thStyle}text-align:right;">Satır Maliyeti</th>
+                </tr>
+              </thead>
+              <tbody>${ingRows}</tbody>
+              <tfoot>
+                <tr style="background:#f9f7f3;border-top:2px solid #f0ece4;">
+                  <td colspan="4" style="padding:0.75rem 1rem;font-size:0.82rem;font-weight:700;color:#374151;text-align:right;letter-spacing:0.04em;text-transform:uppercase;">
+                    Toplam Parti Maliyeti
+                  </td>
+                  <td style="padding:0.75rem 1rem;text-align:right;font-family:'Playfair Display',serif;font-size:1.05rem;font-weight:700;color:var(--navy);">
+                    ${hasAnyCost ? fmtCurrency(r.total_cost) : '—'}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>`;
+
+        document.getElementById('detailModalBody').innerHTML = summaryHtml + breakdownHtml;
+
+      } catch {
+        document.getElementById('detailModalBody').innerHTML =
+          `<p style="color:#dc2626;text-align:center;padding:2rem;">
+             <i class="bi bi-exclamation-circle" style="display:block;font-size:1.8rem;margin-bottom:0.5rem;"></i>
+             Reçete detayları yüklenemedi.
+           </p>`;
+      }
     }
 
     /* ── Logout ── */

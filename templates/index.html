@@ -396,6 +396,141 @@
       from { opacity: 0; transform: translateY(10px); }
       to   { opacity: 1; transform: translateY(0); }
     }
+
+    /* ══ CRITICAL ALERT BANNER ══ */
+    .critical-banner {
+      display: flex; align-items: center; gap: 0.75rem;
+      background: #fff1f1; border: 1px solid #fca5a5; border-radius: 10px;
+      padding: 0.85rem 1.15rem; margin-bottom: 1.5rem;
+      font-size: 0.86rem; color: #b91c1c;
+      animation: slideUp 0.3s ease;
+    }
+    .critical-banner i { font-size: 1.05rem; flex-shrink: 0; }
+    .critical-banner strong { font-weight: 700; }
+    .critical-banner a {
+      margin-left: auto; font-weight: 700; color: #b91c1c;
+      text-decoration: none; white-space: nowrap; padding: 4px 12px;
+      border: 1.5px solid #fca5a5; border-radius: 6px;
+      transition: background 0.15s;
+    }
+    .critical-banner a:hover { background: #fee2e2; }
+
+    /* ══ DASHBOARD GRID (two-column below KPIs) ══ */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1.7fr 1fr;
+      gap: 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+    @media (max-width: 960px) { .dashboard-grid { grid-template-columns: 1fr; } }
+
+    /* ══ PANEL CARD (shared by all three lower sections) ══ */
+    .panel-card {
+      background: var(--white); border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06);
+      overflow: hidden;
+    }
+    .panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 1.4rem 0.8rem; border-bottom: 1px solid #f0ece4;
+    }
+    .panel-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 1rem; font-weight: 600; color: var(--navy);
+      display: flex; align-items: center; gap: 0.5rem; margin: 0;
+    }
+    .panel-title-icon {
+      width: 30px; height: 30px; border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.9rem;
+    }
+    .icon-red   { background: rgba(239,68,68,0.09);   color: #dc2626; }
+    .icon-navy  { background: rgba(44,44,115,0.08);   color: var(--navy); }
+    .icon-teal  { background: rgba(16,185,129,0.09);  color: #059669; }
+    .panel-link {
+      font-size: 0.79rem; font-weight: 600; color: var(--gold); text-decoration: none;
+    }
+    .panel-link:hover { color: var(--gold2); }
+
+    /* ══ CRITICAL STOCK TABLE ══ */
+    .critical-table { width: 100%; border-collapse: collapse; }
+    .critical-table th {
+      padding: 0.65rem 1rem; font-size: 0.68rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: #6b7280; background: #f9f7f3; border-bottom: 2px solid #f0ece4;
+      white-space: nowrap;
+    }
+    .critical-table td {
+      padding: 0.8rem 1rem; font-size: 0.87rem; color: #374151;
+      border-bottom: 1px solid #f3f0ea; vertical-align: middle;
+    }
+    .critical-table tr:last-child td { border-bottom: none; }
+    .critical-table tr:hover td { background: #faf8f4; }
+    .stock-critical {
+      color: #dc2626; font-weight: 700; font-size: 0.95rem;
+    }
+    .stock-low {
+      color: #d97706; font-weight: 600; font-size: 0.9rem;
+    }
+    .deficit-badge {
+      display: inline-block; padding: 2px 9px;
+      background: #fff1f1; color: #b91c1c;
+      border-radius: 20px; font-size: 0.71rem; font-weight: 700;
+      border: 1px solid #fca5a5;
+    }
+    .cat-pill {
+      display: inline-block; padding: 2px 8px; border-radius: 20px;
+      font-size: 0.7rem; font-weight: 600;
+      background: #f3f4f6; color: #4b5563;
+    }
+
+    /* ══ SAFE EMPTY STATE ══ */
+    .safe-state {
+      padding: 2.5rem 1.5rem; text-align: center;
+    }
+    .safe-icon {
+      width: 52px; height: 52px; border-radius: 50%;
+      background: #f0fdf4; color: #15803d; font-size: 1.5rem;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 0.85rem;
+    }
+    .safe-state p { margin: 0; font-size: 0.9rem; color: #15803d; font-weight: 600; }
+    .safe-state small { display: block; margin-top: 4px; color: #6b7280; font-size: 0.8rem; font-weight: 400; }
+
+    /* ══ ACTIVITY FEED ══ */
+    .activity-row {
+      display: flex; align-items: flex-start; gap: 0.75rem;
+      padding: 0.9rem 1.25rem; border-bottom: 1px solid #f3f0ea;
+      transition: background 0.12s;
+    }
+    .activity-row:last-child { border-bottom: none; }
+    .activity-row:hover { background: #faf8f4; }
+    .tx-dot {
+      width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; margin-top: 5px;
+    }
+    .dot-input   { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.18); }
+    .dot-output  { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,0.18); }
+    .dot-qc-ok   { background: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.18); }
+    .dot-qc-fail { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,0.18); }
+    .activity-body { flex: 1; min-width: 0; }
+    .activity-item-name { font-size: 0.87rem; font-weight: 600; color: #1f2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tx-badge {
+      display: inline-block; padding: 1px 7px; border-radius: 20px;
+      font-size: 0.68rem; font-weight: 700; margin-left: 5px; vertical-align: middle;
+    }
+    .badge-input    { background: #f0fdf4; color: #15803d; }
+    .badge-output   { background: #fff1f1; color: #b91c1c; }
+    .badge-qc-ok    { background: #eff6ff; color: #1d4ed8; }
+    .badge-qc-fail  { background: #fefce8; color: #a16207; }
+    .activity-notes { font-size: 0.77rem; color: #9ca3af; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .activity-right { text-align: right; flex-shrink: 0; }
+    .activity-qty  { font-size: 0.83rem; font-weight: 700; color: #374151; }
+    .activity-time { font-size: 0.73rem; color: #9ca3af; margin-top: 2px; }
+
+    .feed-empty {
+      padding: 2.5rem 1.25rem; text-align: center;
+      color: #9ca3af; font-size: 0.87rem;
+    }
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
@@ -454,6 +589,17 @@
         <i class="bi bi-bar-chart-line nav-icon"></i>
         Raporlar
       </a>
+      <a href="/traceability" class="nav-link-item">
+        <i class="bi bi-diagram-3 nav-icon"></i>
+        İzlenebilirlik
+      </a>
+      {% if role == 'SuperAdmin' %}
+      <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>
+      <a href="/admin" class="nav-link-item">
+        <i class="bi bi-shield-lock nav-icon"></i>
+        Yönetim Paneli
+      </a>
+      {% endif %}
     </nav>
 
     <div class="sidebar-footer">
@@ -492,10 +638,17 @@
         <p class="page-subtitle">Hoş geldiniz, {{ full_name }}. İşte bugünkü özet.</p>
       </div>
 
+      <!-- ── Kritik Stok Uyarı Bandı (JS tarafından gösterilir) ── -->
+      <div id="criticalBanner" class="critical-banner" style="display:none;" role="alert">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <span id="criticalBannerText"></span>
+        <a href="#criticalSection">Uyarıları Gör →</a>
+      </div>
+
       <!-- KPI Cards -->
       <div class="kpi-grid">
 
-        <div class="kpi-card" id="cardItems">
+        <a href="/items" class="kpi-card" id="cardItems" style="text-decoration:none;">
           <div class="kpi-icon-wrap kpi-icon-navy">
             <i class="bi bi-box-seam"></i>
           </div>
@@ -504,9 +657,9 @@
           <div class="kpi-trend trend-neutral" id="trendItems">
             <i class="bi bi-dash"></i> Yükleniyor
           </div>
-        </div>
+        </a>
 
-        <div class="kpi-card" id="cardSuppliers">
+        <a href="/suppliers" class="kpi-card" id="cardSuppliers" style="text-decoration:none;">
           <div class="kpi-icon-wrap kpi-icon-gold">
             <i class="bi bi-truck"></i>
           </div>
@@ -515,9 +668,9 @@
           <div class="kpi-trend trend-neutral" id="trendSuppliers">
             <i class="bi bi-dash"></i> Yükleniyor
           </div>
-        </div>
+        </a>
 
-        <div class="kpi-card" id="cardRecipes">
+        <a href="/recipes" class="kpi-card" id="cardRecipes" style="text-decoration:none;">
           <div class="kpi-icon-wrap kpi-icon-green">
             <i class="bi bi-journal-text"></i>
           </div>
@@ -526,9 +679,9 @@
           <div class="kpi-trend trend-neutral" id="trendRecipes">
             <i class="bi bi-dash"></i> Yükleniyor
           </div>
-        </div>
+        </a>
 
-        <div class="kpi-card" id="cardCritical">
+        <div class="kpi-card" id="cardCritical" style="cursor:default;">
           <div class="kpi-icon-wrap kpi-icon-rose">
             <i class="bi bi-exclamation-triangle"></i>
           </div>
@@ -542,23 +695,70 @@
       </div>
       <!-- /KPI Cards -->
 
-      <!-- Son Üretim Faaliyetleri -->
-      <div class="table-card" style="border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05),0 4px 16px rgba(44,44,115,0.06);">
-        <div style="padding:1rem 1.4rem 0.75rem;border-bottom:1px solid #f0ece4;display:flex;align-items:center;justify-content:space-between;">
-          <span style="font-family:'Playfair Display',serif;font-size:1rem;font-weight:600;color:var(--navy);">Son Üretim Faaliyetleri</span>
-          <a href="/production" style="font-size:0.8rem;font-weight:600;color:var(--gold);text-decoration:none;">Tümünü Gör →</a>
+      <!-- ── İki Sütunlu Panel: Kritik Stok | Son İşlemler ── -->
+      <div class="dashboard-grid" id="criticalSection">
+
+        <!-- Sol: Kritik Stok Uyarıları -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <h2 class="panel-title">
+              <span class="panel-title-icon icon-red"><i class="bi bi-exclamation-triangle-fill"></i></span>
+              Kritik Stok Uyarıları
+            </h2>
+            <a href="/ledger" class="panel-link">Stok Defteri →</a>
+          </div>
+          <table class="critical-table">
+            <thead>
+              <tr>
+                <th style="padding-left:1.1rem;">Ürün Adı</th>
+                <th>Kategori</th>
+                <th style="text-align:right;">Mevcut</th>
+                <th style="text-align:right;">Min. Stok</th>
+                <th style="text-align:right; padding-right:1.1rem;">Açık</th>
+              </tr>
+            </thead>
+            <tbody id="criticalStockBody">
+              <tr><td colspan="5" style="padding:2rem;text-align:center;color:#9ca3af;font-size:0.88rem;">Yükleniyor…</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Sağ: Son İşlem Akışı -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <h2 class="panel-title">
+              <span class="panel-title-icon icon-navy"><i class="bi bi-activity"></i></span>
+              Son İşlemler
+            </h2>
+            <a href="/ledger" class="panel-link">Tümü →</a>
+          </div>
+          <div id="activityFeed" class="activity-feed">
+            <div class="feed-empty">Yükleniyor…</div>
+          </div>
+        </div>
+
+      </div>
+      <!-- /dashboard-grid -->
+
+      <!-- ── Son Üretim Faaliyetleri ── -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <h2 class="panel-title">
+            <span class="panel-title-icon icon-teal"><i class="bi bi-gear-fill"></i></span>
+            Son Üretim Faaliyetleri
+          </h2>
+          <a href="/production" class="panel-link">Tümünü Gör →</a>
         </div>
         <table style="width:100%;border-collapse:collapse;">
           <thead>
             <tr style="background:#f9f7f3;border-bottom:2px solid #f0ece4;">
-              <th style="padding:0.7rem 1.1rem;font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">Reçete</th>
-              <th style="padding:0.7rem 1rem;font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">Hedef Ürün</th>
-              <th style="padding:0.7rem 1rem;font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">Miktar</th>
-              <th style="padding:0.7rem 1rem;font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">Tarih</th>
+              <th style="padding:0.65rem 1.1rem;font-size:0.68rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">Reçete / Ürün</th>
+              <th style="padding:0.65rem 1rem;font-size:0.68rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">Miktar</th>
+              <th style="padding:0.65rem 1rem;font-size:0.68rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">Tarih</th>
             </tr>
           </thead>
           <tbody id="recentProductionBody">
-            <tr><td colspan="4" style="padding:2rem;text-align:center;color:#9ca3af;font-size:0.88rem;">Yükleniyor…</td></tr>
+            <tr><td colspan="3" style="padding:2rem;text-align:center;color:#9ca3af;font-size:0.88rem;">Yükleniyor…</td></tr>
           </tbody>
         </table>
       </div>
@@ -584,19 +784,98 @@
       }, 3500);
     }
 
+    /* ── Kritik stok tablosu ──────────────────────────────────────── */
+    function renderCriticalStock(items) {
+      const tbody = document.getElementById('criticalStockBody');
+      if (!items || !items.length) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5">
+              <div class="safe-state">
+                <i class="bi bi-check-circle-fill"></i>
+                Tüm stoklar güvenli seviyede.
+              </div>
+            </td>
+          </tr>`;
+        return;
+      }
+
+      const CAT_COLORS = {
+        'Hammadde':    '#1e3a5f',
+        'Ambalaj':     '#92400e',
+        'Bitmiş Ürün': '#064e3b',
+        'Kimyasal':    '#4c1d95',
+        'Yardımcı':    '#1e40af',
+      };
+
+      tbody.innerHTML = items.map(it => {
+        const catColor = CAT_COLORS[it.category] || '#374151';
+        const catLabel = it.category || 'Diğer';
+        const curClass = it.current_stock <= 0 ? 'stock-critical' : 'stock-low';
+        return `
+          <tr style="border-bottom:1px solid #f3f0ea;">
+            <td style="padding:0.7rem 1.1rem;">
+              <div style="font-weight:600;font-size:0.88rem;color:#1f2937;">${it.name}</div>
+              ${it.sku ? `<div style="font-size:0.75rem;color:#9ca3af;margin-top:1px;">${it.sku}</div>` : ''}
+            </td>
+            <td style="padding:0.7rem 1rem;">
+              <span class="cat-pill" style="background:${catColor}20;color:${catColor};border-radius:20px;padding:2px 10px;font-size:0.72rem;font-weight:700;letter-spacing:0.03em;">${catLabel}</span>
+            </td>
+            <td style="padding:0.7rem 1rem;text-align:right;">
+              <span class="${curClass}" style="font-weight:700;font-size:0.9rem;">${it.current_stock} ${it.unit}</span>
+            </td>
+            <td style="padding:0.7rem 1rem;text-align:right;font-size:0.88rem;color:#6b7280;">${it.min_stock_level} ${it.unit}</td>
+            <td style="padding:0.7rem 1.1rem;text-align:right;">
+              <span class="deficit-badge">-${it.deficit} ${it.unit}</span>
+            </td>
+          </tr>`;
+      }).join('');
+    }
+
+    /* ── Son işlemler akışı ───────────────────────────────────────── */
+    function renderRecentTransactions(txs) {
+      const feed = document.getElementById('activityFeed');
+      if (!txs || !txs.length) {
+        feed.innerHTML = `<div class="feed-empty"><i class="bi bi-inbox" style="font-size:1.4rem;display:block;margin-bottom:0.4rem;"></i>Henüz işlem kaydı yok.</div>`;
+        return;
+      }
+
+      feed.innerHTML = txs.map(tx => {
+        const isInput  = tx.transaction_type === 'Input';
+        const dotClass   = isInput ? 'dot-input' : 'dot-output';
+        const badgeClass = isInput ? 'tx-badge badge-input' : 'tx-badge badge-output';
+        const badgeText  = isInput ? 'Giriş' : 'Çıkış';
+        const qtySign    = isInput ? '+' : '−';
+        const notes = tx.notes ? `<div style="font-size:0.76rem;color:#9ca3af;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px;">${tx.notes}</div>` : '';
+        return `
+          <div class="activity-row">
+            <span class="tx-dot ${dotClass}"></span>
+            <div style="flex:1;min-width:0;">
+              <div style="font-weight:600;font-size:0.87rem;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${tx.item_name}</div>
+              ${notes}
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;">
+              <span class="${badgeClass}">${badgeText}</span>
+              <span style="font-size:0.78rem;font-weight:700;color:${isInput ? '#15803d' : '#b91c1c'};">${qtySign}${tx.quantity}</span>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    /* ── Ana dashboard yükleyici ──────────────────────────────────── */
     async function loadDashboard() {
       try {
         const res  = await fetch('/api/dashboard/stats');
         if (!res.ok) return;
         const data = await res.json();
 
-        // KPI değerleri
+        // ── KPI değerleri ──
         document.getElementById('kpiItems').textContent     = data.total_items;
         document.getElementById('kpiSuppliers').textContent = data.total_suppliers;
         document.getElementById('kpiRecipes').textContent   = data.total_recipes;
         document.getElementById('kpiCritical').textContent  = data.critical_stock_count;
 
-        // Trend metinleri
+        // ── Trend metinleri ──
         document.getElementById('trendItems').innerHTML     = `<i class="bi bi-box-seam"></i> Aktif ürün`;
         document.getElementById('trendSuppliers').innerHTML = `<i class="bi bi-truck"></i> Kayıtlı tedarikçi`;
         document.getElementById('trendRecipes').innerHTML   = `<i class="bi bi-journal-text"></i> Formülasyon`;
@@ -604,26 +883,46 @@
           ? `<i class="bi bi-exclamation-triangle-fill"></i> Müdahale gerekiyor`
           : `<i class="bi bi-check-circle"></i> Stok seviyeleri normal`;
 
-        // Kritik stok uyarısı rengi
+        // ── Kritik stok KPI kartı rengi ──
         const critCard = document.getElementById('cardCritical');
         if (data.critical_stock_count > 0) critCard.classList.add('kpi-alert');
         else critCard.classList.remove('kpi-alert');
 
-        // Son üretim tablosu
-        const tbody = document.getElementById('recentProductionBody');
-        if (!data.recent_productions.length) {
-          tbody.innerHTML = `<tr><td colspan="4" style="padding:2rem;text-align:center;color:#9ca3af;font-size:0.88rem;">Henüz üretim kaydı yok.</td></tr>`;
+        // ── Kırmızı uyarı bandı ──
+        const banner     = document.getElementById('criticalBanner');
+        const bannerText = document.getElementById('criticalBannerText');
+        if (data.critical_stock_count > 0) {
+          bannerText.textContent = `${data.critical_stock_count} ürün kritik stok seviyesinin altında!`;
+          banner.style.display = 'flex';
         } else {
-          tbody.innerHTML = data.recent_productions.map(p => `
-            <tr style="border-bottom:1px solid #f3f0ea;">
-              <td style="padding:0.75rem 1.1rem;font-weight:600;font-size:0.88rem;color:#1f2937;">${p.recipe_name}</td>
-              <td style="padding:0.75rem 1rem;font-size:0.85rem;color:#6b7280;">${p.target_item_name || '—'}</td>
-              <td style="padding:0.75rem 1rem;">
-                <span style="background:#f0fdf4;color:#15803d;border-radius:20px;padding:2px 10px;font-size:0.75rem;font-weight:600;">${p.produced_quantity} birim</span>
-              </td>
-              <td style="padding:0.75rem 1rem;font-size:0.82rem;color:#9ca3af;">${p.produced_at}</td>
-            </tr>`).join('');
+          banner.style.display = 'none';
         }
+
+        // ── Kritik stok tablosu ──
+        renderCriticalStock(data.critical_stock_list || []);
+
+        // ── Son işlemler akışı ──
+        renderRecentTransactions(data.recent_transactions || []);
+
+        // ── Son üretim tablosu (3 sütun) ──
+        const prodBody = document.getElementById('recentProductionBody');
+        if (!data.recent_productions || !data.recent_productions.length) {
+          prodBody.innerHTML = `<tr><td colspan="3" style="padding:2rem;text-align:center;color:#9ca3af;font-size:0.88rem;">Henüz üretim kaydı yok.</td></tr>`;
+        } else {
+          prodBody.innerHTML = data.recent_productions.map(p => {
+            const recipeName = p.recipe_name || '—';
+            const targetName = p.target_item_name ? ` <span style="color:#9ca3af;font-weight:400;">→ ${p.target_item_name}</span>` : '';
+            return `
+              <tr style="border-bottom:1px solid #f3f0ea;">
+                <td style="padding:0.75rem 1.1rem;font-weight:600;font-size:0.88rem;color:#1f2937;">${recipeName}${targetName}</td>
+                <td style="padding:0.75rem 1rem;">
+                  <span style="background:#f0fdf4;color:#15803d;border-radius:20px;padding:2px 10px;font-size:0.75rem;font-weight:600;">${p.produced_quantity} birim</span>
+                </td>
+                <td style="padding:0.75rem 1rem;font-size:0.82rem;color:#9ca3af;">${p.produced_at}</td>
+              </tr>`;
+          }).join('');
+        }
+
       } catch { /* sessiz hata — dashboard kritik değil */ }
     }
 

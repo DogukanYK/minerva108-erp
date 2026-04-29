@@ -116,6 +116,104 @@
     .btn-cancel { padding: 0.6rem 1.2rem; background: transparent; color: #6b7280; border: 1.5px solid #e5e7eb; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.9rem; font-weight: 500; cursor: pointer; transition: border-color 0.2s; }
     .btn-cancel:hover { border-color: #9ca3af; color: #374151; }
 
+    /* ══ TABLE BUTTON ══ */
+    .btn-qc-form {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      padding: 0.38rem 0.85rem; border-radius: 7px; border: 1.5px solid rgba(44,44,115,0.2);
+      background: rgba(44,44,115,0.06); color: var(--navy);
+      font-family: 'Jost', sans-serif; font-size: 0.8rem; font-weight: 600;
+      cursor: pointer; transition: background 0.15s, border-color 0.15s; white-space: nowrap;
+    }
+    .btn-qc-form:hover { background: rgba(44,44,115,0.12); border-color: var(--navy); }
+
+    /* ══ QC FORM MODAL SECTIONS ══ */
+    .qc-section { margin-bottom: 1.75rem; }
+    .qc-section-title {
+      display: flex; align-items: center; gap: 0.5rem;
+      font-size: 0.7rem; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: #6b7280;
+      padding-bottom: 0.55rem; border-bottom: 1.5px solid #f0ece4;
+      margin-bottom: 0.9rem;
+    }
+    .qc-section-badge {
+      background: var(--navy); color: #fff; border-radius: 50%;
+      width: 20px; height: 20px; display: inline-flex;
+      align-items: center; justify-content: center;
+      font-size: 0.65rem; font-weight: 800; flex-shrink: 0;
+    }
+
+    /* Lot info grid */
+    .lot-info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; }
+    .lot-info-cell {
+      background: #f9f7f3; border: 1px solid #f0ece4; border-radius: 8px;
+      padding: 0.55rem 0.85rem;
+    }
+    .lot-info-cell-label { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #9ca3af; }
+    .lot-info-cell-value { font-weight: 700; font-size: 0.92rem; color: #1f2937; margin-top: 2px; font-family: 'Jost', sans-serif; }
+
+    /* Checklist table */
+    .checklist-wrap { border: 1.5px solid #f0ece4; border-radius: 10px; overflow: hidden; }
+    .checklist-table { width: 100%; border-collapse: collapse; }
+    .checklist-table th {
+      padding: 0.55rem 0.85rem; background: #f9f7f3;
+      font-size: 0.67rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #6b7280; border-bottom: 2px solid #f0ece4;
+    }
+    .checklist-table td { padding: 0.48rem 0.85rem; border-bottom: 1px solid #f5f3ef; vertical-align: middle; }
+    .checklist-table tbody tr:last-child td { border-bottom: none; }
+    .checklist-table tbody tr:nth-child(even) { background: #fdfcfa; }
+    .checklist-table tbody tr.row-unanswered { background: #fff5f5 !important; border-left: 3px solid #ef4444; }
+    .q-num { font-size: 0.75rem; font-weight: 700; color: #9ca3af; text-align: center; width: 32px; }
+    .q-text { font-size: 0.87rem; color: #374151; }
+    .q-options { display: flex; gap: 0.4rem; }
+    .q-radio-label {
+      display: inline-flex; align-items: center; gap: 0.28rem;
+      padding: 4px 10px; border-radius: 6px; border: 1.5px solid #e5e7eb;
+      font-size: 0.76rem; font-weight: 600; cursor: pointer;
+      transition: all 0.14s; user-select: none; color: #6b7280; white-space: nowrap;
+    }
+    .q-radio-label input[type=radio] { display: none; }
+    .q-radio-label:hover { border-color: #9ca3af; color: #374151; }
+    .q-radio-label.opt-active.opt-evet   { background: #f0fdf4; border-color: #22c55e; color: #15803d; }
+    .q-radio-label.opt-active.opt-hayir  { background: #fff1f1; border-color: #ef4444; color: #dc2626; }
+    .q-radio-label.opt-active.opt-yok    { background: #f3f4f6; border-color: #9ca3af; color: #374151; }
+
+    /* Progress indicator */
+    .progress-wrap { display: flex; align-items: center; gap: 0.5rem; margin-left: auto; }
+    .progress-count { font-size: 0.78rem; font-weight: 700; color: var(--navy); }
+    .progress-bar-outer { width: 72px; height: 5px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
+    .progress-bar-inner { height: 100%; background: #22c55e; border-radius: 3px; transition: width 0.22s; }
+
+    /* Lab criteria grid */
+    .lab-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; }
+    .lab-grid .form-label-sm { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #6b7280; margin-bottom: 0.3rem; display: block; }
+
+    /* Decision toggle */
+    .decision-wrapper { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.5rem; }
+    .decision-option {
+      display: flex; align-items: center; justify-content: center; gap: 0.65rem;
+      padding: 1.1rem 1rem; border-radius: 10px; border: 2px solid #e5e7eb;
+      cursor: pointer; transition: all 0.18s; font-weight: 700; font-size: 1rem;
+      user-select: none; color: #9ca3af; font-family: 'Jost', sans-serif;
+    }
+    .decision-option input[type=radio] { display: none; }
+    .decision-option i { font-size: 1.35rem; }
+    .decision-option:hover { color: #374151; border-color: #9ca3af; }
+    .decision-option.selected.decision-approve { background: #f0fdf4; border-color: #22c55e; color: #15803d; box-shadow: 0 0 0 3px rgba(34,197,94,0.14); }
+    .decision-option.selected.decision-reject  { background: #fff1f1; border-color: #ef4444; color: #dc2626; box-shadow: 0 0 0 3px rgba(239,68,68,0.14); }
+    .decision-option.decision-error { border-color: #ef4444 !important; animation: shake 0.3s ease; }
+    @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-5px)} 75%{transform:translateX(5px)} }
+
+    /* Submit button */
+    .btn-submit-qc {
+      padding: 0.65rem 1.75rem; background: var(--navy); color: #fff;
+      border: none; border-radius: 8px; font-family: 'Jost', sans-serif;
+      font-size: 0.92rem; font-weight: 600; cursor: pointer; transition: background 0.2s;
+      display: inline-flex; align-items: center; gap: 0.4rem;
+    }
+    .btn-submit-qc:hover { background: #23236b; }
+    .btn-submit-qc:disabled { opacity: 0.6; cursor: not-allowed; }
+
     /* ══ TOAST ══ */
     #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
     .toast-msg { min-width: 260px; max-width: 360px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
@@ -162,6 +260,9 @@
       </a>
       <a href="/reports" class="nav-link-item">
         <i class="bi bi-bar-chart-line nav-icon"></i>Raporlar
+      </a>
+      <a href="/traceability" class="nav-link-item">
+        <i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik
       </a>
     </nav>
     <div class="sidebar-footer">
@@ -241,36 +342,174 @@
 
   <div id="toast-container"></div>
 
-  <!-- ════ QC MODAL ════ -->
-  <div class="modal fade" id="qcModal" tabindex="-1" aria-labelledby="qcModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
+  <!-- ════ QC FORM MODAL ════ -->
+  <div class="modal fade" id="qcFormModal" tabindex="-1" aria-labelledby="qcFormModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable" style="max-width:780px;">
       <div class="modal-content">
-        <div class="modal-header" id="qcModalHeader">
-          <h5 class="modal-title" id="qcModalLabel">Kalite Kontrol</h5>
+
+        <!-- Header -->
+        <div class="modal-header" style="border-bottom:2px solid #f0ece4;padding:1.1rem 1.5rem;">
+          <div>
+            <h5 class="modal-title" id="qcFormModalLabel" style="font-family:'Playfair Display',serif;font-size:1.05rem;font-weight:700;color:var(--navy);margin:0;">
+              <i class="bi bi-clipboard2-pulse" style="color:var(--gold);margin-right:0.4rem;"></i>
+              Üretim ve Kalite Kontrol Formu
+            </h5>
+            <div id="qfModalSubtitle" style="font-size:0.78rem;color:#9ca3af;margin-top:2px;">—</div>
+          </div>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
         </div>
-        <div class="modal-body">
-          <div class="lot-info-box" id="qcLotInfo">—</div>
-          <div class="mb-3">
-            <label class="form-label-sm">Kalite Kontrol Notu</label>
-            <textarea class="form-control" id="qcNotes" rows="4" placeholder="Kontrol bulguları, red sebebi veya onay açıklaması…"></textarea>
+
+        <!-- Body -->
+        <div class="modal-body" style="padding:1.5rem;">
+
+          <!-- A: Lot Bilgisi -->
+          <div class="qc-section">
+            <div class="qc-section-title">
+              <span class="qc-section-badge">A</span> Lot Bilgisi
+            </div>
+            <div class="lot-info-grid">
+              <div class="lot-info-cell">
+                <div class="lot-info-cell-label">Ürün Adı</div>
+                <div class="lot-info-cell-value" id="qfItemName">—</div>
+              </div>
+              <div class="lot-info-cell">
+                <div class="lot-info-cell-label">Lot Numarası</div>
+                <div class="lot-info-cell-value" id="qfLotNumber" style="font-family:monospace;">—</div>
+              </div>
+              <div class="lot-info-cell">
+                <div class="lot-info-cell-label">Lot Miktarı</div>
+                <div class="lot-info-cell-value" id="qfQuantity">—</div>
+              </div>
+            </div>
           </div>
+
+          <!-- B: Kontrol Listesi -->
+          <div class="qc-section">
+            <div class="qc-section-title">
+              <span class="qc-section-badge">B</span>
+              Kontrol Listesi
+              <div class="progress-wrap" id="progressWrap">
+                <span class="progress-count" id="progressCount">0 / 10</span>
+                <div class="progress-bar-outer">
+                  <div class="progress-bar-inner" id="progressBarInner" style="width:0%"></div>
+                </div>
+              </div>
+            </div>
+            <div class="checklist-wrap">
+              <table class="checklist-table">
+                <thead>
+                  <tr>
+                    <th style="width:36px;text-align:center;">#</th>
+                    <th>Kontrol Kriteri</th>
+                    <th style="width:220px;text-align:center;">Evet &nbsp;/&nbsp; Hayır &nbsp;/&nbsp; Yok</th>
+                  </tr>
+                </thead>
+                <tbody id="checklistBody">
+                  <!-- Dynamically rendered by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- C: Lab Kriterleri -->
+          <div class="qc-section">
+            <div class="qc-section-title">
+              <span class="qc-section-badge">C</span> Lab Kriterleri
+              <span style="font-size:0.68rem;font-weight:400;color:#9ca3af;text-transform:none;letter-spacing:0;margin-left:4px;">(isteğe bağlı)</span>
+            </div>
+            <div class="lab-grid">
+              <div>
+                <label class="form-label-sm">Ürün İçi ML</label>
+                <input type="number" class="form-control" id="qfLabMl" min="0" step="0.01" placeholder="Örn: 200" />
+              </div>
+              <div>
+                <label class="form-label-sm">Yoğunluk (g/cm³)</label>
+                <input type="number" class="form-control" id="qfLabDensity" min="0" step="0.001" placeholder="Örn: 0.980" />
+              </div>
+              <div>
+                <label class="form-label-sm">Renk</label>
+                <input type="text" class="form-control" id="qfLabColor" placeholder="Örn: Açık sarı" />
+              </div>
+            </div>
+          </div>
+
+          <!-- D: Notlar -->
+          <div class="qc-section">
+            <div class="qc-section-title">
+              <span class="qc-section-badge">D</span> Kontrol Notları
+              <span style="font-size:0.68rem;font-weight:400;color:#9ca3af;text-transform:none;letter-spacing:0;margin-left:4px;">(isteğe bağlı)</span>
+            </div>
+            <textarea class="form-control" id="qfNotes" rows="3"
+              placeholder="Gözlem, bulgu, red gerekçesi veya onay açıklaması…"
+              style="resize:vertical;"></textarea>
+          </div>
+
+          <!-- E: Kontrol Sonucu -->
+          <div class="qc-section" id="decisionSection">
+            <div class="qc-section-title">
+              <span class="qc-section-badge">E</span> Kontrol Sonucu
+            </div>
+            <div class="decision-wrapper">
+              <label class="decision-option decision-approve" id="decisionApproveLabel">
+                <input type="radio" name="qcDecision" value="APPROVED" />
+                <i class="bi bi-check-circle-fill"></i>
+                Uygundur
+              </label>
+              <label class="decision-option decision-reject" id="decisionRejectLabel">
+                <input type="radio" name="qcDecision" value="REJECTED" />
+                <i class="bi bi-x-circle-fill"></i>
+                Uygun Değildir
+              </label>
+            </div>
+          </div>
+
         </div>
-        <div class="modal-footer">
+        <!-- /modal-body -->
+
+        <!-- Footer -->
+        <div class="modal-footer" style="border-top:1px solid #f0ece4;padding:1rem 1.5rem;">
           <button type="button" class="btn-cancel" data-bs-dismiss="modal">İptal</button>
-          <button type="button" class="btn-approve-modal" id="qcConfirmBtn">Onayla</button>
+          <button type="button" class="btn-submit-qc" id="qcSubmitBtn" onclick="submitQCForm()">
+            <i class="bi bi-clipboard2-check"></i>
+            Formu Tamamla ve Kaydet
+          </button>
         </div>
+
       </div>
     </div>
   </div>
-  <!-- /MODAL -->
+  <!-- /QC FORM MODAL -->
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    let pendingInventoryId = null;
-    let pendingAction = null; // 'APPROVED' | 'REJECTED'
+    /* ════════════════════════════════════════════════════════════════════
+       MINERVA108 — Dijital Kalite Kontrol Formu
+       10 seed sorusu; kalan 20'yi QC_QUESTIONS dizisine ekleyin.
+    ════════════════════════════════════════════════════════════════════ */
 
-    /* ── Toast ── */
+    const QC_QUESTIONS = [
+      { id: 'q01', text: 'Ürün kokusu doğru mu?' },
+      { id: 'q02', text: 'Likit ürün rengi uygun mu?' },
+      { id: 'q03', text: 'Likit ürün şarj no doğru mu?' },
+      { id: 'q04', text: 'Şişe rengi ve şekli doğru mu?' },
+      { id: 'q05', text: 'Valf rengi ve şekli, kapak doğru mu?' },
+      { id: 'q06', text: 'Ön etiket baskısı doğru mu?' },
+      { id: 'q07', text: 'Arka etiket baskısı doğru mu?' },
+      { id: 'q08', text: 'SKT ve şarj numarası baskısı doğru mu?' },
+      { id: 'q09', text: 'Ambalaj fiziksel hasar kontrolü uygun mu?' },
+      { id: 'q10', text: 'Ürün sızdırmazlık kontrolü uygun mu?' },
+      // ── Buraya kalan 20 soruyu ekleyin ──────────────────────────────
+    ];
+
+    /* ── State ── */
+    let _currentInventoryId = null;
+    let _qcModalInstance    = null;
+
+    /* ── Utilities ── */
+    function escHtml(str) {
+      return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
     function showToast(msg, type = 'error') {
       const c = document.getElementById('toast-container');
       const el = document.createElement('div');
@@ -278,6 +517,40 @@
       el.innerHTML = `<span>${type === 'error' ? '✕' : '✓'}</span><span>${msg}</span>`;
       c.appendChild(el);
       setTimeout(() => { el.style.transition='opacity .4s'; el.style.opacity='0'; setTimeout(()=>el.remove(),400); }, 3500);
+    }
+
+    /* ── Progress bar ── */
+    function updateProgress() {
+      const total    = QC_QUESTIONS.length;
+      const answered = QC_QUESTIONS.filter(q =>
+        document.querySelector(`input[name="${q.id}"]:checked`) !== null
+      ).length;
+      document.getElementById('progressCount').textContent = `${answered} / ${total}`;
+      document.getElementById('progressBarInner').style.width =
+        (total > 0 ? (answered / total * 100) : 0) + '%';
+    }
+
+    /* ── Radio change handler (called inline from generated HTML) ── */
+    function onRadioChange(input) {
+      const name = input.name;
+      // Remove active class from all siblings in this group
+      document.querySelectorAll(`input[name="${name}"]`).forEach(sib => {
+        sib.closest('.q-radio-label').classList.remove('opt-active');
+      });
+      // Activate the selected label
+      input.closest('.q-radio-label').classList.add('opt-active');
+      // Clear error state from the row
+      const row = document.getElementById(`row-${name}`);
+      if (row) row.classList.remove('row-unanswered');
+      updateProgress();
+    }
+
+    /* ── Decision toggle ── */
+    function onDecisionChange(input) {
+      document.querySelectorAll('.decision-option').forEach(opt => {
+        opt.classList.remove('selected', 'decision-error');
+      });
+      input.closest('.decision-option').classList.add('selected');
     }
 
     /* ── Load quarantine list ── */
@@ -291,11 +564,11 @@
       }
     }
 
-    /* ── Render table ── */
+    /* ── Render quarantine table ── */
     function renderTable(data) {
-      const tbody = document.getElementById('qcBody');
-      const info  = document.getElementById('tableInfo');
-      const banner = document.getElementById('qcBanner');
+      const tbody      = document.getElementById('qcBody');
+      const info       = document.getElementById('tableInfo');
+      const banner     = document.getElementById('qcBanner');
       const bannerText = document.getElementById('qcBannerText');
 
       if (!data.length) {
@@ -316,16 +589,15 @@
           <td class="td-id">#${r.id}</td>
           <td class="td-name">${escHtml(r.item_name)}</td>
           <td class="td-mono">${escHtml(r.lot_number)}</td>
-          <td>${r.quantity}</td>
+          <td>${r.quantity}${r.item_unit ? ' ' + escHtml(r.item_unit) : ''}</td>
           <td>${escHtml(r.expiry_date)}</td>
           <td>${escHtml(r.location)}</td>
           <td><span class="status-badge status-quarantine">Karantina</span></td>
           <td style="text-align:center;">
-            <button class="btn-icon btn-icon-approve" onclick="openQCModal(${r.id}, '${escHtml(r.item_name)}', '${escHtml(r.lot_number)}', 'APPROVED')" title="Onayla">
-              <i class="bi bi-check-lg"></i>
-            </button>
-            <button class="btn-icon btn-icon-reject" onclick="openQCModal(${r.id}, '${escHtml(r.item_name)}', '${escHtml(r.lot_number)}', 'REJECTED')" title="Reddet">
-              <i class="bi bi-x-lg"></i>
+            <button class="btn-qc-form"
+              onclick="openQCForm(${r.id}, '${escHtml(r.item_name)}', '${escHtml(r.lot_number)}', ${r.quantity}, '${escHtml(r.item_unit || '')}')"
+              title="Kalite Kontrol Formunu Aç">
+              <i class="bi bi-clipboard2-pulse"></i> KK Formu
             </button>
           </td>
         </tr>`).join('');
@@ -333,60 +605,118 @@
       info.textContent = `${data.length} lot listeleniyor`;
     }
 
-    /* ── Escape HTML ── */
-    function escHtml(str) {
-      return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    /* ── Open QC form modal ── */
+    function openQCForm(id, itemName, lotNumber, quantity, unit) {
+      _currentInventoryId = id;
+
+      if (!_qcModalInstance) {
+        _qcModalInstance = new bootstrap.Modal(document.getElementById('qcFormModal'));
+      }
+
+      // ── Fill lot info cells ──
+      document.getElementById('qfItemName').textContent   = itemName;
+      document.getElementById('qfLotNumber').textContent  = lotNumber;
+      document.getElementById('qfQuantity').textContent   = quantity + (unit ? ' ' + unit : '');
+      document.getElementById('qfModalSubtitle').textContent = `Lot: ${lotNumber} · ${itemName}`;
+
+      // ── Build checklist rows dynamically ──
+      document.getElementById('checklistBody').innerHTML = QC_QUESTIONS.map((q, i) => `
+        <tr id="row-${q.id}">
+          <td class="q-num">${i + 1}</td>
+          <td class="q-text">${escHtml(q.text)}</td>
+          <td>
+            <div class="q-options">
+              <label class="q-radio-label opt-evet">
+                <input type="radio" name="${q.id}" value="Evet" onchange="onRadioChange(this)" />
+                <i class="bi bi-check-circle"></i> Evet
+              </label>
+              <label class="q-radio-label opt-hayir">
+                <input type="radio" name="${q.id}" value="Hayır" onchange="onRadioChange(this)" />
+                <i class="bi bi-x-circle"></i> Hayır
+              </label>
+              <label class="q-radio-label opt-yok">
+                <input type="radio" name="${q.id}" value="Yok" onchange="onRadioChange(this)" />
+                <i class="bi bi-dash-circle"></i> Yok
+              </label>
+            </div>
+          </td>
+        </tr>`).join('');
+
+      // ── Reset all other fields ──
+      ['qfLabMl', 'qfLabDensity', 'qfLabColor', 'qfNotes'].forEach(fid => {
+        document.getElementById(fid).value = '';
+      });
+      document.querySelectorAll('input[name="qcDecision"]').forEach(r => { r.checked = false; });
+      document.querySelectorAll('.decision-option').forEach(o => o.classList.remove('selected','decision-error'));
+
+      updateProgress();
+      _qcModalInstance.show();
     }
 
-    /* ── Open QC modal ── */
-    function openQCModal(id, itemName, lotNumber, action) {
-      pendingInventoryId = id;
-      pendingAction = action;
+    /* ── Submit QC form ── */
+    async function submitQCForm() {
+      // 1. Validate decision
+      const decisionEl = document.querySelector('input[name="qcDecision"]:checked');
+      if (!decisionEl) {
+        showToast('Lütfen kontrol sonucunu (Uygundur / Uygun Değildir) seçiniz.');
+        document.querySelectorAll('.decision-option').forEach(o => o.classList.add('decision-error'));
+        document.getElementById('decisionSection').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      const status = decisionEl.value;
 
-      const isApprove = action === 'APPROVED';
-      const header = document.getElementById('qcModalHeader');
-      const label  = document.getElementById('qcModalLabel');
-      const btn    = document.getElementById('qcConfirmBtn');
+      // 2. Validate all checklist rows answered
+      let firstUnanswered = null;
+      const checklist = {};
+      QC_QUESTIONS.forEach(q => {
+        const checked = document.querySelector(`input[name="${q.id}"]:checked`);
+        if (!checked) {
+          const row = document.getElementById(`row-${q.id}`);
+          if (row) row.classList.add('row-unanswered');
+          if (!firstUnanswered) firstUnanswered = row;
+        } else {
+          checklist[q.id] = checked.value;
+        }
+      });
 
-      label.textContent = isApprove ? 'Lot Onaylama' : 'Lot Reddetme';
-      header.style.borderBottom = `3px solid ${isApprove ? '#22c55e' : '#ef4444'}`;
-      btn.className = isApprove ? 'btn-approve-modal' : 'btn-reject-modal';
-      btn.textContent = isApprove ? 'Onayla' : 'Reddet';
+      if (firstUnanswered) {
+        showToast(`Lütfen tüm ${QC_QUESTIONS.length} kontrol sorusunu cevaplayınız.`);
+        firstUnanswered.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
 
-      document.getElementById('qcLotInfo').innerHTML =
-        `<strong>Ürün:</strong> ${escHtml(itemName)} &nbsp;·&nbsp; <strong>Lot:</strong> <span style="font-family:monospace;">${escHtml(lotNumber)}</span>`;
-      document.getElementById('qcNotes').value = '';
+      // 3. Gather optional fields
+      const lab_ml      = parseFloat(document.getElementById('qfLabMl').value)      || null;
+      const lab_density = parseFloat(document.getElementById('qfLabDensity').value) || null;
+      const lab_color   = document.getElementById('qfLabColor').value.trim()        || null;
+      const notes       = document.getElementById('qfNotes').value.trim();
 
-      new bootstrap.Modal(document.getElementById('qcModal')).show();
-    }
-
-    /* ── Confirm QC action ── */
-    document.getElementById('qcConfirmBtn').addEventListener('click', async function () {
-      const notes = document.getElementById('qcNotes').value.trim();
-      if (!notes) { showToast('Lütfen bir QC notu girin.'); return; }
-
-      this.disabled = true;
-      const origText = this.textContent;
-      this.textContent = 'İşleniyor…';
+      // 4. POST
+      const btn = document.getElementById('qcSubmitBtn');
+      btn.disabled    = true;
+      btn.innerHTML   = '<i class="bi bi-hourglass-split"></i> Kaydediliyor…';
 
       try {
-        const res = await fetch(`/api/qc/process/${pendingInventoryId}`, {
+        const res = await fetch(`/api/inventory/${_currentInventoryId}/qc-approve`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ notes, status: pendingAction }),
+          body: JSON.stringify({ status, checklist, lab_ml, lab_density, lab_color, notes }),
         });
         const data = await res.json();
-        if (!res.ok) { showToast(data.detail || 'İşlem başarısız.'); return; }
+        if (!res.ok) {
+          showToast(data.detail || 'İşlem başarısız.');
+          return;
+        }
         showToast(data.message, 'success');
-        bootstrap.Modal.getInstance(document.getElementById('qcModal')).hide();
+        _qcModalInstance.hide();
         loadQC();
       } catch {
-        showToast('İşlem sırasında hata oluştu.');
+        showToast('Sunucuya bağlanılamadı.');
       } finally {
-        this.disabled = false;
-        this.textContent = origText;
+        btn.disabled  = false;
+        btn.innerHTML = '<i class="bi bi-clipboard2-check"></i> Formu Tamamla ve Kaydet';
       }
-    });
+    }
 
     /* ── Logout ── */
     document.getElementById('logoutBtn').addEventListener('click', async function () {
@@ -397,6 +727,7 @@
       } catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
     });
 
+    /* ── Init ── */
     loadQC();
   </script>
 

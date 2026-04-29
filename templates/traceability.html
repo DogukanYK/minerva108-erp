@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minerva108 ERP — İzlenebilirlik</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+
+  <style>
+    :root {
+      --navy:  #2C2C73;
+      --gold:  #b8965a;
+      --gold2: #d4af72;
+      --cream: #f5f0e8;
+      --white: #ffffff;
+      --sidebar-width: 240px;
+      --navbar-height: 64px;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Jost', sans-serif; background-color: var(--cream); color: #1f2937; }
+
+    /* ══ SIDEBAR ══ */
+    .sidebar { position: fixed; top: 0; left: 0; width: var(--sidebar-width); height: 100vh; background: var(--navy); display: flex; flex-direction: column; z-index: 100; }
+    .sidebar-brand { padding: 1.6rem 1.5rem 1.4rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-brand-name { font-family: 'Playfair Display', serif; font-size: 1.25rem; font-weight: 700; color: var(--white); letter-spacing: 0.04em; margin: 0; }
+    .sidebar-brand-sub { font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); margin-top: 0.3rem; }
+    .sidebar-nav { flex: 1; padding: 1.25rem 0.75rem; overflow-y: auto; }
+    .nav-section-label { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.3); padding: 0.5rem 0.75rem 0.4rem; margin-top: 0.5rem; }
+    .nav-link-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.85rem; border-radius: 8px; color: rgba(255,255,255,0.65); font-size: 0.88rem; font-weight: 500; text-decoration: none; transition: background 0.15s, color 0.15s; margin-bottom: 2px; }
+    .nav-link-item:hover { background: rgba(255,255,255,0.07); color: var(--white); }
+    .nav-link-item.active { background: rgba(184,150,90,0.18); color: var(--gold2); }
+    .nav-link-item.active .nav-icon { color: var(--gold); }
+    .nav-icon { font-size: 1rem; width: 18px; text-align: center; flex-shrink: 0; }
+    .sidebar-footer { padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-footer-text { font-size: 0.7rem; color: rgba(255,255,255,0.25); text-align: center; }
+
+    /* ══ TOPNAV ══ */
+    .topnav { position: fixed; top: 0; left: var(--sidebar-width); right: 0; height: var(--navbar-height); background: var(--white); border-bottom: 1px solid #f0ece4; display: flex; align-items: center; justify-content: space-between; padding: 0 1.75rem; z-index: 90; box-shadow: 0 1px 8px rgba(0,0,0,0.05); }
+    .topnav-title { font-family: 'Playfair Display', serif; font-size: 1.15rem; font-weight: 600; color: var(--navy); }
+    .topnav-right { display: flex; align-items: center; gap: 1rem; }
+    .user-chip { display: flex; align-items: center; gap: 0.5rem; background: var(--cream); border-radius: 20px; padding: 0.35rem 0.9rem 0.35rem 0.5rem; }
+    .user-avatar { width: 28px; height: 28px; background: var(--navy); color: var(--gold2); border-radius: 50%; font-size: 0.7rem; font-weight: 700; display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', serif; }
+    .user-name { font-size: 0.85rem; font-weight: 500; color: #374151; }
+    .btn-logout { display: flex; align-items: center; gap: 0.4rem; padding: 0.42rem 1rem; border: 1.5px solid #e5e7eb; border-radius: 8px; background: var(--white); color: #6b7280; font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 500; cursor: pointer; transition: border-color 0.2s, color 0.2s, background 0.2s; }
+    .btn-logout:hover { border-color: #ef4444; color: #ef4444; background: #fff5f5; }
+
+    /* ══ MAIN ══ */
+    .main-content { margin-left: var(--sidebar-width); padding-top: var(--navbar-height); min-height: 100vh; background: var(--cream); }
+    .content-inner { padding: 2rem 2rem 3rem; }
+    .page-header { margin-bottom: 1.5rem; }
+    .page-title { font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 700; color: var(--navy); margin: 0 0 0.25rem; }
+    .page-subtitle { font-size: 0.88rem; color: #6b7280; margin: 0; }
+
+    /* ══ SEARCH BAR ══ */
+    .search-card {
+      background: var(--white); border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06);
+      padding: 1.1rem 1.4rem; margin-bottom: 1.5rem;
+      display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+    }
+    .search-card-label {
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #6b7280;
+    }
+    .search-card input {
+      flex: 1; min-width: 220px;
+      padding: 0.55rem 1rem; border: 1.5px solid #e5e7eb;
+      border-radius: 8px; font-family: 'Jost', sans-serif;
+      font-size: 0.9rem; color: #1f2937; transition: border-color 0.2s;
+    }
+    .search-card input:focus { outline: none; border-color: var(--navy); box-shadow: 0 0 0 3px rgba(44,44,115,0.10); }
+    .btn-search-trace {
+      padding: 0.58rem 1.4rem; background: var(--navy); color: var(--white);
+      border: none; border-radius: 8px; font-family: 'Jost', sans-serif;
+      font-size: 0.88rem; font-weight: 600; cursor: pointer;
+      transition: background 0.2s; display: inline-flex; align-items: center; gap: 0.4rem;
+    }
+    .btn-search-trace:hover { background: #23236b; }
+    .btn-search-trace:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* ══ TWO-COLUMN GRID ══ */
+    .trace-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 1.25rem; }
+    @media (max-width: 1100px) { .trace-grid { grid-template-columns: 1fr; } }
+
+    /* ══ CARD ══ */
+    .panel-card {
+      background: var(--white); border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06);
+      overflow: hidden; margin-bottom: 1.25rem;
+    }
+    .panel-header {
+      padding: 0.95rem 1.3rem; border-bottom: 1px solid #f0ece4;
+      display: flex; align-items: center; gap: 0.6rem;
+    }
+    .panel-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 1rem; font-weight: 700; color: var(--navy);
+      margin: 0; flex: 1;
+    }
+    .panel-title-icon {
+      width: 30px; height: 30px; border-radius: 7px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 0.95rem; flex-shrink: 0;
+    }
+    .icon-navy  { background: rgba(44,44,115,0.10); color: var(--navy); }
+    .icon-gold  { background: rgba(184,150,90,0.16); color: #92750e; }
+    .icon-green { background: #dcfce7; color: #15803d; }
+    .icon-red   { background: #fee2e2; color: #b91c1c; }
+    .icon-blue  { background: #dbeafe; color: #1e40af; }
+    .icon-amber { background: #fef3c7; color: #b45309; }
+
+    .panel-body { padding: 1.1rem 1.3rem; }
+
+    /* ══ EMPTY STATE ══ */
+    .empty-state {
+      padding: 4rem 2rem; text-align: center; color: #9ca3af;
+    }
+    .empty-state i { font-size: 3rem; display: block; margin-bottom: 0.85rem; color: #d1d5db; }
+    .empty-state-title { font-size: 1rem; font-weight: 600; color: #6b7280; margin: 0 0 0.3rem; }
+    .empty-state-sub { font-size: 0.85rem; color: #9ca3af; margin: 0; }
+
+    /* ══ KEY-VALUE GRID ══ */
+    .kv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.65rem; }
+    .kv-cell {
+      background: #f9f7f3; border: 1px solid #f0ece4; border-radius: 8px;
+      padding: 0.55rem 0.85rem;
+    }
+    .kv-cell-label {
+      font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #9ca3af;
+    }
+    .kv-cell-value {
+      font-weight: 600; font-size: 0.9rem; color: #1f2937; margin-top: 2px;
+      word-break: break-word;
+    }
+
+    /* ══ STATUS BADGE ══ */
+    .status-badge {
+      display: inline-block; padding: 3px 12px; border-radius: 20px;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em;
+    }
+    .status-quarantine { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+    .status-approved   { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .status-rejected   { background: #fff1f1; color: #b91c1c; border: 1px solid #fca5a5; }
+
+    /* ══ PERSON CHIP — accountable personnel ══ */
+    .person-chip {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 4px 10px 4px 4px; border-radius: 20px;
+      background: rgba(44,44,115,0.07); border: 1px solid rgba(44,44,115,0.15);
+      font-size: 0.78rem; font-weight: 600; color: var(--navy);
+    }
+    .person-chip-avatar {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--navy); color: var(--gold2);
+      display: inline-flex; align-items: center; justify-content: center;
+      font-family: 'Playfair Display', serif; font-size: 0.7rem; font-weight: 700;
+    }
+    .person-chip-empty { color: #9ca3af; background: #f9fafb; border-color: #e5e7eb; }
+    .person-chip-empty .person-chip-avatar { background: #d1d5db; color: #fff; }
+
+    /* ══ ACCOUNTABILITY ROW ══ */
+    .accountability-row {
+      display: flex; flex-wrap: wrap; gap: 0.6rem 1.2rem;
+      padding: 0.85rem 1rem; margin-top: 0.75rem;
+      background: #faf8f4; border-radius: 8px;
+      border-left: 4px solid var(--gold);
+    }
+    .acc-item {
+      display: flex; align-items: center; gap: 0.5rem;
+      font-size: 0.82rem; color: #374151;
+    }
+    .acc-item .acc-label {
+      font-weight: 600; color: #6b7280;
+    }
+    .acc-item .acc-label::after { content: ":"; margin-right: 4px; }
+
+    /* ══ INGREDIENTS TABLE ══ */
+    table.ing-table { width: 100%; border-collapse: collapse; margin-top: 0.8rem; }
+    table.ing-table th {
+      background: #f9f7f3; padding: 0.55rem 0.85rem;
+      font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #6b7280;
+      border-bottom: 2px solid #f0ece4; text-align: left; white-space: nowrap;
+    }
+    table.ing-table td {
+      padding: 0.6rem 0.85rem; border-bottom: 1px solid #f5f3ef;
+      font-size: 0.84rem; color: #374151; vertical-align: middle;
+    }
+    table.ing-table tbody tr:last-child td { border-bottom: none; }
+    table.ing-table tbody tr:hover { background: #faf8f4; }
+    .ing-name { font-weight: 600; color: #1f2937; }
+    .ing-lot {
+      font-family: monospace; font-size: 0.78rem;
+      background: #f3f4f6; padding: 2px 7px; border-radius: 5px;
+      color: #4b5563;
+    }
+
+    /* ══ TIMELINE ══ */
+    .timeline { position: relative; padding-left: 1.7rem; }
+    .timeline::before {
+      content: ''; position: absolute; left: 9px; top: 4px; bottom: 4px;
+      width: 2px; background: #f0ece4;
+    }
+    .tl-item { position: relative; padding-bottom: 1.1rem; }
+    .tl-item:last-child { padding-bottom: 0; }
+    .tl-dot {
+      position: absolute; left: -1.7rem; top: 6px;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: var(--white); border: 3px solid var(--navy);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .tl-dot.in   { border-color: #22c55e; }
+    .tl-dot.out  { border-color: #ef4444; }
+    .tl-dot.qc   { border-color: #3b82f6; }
+    .tl-dot.qcr  { border-color: #f59e0b; }
+    .tl-time { font-size: 0.75rem; font-weight: 600; color: #9ca3af; letter-spacing: 0.03em; }
+    .tl-body { font-size: 0.86rem; color: #374151; margin-top: 2px; }
+    .tl-body strong { color: #1f2937; }
+    .tl-meta { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+    .tx-pill {
+      display: inline-block; padding: 1px 8px; border-radius: 20px;
+      font-size: 0.68rem; font-weight: 700;
+    }
+    .tx-in   { background: #f0fdf4; color: #15803d; }
+    .tx-out  { background: #fff1f1; color: #b91c1c; }
+    .tx-qc   { background: #eff6ff; color: #1d4ed8; }
+    .tx-qcr  { background: #fffbeb; color: #b45309; }
+
+    /* ══ EXPIRING TABLE ══ */
+    table.exp-table { width: 100%; border-collapse: collapse; }
+    table.exp-table th {
+      background: #f9f7f3; padding: 0.5rem 0.85rem;
+      font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #6b7280;
+      border-bottom: 2px solid #f0ece4; text-align: left;
+    }
+    table.exp-table td {
+      padding: 0.55rem 0.85rem; border-bottom: 1px solid #f5f3ef;
+      font-size: 0.83rem; vertical-align: middle;
+    }
+    table.exp-table tbody tr:last-child td { border-bottom: none; }
+    .exp-days {
+      display: inline-block; padding: 2px 9px; border-radius: 20px;
+      font-size: 0.72rem; font-weight: 700;
+    }
+    .exp-days-red    { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+    .exp-days-amber  { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+    .exp-days-green  { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+    .exp-lot {
+      font-family: monospace; font-size: 0.77rem; color: #4b5563;
+      background: #f3f4f6; padding: 1px 6px; border-radius: 4px;
+    }
+
+    /* ══ TOAST ══ */
+    #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
+    .toast-msg { min-width: 260px; max-width: 360px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
+    .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
+    .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+</head>
+<body>
+
+  <!-- ════ SIDEBAR ════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <p class="sidebar-brand-name">Minerva108</p>
+      <p class="sidebar-brand-sub">Kozmetik &nbsp;·&nbsp; ERP</p>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      <a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>
+      <a href="/suppliers" class="nav-link-item"><i class="bi bi-truck nav-icon"></i>Tedarikçiler</a>
+      <a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>
+      <a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
+      <a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
+      <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
+      <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
+      <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+      <a href="/traceability" class="nav-link-item active"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
+      {% if role == 'SuperAdmin' %}
+      <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>
+      <a href="/admin" class="nav-link-item"><i class="bi bi-shield-lock nav-icon"></i>Yönetim Paneli</a>
+      {% endif %}
+    </nav>
+    <div class="sidebar-footer"><p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p></div>
+  </aside>
+
+  <!-- ════ TOPNAV ════ -->
+  <header class="topnav">
+    <span class="topnav-title">İzlenebilirlik &amp; Denetim Zinciri</span>
+    <div class="topnav-right">
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+      <button class="btn-logout" id="logoutBtn"><i class="bi bi-box-arrow-right"></i>Çıkış Yap</button>
+    </div>
+  </header>
+
+  <!-- ════ MAIN ════ -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <!-- Page Header -->
+      <div class="page-header">
+        <h1 class="page-title">İzlenebilirlik</h1>
+        <p class="page-subtitle">Lot bazında tam soy ağacı (genealogy) — kim, ne zaman, ne yaptı? GMP / ISO 22716 uyumu için tam denetim zinciri.</p>
+      </div>
+
+      <!-- Search Bar -->
+      <div class="search-card">
+        <span class="search-card-label"><i class="bi bi-upc-scan" style="margin-right:4px;"></i>Lot Numarası</span>
+        <input type="text" id="lotSearchInput" placeholder="Örn: PRD-20260428-143215 veya AY-2026-001"
+               autocomplete="off" spellcheck="false" />
+        <button class="btn-search-trace" id="lotSearchBtn">
+          <i class="bi bi-search"></i> İzle
+        </button>
+      </div>
+
+      <!-- Two-Panel Grid -->
+      <div class="trace-grid">
+
+        <!-- ════ LEFT — GENEALOGY ════ -->
+        <div id="traceResultColumn">
+
+          <!-- Initial empty state -->
+          <div class="panel-card" id="traceEmptyCard">
+            <div class="panel-body">
+              <div class="empty-state">
+                <i class="bi bi-diagram-3"></i>
+                <p class="empty-state-title">Bir lot araması yapın</p>
+                <p class="empty-state-sub">Hammadde lot numarası veya üretim partisi (PRD-…) girerek tam soy ağacını görüntüleyebilirsiniz.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Result containers (populated by JS) -->
+          <div id="lotInfoCard"      style="display:none;"></div>
+          <div id="productionCard"   style="display:none;"></div>
+          <div id="timelineCard"     style="display:none;"></div>
+
+        </div>
+        <!-- /left -->
+
+        <!-- ════ RIGHT — EXPIRING SOON ════ -->
+        <div>
+          <div class="panel-card">
+            <div class="panel-header">
+              <span class="panel-title-icon icon-amber"><i class="bi bi-hourglass-split"></i></span>
+              <h2 class="panel-title">Yaklaşan SKT'ler</h2>
+              <span style="font-size:0.72rem;color:#9ca3af;font-weight:600;">≤ 60 gün</span>
+            </div>
+            <div id="expiringBody">
+              <div class="empty-state" style="padding:2rem 1rem;">
+                <i class="bi bi-hourglass" style="font-size:1.6rem;"></i>
+                <p class="empty-state-sub">Yükleniyor…</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- /right -->
+
+      </div>
+
+    </div>
+  </main>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    /* ════════════════════════════════════════════════════════════════════
+       MINERVA108 — İzlenebilirlik Modülü
+       GMP / ISO 22716 — tam denetim zinciri
+    ════════════════════════════════════════════════════════════════════ */
+
+    /* ── Utilities ── */
+    function escHtml(str) {
+      return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function showToast(msg, type = 'error') {
+      const c = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      el.className = `toast-msg toast-${type}`;
+      el.innerHTML = `<span>${type === 'error' ? '✕' : '✓'}</span><span>${escHtml(msg)}</span>`;
+      c.appendChild(el);
+      setTimeout(() => { el.style.transition='opacity .4s'; el.style.opacity='0'; setTimeout(()=>el.remove(),400); }, 3500);
+    }
+
+    /* ── Person chip — accountable personnel pill ── */
+    function personChip(name) {
+      if (!name || name === '—') {
+        return `<span class="person-chip person-chip-empty">
+                  <span class="person-chip-avatar">?</span> Bilinmiyor
+                </span>`;
+      }
+      const initial = (name.trim()[0] || '?').toUpperCase();
+      return `<span class="person-chip">
+                <span class="person-chip-avatar">${escHtml(initial)}</span>
+                ${escHtml(name)}
+              </span>`;
+    }
+
+    /* ── Status badge ── */
+    function statusBadge(status) {
+      const map = {
+        'APPROVED':   ['status-approved',   'Onaylı ✓'],
+        'REJECTED':   ['status-rejected',   'Reddedildi ✗'],
+        'QUARANTINE': ['status-quarantine', 'Karantina'],
+      };
+      const [cls, label] = map[status] || ['status-quarantine', status || '—'];
+      return `<span class="status-badge ${cls}">${label}</span>`;
+    }
+
+    /* ── Transaction type → CSS class & Turkish label ── */
+    function txMeta(type) {
+      const m = {
+        'Input':         { dot: 'in',  pill: 'tx-in',  label: 'Giriş'      },
+        'Output':        { dot: 'out', pill: 'tx-out', label: 'Çıkış'      },
+        'QC Approval':   { dot: 'qc',  pill: 'tx-qc',  label: 'QC Onay'    },
+        'QC Rejection':  { dot: 'qcr', pill: 'tx-qcr', label: 'QC Red'     },
+      };
+      return m[type] || { dot: '', pill: '', label: type || '—' };
+    }
+
+    /* ── Render Lot Info Card ── */
+    function renderLotInfo(info) {
+      const card = document.getElementById('lotInfoCard');
+      if (!info) { card.style.display = 'none'; return; }
+
+      card.style.display = 'block';
+      card.innerHTML = `
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title-icon icon-navy"><i class="bi bi-box-seam"></i></span>
+            <h2 class="panel-title">Lot Bilgisi</h2>
+            ${statusBadge(info.status)}
+          </div>
+          <div class="panel-body">
+            <div class="kv-grid">
+              <div class="kv-cell">
+                <div class="kv-cell-label">Ürün Adı</div>
+                <div class="kv-cell-value">${escHtml(info.item_name)}</div>
+              </div>
+              <div class="kv-cell">
+                <div class="kv-cell-label">Kategori</div>
+                <div class="kv-cell-value">${escHtml(info.item_category)}</div>
+              </div>
+              <div class="kv-cell">
+                <div class="kv-cell-label">Miktar</div>
+                <div class="kv-cell-value">${info.quantity} ${escHtml(info.item_unit)}</div>
+              </div>
+              <div class="kv-cell">
+                <div class="kv-cell-label">Konum</div>
+                <div class="kv-cell-value">${escHtml(info.location)}</div>
+              </div>
+              <div class="kv-cell">
+                <div class="kv-cell-label">Tedarikçi</div>
+                <div class="kv-cell-value">${escHtml(info.supplier_name)}</div>
+              </div>
+              <div class="kv-cell">
+                <div class="kv-cell-label">Son Kullanma</div>
+                <div class="kv-cell-value">${escHtml(info.expiry_date)}</div>
+              </div>
+              <div class="kv-cell">
+                <div class="kv-cell-label">Kayıt Tarihi</div>
+                <div class="kv-cell-value">${escHtml(info.created_at)}</div>
+              </div>
+              <div class="kv-cell">
+                <div class="kv-cell-label">Son Güncelleme</div>
+                <div class="kv-cell-value">${escHtml(info.updated_at)}</div>
+              </div>
+            </div>
+
+            <!-- Accountability row — WHO did what -->
+            <div class="accountability-row">
+              <div class="acc-item">
+                <span class="acc-label"><i class="bi bi-box-arrow-in-down"></i> Mal Kabul Yapan</span>
+                ${personChip(info.received_by)}
+              </div>
+              <div class="acc-item">
+                <span class="acc-label"><i class="bi bi-patch-check"></i> Kalite Onayı</span>
+                ${personChip(info.qc_approved_by)}
+              </div>
+            </div>
+
+            ${info.qc_notes ? `
+            <div style="margin-top:0.85rem;background:#f9f7f3;border:1px solid #f0ece4;border-radius:8px;padding:0.7rem 0.95rem;">
+              <div style="font-size:0.68rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#9ca3af;margin-bottom:3px;">QC Notu</div>
+              <div style="font-size:0.86rem;color:#374151;">${escHtml(info.qc_notes)}</div>
+            </div>` : ''}
+          </div>
+        </div>`;
+    }
+
+    /* ── Render Production Card ── */
+    function renderProduction(prod) {
+      const card = document.getElementById('productionCard');
+      if (!prod) { card.style.display = 'none'; return; }
+
+      card.style.display = 'block';
+
+      const ingRows = (prod.ingredients_consumed || []).map(ing => `
+        <tr>
+          <td>
+            <div class="ing-name">${escHtml(ing.item_name)}</div>
+            <div style="font-size:0.72rem;color:#9ca3af;margin-top:1px;">${escHtml(ing.item_category)}</div>
+          </td>
+          <td><span class="ing-lot">${escHtml(ing.source_lot)}</span></td>
+          <td><strong>${ing.quantity}</strong> ${escHtml(ing.unit)}</td>
+          <td>${escHtml(ing.supplier_name)}</td>
+          <td>${escHtml(ing.expiry_date)}</td>
+          <td>${personChip(ing.received_by)}</td>
+        </tr>`).join('');
+
+      card.innerHTML = `
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title-icon icon-gold"><i class="bi bi-gear-fill"></i></span>
+            <h2 class="panel-title">Üretim Detayı</h2>
+          </div>
+          <div class="panel-body">
+            <div class="kv-grid">
+              <div class="kv-cell">
+                <div class="kv-cell-label">Reçete</div>
+                <div class="kv-cell-value">${escHtml(prod.recipe_name)}</div>
+              </div>
+              <div class="kv-cell">
+                <div class="kv-cell-label">Hedef Ürün</div>
+                <div class="kv-cell-value">${escHtml(prod.target_item_name)}</div>
+              </div>
+              <div class="kv-cell">
+                <div class="kv-cell-label">Üretim Miktarı</div>
+                <div class="kv-cell-value">${prod.produced_quantity}</div>
+              </div>
+              <div class="kv-cell">
+                <div class="kv-cell-label">Üretim Tarihi</div>
+                <div class="kv-cell-value">${escHtml(prod.produced_at)}</div>
+              </div>
+            </div>
+
+            <div class="accountability-row">
+              <div class="acc-item">
+                <span class="acc-label"><i class="bi bi-person-badge"></i> Üretimi Yapan</span>
+                ${personChip(prod.produced_by)}
+              </div>
+            </div>
+
+            ${ingRows.length ? `
+              <div style="margin-top:1.1rem;">
+                <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;margin-bottom:0.4rem;">
+                  <i class="bi bi-boxes" style="margin-right:4px;"></i>
+                  Tüketilen Hammaddeler ve Ambalajlar
+                </div>
+                <div style="overflow-x:auto;border:1px solid #f0ece4;border-radius:10px;">
+                  <table class="ing-table">
+                    <thead>
+                      <tr>
+                        <th>Bileşen</th>
+                        <th>Kaynak Lot</th>
+                        <th>Miktar</th>
+                        <th>Tedarikçi</th>
+                        <th>SKT</th>
+                        <th>Mal Kabul</th>
+                      </tr>
+                    </thead>
+                    <tbody>${ingRows}</tbody>
+                  </table>
+                </div>
+              </div>` : `
+              <div style="margin-top:1rem;padding:1rem;background:#f9fafb;border-radius:8px;color:#9ca3af;font-size:0.85rem;text-align:center;">
+                <i class="bi bi-info-circle"></i>
+                Bu üretim için tüketim kaydı bulunamadı.
+              </div>`}
+          </div>
+        </div>`;
+    }
+
+    /* ── Render Transaction Timeline ── */
+    function renderTimeline(txs) {
+      const card = document.getElementById('timelineCard');
+      if (!txs || !txs.length) { card.style.display = 'none'; return; }
+
+      card.style.display = 'block';
+
+      const items = txs.map(t => {
+        const m = txMeta(t.transaction_type);
+        return `
+          <div class="tl-item">
+            <div class="tl-dot ${m.dot}"></div>
+            <div class="tl-time">${escHtml(t.timestamp)}</div>
+            <div class="tl-body">
+              <strong>${m.label}</strong>
+              · ${t.quantity}
+              ${t.notes ? `<div style="font-size:0.79rem;color:#6b7280;margin-top:2px;">${escHtml(t.notes)}</div>` : ''}
+            </div>
+            <div class="tl-meta">
+              <span class="tx-pill ${m.pill}">${m.label}</span>
+              ${personChip(t.performed_by)}
+            </div>
+          </div>`;
+      }).join('');
+
+      card.innerHTML = `
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title-icon icon-blue"><i class="bi bi-clock-history"></i></span>
+            <h2 class="panel-title">İşlem Geçmişi</h2>
+            <span style="font-size:0.74rem;color:#9ca3af;font-weight:600;">${txs.length} kayıt</span>
+          </div>
+          <div class="panel-body">
+            <div class="timeline">${items}</div>
+          </div>
+        </div>`;
+    }
+
+    /* ── Trace lot search ── */
+    async function searchLot() {
+      const input = document.getElementById('lotSearchInput');
+      const lot   = input.value.trim();
+      if (!lot) { showToast('Lütfen bir lot numarası girin.'); return; }
+
+      const btn = document.getElementById('lotSearchBtn');
+      btn.disabled  = true;
+      btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Aranıyor…';
+
+      // Reset all result cards
+      document.getElementById('traceEmptyCard').style.display  = 'none';
+      ['lotInfoCard','productionCard','timelineCard'].forEach(id => {
+        document.getElementById(id).style.display = 'none';
+        document.getElementById(id).innerHTML = '';
+      });
+
+      try {
+        const res = await fetch(`/api/traceability/lot/${encodeURIComponent(lot)}`);
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data.detail || 'Lot bulunamadı.');
+          // Show empty state again
+          document.getElementById('traceEmptyCard').style.display = 'block';
+          return;
+        }
+        renderLotInfo(data.lot_info);
+        renderProduction(data.production);
+        renderTimeline(data.transactions);
+        showToast(`Lot ${lot} için soy ağacı yüklendi.`, 'success');
+      } catch {
+        showToast('Sunucuya bağlanılamadı.');
+        document.getElementById('traceEmptyCard').style.display = 'block';
+      } finally {
+        btn.disabled  = false;
+        btn.innerHTML = '<i class="bi bi-search"></i> İzle';
+      }
+    }
+
+    /* ── Expiring soon panel ── */
+    async function loadExpiring() {
+      const container = document.getElementById('expiringBody');
+      try {
+        const res = await fetch('/api/traceability/expiring');
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+
+        if (!data.length) {
+          container.innerHTML = `
+            <div class="empty-state" style="padding:2rem 1rem;">
+              <i class="bi bi-shield-check" style="color:#22c55e;font-size:1.8rem;"></i>
+              <p class="empty-state-title" style="font-size:0.88rem;">SKT Riski Yok</p>
+              <p class="empty-state-sub">Önümüzdeki 60 gün içinde sona erecek lot bulunmuyor.</p>
+            </div>`;
+          return;
+        }
+
+        container.innerHTML = `
+          <div style="overflow-x:auto;">
+            <table class="exp-table">
+              <thead>
+                <tr>
+                  <th>Lot / Ürün</th>
+                  <th>SKT</th>
+                  <th style="text-align:right;">Kalan</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${data.map(it => {
+                  const cls = it.days_left <= 7 ? 'exp-days-red'
+                            : it.days_left <= 30 ? 'exp-days-amber'
+                            : 'exp-days-green';
+                  return `
+                  <tr style="cursor:pointer;" onclick="document.getElementById('lotSearchInput').value='${escHtml(it.lot_number)}';searchLot();">
+                    <td>
+                      <div style="font-weight:600;color:#1f2937;font-size:0.84rem;">${escHtml(it.item_name)}</div>
+                      <div style="margin-top:2px;"><span class="exp-lot">${escHtml(it.lot_number)}</span></div>
+                    </td>
+                    <td style="white-space:nowrap;">${escHtml(it.expiry_date)}</td>
+                    <td style="text-align:right;">
+                      <span class="exp-days ${cls}">${it.days_left} gün</span>
+                    </td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div style="padding:0.6rem 1rem;border-top:1px solid #f0ece4;font-size:0.75rem;color:#9ca3af;text-align:center;">
+            Lot adına tıklayarak izleyin →
+          </div>`;
+      } catch {
+        container.innerHTML = `<div class="empty-state" style="padding:2rem 1rem;">
+          <i class="bi bi-exclamation-circle" style="color:#ef4444;"></i>
+          <p class="empty-state-sub">SKT listesi yüklenemedi.</p></div>`;
+      }
+    }
+
+    /* ── Wire up search ── */
+    document.getElementById('lotSearchBtn').addEventListener('click', searchLot);
+    document.getElementById('lotSearchInput').addEventListener('keypress', e => {
+      if (e.key === 'Enter') { e.preventDefault(); searchLot(); }
+    });
+
+    /* ── Logout ── */
+    document.getElementById('logoutBtn').addEventListener('click', async function () {
+      this.disabled = true;
+      try {
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.href = '/login';
+      } catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
+    });
+
+    /* ── Init ── */
+    loadExpiring();
+  </script>
+
+</body>
+</html>

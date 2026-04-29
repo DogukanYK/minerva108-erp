@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minerva108 ERP — Yönetim Paneli</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+
+  <style>
+    :root {
+      --navy:  #2C2C73;
+      --gold:  #b8965a;
+      --gold2: #d4af72;
+      --cream: #f5f0e8;
+      --white: #ffffff;
+      --sidebar-width: 240px;
+      --navbar-height: 64px;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Jost', sans-serif; background-color: var(--cream); color: #1f2937; }
+
+    /* ══ SIDEBAR ══ */
+    .sidebar { position: fixed; top: 0; left: 0; width: var(--sidebar-width); height: 100vh; background: var(--navy); display: flex; flex-direction: column; z-index: 100; }
+    .sidebar-brand { padding: 1.6rem 1.5rem 1.4rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-brand-name { font-family: 'Playfair Display', serif; font-size: 1.25rem; font-weight: 700; color: var(--white); letter-spacing: 0.04em; margin: 0; }
+    .sidebar-brand-sub { font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); margin-top: 0.3rem; }
+    .sidebar-nav { flex: 1; padding: 1.25rem 0.75rem; overflow-y: auto; }
+    .nav-section-label { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.3); padding: 0.5rem 0.75rem 0.4rem; margin-top: 0.5rem; }
+    .nav-link-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.85rem; border-radius: 8px; color: rgba(255,255,255,0.65); font-size: 0.88rem; font-weight: 500; text-decoration: none; transition: background 0.15s, color 0.15s; margin-bottom: 2px; }
+    .nav-link-item:hover { background: rgba(255,255,255,0.07); color: var(--white); }
+    .nav-link-item.active { background: rgba(184,150,90,0.18); color: var(--gold2); }
+    .nav-link-item.active .nav-icon { color: var(--gold); }
+    .nav-icon { font-size: 1rem; width: 18px; text-align: center; flex-shrink: 0; }
+    .sidebar-footer { padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-footer-text { font-size: 0.7rem; color: rgba(255,255,255,0.25); text-align: center; }
+
+    /* ══ TOPNAV ══ */
+    .topnav { position: fixed; top: 0; left: var(--sidebar-width); right: 0; height: var(--navbar-height); background: var(--white); border-bottom: 1px solid #f0ece4; display: flex; align-items: center; justify-content: space-between; padding: 0 1.75rem; z-index: 90; box-shadow: 0 1px 8px rgba(0,0,0,0.05); }
+    .topnav-title { font-family: 'Playfair Display', serif; font-size: 1.15rem; font-weight: 600; color: var(--navy); }
+    .topnav-right { display: flex; align-items: center; gap: 1rem; }
+    .user-chip { display: flex; align-items: center; gap: 0.5rem; background: var(--cream); border-radius: 20px; padding: 0.35rem 0.9rem 0.35rem 0.5rem; }
+    .user-avatar { width: 28px; height: 28px; background: var(--navy); color: var(--gold2); border-radius: 50%; font-size: 0.7rem; font-weight: 700; display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', serif; }
+    .user-name { font-size: 0.85rem; font-weight: 500; color: #374151; }
+    .btn-logout { display: flex; align-items: center; gap: 0.4rem; padding: 0.42rem 1rem; border: 1.5px solid #e5e7eb; border-radius: 8px; background: var(--white); color: #6b7280; font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 500; cursor: pointer; transition: border-color 0.2s, color 0.2s, background 0.2s; }
+    .btn-logout:hover { border-color: #ef4444; color: #ef4444; background: #fff5f5; }
+
+    /* ══ MAIN ══ */
+    .main-content { margin-left: var(--sidebar-width); padding-top: var(--navbar-height); min-height: 100vh; background: var(--cream); }
+    .content-inner { padding: 2rem 2rem 3rem; }
+    .page-header { margin-bottom: 1.5rem; }
+    .page-title { font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 700; color: var(--navy); margin: 0 0 0.25rem; }
+    .page-subtitle { font-size: 0.88rem; color: #6b7280; margin: 0; }
+
+    /* ══ SECURITY BANNER ══ */
+    .security-banner {
+      display: flex; align-items: center; gap: 0.75rem;
+      background: linear-gradient(135deg, rgba(184,150,90,0.08) 0%, rgba(44,44,115,0.06) 100%);
+      border: 1px solid rgba(184,150,90,0.3); border-radius: 10px;
+      padding: 0.8rem 1.1rem; margin-bottom: 1.5rem;
+      font-size: 0.84rem; color: #7a5c1e;
+    }
+    .security-banner i { color: var(--gold); font-size: 1rem; flex-shrink: 0; }
+
+    /* ══ KPI STRIP ══ */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .kpi-card {
+      background: var(--white); border-radius: 12px;
+      padding: 1.1rem 1.25rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06);
+      display: flex; align-items: center; gap: 1rem;
+    }
+    .kpi-icon {
+      width: 44px; height: 44px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.2rem; flex-shrink: 0;
+    }
+    .kpi-icon-total    { background: rgba(44,44,115,0.08);  color: var(--navy); }
+    .kpi-icon-active   { background: rgba(21,128,61,0.10);  color: #15803d; }
+    .kpi-icon-inactive { background: rgba(185,28,28,0.09);  color: #b91c1c; }
+    .kpi-icon-admin    { background: rgba(184,150,90,0.12); color: #7a5c1e; }
+    .kpi-value { font-family: 'Playfair Display', serif; font-size: 1.8rem; font-weight: 700; color: var(--navy); line-height: 1; }
+    .kpi-label { font-size: 0.78rem; color: #6b7280; margin-top: 3px; font-weight: 500; }
+
+    /* ══ TOOLBAR ══ */
+    .toolbar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .btn-primary-gold { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.52rem 1.15rem; background: var(--navy); color: var(--white); border: none; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 600; cursor: pointer; transition: background 0.2s, box-shadow 0.2s; box-shadow: 0 2px 8px rgba(44,44,115,0.22); }
+    .btn-primary-gold:hover { background: #23236b; }
+    .search-box { margin-left: auto; position: relative; }
+    .search-box input { padding: 0.5rem 1rem 0.5rem 2.2rem; border: 1.5px solid #e5e7eb; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.88rem; color: #374151; background: var(--white); width: 230px; transition: border-color 0.2s; }
+    .search-box input:focus { outline: none; border-color: var(--navy); }
+    .search-box .bi-search { position: absolute; left: 0.7rem; top: 50%; transform: translateY(-50%); color: #9ca3af; font-size: 0.85rem; }
+
+    /* ══ TABLE ══ */
+    .table-card { background: var(--white); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06); overflow: hidden; }
+    .table-responsive { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: #f9f7f3; border-bottom: 2px solid #f0ece4; }
+    thead th { padding: 0.85rem 1rem; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #6b7280; white-space: nowrap; user-select: none; }
+    thead th.sortable { cursor: pointer; }
+    thead th.sortable:hover { color: var(--navy); }
+    thead th .sort-icon { margin-left: 4px; opacity: 0.4; font-size: 0.7rem; }
+    thead th.sort-asc  .sort-icon::before { content: "▲"; opacity: 1; }
+    thead th.sort-desc .sort-icon::before { content: "▼"; opacity: 1; }
+    tbody tr { border-bottom: 1px solid #f3f0ea; transition: background 0.12s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #faf8f4; }
+    tbody tr.self-row { background: rgba(184,150,90,0.04); }
+    td { padding: 0.85rem 1rem; font-size: 0.9rem; color: #374151; vertical-align: middle; }
+    td.td-id { color: #9ca3af; font-size: 0.8rem; font-weight: 500; padding-left: 1.1rem; }
+    .table-footer { padding: 0.75rem 1.25rem; border-top: 1px solid #f0ece4; font-size: 0.8rem; color: #9ca3af; }
+
+    /* ══ USER CELL ══ */
+    .user-cell { display: flex; align-items: center; gap: 0.75rem; }
+    .user-avatar-sm {
+      width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+      background: var(--navy); color: var(--gold2);
+      font-family: 'Playfair Display', serif; font-size: 0.78rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      letter-spacing: 0.02em;
+    }
+    .user-username { font-weight: 600; color: #1f2937; font-size: 0.9rem; }
+    .user-fullname { font-size: 0.8rem; color: #6b7280; margin-top: 1px; }
+    .self-tag {
+      display: inline-flex; align-items: center;
+      padding: 1px 7px; border-radius: 20px; margin-left: 6px;
+      font-size: 0.65rem; font-weight: 700; letter-spacing: 0.06em;
+      background: rgba(184,150,90,0.15); color: var(--gold);
+      border: 1px solid rgba(184,150,90,0.3);
+      vertical-align: middle;
+    }
+
+    /* ══ ROLE BADGES ══ */
+    .role-badge {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      padding: 4px 11px; border-radius: 20px;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; white-space: nowrap;
+    }
+    .role-superadmin { background: rgba(44,44,115,0.10); color: var(--navy); border: 1px solid rgba(44,44,115,0.15); }
+    .role-manager    { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+    .role-lablead    { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .role-labtech    { background: #fefce8; color: #a16207; border: 1px solid #fde68a; }
+    .role-staff      { background: #f3f4f6; color: #4b5563; border: 1px solid #e5e7eb; }
+
+    /* ══ STATUS BADGES ══ */
+    .status-badge { display: inline-flex; align-items: center; gap: 0.3rem; padding: 4px 10px; border-radius: 20px; font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
+    .status-active   { background: #f0fdf4; color: #15803d; }
+    .status-inactive { background: #fff1f1; color: #b91c1c; }
+
+    /* ══ ACTION BUTTONS ══ */
+    .btn-icon { width: 30px; height: 30px; border-radius: 6px; border: none; display: inline-flex; align-items: center; justify-content: center; font-size: 0.85rem; cursor: pointer; transition: background 0.15s; }
+    .btn-icon-edit { background: #eff6ff; color: #1d4ed8; margin-right: 3px; }
+    .btn-icon-edit:hover { background: #dbeafe; }
+    .btn-icon-key { background: #fefce8; color: #a16207; }
+    .btn-icon-key:hover { background: #fef9c3; }
+    .btn-icon:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ══ MODAL ══ */
+    .modal-content { border: none; border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
+    .modal-header { border-bottom: 1px solid #f0ece4; padding: 1.25rem 1.5rem; }
+    .modal-title { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 700; color: var(--navy); }
+    .modal-body { padding: 1.5rem; }
+    .modal-footer { border-top: 1px solid #f0ece4; padding: 1rem 1.5rem; }
+    .form-label-sm { font-size: 0.78rem; font-weight: 600; color: #6b7280; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.35rem; display: block; }
+    .form-control, .form-select { border: 1.5px solid #e5e7eb; border-radius: 8px; padding: 0.6rem 0.9rem; font-family: 'Jost', sans-serif; font-size: 0.9rem; color: #1f2937; transition: border-color 0.2s, box-shadow 0.2s; width: 100%; }
+    .form-control:focus, .form-select:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(44,44,115,0.10); outline: none; }
+    .form-control:disabled, .form-select:disabled { background: #f3f4f6; color: #9ca3af; cursor: not-allowed; }
+    .btn-save { padding: 0.6rem 1.5rem; background: var(--navy); color: var(--white); border: none; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+    .btn-save:hover { background: #23236b; }
+    .btn-save:disabled { opacity: 0.65; cursor: not-allowed; }
+    .btn-cancel { padding: 0.6rem 1.2rem; background: transparent; color: #6b7280; border: 1.5px solid #e5e7eb; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.9rem; font-weight: 500; cursor: pointer; }
+    .btn-cancel:hover { border-color: #9ca3af; color: #374151; }
+
+    /* Self-edit warning inside modal */
+    .self-edit-warning {
+      display: flex; align-items: flex-start; gap: 0.55rem;
+      background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px;
+      padding: 0.75rem 1rem; font-size: 0.83rem; color: #c2410c;
+      margin-bottom: 1rem;
+    }
+    .self-edit-warning i { flex-shrink: 0; margin-top: 1px; }
+
+    /* Password strength hint */
+    .pw-hint { font-size: 0.76rem; color: #9ca3af; margin-top: 4px; }
+    .pw-hint.ok  { color: #15803d; }
+    .pw-hint.bad { color: #b91c1c; }
+
+    /* Empty state */
+    .empty-state { padding: 4rem 2rem; text-align: center; color: #9ca3af; }
+    .empty-state i { font-size: 2.5rem; margin-bottom: 1rem; display: block; color: #d1d5db; }
+    .empty-state p { font-size: 0.9rem; margin: 0; }
+
+    /* ══ TOAST ══ */
+    #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
+    .toast-msg { min-width: 260px; max-width: 380px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
+    .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
+    .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    @media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 500px) { .kpi-grid { grid-template-columns: 1fr; } }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+</head>
+<body>
+
+  <!-- ════ SIDEBAR ════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <p class="sidebar-brand-name">Minerva108</p>
+      <p class="sidebar-brand-sub">Kozmetik &nbsp;·&nbsp; ERP</p>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/"          class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      <a href="/items"     class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>
+      <a href="/suppliers" class="nav-link-item"><i class="bi bi-truck nav-icon"></i>Tedarikçiler</a>
+      <a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>
+      <a href="/recipes"   class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
+      <a href="/production"class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
+      <a href="/qc"        class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
+      <a href="/ledger"    class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
+      <a href="/reports"   class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+      <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
+      <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>
+      <a href="/admin"     class="nav-link-item active"><i class="bi bi-shield-lock nav-icon"></i>Yönetim Paneli</a>
+    </nav>
+    <div class="sidebar-footer"><p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p></div>
+  </aside>
+
+  <!-- ════ TOPNAV ════ -->
+  <header class="topnav">
+    <span class="topnav-title">Yönetim Paneli</span>
+    <div class="topnav-right">
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+      <button class="btn-logout" id="logoutBtn"><i class="bi bi-box-arrow-right"></i>Çıkış Yap</button>
+    </div>
+  </header>
+
+  <!-- ════ MAIN CONTENT ════ -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <div class="page-header">
+        <h1 class="page-title">Kullanıcı Yönetimi</h1>
+        <p class="page-subtitle">Sistem kullanıcılarını, rollerini ve erişim yetkilerini yönetin.</p>
+      </div>
+
+      <!-- Security Banner -->
+      <div class="security-banner">
+        <i class="bi bi-shield-lock-fill"></i>
+        <span>Bu sayfa <strong>yalnızca SuperAdmin</strong> yetkisiyle erişilebilir. Burada yapılan tüm değişiklikler anında geçerli olur ve geri alınamaz.</span>
+      </div>
+
+      <!-- KPI Strip -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-icon kpi-icon-total"><i class="bi bi-people-fill"></i></div>
+          <div><div class="kpi-value" id="kpi-total">—</div><div class="kpi-label">Toplam Kullanıcı</div></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon kpi-icon-active"><i class="bi bi-check-circle-fill"></i></div>
+          <div><div class="kpi-value" id="kpi-active">—</div><div class="kpi-label">Aktif Hesap</div></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon kpi-icon-inactive"><i class="bi bi-x-circle-fill"></i></div>
+          <div><div class="kpi-value" id="kpi-inactive">—</div><div class="kpi-label">Pasif Hesap</div></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon kpi-icon-admin"><i class="bi bi-star-fill"></i></div>
+          <div><div class="kpi-value" id="kpi-admins">—</div><div class="kpi-label">Yönetici (Admin+Manager)</div></div>
+        </div>
+      </div>
+
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <button class="btn-primary-gold" onclick="openAddModal()">
+          <i class="bi bi-person-plus-fill"></i> Yeni Kullanıcı Ekle
+        </button>
+        <div class="search-box">
+          <i class="bi bi-search"></i>
+          <input type="text" id="searchInput" placeholder="Kullanıcı ara…" />
+        </div>
+      </div>
+
+      <!-- Table Card -->
+      <div class="table-card">
+        <div class="table-responsive">
+          <table id="usersTable">
+            <thead>
+              <tr>
+                <th style="width:60px; padding-left:1.1rem;">ID</th>
+                <th class="sortable" data-col="username">Kullanıcı <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="role">Rol <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="is_active">Durum <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="created_at">Kayıt Tarihi <span class="sort-icon"></span></th>
+                <th style="width:90px; text-align:center;">İşlemler</th>
+              </tr>
+            </thead>
+            <tbody id="usersBody">
+              <tr><td colspan="6"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-footer"><span id="tableInfo">—</span></div>
+      </div>
+
+    </div>
+  </main>
+
+  <div id="toast-container"></div>
+
+  <!-- ════ MODAL: YENİ KULLANICI EKLE ════ -->
+  <div class="modal fade" id="addUserModal" tabindex="-1" aria-labelledby="addUserModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="addUserModalLabel">
+            <i class="bi bi-person-plus-fill" style="margin-right:8px;color:var(--gold);"></i>
+            Yeni Kullanıcı Ekle
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body">
+          <form id="addUserForm" novalidate>
+            <div class="row g-3">
+              <div class="col-12 col-md-6">
+                <label class="form-label-sm">Kullanıcı Adı *</label>
+                <input type="text" class="form-control" id="addUsername" placeholder="Örn: ayse.kaya" autocomplete="off" />
+                <div class="pw-hint" id="usernameHint"></div>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label-sm">Ad Soyad *</label>
+                <input type="text" class="form-control" id="addFullName" placeholder="Örn: Ayşe Kaya" />
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label-sm">Şifre *</label>
+                <input type="password" class="form-control" id="addPassword" placeholder="En az 6 karakter" autocomplete="new-password" oninput="checkPwStrength('addPassword','addPwHint')" />
+                <div class="pw-hint" id="addPwHint"></div>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label-sm">Rol *</label>
+                <select class="form-select" id="addRole">
+                  <option value="LabTech">Lab Teknisyeni</option>
+                  <option value="LabLead">Lab Sorumlusu</option>
+                  <option value="Manager">Yönetici</option>
+                  <option value="SuperAdmin">Süper Yönetici</option>
+                  <option value="Staff">Personel</option>
+                </select>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" data-bs-dismiss="modal">İptal</button>
+          <button type="button" class="btn-save" id="addUserBtn" onclick="saveNewUser()">
+            <i class="bi bi-person-check-fill" style="margin-right:5px;"></i>Kullanıcı Oluştur
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: KULLANICI DÜZENLE ════ -->
+  <div class="modal fade" id="editUserModal" tabindex="-1" aria-labelledby="editUserModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="editUserModalLabel">
+            <i class="bi bi-pencil-square" style="margin-right:8px;color:var(--gold);"></i>
+            Kullanıcı Düzenle
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body">
+          <!-- Self-edit warning — shown only when editing own account -->
+          <div class="self-edit-warning" id="selfEditWarning" style="display:none;">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <span>Kendi hesabınızı düzenliyorsunuz. <strong>Rol</strong> ve <strong>aktiflik durumu</strong> değiştirilemez.</span>
+          </div>
+
+          <form id="editUserForm" novalidate>
+            <input type="hidden" id="editUserId" />
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label-sm">Kullanıcı</label>
+                <input type="text" class="form-control" id="editUsernameDisplay" disabled />
+              </div>
+              <div class="col-12">
+                <label class="form-label-sm">Ad Soyad</label>
+                <input type="text" class="form-control" id="editFullName" placeholder="Ad Soyad" />
+              </div>
+              <div class="col-12 col-md-7">
+                <label class="form-label-sm">Rol</label>
+                <select class="form-select" id="editRole">
+                  <option value="LabTech">Lab Teknisyeni</option>
+                  <option value="LabLead">Lab Sorumlusu</option>
+                  <option value="Manager">Yönetici</option>
+                  <option value="SuperAdmin">Süper Yönetici</option>
+                  <option value="Staff">Personel</option>
+                </select>
+              </div>
+              <div class="col-12 col-md-5">
+                <label class="form-label-sm">Hesap Durumu</label>
+                <div class="form-check form-switch" style="padding-top:0.65rem; padding-left:2.75rem;">
+                  <input class="form-check-input" type="checkbox" role="switch" id="editIsActive" style="width:2.4em; height:1.3em; cursor:pointer; accent-color:var(--navy);" />
+                  <label class="form-check-label" for="editIsActive" style="margin-left:0.5rem; font-size:0.88rem; color:#374151; cursor:pointer;" id="editIsActiveLabel">Aktif</label>
+                </div>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" data-bs-dismiss="modal">İptal</button>
+          <button type="button" class="btn-save" id="editUserBtn" onclick="saveEditUser()">
+            <i class="bi bi-check-lg" style="margin-right:5px;"></i>Değişiklikleri Kaydet
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: ŞİFRE SIFIRLA ════ -->
+  <div class="modal fade" id="resetPasswordModal" tabindex="-1" aria-labelledby="resetPasswordModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="resetPasswordModalLabel">
+            <i class="bi bi-key-fill" style="margin-right:8px;color:var(--gold);"></i>
+            Şifre Sıfırla
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="resetUserId" />
+          <p id="resetModalDesc" style="font-size:0.85rem; color:#374151; margin-bottom:1rem;"></p>
+          <div class="mb-3">
+            <label class="form-label-sm">Yeni Şifre *</label>
+            <input type="password" class="form-control" id="newPassword" placeholder="En az 6 karakter" autocomplete="new-password" oninput="checkPwStrength('newPassword','newPwHint')" />
+            <div class="pw-hint" id="newPwHint"></div>
+          </div>
+          <div class="mb-1">
+            <label class="form-label-sm">Şifre Tekrar *</label>
+            <input type="password" class="form-control" id="confirmPassword" placeholder="Şifreyi tekrar girin" autocomplete="new-password" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" data-bs-dismiss="modal">İptal</button>
+          <button type="button" class="btn-save" id="resetPwBtn" onclick="savePasswordReset()"
+            style="background:#c2410c;" onmouseover="this.style.background='#9a3412'" onmouseout="this.style.background='#c2410c'">
+            <i class="bi bi-arrow-repeat" style="margin-right:5px;"></i>Şifreyi Sıfırla
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    /* ── Globals ── */
+    const CURRENT_USER_ID = {{ user_id }};
+    let allUsers = [];
+    let sortCol  = null, sortDir = 'asc';
+    let editingUserId = null, resetUserId = null;
+
+    /* ── Toast ── */
+    function showToast(msg, type = 'error') {
+      const c  = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      el.className = `toast-msg toast-${type}`;
+      el.innerHTML = `<span>${type === 'error' ? '✕' : '✓'}</span><span>${msg}</span>`;
+      c.appendChild(el);
+      setTimeout(() => { el.style.transition='opacity .4s'; el.style.opacity='0'; setTimeout(()=>el.remove(),400); }, 3500);
+    }
+
+    function escHtml(str) {
+      return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    /* ── Role badge ── */
+    function roleBadge(role) {
+      const map = {
+        'SuperAdmin': ['role-superadmin', '<i class="bi bi-shield-lock-fill"></i>', 'Süper Yönetici'],
+        'Manager':    ['role-manager',    '<i class="bi bi-person-badge-fill"></i>', 'Yönetici'],
+        'LabLead':    ['role-lablead',    '<i class="bi bi-award-fill"></i>',        'Lab Sorumlusu'],
+        'LabTech':    ['role-labtech',    '<i class="bi bi-eyedropper"></i>',        'Lab Teknisyeni'],
+        'Staff':      ['role-staff',      '<i class="bi bi-person-fill"></i>',       'Personel'],
+      };
+      const [cls, icon, label] = map[role] || ['role-staff', '<i class="bi bi-person-fill"></i>', role];
+      return `<span class="role-badge ${cls}">${icon} ${label}</span>`;
+    }
+
+    /* ── Status badge ── */
+    function statusBadge(isActive) {
+      return isActive
+        ? '<span class="status-badge status-active"><i class="bi bi-check-circle-fill"></i> Aktif</span>'
+        : '<span class="status-badge status-inactive"><i class="bi bi-x-circle-fill"></i> Pasif</span>';
+    }
+
+    /* ── Initials from full name ── */
+    function initials(fullName, username) {
+      const words = (fullName || username || '?').trim().split(/\s+/);
+      return words.slice(0, 2).map(w => w[0].toUpperCase()).join('');
+    }
+
+    /* ── Password strength checker ── */
+    function checkPwStrength(inputId, hintId) {
+      const val  = document.getElementById(inputId).value;
+      const hint = document.getElementById(hintId);
+      if (!val) { hint.textContent = ''; hint.className = 'pw-hint'; return; }
+      if (val.length < 6) {
+        hint.textContent = '⚠ Çok kısa — en az 6 karakter gerekli.';
+        hint.className = 'pw-hint bad';
+      } else if (val.length < 10) {
+        hint.textContent = '✓ Yeterli — daha uzun şifreler daha güvenlidir.';
+        hint.className = 'pw-hint ok';
+      } else {
+        hint.textContent = '✓✓ Güçlü şifre.';
+        hint.className = 'pw-hint ok';
+      }
+    }
+
+    /* ── Update KPI cards ── */
+    function updateKpis(users) {
+      document.getElementById('kpi-total').textContent    = users.length;
+      document.getElementById('kpi-active').textContent   = users.filter(u => u.is_active).length;
+      document.getElementById('kpi-inactive').textContent = users.filter(u => !u.is_active).length;
+      document.getElementById('kpi-admins').textContent   = users.filter(u => u.role === 'SuperAdmin' || u.role === 'Manager').length;
+    }
+
+    /* ── Render table ── */
+    function renderTable(data) {
+      const tbody = document.getElementById('usersBody');
+      const info  = document.getElementById('tableInfo');
+
+      if (!data.length) {
+        tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">
+          <i class="bi bi-people"></i><p>Henüz kullanıcı yok.</p>
+        </div></td></tr>`;
+        info.textContent = '0 kullanıcı';
+        return;
+      }
+
+      tbody.innerHTML = data.map(u => {
+        const isSelf = u.id === CURRENT_USER_ID;
+        const ini    = initials(u.full_name, u.username);
+        return `
+          <tr data-id="${u.id}" class="${isSelf ? 'self-row' : ''}">
+            <td class="td-id">#${u.id}</td>
+            <td>
+              <div class="user-cell">
+                <div class="user-avatar-sm">${escHtml(ini)}</div>
+                <div>
+                  <div class="user-username">
+                    ${escHtml(u.username)}
+                    ${isSelf ? '<span class="self-tag">SEN</span>' : ''}
+                  </div>
+                  <div class="user-fullname">${escHtml(u.full_name)}</div>
+                </div>
+              </div>
+            </td>
+            <td>${roleBadge(u.role)}</td>
+            <td>${statusBadge(u.is_active)}</td>
+            <td style="color:#6b7280; font-size:0.85rem;">${escHtml(u.created_at)}</td>
+            <td style="text-align:center; white-space:nowrap;">
+              <button class="btn-icon btn-icon-edit"   onclick="openEditModal(${u.id})"     title="Düzenle"><i class="bi bi-pencil"></i></button>
+              <button class="btn-icon btn-icon-key"    onclick="openPasswordModal(${u.id})" title="Şifre Sıfırla"><i class="bi bi-key"></i></button>
+            </td>
+          </tr>`;
+      }).join('');
+
+      info.textContent = `${data.length} kullanıcı listeleniyor`;
+    }
+
+    /* ── Filter + Sort ── */
+    function applyFiltersAndSort() {
+      const q = document.getElementById('searchInput').value.toLowerCase();
+      let data = allUsers.filter(u =>
+        u.username.toLowerCase().includes(q) ||
+        u.full_name.toLowerCase().includes(q) ||
+        u.role.toLowerCase().includes(q)
+      );
+      if (sortCol) {
+        data = [...data].sort((a, b) => {
+          let va = a[sortCol] ?? '', vb = b[sortCol] ?? '';
+          if (typeof va === 'string') va = va.toLowerCase();
+          if (typeof vb === 'string') vb = vb.toLowerCase();
+          if (va < vb) return sortDir === 'asc' ? -1 : 1;
+          if (va > vb) return sortDir === 'asc' ?  1 : -1;
+          return 0;
+        });
+      }
+      renderTable(data);
+    }
+
+    /* ── Sort headers ── */
+    document.querySelectorAll('thead th.sortable').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        sortDir = sortCol === col && sortDir === 'asc' ? 'desc' : 'asc';
+        sortCol = col;
+        document.querySelectorAll('thead th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+        th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+        applyFiltersAndSort();
+      });
+    });
+
+    document.getElementById('searchInput').addEventListener('input', applyFiltersAndSort);
+
+    /* ── Load users ── */
+    async function loadUsers() {
+      try {
+        const res = await fetch('/api/admin/users');
+        if (!res.ok) {
+          showToast('Kullanıcılar yüklenemedi. Yetkiniz yetersiz olabilir.');
+          return;
+        }
+        allUsers = await res.json();
+        updateKpis(allUsers);
+        applyFiltersAndSort();
+      } catch { showToast('Sunucuya ulaşılamadı.'); }
+    }
+
+    /* ═══════════════════════════════════════
+       ADD USER MODAL
+    ═══════════════════════════════════════ */
+    function openAddModal() {
+      document.getElementById('addUserForm').reset();
+      document.getElementById('addPwHint').textContent = '';
+      document.getElementById('usernameHint').textContent = '';
+      new bootstrap.Modal(document.getElementById('addUserModal')).show();
+    }
+
+    async function saveNewUser() {
+      const username  = document.getElementById('addUsername').value.trim();
+      const full_name = document.getElementById('addFullName').value.trim();
+      const password  = document.getElementById('addPassword').value;
+      const role      = document.getElementById('addRole').value;
+
+      if (!username)  { showToast('Kullanıcı adı zorunludur.'); return; }
+      if (!full_name) { showToast('Ad Soyad zorunludur.');      return; }
+      if (password.length < 6) { showToast('Şifre en az 6 karakter olmalıdır.'); return; }
+
+      const btn = document.getElementById('addUserBtn');
+      btn.disabled = true; btn.textContent = 'Kaydediliyor…';
+      try {
+        const res  = await fetch('/api/admin/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, full_name, password, role }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Oluşturma başarısız.'); return; }
+        showToast(`${full_name} başarıyla oluşturuldu.`, 'success');
+        bootstrap.Modal.getInstance(document.getElementById('addUserModal')).hide();
+        loadUsers();
+      } catch { showToast('Kayıt sırasında hata oluştu.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-person-check-fill" style="margin-right:5px;"></i>Kullanıcı Oluştur';
+      }
+    }
+
+    /* ═══════════════════════════════════════
+       EDIT USER MODAL
+    ═══════════════════════════════════════ */
+    function openEditModal(id) {
+      const user = allUsers.find(u => u.id === id);
+      if (!user) return;
+      editingUserId = id;
+      const isSelf = id === CURRENT_USER_ID;
+
+      document.getElementById('editUserId').value          = id;
+      document.getElementById('editUsernameDisplay').value = user.username;
+      document.getElementById('editFullName').value        = user.full_name;
+      document.getElementById('editRole').value            = user.role;
+      document.getElementById('editIsActive').checked      = user.is_active;
+      document.getElementById('editIsActiveLabel').textContent = user.is_active ? 'Aktif' : 'Pasif';
+
+      // Self-protection: disable role + status toggle
+      document.getElementById('selfEditWarning').style.display = isSelf ? 'flex' : 'none';
+      document.getElementById('editRole').disabled      = isSelf;
+      document.getElementById('editIsActive').disabled  = isSelf;
+
+      new bootstrap.Modal(document.getElementById('editUserModal')).show();
+    }
+
+    // Update label text when toggling
+    document.getElementById('editIsActive').addEventListener('change', function () {
+      document.getElementById('editIsActiveLabel').textContent = this.checked ? 'Aktif' : 'Pasif';
+    });
+
+    async function saveEditUser() {
+      const id        = editingUserId;
+      const full_name = document.getElementById('editFullName').value.trim();
+      if (!full_name) { showToast('Ad Soyad boş bırakılamaz.'); return; }
+
+      const isSelf = id === CURRENT_USER_ID;
+      const payload = { full_name };
+      if (!isSelf) {
+        payload.role      = document.getElementById('editRole').value;
+        payload.is_active = document.getElementById('editIsActive').checked;
+      }
+
+      const btn = document.getElementById('editUserBtn');
+      btn.disabled = true; btn.textContent = 'Kaydediliyor…';
+      try {
+        const res  = await fetch(`/api/admin/users/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Güncelleme başarısız.'); return; }
+        showToast(data.message || 'Kullanıcı güncellendi.', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('editUserModal')).hide();
+        loadUsers();
+      } catch { showToast('Güncelleme sırasında hata oluştu.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-lg" style="margin-right:5px;"></i>Değişiklikleri Kaydet';
+      }
+    }
+
+    /* ═══════════════════════════════════════
+       RESET PASSWORD MODAL
+    ═══════════════════════════════════════ */
+    function openPasswordModal(id) {
+      const user = allUsers.find(u => u.id === id);
+      if (!user) return;
+      resetUserId = id;
+
+      document.getElementById('resetUserId').value   = id;
+      document.getElementById('newPassword').value   = '';
+      document.getElementById('confirmPassword').value = '';
+      document.getElementById('newPwHint').textContent  = '';
+      document.getElementById('resetModalDesc').innerHTML =
+        `<strong>${escHtml(user.full_name)}</strong> (<code>${escHtml(user.username)}</code>) `
+        + `kullanıcısının şifresini sıfırlıyorsunuz.<br>`
+        + `<span style="color:#9ca3af;font-size:0.78rem;">Değişiklik anında geçerli olur.</span>`;
+
+      new bootstrap.Modal(document.getElementById('resetPasswordModal')).show();
+    }
+
+    async function savePasswordReset() {
+      const pw      = document.getElementById('newPassword').value;
+      const confirm = document.getElementById('confirmPassword').value;
+
+      if (pw.length < 6)  { showToast('Şifre en az 6 karakter olmalıdır.'); return; }
+      if (pw !== confirm)  { showToast('Şifreler eşleşmiyor.'); return; }
+
+      const btn = document.getElementById('resetPwBtn');
+      btn.disabled = true; btn.textContent = 'Sıfırlanıyor…';
+      try {
+        const res  = await fetch(`/api/admin/users/${resetUserId}/reset-password`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_password: pw }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Şifre sıfırlama başarısız.'); return; }
+        showToast(data.message || 'Şifre başarıyla sıfırlandı.', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('resetPasswordModal')).hide();
+      } catch { showToast('Şifre sıfırlama sırasında hata oluştu.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-repeat" style="margin-right:5px;"></i>Şifreyi Sıfırla';
+      }
+    }
+
+    /* ── Logout ── */
+    document.getElementById('logoutBtn').addEventListener('click', async function () {
+      this.disabled = true;
+      try { await fetch('/api/logout', { method: 'POST' }); window.location.href = '/login'; }
+      catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
+    });
+
+    /* ── Init ── */
+    loadUsers();
+  </script>
+
+</body>
+</html>

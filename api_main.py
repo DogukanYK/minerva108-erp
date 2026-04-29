@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Depends, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi import FastAPI, Depends, Request, Response, UploadFile, File
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -32,8 +32,11 @@ _ROLE_LABELS = {
     "LabTech":    "Lab Teknisyeni",
 }
 
-_CAN_DELETE = ["SuperAdmin", "LabLead"]
+_CAN_DELETE       = ["SuperAdmin", "LabLead"]
 _CAN_EDIT_RECIPES = ["SuperAdmin", "LabLead"]
+_SUPERADMIN_ONLY  = ["SuperAdmin"]
+
+_VALID_ROLES = {"SuperAdmin", "Manager", "LabLead", "LabTech", "Staff"}
 
 
 def _page_ctx(request: Request, payload: dict) -> dict:
@@ -44,6 +47,7 @@ def _page_ctx(request: Request, payload: dict) -> dict:
         "full_name":  payload.get("full_name"),
         "role":       role,
         "role_label": _ROLE_LABELS.get(role, role),
+        "user_id":    int(payload.get("sub", 0)),   # current user ID — used by admin UI self-protection
     }
 
 
@@ -59,7 +63,10 @@ class ItemCreateRequest(BaseModel):
     name: str
     category: Optional[str] = None
     unit: str = "adet"
-    min_stock: Optional[float] = 0.0
+    min_stock:      Optional[float] = 0.0
+    cost_price:     Optional[float] = 0.0
+    parent_id:      Optional[int]   = None    # Variation hierarchy — null for parents/standalones
+    variation_name: Optional[str]   = None    # e.g. "200ml" — required if parent_id set
 
 
 class BulkDeleteRequest(BaseModel):
@@ -84,9 +91,10 @@ class RecipeIngredientSchema(BaseModel):
 
 
 class RecipeCreateRequest(BaseModel):
-    name: str
+    name: Optional[str] = None          # arka planda hedef ürün adına eşitlenir; göndermek isteğe bağlı
     target_item_id: int
     expected_yield: float
+    waste_percentage: Optional[float] = 0.0   # % fire oranı
     ingredients: List[RecipeIngredientSchema]
 
 
@@ -98,6 +106,33 @@ class ProductionCreateRequest(BaseModel):
 class QCActionRequest(BaseModel):
     notes: str
     status: str  # 'APPROVED' veya 'REJECTED'
+
+
+class QCFormRequest(BaseModel):
+    """Digital QC form — full checklist + lab results + decision."""
+    status:      str                        # 'APPROVED' or 'REJECTED'
+    checklist:   dict                       # { "q01": "Evet", "q02": "Hayır", … }
+    lab_ml:      Optional[float] = None     # Ürün içi ML
+    lab_density: Optional[float] = None     # Yoğunluk
+    lab_color:   Optional[str]   = None     # Renk
+    notes:       Optional[str]   = ""       # Serbest notlar
+
+
+class AdminUserCreateRequest(BaseModel):
+    username:  str
+    full_name: str
+    password:  str
+    role:      str = "LabTech"
+
+
+class AdminUserUpdateRequest(BaseModel):
+    full_name: Optional[str]  = None
+    role:      Optional[str]  = None
+    is_active: Optional[bool] = None
+
+
+class PasswordResetRequest(BaseModel):
+    new_password: str
 
 
 class StockReceiveRequest(BaseModel):
@@ -142,27 +177,79 @@ def logout(response: Response):
 @app.get("/api/items")
 def list_items(db: Session = Depends(get_db)):
     items = db.query(Item).filter(Item.is_active == True).order_by(Item.id.desc()).all()
+
+    # Resolve parent names + child counts in O(n) — avoids N+1 queries
+    name_by_id = {i.id: i.name for i in items}
+    child_count = {}
+    for i in items:
+        if i.parent_id:
+            child_count[i.parent_id] = child_count.get(i.parent_id, 0) + 1
+
     return [
         {
-            "id": i.id,
-            "name": i.name,
-            "category": i.category,
-            "unit": i.unit,
+            "id":              i.id,
+            "name":            i.name,
+            "category":        i.category,
+            "unit":            i.unit,
             "min_stock_level": i.min_stock_level,
-            "current_stock": i.current_stock,
-            "created_at": i.created_at.strftime("%d.%m.%Y") if i.created_at else "",
+            "current_stock":   i.current_stock,
+            "cost_price":      round(i.cost_price or 0.0, 4),
+            "parent_id":       i.parent_id,
+            "parent_name":     name_by_id.get(i.parent_id) if i.parent_id else None,
+            "variation_name":  i.variation_name,
+            "child_count":     child_count.get(i.id, 0),
+            "is_parent":       child_count.get(i.id, 0) > 0,
+            "is_variation":    i.parent_id is not None,
+            "created_at":      i.created_at.strftime("%d.%m.%Y") if i.created_at else "",
         }
         for i in items
     ]
 
 
+def _validate_variation(
+    db: Session,
+    parent_id: Optional[int],
+    variation_name: Optional[str],
+    self_id: Optional[int] = None,
+) -> Optional[JSONResponse]:
+    """
+    Shared parent-child validation for both create_item and update_item.
+    Returns a JSONResponse on validation failure, or None if OK.
+    """
+    if parent_id is None:
+        return None  # Standalone or future-parent — nothing to validate
+
+    if self_id is not None and parent_id == self_id:
+        return JSONResponse(status_code=400, content={"detail": "Bir ürün kendisinin varyasyonu olamaz."})
+
+    parent = db.query(Item).filter(Item.id == parent_id).first()
+    if not parent:
+        return JSONResponse(status_code=400, content={"detail": "Seçilen ana ürün bulunamadı."})
+
+    if parent.parent_id is not None:
+        return JSONResponse(status_code=400, content={
+            "detail": "Varyasyonlar bir başka varyasyonun altına eklenemez (depth=1 sınırı)."
+        })
+
+    if not variation_name or not variation_name.strip():
+        return JSONResponse(status_code=400, content={"detail": "Varyasyon adı zorunludur (örn: '200ml')."})
+
+    return None
+
+
 @app.post("/api/items", status_code=201)
 def create_item(data: ItemCreateRequest, db: Session = Depends(get_db), _: dict = Depends(require_role(_CAN_DELETE))):
+    err = _validate_variation(db, data.parent_id, data.variation_name)
+    if err: return err
+
     item = Item(
         name=data.name,
         category=data.category,
         unit=data.unit,
-        min_stock_level=data.min_stock or 0.0,
+        min_stock_level=data.min_stock  or 0.0,
+        cost_price=data.cost_price or 0.0,
+        parent_id=data.parent_id,
+        variation_name=(data.variation_name.strip() if data.parent_id and data.variation_name else None),
     )
     db.add(item)
     db.commit()
@@ -185,10 +272,25 @@ def update_item(item_id: int, data: ItemCreateRequest, db: Session = Depends(get
     item = db.query(Item).filter(Item.id == item_id).first()
     if not item:
         return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
-    item.name = data.name
-    item.category = data.category
-    item.unit = data.unit
-    item.min_stock_level = data.min_stock or 0.0
+
+    # If converting to a variation, ensure this item itself has no children (would orphan them)
+    if data.parent_id is not None and item.parent_id is None:
+        has_children = db.query(Item).filter(Item.parent_id == item_id).count() > 0
+        if has_children:
+            return JSONResponse(status_code=400, content={
+                "detail": "Bu ürünün varyasyonları mevcut. Önce varyasyonları silip sonra dönüştürebilirsiniz."
+            })
+
+    err = _validate_variation(db, data.parent_id, data.variation_name, self_id=item_id)
+    if err: return err
+
+    item.name            = data.name
+    item.category        = data.category
+    item.unit            = data.unit
+    item.min_stock_level = data.min_stock  or 0.0
+    item.cost_price      = data.cost_price or 0.0
+    item.parent_id       = data.parent_id
+    item.variation_name  = (data.variation_name.strip() if data.parent_id and data.variation_name else None)
     db.commit()
     return {"id": item.id, "message": "Ürün güncellendi."}
 
@@ -253,22 +355,70 @@ def bulk_delete_suppliers(data: SupplierBulkDeleteRequest, db: Session = Depends
 
 # ─── Recipes Endpoints ───────────────────────────────────────────────────────
 
+def _calc_recipe_costs(recipe: Recipe, db: Session) -> dict:
+    """
+    Compute BOM cost for a recipe.
+
+    Rules:
+      - Hammadde (raw material): gross_qty = net × (1 + waste% / 100)  [additive fire]
+      - Ambalaj (packaging):     gross_qty = net                        [fire exempt]
+    Returns total_cost, unit_cost, and per-ingredient cost dicts.
+    """
+    waste_factor = 1.0 + (recipe.waste_percentage or 0.0) / 100.0
+    total_cost   = 0.0
+    ingredient_costs = []
+
+    for ing in recipe.ingredients:
+        item = db.query(Item).filter(Item.id == ing.item_id).first()
+        if not item:
+            continue
+        is_ambalaj = (item.category == "Ambalaj")
+        factor     = 1.0 if is_ambalaj else waste_factor
+        gross_qty  = round(ing.quantity * factor, 6)
+        cost_price = round(item.cost_price or 0.0, 4)
+        line_cost  = round(gross_qty * cost_price, 4)
+        total_cost += line_cost
+        ingredient_costs.append({
+            "item_id":       ing.item_id,
+            "item_name":     item.name,
+            "unit":          ing.unit or item.unit or "",
+            "current_stock": item.current_stock,
+            "quantity":      ing.quantity,          # net (recipe spec)
+            "gross_qty":     gross_qty,              # actual stock consumption
+            "is_ambalaj":    is_ambalaj,
+            "cost_price":    cost_price,
+            "line_cost":     line_cost,
+        })
+
+    total_cost = round(total_cost, 4)
+    unit_cost  = round(total_cost / (recipe.output_quantity or 1.0), 6)
+    return {
+        "total_cost":       total_cost,
+        "unit_cost":        unit_cost,
+        "ingredient_costs": ingredient_costs,
+    }
+
+
 @app.get("/api/recipes")
 def list_recipes(db: Session = Depends(get_db)):
     rows = db.query(Recipe).filter(Recipe.is_active == True).order_by(Recipe.id.desc()).all()
     result = []
     for r in rows:
-        target = db.query(Item).filter(Item.id == r.output_quantity).first() if False else None
-        # target_item stored via output_unit field repurposed — use dedicated join below
-        ingredient_count = len(r.ingredients)
+        target = db.query(Item).filter(Item.id == r.target_item_id).first() if r.target_item_id else None
+        costs  = _calc_recipe_costs(r, db)
         result.append({
-            "id": r.id,
-            "name": r.name,
-            "description": r.description,
-            "expected_yield": r.output_quantity,
-            "target_item_name": r.output_unit,
-            "ingredient_count": ingredient_count,
-            "created_at": r.created_at.strftime("%d.%m.%Y") if r.created_at else "",
+            "id":               r.id,
+            "name":             r.name,
+            "description":      r.description,
+            "expected_yield":   r.output_quantity,
+            "waste_percentage": round(r.waste_percentage or 0.0, 2),
+            "target_item_id":   r.target_item_id,
+            "target_item_name": target.name if target else (r.description or r.name),
+            "target_item_unit": target.unit if target else (r.output_unit or ""),
+            "ingredient_count": len(r.ingredients),
+            "total_cost":       costs["total_cost"],
+            "unit_cost":        costs["unit_cost"],
+            "created_at":       r.created_at.strftime("%d.%m.%Y") if r.created_at else "",
         })
     return result
 
@@ -278,12 +428,22 @@ def create_recipe(data: RecipeCreateRequest, db: Session = Depends(get_db), _: d
     target_item = db.query(Item).filter(Item.id == data.target_item_id).first()
     if not target_item:
         return JSONResponse(status_code=404, content={"detail": "Hedef ürün bulunamadı."})
+
+    # Block abstract-parent recipes — only standalones or variations may have recipes
+    has_children = db.query(Item).filter(Item.parent_id == target_item.id).count() > 0
+    if has_children:
+        return JSONResponse(status_code=400, content={
+            "detail": (f"'{target_item.name}' bir ana üründür ve varyasyonları vardır. "
+                       "Reçete varyasyonlara (örn: 200ml, 500ml) ayrı ayrı tanımlanmalıdır.")
+        })
+
     try:
         recipe = Recipe(
-            name=data.name,
+            name=target_item.name,          # her zaman hedef ürünün adına eşitlenir
             output_quantity=data.expected_yield,
             output_unit=target_item.unit or "adet",
             target_item_id=data.target_item_id,
+            waste_percentage=round(data.waste_percentage or 0.0, 4),
             description=f"Hedef: {target_item.name}",
         )
         db.add(recipe)
@@ -323,24 +483,18 @@ def get_recipe_detail(recipe_id: int, db: Session = Depends(get_db)):
     if not recipe:
         return JSONResponse(status_code=404, content={"detail": "Reçete bulunamadı."})
     target = db.query(Item).filter(Item.id == recipe.target_item_id).first() if recipe.target_item_id else None
-    ingredients = []
-    for ing in recipe.ingredients:
-        item = db.query(Item).filter(Item.id == ing.item_id).first()
-        ingredients.append({
-            "item_id": ing.item_id,
-            "item_name": item.name if item else "—",
-            "quantity": ing.quantity,
-            "unit": ing.unit or (item.unit if item else ""),
-            "current_stock": item.current_stock if item else 0,
-        })
+    costs  = _calc_recipe_costs(recipe, db)
     return {
-        "id": recipe.id,
-        "name": recipe.name,
-        "expected_yield": recipe.output_quantity,
-        "target_item_id": recipe.target_item_id,
+        "id":               recipe.id,
+        "name":             recipe.name,
+        "expected_yield":   recipe.output_quantity,
+        "waste_percentage": round(recipe.waste_percentage or 0.0, 2),
+        "target_item_id":   recipe.target_item_id,
         "target_item_name": target.name if target else recipe.description,
         "target_item_unit": target.unit if target else recipe.output_unit,
-        "ingredients": ingredients,
+        "total_cost":       costs["total_cost"],
+        "unit_cost":        costs["unit_cost"],
+        "ingredients":      costs["ingredient_costs"],   # full breakdown incl. gross_qty, cost_price, line_cost
     }
 
 
@@ -362,52 +516,86 @@ def list_production_history(db: Session = Depends(get_db)):
 
 
 @app.post("/api/production", status_code=201)
-def start_production(data: ProductionCreateRequest, db: Session = Depends(get_db)):
+def start_production(
+    data: ProductionCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     recipe = db.query(Recipe).filter(Recipe.id == data.recipe_id).first()
     if not recipe:
         return JSONResponse(status_code=404, content={"detail": "Reçete bulunamadı."})
     if data.produced_quantity <= 0:
         return JSONResponse(status_code=400, content={"detail": "Üretim miktarı sıfırdan büyük olmalıdır."})
 
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
     multiplier = data.produced_quantity / recipe.output_quantity
 
+    # ── Brüt Girdi Hesabı ──────────────────────────────────────────────────
+    # Fire (waste) EKLEMELI çalışır: brüt_girdi = net_miktar × (1 + fire% / 100)
+    # Örnek: 50 ml hammadde + %10 fire = 55 ml stoktan düşülür.
+    # Ambalaj bileşenlerine fire uygulanmaz (reçete mantığıyla tutarlı).
+    waste_factor = 1.0 + (recipe.waste_percentage or 0.0) / 100.0
+
     try:
-        # Stok yeterliliğini kontrol et
+        # ── Önce tüm brüt miktarları hesapla ve stok kontrolü yap ──────────
+        ing_plan = []   # (ing, item, gross_qty) üçlüsü
         for ing in recipe.ingredients:
             item = db.query(Item).filter(Item.id == ing.item_id).with_for_update().first()
             if not item:
                 db.rollback()
                 return JSONResponse(status_code=404, content={"detail": f"Hammadde bulunamadı (ID: {ing.item_id})."})
-            needed = round(ing.quantity * multiplier, 6)
-            if item.current_stock < needed:
+            is_ambalaj = (item.category == "Ambalaj")
+            factor     = 1.0 if is_ambalaj else waste_factor   # ambalaja fire uygulanmaz
+            gross_qty  = round(ing.quantity * multiplier * factor, 6)
+            ing_plan.append((ing, item, gross_qty, is_ambalaj))
+
+        for ing, item, gross_qty, is_ambalaj in ing_plan:
+            if item.current_stock < gross_qty:
                 db.rollback()
+                fire_note = "" if is_ambalaj else f" (%{recipe.waste_percentage or 0} fire dahil)"
                 return JSONResponse(status_code=400, content={
                     "detail": f"'{item.name}' için yeterli stok yok. "
-                              f"Gereken: {needed} {item.unit}, Mevcut: {item.current_stock} {item.unit}"
+                              f"Gereken: {gross_qty} {item.unit}{fire_note}, "
+                              f"Mevcut: {item.current_stock} {item.unit}"
                 })
 
-        # Hammadde stoklarını düş
-        for ing in recipe.ingredients:
-            item = db.query(Item).filter(Item.id == ing.item_id).first()
-            item.current_stock = round(item.current_stock - (ing.quantity * multiplier), 6)
+        # ── Lot numarası şimdiden üret — tüm transaction notlarına stamp atılır
+        import datetime as _dt
+        now = _dt.datetime.utcnow()
+        produced_lot = f"PRD-{now.strftime('%Y%m%d-%H%M%S')}"
+
+        # ── Stok düş + Output transaction kaydet ───────────────────────────
+        for ing, item, gross_qty, is_ambalaj in ing_plan:
+            item.current_stock = round(item.current_stock - gross_qty, 6)
+            fire_note = (
+                f" | %{recipe.waste_percentage or 0} fire dahil, brüt girdi"
+                if not is_ambalaj and (recipe.waste_percentage or 0) > 0
+                else ""
+            )
+            db.add(Transaction(
+                item_id=ing.item_id,
+                transaction_type="Output",
+                quantity=gross_qty,
+                notes=f"Üretim tüketimi — Reçete: {recipe.name}{fire_note} | Üretim Lot: {produced_lot}",
+                performed_by=actor,
+            ))
 
         # Üretilen lot'u QUARANTINE olarak inventory'e ekle (QC onayına kadar stok artmaz)
         if recipe.target_item_id:
-            import datetime as _dt
-            now = _dt.datetime.utcnow()
-            lot_number = f"PRD-{now.strftime('%Y%m%d-%H%M%S')}"
             db.add(Inventory(
                 item_id=recipe.target_item_id,
-                lot_number=lot_number,
+                lot_number=produced_lot,
                 quantity=data.produced_quantity,
                 status="QUARANTINE",
+                received_by=actor,                  # Üretim çıktısını "alan" da üretici
             ))
             db.add(Transaction(
                 item_id=recipe.target_item_id,
-                lot_number=lot_number,
+                lot_number=produced_lot,
                 transaction_type="Input",
                 quantity=data.produced_quantity,
-                notes=f"Üretim çıktısı — Reçete: {recipe.name}, Lot: {lot_number}",
+                notes=f"Üretim çıktısı — Reçete: {recipe.name}, Lot: {produced_lot}",
+                performed_by=actor,
             ))
 
         # Üretim kaydı
@@ -417,10 +605,15 @@ def start_production(data: ProductionCreateRequest, db: Session = Depends(get_db
             target_item_id=recipe.target_item_id,
             target_item_name=recipe.target_item.name if recipe.target_item else recipe.description,
             produced_quantity=data.produced_quantity,
+            produced_by=actor,                       # Audit
+            lot_number=produced_lot if recipe.target_item_id else None,
         ))
 
         db.commit()
-        return {"message": f"Üretim tamamlandı. {data.produced_quantity} birim QC onayına gönderildi."}
+        return {
+            "message": f"Üretim tamamlandı. {data.produced_quantity} birim QC onayına gönderildi.",
+            "lot_number": produced_lot if recipe.target_item_id else None,
+        }
 
     except Exception:
         db.rollback()
@@ -450,13 +643,19 @@ def list_inventory(db: Session = Depends(get_db)):
 
 
 @app.post("/api/inventory/receive", status_code=201)
-def receive_stock(data: StockReceiveRequest, db: Session = Depends(get_db)):
+def receive_stock(
+    data: StockReceiveRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     if data.quantity <= 0:
         return JSONResponse(status_code=400, content={"detail": "Miktar sıfırdan büyük olmalıdır."})
 
     item = db.query(Item).filter(Item.id == data.item_id).first()
     if not item:
         return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
 
     try:
         # ── Upsert Logic (4.7) ──────────────────────────────────────────────
@@ -475,6 +674,7 @@ def receive_stock(data: StockReceiveRequest, db: Session = Depends(get_db)):
                 existing.supplier_id = data.supplier_id
             if data.expiry_date:
                 existing.expiry_date = data.expiry_date
+            # received_by sadece ilk kabul edende kalır (audit immutability)
         else:
             # Yeni satır — statü kesinlikle APPROVED
             db.add(Inventory(
@@ -485,6 +685,7 @@ def receive_stock(data: StockReceiveRequest, db: Session = Depends(get_db)):
                 quantity=data.quantity,
                 location=data.location,
                 status="APPROVED",
+                received_by=actor,                      # Audit trail
             ))
 
         # ── Transaction kaydı (2.4) ─────────────────────────────────────────
@@ -494,6 +695,7 @@ def receive_stock(data: StockReceiveRequest, db: Session = Depends(get_db)):
             transaction_type="Input",
             quantity=data.quantity,
             notes=f"Mal kabul — Lot: {data.lot_number}" + (f", Konum: {data.location}" if data.location else ""),
+            performed_by=actor,                          # Audit trail
         ))
 
         # ── items.current_stock güncelle (üretim modülü ile uyum) ───────────
@@ -514,22 +716,28 @@ def list_quarantine(db: Session = Depends(get_db)):
     rows = db.query(Inventory).filter(Inventory.status == "QUARANTINE").order_by(Inventory.id.desc()).all()
     return [
         {
-            "id": r.id,
-            "item_name": r.item.name if r.item else "—",
-            "item_id": r.item_id,
-            "lot_number": r.lot_number,
-            "quantity": r.quantity,
-            "expiry_date": r.expiry_date or "—",
-            "location": r.location or "—",
-            "status": r.status,
-            "created_at": r.created_at.strftime("%d.%m.%Y") if r.created_at else "",
+            "id":           r.id,
+            "item_name":    r.item.name if r.item else "—",
+            "item_id":      r.item_id,
+            "item_unit":    r.item.unit if r.item else "",
+            "lot_number":   r.lot_number,
+            "quantity":     r.quantity,
+            "expiry_date":  r.expiry_date or "—",
+            "location":     r.location or "—",
+            "status":       r.status,
+            "created_at":   r.created_at.strftime("%d.%m.%Y") if r.created_at else "",
         }
         for r in rows
     ]
 
 
 @app.post("/api/qc/process/{inventory_id}")
-def process_qc(inventory_id: int, data: QCActionRequest, db: Session = Depends(get_db)):
+def process_qc(
+    inventory_id: int,
+    data: QCActionRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     if data.status not in ("APPROVED", "REJECTED"):
         return JSONResponse(status_code=400, content={"detail": "Geçersiz statü. 'APPROVED' veya 'REJECTED' olmalıdır."})
 
@@ -539,10 +747,13 @@ def process_qc(inventory_id: int, data: QCActionRequest, db: Session = Depends(g
     if inv.status != "QUARANTINE":
         return JSONResponse(status_code=400, content={"detail": "Bu kayıt zaten karantinade değil."})
 
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
+
     try:
-        inv.status = data.status
-        inv.qc_notes = data.notes
-        inv.updated_at = __import__("datetime").datetime.utcnow()
+        inv.status         = data.status
+        inv.qc_notes       = data.notes
+        inv.qc_approved_by = actor
+        inv.updated_at     = __import__("datetime").datetime.utcnow()
 
         # APPROVED ise items.current_stock'u artır; REJECTED ise stok değişmez
         if data.status == "APPROVED":
@@ -557,6 +768,7 @@ def process_qc(inventory_id: int, data: QCActionRequest, db: Session = Depends(g
             transaction_type=tx_type,
             quantity=inv.quantity,
             notes=f"{tx_type} — Lot: {inv.lot_number}. Not: {data.notes}",
+            performed_by=actor,
         ))
 
         db.commit()
@@ -565,6 +777,443 @@ def process_qc(inventory_id: int, data: QCActionRequest, db: Session = Depends(g
     except Exception:
         db.rollback()
         return JSONResponse(status_code=500, content={"detail": "QC işlemi sırasında hata oluştu."})
+
+
+@app.post("/api/inventory/{inventory_id}/qc-approve")
+def qc_approve_form(
+    inventory_id: int,
+    data: QCFormRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role(["SuperAdmin", "Manager", "LabLead", "LabTech"])),
+):
+    """
+    Digital QC form endpoint — the ONLY approved path to change a lot from
+    QUARANTINE to APPROVED or REJECTED.  Stores the full form JSON in
+    inventory.qc_form_data so the audit trail is permanent.
+    """
+    import json
+    from datetime import datetime as _dt
+
+    if data.status not in ("APPROVED", "REJECTED"):
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz statü. 'APPROVED' veya 'REJECTED' olmalıdır."})
+
+    inv = db.query(Inventory).filter(Inventory.id == inventory_id).first()
+    if not inv:
+        return JSONResponse(status_code=404, content={"detail": "Envanter kaydı bulunamadı."})
+    if inv.status != "QUARANTINE":
+        return JSONResponse(status_code=400, content={"detail": "Bu lot zaten işlenmiş — tekrar değiştirilemez."})
+
+    if not data.checklist:
+        return JSONResponse(status_code=422, content={"detail": "Kontrol listesi boş gönderilemez."})
+
+    # ── Serialize full form payload for permanent audit ────────────────────
+    form_payload = {
+        "checklist":    data.checklist,
+        "lab_ml":       data.lab_ml,
+        "lab_density":  data.lab_density,
+        "lab_color":    data.lab_color,
+        "notes":        data.notes or "",
+        "status":       data.status,
+        "submitted_at": _dt.utcnow().isoformat(),
+    }
+
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
+
+    try:
+        inv.status         = data.status
+        inv.qc_notes       = data.notes or ""
+        inv.qc_form_data   = json.dumps(form_payload, ensure_ascii=False)
+        inv.qc_approved_by = actor                  # Audit: who QC'd
+        inv.updated_at     = _dt.utcnow()
+
+        label = "Onaylandı ✓" if data.status == "APPROVED" else "Reddedildi ✗"
+
+        # APPROVED → add lot quantity to live stock
+        if data.status == "APPROVED":
+            approved_item = db.query(Item).filter(Item.id == inv.item_id).first()
+            if approved_item:
+                approved_item.current_stock = round(approved_item.current_stock + inv.quantity, 6)
+
+        note_text = f"QC Form — {label} — Lot: {inv.lot_number}"
+        if data.notes:
+            note_text += f" | Not: {data.notes[:120]}"
+
+        db.add(Transaction(
+            item_id=inv.item_id,
+            lot_number=inv.lot_number,
+            transaction_type="QC Approval" if data.status == "APPROVED" else "QC Rejection",
+            quantity=inv.quantity,
+            notes=note_text,
+            performed_by=actor,                      # Audit
+        ))
+
+        db.commit()
+        return {"message": f"Lot #{inv.lot_number} QC formu kaydedildi — {label}."}
+
+    except Exception:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"detail": "QC işlemi sırasında hata oluştu."})
+
+
+# ─── Traceability / Audit Trail (Phase 2 / Task 9) ──────────────────────────
+
+@app.get("/api/traceability/lot/{lot_number}")
+def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+    """
+    Full genealogy tree for a lot. Resolves:
+      • Lot identity (Inventory record + supplier)
+      • Production record (if internally produced)
+      • Ingredients consumed during that production (with their own supplier/expiry/received_by)
+      • All transactions for this lot — chronological audit trail.
+    """
+    inv  = db.query(Inventory).filter(Inventory.lot_number == lot_number).first()
+    prod = db.query(ProductionHistory).filter(ProductionHistory.lot_number == lot_number).first()
+
+    if not inv and not prod:
+        return JSONResponse(status_code=404, content={"detail": f"Lot bulunamadı: {lot_number}"})
+
+    out = {"lot_number": lot_number}
+
+    # ── Lot bilgisi (Inventory) ──────────────────────────────────────────────
+    if inv:
+        item     = db.query(Item).filter(Item.id == inv.item_id).first()
+        supplier = db.query(Supplier).filter(Supplier.id == inv.supplier_id).first() if inv.supplier_id else None
+        out["lot_info"] = {
+            "id":             inv.id,
+            "item_id":        inv.item_id,
+            "item_name":      item.name if item else "—",
+            "item_category":  item.category if item else "—",
+            "item_unit":      item.unit if item else "",
+            "supplier_name":  supplier.name if supplier else "—",
+            "supplier_phone": (supplier.phone if supplier else "") or "",
+            "expiry_date":    inv.expiry_date or "—",
+            "quantity":       inv.quantity,
+            "location":       inv.location or "—",
+            "status":         inv.status,
+            "received_by":    inv.received_by or "—",
+            "qc_approved_by": inv.qc_approved_by or "—",
+            "qc_notes":       inv.qc_notes or "",
+            "created_at":     inv.created_at.strftime("%d.%m.%Y %H:%M") if inv.created_at else "",
+            "updated_at":     inv.updated_at.strftime("%d.%m.%Y %H:%M") if inv.updated_at else "",
+        }
+    else:
+        out["lot_info"] = None
+
+    # ── Üretim kaydı + tüketilen hammaddeler ────────────────────────────────
+    if prod:
+        # Production-time Output transactions are stamped with "Üretim Lot: {lot}" in notes.
+        marker = f"Üretim Lot: {lot_number}"
+        ing_outputs = (
+            db.query(Transaction)
+            .filter(
+                Transaction.transaction_type == "Output",
+                Transaction.notes.like(f"%{marker}%"),
+            )
+            .order_by(Transaction.id.asc())
+            .all()
+        )
+
+        ingredients_consumed = []
+        for tx in ing_outputs:
+            tx_item = db.query(Item).filter(Item.id == tx.item_id).first()
+            # Best-guess source lot: most-recent APPROVED Inventory for this item before production date
+            tx_inv = (
+                db.query(Inventory)
+                .filter(
+                    Inventory.item_id == tx.item_id,
+                    Inventory.status == "APPROVED",
+                    Inventory.created_at <= (prod.produced_at or _import_dt().utcnow()),
+                )
+                .order_by(Inventory.created_at.desc())
+                .first()
+            )
+            tx_supplier = db.query(Supplier).filter(Supplier.id == tx_inv.supplier_id).first() if tx_inv and tx_inv.supplier_id else None
+            ingredients_consumed.append({
+                "item_id":       tx.item_id,
+                "item_name":     tx_item.name if tx_item else "—",
+                "item_category": tx_item.category if tx_item else "—",
+                "quantity":      tx.quantity,
+                "unit":          tx_item.unit if tx_item else "",
+                "source_lot":    tx_inv.lot_number   if tx_inv else "—",
+                "supplier_name": tx_supplier.name    if tx_supplier else "—",
+                "expiry_date":   (tx_inv.expiry_date if tx_inv else None) or "—",
+                "received_by":   (tx_inv.received_by if tx_inv else None) or "—",
+                "performed_by":  tx.performed_by or "—",
+            })
+
+        out["production"] = {
+            "id":                prod.id,
+            "recipe_id":         prod.recipe_id,
+            "recipe_name":       prod.recipe_name or "—",
+            "target_item_id":    prod.target_item_id,
+            "target_item_name":  prod.target_item_name or "—",
+            "produced_quantity": prod.produced_quantity,
+            "produced_at":       prod.produced_at.strftime("%d.%m.%Y %H:%M") if prod.produced_at else "—",
+            "produced_by":       prod.produced_by or "—",
+            "ingredients_consumed": ingredients_consumed,
+        }
+    else:
+        out["production"] = None
+
+    # ── İşlem geçmişi ───────────────────────────────────────────────────────
+    txs = (
+        db.query(Transaction)
+        .filter(Transaction.lot_number == lot_number)
+        .order_by(Transaction.id.asc())
+        .all()
+    )
+    out["transactions"] = [
+        {
+            "id":               t.id,
+            "transaction_type": t.transaction_type,
+            "quantity":         t.quantity,
+            "timestamp":        t.timestamp.strftime("%d.%m.%Y %H:%M") if t.timestamp else "—",
+            "performed_by":     t.performed_by or "—",
+            "notes":            (t.notes or "")[:200],
+        }
+        for t in txs
+    ]
+
+    return out
+
+
+def _import_dt():
+    """Tiny helper — import datetime lazily without polluting module top level."""
+    import datetime as _d
+    return _d.datetime
+
+
+@app.get("/api/traceability/expiring")
+def list_expiring(db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+    """All APPROVED inventory lots expiring within the next 60 days, sorted most-urgent first."""
+    from datetime import datetime as _dt, timedelta
+
+    today  = _dt.utcnow().date()
+    cutoff = today + timedelta(days=60)
+
+    rows = (
+        db.query(Inventory)
+        .filter(
+            Inventory.expiry_date.isnot(None),
+            Inventory.expiry_date != "",
+            Inventory.status == "APPROVED",
+        )
+        .all()
+    )
+
+    result = []
+    for r in rows:
+        try:
+            exp_date = _dt.strptime(r.expiry_date, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            continue
+        days_left = (exp_date - today).days
+        if days_left < 0 or days_left > 60:
+            continue
+        item = db.query(Item).filter(Item.id == r.item_id).first()
+        result.append({
+            "id":            r.id,
+            "lot_number":    r.lot_number,
+            "item_name":     item.name if item else "—",
+            "item_category": item.category if item else "—",
+            "item_unit":     item.unit if item else "",
+            "expiry_date":   r.expiry_date,
+            "days_left":     days_left,
+            "quantity":      r.quantity,
+            "location":      r.location or "—",
+            "received_by":   r.received_by or "—",
+        })
+
+    result.sort(key=lambda x: x["days_left"])
+    return result
+
+
+# ─── Excel Import Endpoints ──────────────────────────────────────────────────
+
+_REQUIRED_COLS = {"Item_Name", "SKU", "Category", "Unit", "Stock", "Cost_Price", "Min_Stock_Level"}
+
+
+@app.get("/api/import-items/template")
+def download_import_template(_: dict = Depends(require_role(_CAN_DELETE))):
+    """Doldurulabilir örnek Excel şablonunu indir."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Ürün Şablonu"
+
+    headers = list(_REQUIRED_COLS)
+    # Sabit sıralama
+    headers = ["Item_Name", "SKU", "Category", "Unit", "Stock", "Cost_Price", "Min_Stock_Level"]
+    ws.append(headers)
+
+    # Örnek satırlar
+    ws.append(["Argan Yağı",      "ARG-001",     "Hammadde",    "kg",   50,  25.50, 10])
+    ws.append(["Cam Şişe 100ml",  "CAM-100",     "Ambalaj",     "adet", 200,  3.75, 50])
+    ws.append(["Vitamin C Serum", "VIT-SRM-001", "Bitmiş Ürün", "adet",  0,  45.00, 20])
+
+    # Header stili — lacivert/altın
+    hdr_font  = Font(bold=True, color="FFFFFF", size=11)
+    hdr_fill  = PatternFill("solid", fgColor="2C2C73")
+    hdr_align = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        bottom=Side(style="thin", color="B8965A"),
+        right=Side(style="thin",  color="E5E7EB"),
+    )
+    for cell in ws[1]:
+        cell.font   = hdr_font
+        cell.fill   = hdr_fill
+        cell.alignment = hdr_align
+        cell.border = thin_border
+
+    # Zebra satırları
+    alt_fill = PatternFill("solid", fgColor="F5F0E8")
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        for cell in row:
+            if cell.row % 2 == 0:
+                cell.fill = alt_fill
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    # Otomatik sütun genişliği
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or "")) for cell in col) + 4
+        ws.column_dimensions[col[0].column_letter].width = min(max_len, 30)
+
+    ws.row_dimensions[1].height = 22
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=minerva108_urun_sablonu.xlsx"},
+    )
+
+
+@app.post("/api/import-items")
+async def import_items_from_excel(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_role(_CAN_DELETE)),
+):
+    """Excel (.xlsx) dosyasından toplu ürün içe aktarma — SKU bazlı upsert."""
+    import io, datetime as _dt
+
+    # ── 1. Dosya uzantısı kontrolü ──────────────────────────────────────────
+    if not file.filename.lower().endswith(".xlsx"):
+        return JSONResponse(status_code=400, content={
+            "detail": "Geçersiz dosya formatı. Yalnızca .xlsx dosyaları desteklenmektedir."
+        })
+
+    contents = await file.read()
+    if len(contents) == 0:
+        return JSONResponse(status_code=400, content={"detail": "Yüklenen dosya boş."})
+
+    # ── 2. Pandas ile oku ───────────────────────────────────────────────────
+    try:
+        import pandas as pd
+        df = pd.read_excel(io.BytesIO(contents), dtype=str)   # hepsini str oku, sonra cast
+        df.columns = [str(c).strip() for c in df.columns]     # boşluk temizle
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={
+            "detail": f"Excel dosyası okunamadı. Dosya bozuk olabilir. ({exc})"
+        })
+
+    # ── 3. Zorunlu sütun kontrolü ───────────────────────────────────────────
+    missing_cols = _REQUIRED_COLS - set(df.columns)
+    if missing_cols:
+        return JSONResponse(status_code=422, content={
+            "detail": f"Eksik sütunlar: {', '.join(sorted(missing_cols))}. "
+                      "Lütfen örnek şablonu indirip kullanın."
+        })
+
+    # ── 4. Satır satır upsert ───────────────────────────────────────────────
+    created, updated = 0, 0
+    errors = []
+
+    for idx, row in df.iterrows():
+        row_num = int(idx) + 2  # Excel satır no (header = 1)
+        try:
+            item_name = str(row.get("Item_Name", "") or "").strip()
+            sku       = str(row.get("SKU",       "") or "").strip()
+
+            if not item_name:
+                errors.append(f"Satır {row_num}: 'Item_Name' boş bırakılamaz — satır atlandı.")
+                continue
+            if not sku:
+                errors.append(f"Satır {row_num}: 'SKU' boş bırakılamaz — satır atlandı.")
+                continue
+
+            def _float(val, default=0.0):
+                try:    return float(str(val).replace(",", "."))
+                except: return default
+
+            category   = str(row.get("Category",        "") or "").strip() or None
+            unit       = str(row.get("Unit",            "") or "adet").strip() or "adet"
+            stock      = _float(row.get("Stock"),       0.0)
+            cost_price = _float(row.get("Cost_Price"),  0.0)
+            min_stock  = _float(row.get("Min_Stock_Level"), 0.0)
+
+            existing = db.query(Item).filter(Item.sku == sku).first()
+
+            if existing:
+                # ── GÜNCELLE ────────────────────────────────────────────
+                existing.name           = item_name
+                existing.category       = category
+                existing.unit           = unit
+                existing.cost_price     = cost_price
+                existing.min_stock_level = min_stock
+                if stock >= 0:
+                    existing.current_stock = round(stock, 6)
+                updated += 1
+
+            else:
+                # ── OLUŞTUR ─────────────────────────────────────────────
+                new_item = Item(
+                    name=item_name, sku=sku, category=category,
+                    unit=unit, current_stock=round(stock, 6),
+                    cost_price=cost_price, min_stock_level=min_stock,
+                )
+                db.add(new_item)
+                db.flush()   # ID'yi al
+
+                if stock > 0:
+                    lot = f"IMP-{_dt.datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{new_item.id}"
+                    db.add(Inventory(
+                        item_id=new_item.id, lot_number=lot,
+                        quantity=stock, status="APPROVED",
+                    ))
+                    db.add(Transaction(
+                        item_id=new_item.id, lot_number=lot,
+                        transaction_type="Input", quantity=stock,
+                        notes=f"Excel içe aktarım — SKU: {sku}",
+                    ))
+                created += 1
+
+        except Exception as exc:
+            db.rollback()
+            errors.append(f"Satır {row_num}: İşlem hatası — {str(exc)[:100]}")
+
+    # ── 5. Commit ────────────────────────────────────────────────────────────
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        return JSONResponse(status_code=500, content={
+            "detail": f"Veritabanına kayıt sırasında hata oluştu: {str(exc)[:120]}"
+        })
+
+    suffix = f" {len(errors)} satırda hata oluştu." if errors else ""
+    return {
+        "created": created,
+        "updated": updated,
+        "error_count": len(errors),
+        "errors": errors,
+        "message": f"{created} yeni ürün eklendi, {updated} ürün güncellendi.{suffix}",
+    }
 
 
 # ─── Ledger Endpoints ────────────────────────────────────────────────────────
@@ -709,34 +1358,187 @@ def report_low_stock_alert(db: Session = Depends(get_db)):
 
 @app.get("/api/dashboard/stats")
 def dashboard_stats(db: Session = Depends(get_db)):
-    total_items      = db.query(Item).filter(Item.is_active == True).count()
-    total_suppliers  = db.query(Supplier).filter(Supplier.is_active == True).count()
-    total_recipes    = db.query(Recipe).filter(Recipe.is_active == True).count()
-    critical_stock   = db.query(Item).filter(
-        Item.is_active == True,
-        Item.min_stock_level > 0,
-        Item.current_stock <= Item.min_stock_level,
-    ).count()
-    recent = (
+    total_items     = db.query(Item).filter(Item.is_active == True).count()
+    total_suppliers = db.query(Supplier).filter(Supplier.is_active == True).count()
+    total_recipes   = db.query(Recipe).filter(Recipe.is_active == True).count()
+
+    # ── Critical stock: items at or below min level ────────────────────────
+    critical_items_raw = (
+        db.query(Item)
+        .filter(
+            Item.is_active == True,
+            Item.min_stock_level > 0,
+            Item.current_stock <= Item.min_stock_level,
+        )
+        .order_by(Item.current_stock.asc())
+        .all()
+    )
+    critical_stock_list = [
+        {
+            "id":              i.id,
+            "name":            i.name,
+            "sku":             i.sku or "—",
+            "category":        i.category or "—",
+            "unit":            i.unit,
+            "current_stock":   round(i.current_stock, 4),
+            "min_stock_level": round(i.min_stock_level, 4),
+            "deficit":         round(i.min_stock_level - i.current_stock, 4),
+        }
+        for i in critical_items_raw
+    ]
+
+    # ── Recent transactions (last 5) ───────────────────────────────────────
+    recent_txs = (
+        db.query(Transaction)
+        .order_by(Transaction.id.desc())
+        .limit(5)
+        .all()
+    )
+    recent_transactions = [
+        {
+            "id":               t.id,
+            "item_name":        t.item.name if t.item else "—",
+            "transaction_type": t.transaction_type,
+            "quantity":         t.quantity,
+            "notes":            (t.notes or "")[:90],   # truncate for display
+            "timestamp":        t.timestamp.strftime("%d.%m.%Y %H:%M") if t.timestamp else "",
+        }
+        for t in recent_txs
+    ]
+
+    # ── Recent production (last 5) ─────────────────────────────────────────
+    recent_prod = (
         db.query(ProductionHistory)
         .order_by(ProductionHistory.id.desc())
-        .limit(5).all()
+        .limit(5)
+        .all()
     )
+
     return {
-        "total_items": total_items,
-        "total_suppliers": total_suppliers,
-        "total_recipes": total_recipes,
-        "critical_stock_count": critical_stock,
+        "total_items":          total_items,
+        "total_suppliers":      total_suppliers,
+        "total_recipes":        total_recipes,
+        "critical_stock_count": len(critical_stock_list),
+        "critical_stock_list":  critical_stock_list,
+        "recent_transactions":  recent_transactions,
         "recent_productions": [
             {
-                "recipe_name": r.recipe_name,
-                "target_item_name": r.target_item_name,
+                "recipe_name":       r.recipe_name,
+                "target_item_name":  r.target_item_name,
                 "produced_quantity": r.produced_quantity,
-                "produced_at": r.produced_at.strftime("%d.%m.%Y %H:%M") if r.produced_at else "",
+                "produced_at":       r.produced_at.strftime("%d.%m.%Y %H:%M") if r.produced_at else "",
             }
-            for r in recent
+            for r in recent_prod
         ],
     }
+
+
+# ─── Admin User Management Endpoints ────────────────────────────────────────
+
+@app.get("/api/admin/users")
+def admin_list_users(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role(_SUPERADMIN_ONLY)),
+):
+    """Tüm kullanıcıları listele (şifre hash'i hariç)."""
+    users = db.query(User).order_by(User.id.asc()).all()
+    return [
+        {
+            "id":         u.id,
+            "username":   u.username,
+            "full_name":  u.full_name,
+            "role":       u.role,
+            "is_active":  u.is_active,
+            "created_at": u.created_at.strftime("%d.%m.%Y") if u.created_at else "",
+        }
+        for u in users
+    ]
+
+
+@app.post("/api/admin/users", status_code=201)
+def admin_create_user(
+    data: AdminUserCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role(_SUPERADMIN_ONLY)),
+):
+    """Yeni kullanıcı hesabı oluştur."""
+    if data.role not in _VALID_ROLES:
+        return JSONResponse(status_code=422, content={"detail": f"Geçersiz rol: '{data.role}'."})
+    if len(data.password) < 6:
+        return JSONResponse(status_code=422, content={"detail": "Şifre en az 6 karakter olmalıdır."})
+
+    existing = db.query(User).filter(User.username == data.username).first()
+    if existing:
+        return JSONResponse(status_code=409, content={
+            "detail": f"'{data.username}' kullanıcı adı zaten kullanılıyor."
+        })
+
+    import bcrypt as _bcrypt
+    pw_hash = _bcrypt.hashpw(data.password.encode(), _bcrypt.gensalt()).decode()
+    user = User(
+        username=data.username,
+        full_name=data.full_name,
+        password_hash=pw_hash,
+        role=data.role,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {"id": user.id, "message": f"Kullanıcı '{data.username}' başarıyla oluşturuldu."}
+
+
+@app.put("/api/admin/users/{user_id}")
+def admin_update_user(
+    user_id: int,
+    data: AdminUserUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role(_SUPERADMIN_ONLY)),
+):
+    """Kullanıcının bilgilerini, rolünü veya aktiflik durumunu güncelle."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return JSONResponse(status_code=404, content={"detail": "Kullanıcı bulunamadı."})
+
+    # Kendi hesabının rol veya aktiflik durumunu değiştirmeye izin verme
+    if user_id == int(current_user.get("sub", -1)):
+        if data.role is not None or data.is_active is not None:
+            return JSONResponse(status_code=400, content={
+                "detail": "Kendi hesabınızın rol veya aktiflik durumunu değiştiremezsiniz."
+            })
+
+    if data.role is not None:
+        if data.role not in _VALID_ROLES:
+            return JSONResponse(status_code=422, content={"detail": f"Geçersiz rol: '{data.role}'."})
+        user.role = data.role
+
+    if data.full_name is not None and data.full_name.strip():
+        user.full_name = data.full_name.strip()
+
+    if data.is_active is not None:
+        user.is_active = data.is_active
+
+    db.commit()
+    return {"id": user.id, "message": f"Kullanıcı '{user.username}' güncellendi."}
+
+
+@app.put("/api/admin/users/{user_id}/reset-password")
+def admin_reset_password(
+    user_id: int,
+    data: PasswordResetRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role(_SUPERADMIN_ONLY)),
+):
+    """Kullanıcı şifresini zorla sıfırla."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return JSONResponse(status_code=404, content={"detail": "Kullanıcı bulunamadı."})
+    if len(data.new_password) < 6:
+        return JSONResponse(status_code=422, content={"detail": "Şifre en az 6 karakter olmalıdır."})
+
+    import bcrypt as _bcrypt
+    user.password_hash = _bcrypt.hashpw(data.new_password.encode(), _bcrypt.gensalt()).decode()
+    db.commit()
+    return {"message": f"'{user.username}' kullanıcısının şifresi başarıyla sıfırlandı."}
 
 
 # ─── Page Routes ─────────────────────────────────────────────────────────────
@@ -817,3 +1619,20 @@ def receiving_page(request: Request):
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
     return templates.TemplateResponse("receiving.html", _page_ctx(request, payload))
+
+
+@app.get("/traceability", response_class=HTMLResponse)
+def traceability_page(request: Request):
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("traceability.html", _page_ctx(request, payload))
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page(request: Request):
+    payload = _get_user_context(request)
+    if not payload:
+        return RedirectResponse(url="/login", status_code=302)
+    if payload.get("role") != "SuperAdmin":
+        return RedirectResponse(url="/", status_code=302)   # non-SuperAdmin → dashboard
+    return templates.TemplateResponse("admin.html", _page_ctx(request, payload))

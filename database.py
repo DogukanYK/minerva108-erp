@@ -53,6 +53,8 @@ class Item(Base):
     cost_price = Column(Float, default=0.0)
     selling_price = Column(Float, default=0.0)
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
+    parent_id = Column(Integer, ForeignKey("items.id"), nullable=True, index=True)   # Variations: points to parent product
+    variation_name = Column(String(100), nullable=True)                              # e.g. "200ml", "500ml"
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -69,6 +71,7 @@ class Recipe(Base):
     output_quantity = Column(Float, default=1.0)
     output_unit = Column(String(20), default="adet")
     target_item_id = Column(Integer, ForeignKey("items.id"), nullable=True)
+    waste_percentage = Column(Float, default=0.0)   # % fire oranı (üretimde brüt girdiye eklenir)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -105,6 +108,9 @@ class Inventory(Base):
     location = Column(String(100), nullable=True)
     status = Column(String(20), default="APPROVED")
     qc_notes = Column(Text, nullable=True)
+    qc_form_data = Column(Text, nullable=True)   # JSON — full digital QC form answers
+    received_by = Column(String(50), nullable=True)      # Audit: who received this lot
+    qc_approved_by = Column(String(50), nullable=True)   # Audit: who approved/rejected the lot
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -118,10 +124,11 @@ class Transaction(Base):
     id = Column(Integer, primary_key=True, index=True)
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
     lot_number = Column(String(100))
-    transaction_type = Column(String(20), nullable=False)  # Input / Output
+    transaction_type = Column(String(20), nullable=False)  # Input / Output / QC Approval / QC Rejection
     quantity = Column(Float, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
     notes = Column(Text)
+    performed_by = Column(String(50), nullable=True)   # Audit: who triggered this transaction
 
     item = relationship("Item", foreign_keys=[item_id])
 
@@ -144,6 +151,8 @@ class ProductionHistory(Base):
     target_item_name = Column(String(150))
     produced_quantity = Column(Float, nullable=False)
     produced_at = Column(DateTime, default=datetime.utcnow)
+    produced_by = Column(String(50), nullable=True)             # Audit: who started production
+    lot_number = Column(String(100), nullable=True, index=True) # Genealogy: lot of finished good
 
 
 def init_db():
@@ -159,6 +168,41 @@ def init_db():
             conn.commit()
         except Exception:
             pass
+        try:
+            conn.execute(text("ALTER TABLE recipes ADD COLUMN waste_percentage REAL DEFAULT 0.0"))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE inventory ADD COLUMN qc_form_data TEXT"))
+            conn.commit()
+        except Exception:
+            pass
+
+        # ── Phase 2 / Task 9 — Full traceability columns (idempotent) ────────
+        for stmt in (
+            "ALTER TABLE inventory          ADD COLUMN received_by VARCHAR(50)",
+            "ALTER TABLE inventory          ADD COLUMN qc_approved_by VARCHAR(50)",
+            "ALTER TABLE transactions       ADD COLUMN performed_by VARCHAR(50)",
+            "ALTER TABLE production_history ADD COLUMN produced_by VARCHAR(50)",
+            "ALTER TABLE production_history ADD COLUMN lot_number VARCHAR(100)",
+        ):
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass
+
+        # ── Phase 3 / Task 1 — Product variations hierarchy (idempotent) ─────
+        for stmt in (
+            "ALTER TABLE items ADD COLUMN parent_id INTEGER REFERENCES items(id)",
+            "ALTER TABLE items ADD COLUMN variation_name VARCHAR(100)",
+        ):
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass
 
     # ── Varsayılan kullanıcıları oluştur (idempotent — her başlatmada güvenli) ──
     import bcrypt
