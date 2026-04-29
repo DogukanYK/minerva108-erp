@@ -124,13 +124,15 @@ echo
 echo "→ Yeni commit:        $(git rev-parse --short HEAD) — $(git log -1 --format='%s' | cut -c1-60)"
 echo
 
-# ── Optional: dependency install if requirements.txt changed ──
-if git diff --name-only HEAD@{1} HEAD 2>/dev/null | grep -q '^requirements\.txt$'; then
-  echo "→ requirements.txt değişti — pip install -r requirements.txt"
-  if [ -f "$REMOTE_PATH/.venv/bin/pip" ]; then
-    "$REMOTE_PATH/.venv/bin/pip" install -q -r requirements.txt && echo "  ✓ venv içine kuruldu"
+# ── Dependency sync — always run on every deploy (idempotent, fast no-op) ──
+if [ -f "$REMOTE_PATH/requirements.txt" ]; then
+  echo "→ pip install -r requirements.txt (eksik paketler varsa kurar)"
+  if   [ -f "$REMOTE_PATH/venv/bin/pip" ]; then
+    "$REMOTE_PATH/venv/bin/pip"  install -q -r "$REMOTE_PATH/requirements.txt" && echo "  ✓ venv senkron"
+  elif [ -f "$REMOTE_PATH/.venv/bin/pip" ]; then
+    "$REMOTE_PATH/.venv/bin/pip" install -q -r "$REMOTE_PATH/requirements.txt" && echo "  ✓ .venv senkron"
   elif command -v pip3 >/dev/null 2>&1; then
-    pip3 install -q -r requirements.txt && echo "  ✓ pip3 ile kuruldu"
+    pip3 install -q -r "$REMOTE_PATH/requirements.txt" && echo "  ✓ pip3 senkron"
   else
     echo "  ⚠ pip bulunamadı, dependency install atlandı"
   fi

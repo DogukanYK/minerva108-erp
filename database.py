@@ -1,3 +1,4 @@
+import os
 from sqlalchemy import (
     create_engine, Column, Integer, String, Float,
     Boolean, Text, DateTime, ForeignKey, text
@@ -5,9 +6,27 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime
 
-DATABASE_URL = "sqlite:///./minerva108.db"
+# ── Environment-driven DB URL ────────────────────────────────────────────────
+# Local dev: SQLite (default).
+# Production: set DATABASE_URL=postgresql://user:pass@host:5432/dbname
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./minerva108.db")
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# Engine config differs between SQLite and PostgreSQL
+if DATABASE_URL.startswith("sqlite"):
+    # SQLite: tek bir dosya, threading shenanigans
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+    )
+else:
+    # PostgreSQL (or any networked DB): connection pooling + dead-conn detection
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,   # ping before reuse → no "server closed connection" surprises
+        pool_size=10,
+        max_overflow=20,
+    )
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
