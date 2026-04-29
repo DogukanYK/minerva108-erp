@@ -46,6 +46,118 @@ def _can_see_finance(payload_or_role) -> bool:
     return role in _FINANCE_ROLES
 
 
+# ─── RBAC 2.0 — Granular Permission Matrix (Phase 4 / Task 2) ───────────────
+
+# Single source of truth for the permission tree. Adding a new permission here
+# automatically makes it appear in the admin UI matrix.
+PERMISSION_CATEGORIES = {
+    "items":      ["view", "create", "edit", "delete", "import"],
+    "recipes":    ["view", "create", "edit", "delete"],
+    "inventory":  ["view", "receive", "delete"],
+    "production": ["view", "create"],
+    "qc":         ["view", "approve"],
+    "finance":    ["view"],            # Cost prices, recipe BOM costs, margins
+    "b2b":        ["view", "create", "confirm"],
+    "reports":    ["view"],
+    "admin":      ["manage_users", "import_excel", "view_audit"],
+}
+
+# Default permission set per role — used when a user's `permissions` JSON is null.
+# SuperAdmin is special-cased (always allowed) so doesn't need an entry.
+_DEFAULT_PERMISSIONS = {
+    "Manager": {
+        "items":      {"view": True,  "create": True,  "edit": True,  "delete": False, "import": True},
+        "recipes":    {"view": True,  "create": False, "edit": False, "delete": False},
+        "inventory":  {"view": True,  "receive": True, "delete": False},
+        "production": {"view": True,  "create": True},
+        "qc":         {"view": True,  "approve": True},
+        "finance":    {"view": True},
+        "b2b":        {"view": True,  "create": True,  "confirm": True},
+        "reports":    {"view": True},
+        "admin":      {"manage_users": False, "import_excel": False, "view_audit": True},
+    },
+    "LabLead": {
+        "items":      {"view": True,  "create": True,  "edit": True,  "delete": True,  "import": True},
+        "recipes":    {"view": True,  "create": True,  "edit": True,  "delete": True},
+        "inventory":  {"view": True,  "receive": True, "delete": True},
+        "production": {"view": True,  "create": True},
+        "qc":         {"view": True,  "approve": True},
+        "finance":    {"view": False},
+        "b2b":        {"view": False, "create": False, "confirm": False},
+        "reports":    {"view": True},
+        "admin":      {"manage_users": False, "import_excel": False, "view_audit": False},
+    },
+    "LabTech": {
+        "items":      {"view": True,  "create": True,  "edit": False, "delete": False, "import": False},
+        "recipes":    {"view": True,  "create": False, "edit": False, "delete": False},
+        "inventory":  {"view": True,  "receive": True, "delete": False},
+        "production": {"view": True,  "create": True},
+        "qc":         {"view": True,  "approve": False},
+        "finance":    {"view": False},
+        "b2b":        {"view": False, "create": False, "confirm": False},
+        "reports":    {"view": True},
+        "admin":      {"manage_users": False, "import_excel": False, "view_audit": False},
+    },
+    "Staff": {
+        # Read-only baseline
+        "items":      {"view": True,  "create": False, "edit": False, "delete": False, "import": False},
+        "recipes":    {"view": True,  "create": False, "edit": False, "delete": False},
+        "inventory":  {"view": True,  "receive": False, "delete": False},
+        "production": {"view": True,  "create": False},
+        "qc":         {"view": True,  "approve": False},
+        "finance":    {"view": False},
+        "b2b":        {"view": False, "create": False, "confirm": False},
+        "reports":    {"view": True},
+        "admin":      {"manage_users": False, "import_excel": False, "view_audit": False},
+    },
+}
+
+
+def _resolve_permissions(user: User) -> dict:
+    """
+    Compute the EFFECTIVE permission set for a user. Order of precedence:
+      1) SuperAdmin → all True (no override possible)
+      2) user.permissions JSON if set → that's the source of truth
+      3) Otherwise, fall back to _DEFAULT_PERMISSIONS[role]
+    """
+    import json as _json
+    if user.role == "SuperAdmin":
+        return {cat: {act: True for act in acts} for cat, acts in PERMISSION_CATEGORIES.items()}
+    if user.permissions:
+        try:
+            return _json.loads(user.permissions)
+        except Exception:
+            pass
+    return _DEFAULT_PERMISSIONS.get(user.role, _DEFAULT_PERMISSIONS["Staff"])
+
+
+def _has_permission(user: User, category: str, action: str) -> bool:
+    perms = _resolve_permissions(user)
+    return bool(perms.get(category, {}).get(action, False))
+
+
+def require_permission(category: str, action: str):
+    """
+    FastAPI dependency factory. Raises 403 if the current user lacks the permission.
+    Usage:
+        @app.delete(...)
+        def endpoint(_: dict = Depends(require_permission("items", "delete"))):
+            ...
+    """
+    def _dep(payload: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+        user = db.query(User).filter(User.id == int(payload.get("sub", 0))).first()
+        if not user or not user.is_active:
+            return JSONResponse(status_code=401, content={"detail": "Yetkisiz."})
+        if not _has_permission(user, category, action):
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=403,
+                detail=f"Yetersiz yetki: {category}.{action}",
+            )
+        return payload
+    return _dep
+
+
 def _page_ctx(request: Request, payload: dict) -> dict:
     role = payload.get("role", "")
     return {
@@ -1941,6 +2053,396 @@ def admin_reset_password(
     user.password_hash = _bcrypt.hashpw(data.new_password.encode(), _bcrypt.gensalt()).decode()
     db.commit()
     return {"message": f"'{user.username}' kullanıcısının şifresi başarıyla sıfırlandı."}
+
+
+# ─── Permission Matrix Endpoints (RBAC 2.0) ─────────────────────────────────
+
+@app.get("/api/admin/permission-schema")
+def admin_permission_schema(_: dict = Depends(require_role(_SUPERADMIN_ONLY))):
+    """Returns the catalogue of categories × actions — drives the admin matrix UI."""
+    return {"categories": PERMISSION_CATEGORIES}
+
+
+@app.get("/api/admin/users/{user_id}/permissions")
+def admin_get_user_permissions(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_role(_SUPERADMIN_ONLY)),
+):
+    """
+    Returns the EFFECTIVE permission set for a user, plus a flag indicating
+    whether they're using custom perms (`source: 'custom'`) or role defaults
+    (`source: 'role-default'`). SuperAdmin always returns 'superadmin'.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return JSONResponse(status_code=404, content={"detail": "Kullanıcı bulunamadı."})
+
+    if user.role == "SuperAdmin":
+        source = "superadmin"
+    elif user.permissions:
+        source = "custom"
+    else:
+        source = "role-default"
+
+    return {
+        "user_id":     user.id,
+        "username":    user.username,
+        "full_name":   user.full_name,
+        "role":        user.role,
+        "source":      source,
+        "permissions": _resolve_permissions(user),
+    }
+
+
+class PermissionsUpdateRequest(BaseModel):
+    permissions: dict   # category → action → bool
+
+
+@app.put("/api/admin/users/{user_id}/permissions")
+def admin_update_user_permissions(
+    user_id: int,
+    data: PermissionsUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role(_SUPERADMIN_ONLY)),
+):
+    """Persist a user-specific permission set as JSON. SuperAdmin perms are immutable."""
+    import json as _json
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return JSONResponse(status_code=404, content={"detail": "Kullanıcı bulunamadı."})
+    if user.role == "SuperAdmin":
+        return JSONResponse(status_code=400, content={
+            "detail": "SuperAdmin yetkileri değiştirilemez (her zaman tüm yetkilere sahiptir)."
+        })
+
+    # Sanitize: only accept categories/actions defined in PERMISSION_CATEGORIES
+    cleaned = {}
+    for cat, actions in PERMISSION_CATEGORIES.items():
+        cleaned[cat] = {}
+        for act in actions:
+            cleaned[cat][act] = bool(data.permissions.get(cat, {}).get(act, False))
+
+    user.permissions = _json.dumps(cleaned, ensure_ascii=False)
+    db.commit()
+    return {
+        "message":     f"'{user.username}' yetkileri güncellendi.",
+        "permissions": cleaned,
+    }
+
+
+@app.post("/api/admin/users/{user_id}/permissions/reset")
+def admin_reset_user_permissions(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_role(_SUPERADMIN_ONLY)),
+):
+    """Clear custom permissions → user reverts to role defaults."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return JSONResponse(status_code=404, content={"detail": "Kullanıcı bulunamadı."})
+    user.permissions = None
+    db.commit()
+    return {"message": f"'{user.username}' yetkileri rol varsayılanlarına döndürüldü."}
+
+
+# ─── Smart Excel Importer (Phase 4 / Task 1) ────────────────────────────────
+
+def _parse_qty_unit(raw):
+    """
+    Parse messy quantity strings from the Hammadde sheets.
+      '4.276GR'  → (4276, 'g')      (Turkish dot = thousands separator)
+      '1 KG'     → (1000, 'g')
+      '90GR'     → (90, 'g')
+      '162ML'    → (162, 'ml')
+      '21KG'     → (21000, 'g')
+      ''/None    → (0, 'adet')
+    """
+    import re
+    if raw is None:
+        return (0.0, "adet")
+    s = str(raw).strip().upper()
+    if not s or s in ("—", "-", "NAN"):
+        return (0.0, "adet")
+
+    # Detect unit suffix
+    m = re.search(r'(KG|ML|GR|G)\b\s*$', s)
+    if m:
+        unit_str = m.group(1)
+        s = s[:m.start()].strip()
+    else:
+        unit_str = "GR"
+
+    # Comma → dot for decimals (Turkish comma)
+    s = s.replace(",", ".")
+    # Treat XX.XXX (3 trailing digits after dot) as a thousands separator
+    if re.match(r'^\d+\.\d{3}$', s):
+        s = s.replace(".", "")
+
+    try:
+        qty = float(s)
+    except ValueError:
+        qty = 0.0
+
+    if unit_str == "KG":
+        return (qty * 1000, "g")
+    if unit_str == "ML":
+        return (qty, "ml")
+    return (qty, "g")
+
+
+def _detect_excel_schema(workbook) -> str:
+    """
+    Sniff the workbook to identify which schema it follows. Returns one of:
+      'hammadde' — multi-sheet raw-material catalogue with HAMMADDE/GR/MARKASI columns
+      'etiket'   — packaging/label inventory (ÜRÜN İSMİ + ML + ETİKET SAYISI)
+      'standard' — the existing minimal Item_Name/SKU/Category template
+      'unknown'
+    """
+    keywords_hammadde = {"HAMMADDE", "MARKASI"}
+    keywords_etiket   = {"ETİKET", "ÜRÜN İSİM", "ÜRÜN İSMİ"}
+    keywords_standard = {"ITEM_NAME", "SKU"}
+
+    for sheet in workbook.sheetnames:
+        ws = workbook[sheet]
+        # Scan first 5 rows
+        for row in ws.iter_rows(min_row=1, max_row=5, values_only=True):
+            cells = [str(c).strip().upper() for c in row if c is not None]
+            joined = " | ".join(cells)
+            if any(k in joined for k in keywords_hammadde):
+                return "hammadde"
+            if any(k in joined for k in keywords_etiket):
+                return "etiket"
+            if any(k in joined for k in keywords_standard):
+                return "standard"
+    return "unknown"
+
+
+def _parse_hammadde_workbook(workbook) -> list:
+    """
+    Walk every sheet in a Hammadde workbook. Returns list of dicts:
+      { sheet, name, quantity, unit, supplier, raw_qty }
+    Skips header rows ('KONTROL TARİHİ' or starts with 'DOLAP') and blank rows.
+    """
+    out = []
+    for sheet_name in workbook.sheetnames:
+        ws = workbook[sheet_name]
+        for row in ws.iter_rows(min_row=1, values_only=True):
+            row_norm = [c if c is not None else "" for c in row]
+            if len(row_norm) < 4:
+                continue
+
+            col_a = str(row_norm[0]).strip()
+            col_b = str(row_norm[1]).strip()
+            col_c = row_norm[2]
+            col_d = str(row_norm[3]).strip() if len(row_norm) > 3 else ""
+
+            # Skip blanks and section headers
+            if not col_b:
+                continue
+            joined_left = f"{col_a} {col_b}".upper()
+            if "KONTROL TARİHİ" in joined_left:        # Header row (multiple sheets repeat it)
+                continue
+            if "DOLAP" in joined_left and "RAF" in joined_left:   # Cabinet/shelf section header — anywhere in left two cols
+                continue
+            if "DOLAP" in joined_left and "ÜST RAF" in joined_left:
+                continue
+            # Skip rows where col_b is itself the column header
+            if col_b.upper().strip() in ("HAMMADDE İSİM", "HAMMADDE İSIM"):
+                continue
+            # Skip if col_b looks like a section header by itself
+            if col_b.upper().strip().startswith("DOLAP"):
+                continue
+
+            qty, unit = _parse_qty_unit(col_c)
+            out.append({
+                "sheet":    sheet_name,
+                "name":     col_b,
+                "quantity": qty,
+                "unit":     unit,
+                "supplier": col_d if col_d and col_d not in ("—", "-", "NAN") else None,
+                "raw_qty":  str(col_c) if col_c is not None else "",
+            })
+    return out
+
+
+@app.post("/api/admin/smart-import")
+async def smart_excel_import(
+    file: UploadFile = File(...),
+    commit: bool = False,
+    _: dict = Depends(require_role(_SUPERADMIN_ONLY)),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Smart Excel importer.
+      - Auto-detects schema (Hammadde / Etiket / Standard)
+      - Always returns a dry-run preview (commit=false default)
+      - When commit=true: creates Items, Suppliers, Inventory + Transaction logs
+      - Existing items are upserted (stock added, supplier filled if missing)
+    """
+    import io
+    import openpyxl
+    from datetime import datetime as _dt
+
+    actor = current_user.get("full_name") or current_user.get("username") or "Excel Bulk Import"
+
+    try:
+        contents = await file.read()
+        wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True, read_only=False)
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"detail": f"Excel dosyası okunamadı: {e}"})
+
+    schema = _detect_excel_schema(wb)
+    if schema == "unknown":
+        return JSONResponse(status_code=422, content={
+            "detail": "Dosya yapısı tanınamadı. Hammadde, Etiket veya Standart formatlardan biri olmalı.",
+            "detected_schema": schema,
+        })
+
+    # ── Currently Hammadde is the production-ready parser; others return preview only.
+    if schema != "hammadde":
+        return JSONResponse(status_code=422, content={
+            "detail": f"Bu sürümde sadece Hammadde formatı işlenebiliyor. Algılanan: '{schema}'. "
+                      "Etiket dosyaları için ayrı içe aktarım akışı yakında eklenecektir.",
+            "detected_schema": schema,
+        })
+
+    parsed = _parse_hammadde_workbook(wb)
+    if not parsed:
+        return JSONResponse(status_code=422, content={"detail": "Sayfalardan veri okunamadı."})
+
+    # ── Pre-flight analysis: classify each row as create vs update ──────────
+    name_index = {i.name.strip().upper(): i for i in db.query(Item).filter(Item.is_active == True).all()}
+    supp_index = {s.name.strip().upper(): s for s in db.query(Supplier).filter(Supplier.is_active == True).all()}
+
+    plan = {
+        "schema":               schema,
+        "sheets_processed":     len(wb.sheetnames),
+        "rows_parsed":          len(parsed),
+        "items_to_create":      0,
+        "items_to_update":      0,
+        "suppliers_to_create":  0,
+        "warnings":             [],
+        "preview":              [],
+    }
+
+    new_supplier_keys = set()
+    for row in parsed:
+        key = row["name"].strip().upper()
+        existing = name_index.get(key)
+        action = "update" if existing else "create"
+        if action == "create":
+            plan["items_to_create"] += 1
+        else:
+            plan["items_to_update"] += 1
+
+        if row["supplier"]:
+            sk = row["supplier"].strip().upper()
+            if sk not in supp_index and sk not in new_supplier_keys:
+                new_supplier_keys.add(sk)
+                plan["suppliers_to_create"] += 1
+
+        if row["quantity"] <= 0:
+            plan["warnings"].append(f"Sıfır miktar: '{row['name']}' (sayfa: {row['sheet']}, ham değer: '{row['raw_qty']}')")
+
+        if len(plan["preview"]) < 25:   # Cap preview for response size
+            plan["preview"].append({
+                "sheet":    row["sheet"],
+                "name":     row["name"],
+                "quantity": row["quantity"],
+                "unit":     row["unit"],
+                "supplier": row["supplier"] or "—",
+                "action":   action,
+            })
+
+    # ── If dry run, stop here ──
+    if not commit:
+        plan["committed"] = False
+        return plan
+
+    # ── COMMIT: idempotent upserts ──────────────────────────────────────────
+    items_created    = 0
+    items_updated    = 0
+    suppliers_added  = 0
+    inv_rows_created = 0
+    txs_logged       = 0
+
+    try:
+        for row in parsed:
+            key = row["name"].strip().upper()
+            supplier_obj = None
+            if row["supplier"]:
+                sk = row["supplier"].strip().upper()
+                supplier_obj = supp_index.get(sk)
+                if not supplier_obj:
+                    supplier_obj = Supplier(name=row["supplier"], is_active=True)
+                    db.add(supplier_obj)
+                    db.flush()
+                    supp_index[sk] = supplier_obj
+                    suppliers_added += 1
+
+            existing = name_index.get(key)
+            if existing:
+                # Add stock to existing item
+                existing.current_stock = round((existing.current_stock or 0) + row["quantity"], 6)
+                if supplier_obj and not existing.supplier_id:
+                    existing.supplier_id = supplier_obj.id
+                item = existing
+                items_updated += 1
+            else:
+                item = Item(
+                    name=row["name"],
+                    category="Hammadde",
+                    unit=row["unit"],
+                    current_stock=row["quantity"],
+                    cost_price=0.0,
+                    supplier_id=supplier_obj.id if supplier_obj else None,
+                    is_active=True,
+                )
+                db.add(item)
+                db.flush()
+                name_index[key] = item
+                items_created += 1
+
+            # Inventory + Transaction (only when there's actual stock)
+            if row["quantity"] > 0:
+                lot_no = f"XLS-{_dt.utcnow().strftime('%Y%m%d')}-{item.id}"
+                db.add(Inventory(
+                    item_id=item.id,
+                    supplier_id=supplier_obj.id if supplier_obj else None,
+                    lot_number=lot_no,
+                    quantity=row["quantity"],
+                    status="APPROVED",
+                    received_by=actor,
+                ))
+                inv_rows_created += 1
+
+                db.add(Transaction(
+                    item_id=item.id,
+                    lot_number=lot_no,
+                    transaction_type="Input",
+                    quantity=row["quantity"],
+                    notes=f"Excel Bulk Import — Sheet: {row['sheet']} · Raw: '{row['raw_qty']}'",
+                    performed_by=actor,
+                ))
+                txs_logged += 1
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"detail": f"İçe aktarım sırasında hata: {e}"})
+
+    plan.update({
+        "committed":       True,
+        "items_created":   items_created,
+        "items_updated":   items_updated,
+        "suppliers_added": suppliers_added,
+        "inventory_rows":  inv_rows_created,
+        "transactions":    txs_logged,
+    })
+    return plan
 
 
 # ─── Page Routes ─────────────────────────────────────────────────────────────

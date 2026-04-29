@@ -196,6 +196,113 @@
     .empty-state i { font-size: 2.5rem; margin-bottom: 1rem; display: block; color: #d1d5db; }
     .empty-state p { font-size: 0.9rem; margin: 0; }
 
+    /* ══ PERMISSION MATRIX ══ */
+    .perm-source-pill {
+      display: inline-block; padding: 3px 10px; border-radius: 20px;
+      font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em;
+      margin-left: 8px;
+    }
+    .perm-source-superadmin { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+    .perm-source-custom     { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; }
+    .perm-source-default    { background: #f3f4f6; color: #4b5563; border: 1px solid #e5e7eb; }
+
+    .perm-matrix-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .perm-matrix-table th, .perm-matrix-table td {
+      padding: 0.45rem 0.7rem; border-bottom: 1px solid #f3f0ea;
+    }
+    .perm-matrix-table thead th {
+      background: #f9f7f3; font-size: 0.66rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase; color: #6b7280;
+      white-space: nowrap;
+    }
+    .perm-matrix-table tbody tr:hover { background: #fdfcfa; }
+    .perm-matrix-table .perm-cat-cell {
+      font-weight: 700; color: var(--navy); text-transform: capitalize;
+      white-space: nowrap; min-width: 110px;
+    }
+    .perm-matrix-table .perm-cat-cell .bi { margin-right: 6px; color: var(--gold); }
+    .perm-matrix-table .perm-action-cell { text-align: center; min-width: 80px; }
+    .perm-matrix-table .perm-action-cell input[type=checkbox] {
+      width: 18px; height: 18px; accent-color: var(--navy); cursor: pointer;
+    }
+    .perm-action-disabled { opacity: 0.4; pointer-events: none; }
+
+    /* ══ EXCEL IMPORT PANEL ══ */
+    .import-panel {
+      background: var(--white); border-radius: 12px; padding: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06);
+      margin-bottom: 1.5rem;
+    }
+    .import-panel-header {
+      display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;
+      padding-bottom: 0.85rem; border-bottom: 2px solid #f0ece4;
+    }
+    .import-panel-icon {
+      width: 36px; height: 36px; border-radius: 8px;
+      background: rgba(34,197,94,0.12); color: #15803d;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.1rem; flex-shrink: 0;
+    }
+    .import-panel-title {
+      font-family: 'Playfair Display', serif; font-size: 1.05rem;
+      font-weight: 700; color: var(--navy); margin: 0;
+    }
+    .import-panel-sub { font-size: 0.78rem; color: #9ca3af; margin: 2px 0 0; }
+    .import-dropzone {
+      border: 2px dashed #d1d5db; border-radius: 10px; padding: 1.5rem;
+      text-align: center; transition: border-color 0.2s, background 0.2s;
+      cursor: pointer; background: #fafaf7;
+    }
+    .import-dropzone:hover { border-color: var(--navy); background: #f5f0e8; }
+    .import-dropzone.has-file { border-color: #22c55e; background: #f0fdf4; }
+    .import-dropzone i.icon-large { font-size: 2rem; color: #9ca3af; display: block; margin-bottom: 0.4rem; }
+    .import-dropzone.has-file i.icon-large { color: #15803d; }
+    .import-dropzone .file-label { font-size: 0.88rem; font-weight: 600; color: #374151; }
+    .import-dropzone .file-hint  { font-size: 0.76rem; color: #9ca3af; margin-top: 4px; }
+    .import-dropzone input[type=file] { display: none; }
+
+    .import-result-card {
+      margin-top: 1rem; background: #f9f7f3; border: 1px solid #f0ece4;
+      border-radius: 10px; padding: 1rem 1.2rem;
+    }
+    .import-stats-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.6rem; margin-bottom: 0.85rem;
+    }
+    .import-stat {
+      background: var(--white); border: 1px solid #f0ece4; border-radius: 8px;
+      padding: 0.55rem 0.85rem;
+    }
+    .import-stat-label { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #9ca3af; }
+    .import-stat-value { font-family: 'Playfair Display', serif; font-size: 1.25rem; font-weight: 700; color: var(--navy); }
+
+    .import-preview-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .import-preview-table th { background: #f9f7f3; padding: 0.5rem 0.7rem; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #6b7280; text-align: left; }
+    .import-preview-table td { padding: 0.45rem 0.7rem; border-bottom: 1px solid #f3f0ea; }
+    .import-preview-table .action-create { color: #15803d; font-weight: 700; }
+    .import-preview-table .action-update { color: #b45309; font-weight: 700; }
+
+    .import-warnings {
+      margin-top: 0.75rem; padding: 0.65rem 0.95rem;
+      background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
+      font-size: 0.8rem; color: #92400e;
+    }
+    .import-warnings ul { margin: 5px 0 0 1.2rem; padding: 0; }
+
+    .btn-icon-perm {
+      background: #eef2ff; color: #4338ca; margin-right: 3px;
+    }
+    .btn-icon-perm:hover { background: #c7d2fe; }
+    .btn-import {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.55rem 1.2rem; background: #15803d; color: #fff;
+      border: none; border-radius: 8px; cursor: pointer;
+      font-family: 'Jost', sans-serif; font-size: 0.86rem; font-weight: 600;
+      transition: background 0.2s;
+    }
+    .btn-import:hover { background: #166534; }
+    .btn-import:disabled { opacity: 0.6; cursor: not-allowed; }
+
     /* ══ TOAST ══ */
     #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
     .toast-msg { min-width: 260px; max-width: 380px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
@@ -307,7 +414,7 @@
                 <th class="sortable" data-col="role">Rol <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="is_active">Durum <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="created_at">Kayıt Tarihi <span class="sort-icon"></span></th>
-                <th style="width:90px; text-align:center;">İşlemler</th>
+                <th style="width:130px; text-align:center;">İşlemler</th>
               </tr>
             </thead>
             <tbody id="usersBody">
@@ -316,6 +423,40 @@
           </table>
         </div>
         <div class="table-footer"><span id="tableInfo">—</span></div>
+      </div>
+
+      <!-- ════ SMART EXCEL IMPORT ════ -->
+      <div class="import-panel" style="margin-top:2rem;">
+        <div class="import-panel-header">
+          <span class="import-panel-icon"><i class="bi bi-file-earmark-spreadsheet-fill"></i></span>
+          <div>
+            <h2 class="import-panel-title">Akıllı Excel İçe Aktarımı</h2>
+            <p class="import-panel-sub">
+              Hammadde / Etiket / Standart şablonlarını otomatik tanır · Önizleme &amp; onay akışı ile veri güvenliği
+            </p>
+          </div>
+        </div>
+
+        <label class="import-dropzone" id="importDropzone" for="importFileInput">
+          <i class="bi bi-cloud-arrow-up icon-large"></i>
+          <div class="file-label" id="importFileLabel">.xlsx dosyası seçmek için tıklayın veya buraya bırakın</div>
+          <div class="file-hint">Sistem dosya yapısını otomatik algılar — Hammadde Çalışmam.xlsx gibi gerçek lab dosyalarını destekler</div>
+          <input type="file" id="importFileInput" accept=".xlsx,.xls" />
+        </label>
+
+        <div style="display:flex;gap:0.6rem;margin-top:0.8rem;flex-wrap:wrap;">
+          <button class="btn-import" id="importPreviewBtn" disabled style="background:var(--navy);">
+            <i class="bi bi-eye"></i> Önizleme (Dry-run)
+          </button>
+          <button class="btn-import" id="importCommitBtn" disabled>
+            <i class="bi bi-check2-circle"></i> Onayla &amp; İçe Aktar
+          </button>
+          <button class="btn-cancel" id="importResetBtn" style="margin-left:auto;">
+            <i class="bi bi-x-circle"></i> Temizle
+          </button>
+        </div>
+
+        <div id="importResult"></div>
       </div>
 
     </div>
@@ -468,6 +609,44 @@
     </div>
   </div>
 
+  <!-- ════ MODAL: YETKİ MATRİSİ (Permission Matrix) ════ -->
+  <div class="modal fade" id="permissionsModal" tabindex="-1" aria-labelledby="permissionsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable" style="max-width:760px;">
+      <div class="modal-content">
+        <div class="modal-header" style="border-bottom:2px solid #f0ece4;">
+          <div>
+            <h5 class="modal-title" id="permissionsModalLabel">
+              <i class="bi bi-shield-lock-fill" style="margin-right:8px;color:var(--gold);"></i>
+              Yetki Matrisi
+            </h5>
+            <div id="permModalSubtitle" style="font-size:0.78rem;color:#9ca3af;margin-top:2px;">—</div>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body" style="padding:1.5rem;">
+          <div id="permModalSourceBanner" style="display:none;padding:0.6rem 0.95rem;border-radius:8px;font-size:0.83rem;margin-bottom:1rem;"></div>
+          <div id="permMatrixContainer">
+            <div style="text-align:center;padding:2rem;color:#9ca3af;">
+              <i class="bi bi-hourglass-split" style="font-size:1.5rem;"></i>
+              <div style="margin-top:6px;font-size:0.85rem;">Yetkiler yükleniyor…</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer" style="display:flex;justify-content:space-between;">
+          <button type="button" class="btn-cancel" id="permResetBtn">
+            <i class="bi bi-arrow-counterclockwise"></i> Rol Varsayılanına Dön
+          </button>
+          <div style="display:flex;gap:0.6rem;">
+            <button type="button" class="btn-cancel" data-bs-dismiss="modal">İptal</button>
+            <button type="button" class="btn-save" id="permSaveBtn">
+              <i class="bi bi-check2"></i> Yetkileri Kaydet
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     /* ── Globals ── */
@@ -577,6 +756,7 @@
             <td style="color:#6b7280; font-size:0.85rem;">${escHtml(u.created_at)}</td>
             <td style="text-align:center; white-space:nowrap;">
               <button class="btn-icon btn-icon-edit"   onclick="openEditModal(${u.id})"     title="Düzenle"><i class="bi bi-pencil"></i></button>
+              <button class="btn-icon btn-icon-perm"   onclick="openPermissionsModal(${u.id})" title="Yetki Matrisi"><i class="bi bi-shield-lock"></i></button>
               <button class="btn-icon btn-icon-key"    onclick="openPasswordModal(${u.id})" title="Şifre Sıfırla"><i class="bi bi-key"></i></button>
             </td>
           </tr>`;
@@ -780,6 +960,374 @@
         btn.innerHTML = '<i class="bi bi-arrow-repeat" style="margin-right:5px;"></i>Şifreyi Sıfırla';
       }
     }
+
+    /* ════════════════════════════════════════════════════════════════════
+       PERMISSION MATRIX (RBAC 2.0)
+    ════════════════════════════════════════════════════════════════════ */
+
+    let _permModalInstance = null;
+    let _permEditingUserId = null;
+    let _permSchema        = null;   // {categories: {name: [actions]}}
+
+    // Friendly labels for the matrix UI
+    const _CATEGORY_LABELS = {
+      items:      { tr: 'Ürünler',     icon: 'bi-box-seam' },
+      recipes:    { tr: 'Reçeteler',   icon: 'bi-journal-text' },
+      inventory:  { tr: 'Envanter',    icon: 'bi-boxes' },
+      production: { tr: 'Üretim',      icon: 'bi-gear-fill' },
+      qc:         { tr: 'Kalite',      icon: 'bi-patch-check' },
+      finance:    { tr: 'Finans',      icon: 'bi-cash-coin' },
+      b2b:        { tr: 'B2B Teklif',  icon: 'bi-file-earmark-text' },
+      reports:    { tr: 'Raporlar',    icon: 'bi-bar-chart-line' },
+      admin:      { tr: 'Sistem',      icon: 'bi-shield-lock' },
+    };
+    const _ACTION_LABELS = {
+      view: 'Görüntüle', create: 'Oluştur', edit: 'Düzenle', delete: 'Sil',
+      import: 'İçe Aktar', receive: 'Mal Kabul', approve: 'Onayla',
+      confirm: 'Onayla', manage_users: 'Kullanıcı Yönetimi',
+      import_excel: 'Excel Aktarımı', view_audit: 'Denetim Görünümü',
+    };
+
+    async function ensurePermSchema() {
+      if (_permSchema) return _permSchema;
+      const r = await fetch('/api/admin/permission-schema');
+      _permSchema = await r.json();
+      return _permSchema;
+    }
+
+    async function openPermissionsModal(userId) {
+      _permEditingUserId = userId;
+      if (!_permModalInstance) {
+        _permModalInstance = new bootstrap.Modal(document.getElementById('permissionsModal'));
+      }
+
+      // Reset modal body to loading state
+      document.getElementById('permMatrixContainer').innerHTML = `
+        <div style="text-align:center;padding:2rem;color:#9ca3af;">
+          <i class="bi bi-hourglass-split" style="font-size:1.5rem;"></i>
+          <div style="margin-top:6px;font-size:0.85rem;">Yetkiler yükleniyor…</div>
+        </div>`;
+      document.getElementById('permModalSourceBanner').style.display = 'none';
+      _permModalInstance.show();
+
+      try {
+        const [schemaRes, userRes] = await Promise.all([
+          ensurePermSchema(),
+          fetch(`/api/admin/users/${userId}/permissions`).then(r => r.json()),
+        ]);
+        renderPermMatrix(schemaRes.categories, userRes);
+      } catch {
+        document.getElementById('permMatrixContainer').innerHTML =
+          `<div style="color:#dc2626;text-align:center;padding:1rem;">Yetkiler yüklenemedi.</div>`;
+      }
+    }
+
+    function renderPermMatrix(categories, userInfo) {
+      // Subtitle: who we're editing
+      document.getElementById('permModalSubtitle').textContent =
+        `${userInfo.full_name} (@${userInfo.username}) · Rol: ${userInfo.role}`;
+
+      // Source banner
+      const banner = document.getElementById('permModalSourceBanner');
+      const isSuperAdmin = userInfo.source === 'superadmin';
+      const isCustom     = userInfo.source === 'custom';
+      const srcMap = {
+        superadmin: { cls: 'perm-source-superadmin', text: '🛡️ SuperAdmin — tüm yetkiler her zaman açık, değiştirilemez' },
+        custom:     { cls: 'perm-source-custom',     text: '✏️ Bu kullanıcının özel yetkileri ayarlanmış (rol varsayılanlarından farklı)' },
+        default:    { cls: 'perm-source-default',    text: '🎚️ Şu an rol (' + userInfo.role + ') varsayılan yetkilerini kullanıyor' },
+      };
+      const src = srcMap[userInfo.source] || srcMap.default;
+      banner.className = src.cls;
+      banner.style.cssText = `display:flex;padding:0.6rem 0.95rem;border-radius:8px;font-size:0.83rem;margin-bottom:1rem;font-weight:600;align-items:center;gap:0.4rem;border:1px solid;`;
+      banner.textContent = src.text;
+      banner.style.display = 'flex';
+
+      // Build matrix table
+      const allActions = new Set();
+      Object.values(categories).forEach(acts => acts.forEach(a => allActions.add(a)));
+      // Order actions consistently
+      const actionOrder = ['view', 'create', 'edit', 'delete', 'import', 'receive', 'approve', 'confirm', 'manage_users', 'import_excel', 'view_audit'];
+      const orderedActions = actionOrder.filter(a => allActions.has(a));
+
+      let html = `
+        <table class="perm-matrix-table">
+          <thead>
+            <tr>
+              <th style="text-align:left;">Kategori</th>
+              ${orderedActions.map(a => `<th style="text-align:center;">${escHtml(_ACTION_LABELS[a] || a)}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>`;
+
+      for (const [cat, allowedActions] of Object.entries(categories)) {
+        const lbl = _CATEGORY_LABELS[cat] || { tr: cat, icon: 'bi-circle' };
+        const allowedSet = new Set(allowedActions);
+        html += `<tr>
+          <td class="perm-cat-cell"><i class="bi ${lbl.icon}"></i>${escHtml(lbl.tr)}</td>`;
+        for (const act of orderedActions) {
+          if (!allowedSet.has(act)) {
+            html += `<td class="perm-action-cell perm-action-disabled">—</td>`;
+            continue;
+          }
+          const checked = !!(userInfo.permissions[cat] || {})[act];
+          html += `
+            <td class="perm-action-cell">
+              <input type="checkbox" class="perm-checkbox"
+                data-cat="${cat}" data-act="${act}"
+                ${checked ? 'checked' : ''}
+                ${isSuperAdmin ? 'disabled' : ''} />
+            </td>`;
+        }
+        html += `</tr>`;
+      }
+      html += `</tbody></table>`;
+
+      // Bulk-toggle helper buttons (above the matrix)
+      const bulk = isSuperAdmin ? '' : `
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.85rem;flex-wrap:wrap;">
+          <button class="btn-cancel" style="padding:0.32rem 0.85rem;font-size:0.78rem;" onclick="permBulkToggle(true)">
+            <i class="bi bi-check-all"></i> Tümünü Aç
+          </button>
+          <button class="btn-cancel" style="padding:0.32rem 0.85rem;font-size:0.78rem;" onclick="permBulkToggle(false)">
+            <i class="bi bi-x-lg"></i> Tümünü Kapat
+          </button>
+          <span style="font-size:0.74rem;color:#9ca3af;align-self:center;margin-left:auto;">
+            ${Object.values(userInfo.permissions).reduce((acc, c) => acc + Object.values(c).filter(Boolean).length, 0)} aktif yetki
+          </span>
+        </div>`;
+
+      document.getElementById('permMatrixContainer').innerHTML = bulk + html;
+
+      // Disable Save / Reset for SuperAdmin
+      document.getElementById('permSaveBtn').disabled  = isSuperAdmin;
+      document.getElementById('permResetBtn').disabled = isSuperAdmin || !isCustom;
+    }
+
+    function permBulkToggle(state) {
+      document.querySelectorAll('.perm-checkbox:not(:disabled)').forEach(cb => {
+        cb.checked = state;
+      });
+    }
+
+    function gatherPermsFromMatrix() {
+      const out = {};
+      document.querySelectorAll('.perm-checkbox').forEach(cb => {
+        const cat = cb.dataset.cat;
+        const act = cb.dataset.act;
+        if (!out[cat]) out[cat] = {};
+        out[cat][act] = cb.checked;
+      });
+      return out;
+    }
+
+    document.getElementById('permSaveBtn').addEventListener('click', async function () {
+      if (!_permEditingUserId) return;
+      const perms = gatherPermsFromMatrix();
+      this.disabled = true;
+      const orig = this.innerHTML;
+      this.innerHTML = '<i class="bi bi-hourglass-split"></i> Kaydediliyor…';
+      try {
+        const res = await fetch(`/api/admin/users/${_permEditingUserId}/permissions`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ permissions: perms }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Kayıt başarısız.'); return; }
+        showToast(data.message || 'Yetkiler güncellendi.', 'success');
+        _permModalInstance.hide();
+      } catch {
+        showToast('Sunucuya bağlanılamadı.');
+      } finally {
+        this.disabled = false;
+        this.innerHTML = orig;
+      }
+    });
+
+    document.getElementById('permResetBtn').addEventListener('click', async function () {
+      if (!_permEditingUserId) return;
+      if (!confirm('Bu kullanıcının özel yetkileri silinip rol varsayılanlarına dönülecek. Devam edilsin mi?')) return;
+      try {
+        const res = await fetch(`/api/admin/users/${_permEditingUserId}/permissions/reset`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Sıfırlama başarısız.'); return; }
+        showToast(data.message, 'success');
+        // Reload the matrix to show role-default state
+        openPermissionsModal(_permEditingUserId);
+      } catch {
+        showToast('Sunucuya bağlanılamadı.');
+      }
+    });
+
+    /* ════════════════════════════════════════════════════════════════════
+       SMART EXCEL IMPORT
+    ════════════════════════════════════════════════════════════════════ */
+
+    let _importedFile = null;
+
+    function setImportFile(file) {
+      _importedFile = file || null;
+      const dz = document.getElementById('importDropzone');
+      const lbl = document.getElementById('importFileLabel');
+      const previewBtn = document.getElementById('importPreviewBtn');
+      const commitBtn  = document.getElementById('importCommitBtn');
+      if (file) {
+        dz.classList.add('has-file');
+        lbl.textContent = `📎 ${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
+        previewBtn.disabled = false;
+        commitBtn.disabled  = true;   // Locked until preview confirms
+      } else {
+        dz.classList.remove('has-file');
+        lbl.textContent = '.xlsx dosyası seçmek için tıklayın veya buraya bırakın';
+        previewBtn.disabled = true;
+        commitBtn.disabled  = true;
+      }
+      document.getElementById('importResult').innerHTML = '';
+    }
+
+    document.getElementById('importFileInput').addEventListener('change', e => {
+      setImportFile(e.target.files[0]);
+    });
+
+    document.getElementById('importDropzone').addEventListener('dragover', e => {
+      e.preventDefault();
+      document.getElementById('importDropzone').classList.add('has-file');
+    });
+    document.getElementById('importDropzone').addEventListener('drop', e => {
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        document.getElementById('importFileInput').files = e.dataTransfer.files;
+        setImportFile(file);
+      }
+    });
+
+    async function runImport(commit) {
+      if (!_importedFile) return;
+      const fd = new FormData();
+      fd.append('file', _importedFile);
+      const url = `/api/admin/smart-import?commit=${commit ? 'true' : 'false'}`;
+
+      const btn = commit ? document.getElementById('importCommitBtn')
+                         : document.getElementById('importPreviewBtn');
+      btn.disabled = true;
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<i class="bi bi-hourglass-split"></i> İşleniyor…';
+
+      try {
+        const res = await fetch(url, { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data.detail || 'İçe aktarım başarısız.');
+          renderImportError(data);
+          return;
+        }
+        renderImportResult(data, commit);
+        if (commit) {
+          showToast(`İçe aktarım tamamlandı — ${data.items_created} ürün, ${data.transactions} hareket.`, 'success');
+          loadUsers();   // Refresh side data; not strictly needed but keeps view fresh
+          setImportFile(null);
+          document.getElementById('importFileInput').value = '';
+        } else {
+          // Preview successful → unlock commit button
+          document.getElementById('importCommitBtn').disabled = false;
+          showToast('Önizleme hazır — kontrolden sonra onaylayabilirsiniz.', 'success');
+        }
+      } catch {
+        showToast('Sunucuya bağlanılamadı.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+      }
+    }
+
+    function renderImportError(data) {
+      document.getElementById('importResult').innerHTML = `
+        <div class="import-result-card" style="background:#fff1f1;border-color:#fca5a5;">
+          <div style="font-weight:700;color:#b91c1c;margin-bottom:4px;">
+            <i class="bi bi-exclamation-triangle-fill"></i> İçe aktarım başarısız
+          </div>
+          <div style="font-size:0.85rem;color:#7f1d1d;">${escHtml(data.detail || '—')}</div>
+          ${data.detected_schema ? `<div style="margin-top:6px;font-size:0.78rem;color:#9ca3af;">Algılanan şema: <strong>${escHtml(data.detected_schema)}</strong></div>` : ''}
+        </div>`;
+    }
+
+    function renderImportResult(data, committed) {
+      const titlePill = committed
+        ? `<span style="background:#dcfce7;color:#15803d;padding:3px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;letter-spacing:0.05em;"><i class="bi bi-check-circle-fill"></i> İŞLENDİ</span>`
+        : `<span style="background:#fffbeb;color:#92400e;padding:3px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;letter-spacing:0.05em;"><i class="bi bi-eye"></i> ÖNİZLEME (Dry-run)</span>`;
+
+      const stats = committed ? [
+        { label: 'Şema',           value: data.schema },
+        { label: 'Yeni Ürün',      value: data.items_created },
+        { label: 'Güncellenen',    value: data.items_updated },
+        { label: 'Yeni Tedarikçi', value: data.suppliers_added },
+        { label: 'Envanter Satırı', value: data.inventory_rows },
+        { label: 'İşlem Kaydı',    value: data.transactions },
+      ] : [
+        { label: 'Şema',                value: data.schema },
+        { label: 'Sayfalar',            value: data.sheets_processed },
+        { label: 'Okunan Satır',        value: data.rows_parsed },
+        { label: 'Eklenecek Ürün',      value: data.items_to_create },
+        { label: 'Güncellenecek Ürün',  value: data.items_to_update },
+        { label: 'Eklenecek Tedarikçi', value: data.suppliers_to_create },
+      ];
+
+      const previewRows = (data.preview || []).slice(0, 25).map(r => `
+        <tr>
+          <td style="color:#9ca3af;">${escHtml(r.sheet || '—')}</td>
+          <td style="font-weight:600;">${escHtml(r.name)}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">${r.quantity} ${escHtml(r.unit)}</td>
+          <td>${escHtml(r.supplier)}</td>
+          <td><span class="action-${r.action}">${r.action === 'create' ? 'YENİ' : 'GÜNCELLE'}</span></td>
+        </tr>`).join('');
+
+      const warningsHtml = (data.warnings && data.warnings.length) ? `
+        <div class="import-warnings">
+          <strong><i class="bi bi-exclamation-triangle"></i> ${data.warnings.length} uyarı:</strong>
+          <ul>${data.warnings.slice(0, 8).map(w => `<li>${escHtml(w)}</li>`).join('')}</ul>
+          ${data.warnings.length > 8 ? `<div style="margin-top:4px;font-size:0.74rem;">…ve ${data.warnings.length - 8} daha.</div>` : ''}
+        </div>` : '';
+
+      document.getElementById('importResult').innerHTML = `
+        <div class="import-result-card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem;">
+            <div style="font-weight:700;color:var(--navy);">İçe Aktarım Sonucu</div>
+            ${titlePill}
+          </div>
+          <div class="import-stats-grid">
+            ${stats.map(s => `
+              <div class="import-stat">
+                <div class="import-stat-label">${escHtml(s.label)}</div>
+                <div class="import-stat-value">${escHtml(s.value)}</div>
+              </div>`).join('')}
+          </div>
+          ${warningsHtml}
+          ${previewRows ? `
+          <div style="margin-top:0.85rem;">
+            <div style="font-size:0.74rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#6b7280;margin-bottom:6px;">
+              ${committed ? 'İşlenen' : 'Önizleme'} İlk ${Math.min((data.preview || []).length, 25)} Satır
+              ${data.rows_parsed && data.rows_parsed > 25 ? `<span style="color:#9ca3af;font-weight:400;">(toplam ${data.rows_parsed})</span>` : ''}
+            </div>
+            <div style="max-height:340px;overflow-y:auto;border:1px solid #f0ece4;border-radius:8px;">
+              <table class="import-preview-table">
+                <thead><tr><th>Sayfa</th><th>Ürün</th><th style="text-align:right;">Miktar</th><th>Tedarikçi</th><th>Aksiyon</th></tr></thead>
+                <tbody>${previewRows}</tbody>
+              </table>
+            </div>
+          </div>` : ''}
+        </div>`;
+    }
+
+    document.getElementById('importPreviewBtn').addEventListener('click', () => runImport(false));
+    document.getElementById('importCommitBtn').addEventListener('click', () => {
+      if (!confirm('Bu işlem ürünleri, tedarikçileri ve envanter kayıtlarını kalıcı olarak oluşturacak.\nDevam edilsin mi?')) return;
+      runImport(true);
+    });
+    document.getElementById('importResetBtn').addEventListener('click', () => {
+      setImportFile(null);
+      document.getElementById('importFileInput').value = '';
+    });
 
     /* ── Logout ── */
     document.getElementById('logoutBtn').addEventListener('click', async function () {

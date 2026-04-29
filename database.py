@@ -19,7 +19,8 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(100), nullable=False)
-    role = Column(String(20), default="staff")  # admin, manager, staff
+    role = Column(String(20), default="staff")  # SuperAdmin, Manager, LabLead, LabTech, Staff
+    permissions = Column(Text, nullable=True)   # JSON: granular RBAC 2.0 — overrides role defaults
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -266,6 +267,13 @@ def init_db():
                 conn.commit()
             except Exception:
                 pass
+
+        # ── Phase 4 / Task 2 — Granular RBAC 2.0 (idempotent) ────────────────
+        try:
+            conn.execute(text("ALTER TABLE users ADD COLUMN permissions TEXT"))
+            conn.commit()
+        except Exception:
+            pass
 
     # ── Varsayılan kullanıcıları oluştur (idempotent — her başlatmada güvenli) ──
     import bcrypt
