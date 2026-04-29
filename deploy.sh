@@ -9,9 +9,11 @@ set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────
 SERVER_IP="136.144.251.26"
+SERVER_PORT="23422"                          # ← Turhost custom SSH port (not 22)
 SERVER_USER="root"
 SERVER_PATH="/var/www/minerva"
 SERVICE_NAME="minerva"
+SSH_KEY="$HOME/.ssh/id_ed25519_minerva"      # Dedicated key created during setup
 SSH_TIMEOUT=15
 
 # ── Pretty output helpers ─────────────────────────────────────────────
@@ -57,17 +59,19 @@ ok "GitHub'a push tamamlandı"
 step "Step 2/4 — Sunucu erişim testi"
 
 # Quick connection sanity-check — fails loud if SSH is broken
-if ! ssh -o ConnectTimeout=$SSH_TIMEOUT \
+if ! ssh -p "$SERVER_PORT" \
+       -i "$SSH_KEY" \
+       -o ConnectTimeout=$SSH_TIMEOUT \
        -o StrictHostKeyChecking=accept-new \
-       -o BatchMode=no \
+       -o BatchMode=yes \
        "$SERVER_USER@$SERVER_IP" "echo READY" > /tmp/_minerva_ssh_test 2>&1; then
   echo -e "${DIM}-- SSH error output --${NC}"
   cat /tmp/_minerva_ssh_test
   rm -f /tmp/_minerva_ssh_test
-  fail "$SERVER_USER@$SERVER_IP adresine bağlanılamadı (port 22). Sunucu / SSH key / firewall kontrol edin."
+  fail "$SERVER_USER@$SERVER_IP:$SERVER_PORT adresine bağlanılamadı. Sunucu / SSH key / firewall kontrol edin."
 fi
 rm -f /tmp/_minerva_ssh_test
-ok "SSH bağlantısı çalışıyor — $SERVER_USER@$SERVER_IP"
+ok "SSH bağlantısı çalışıyor — $SERVER_USER@$SERVER_IP:$SERVER_PORT"
 
 # ──────────────────────────────────────────────────────────────────────
 # STEP 3 — Remote force-sync + service restart (verbose, fail-fast)
@@ -79,7 +83,9 @@ echo -e "${DIM}-- Sunucudan canlı çıktı --${NC}"
 # `bash -s` ensures we're in a real bash session on the remote.
 # All remote commands run with `set -euo pipefail` so they fail loud and
 # their non-zero exit code is propagated back through SSH to this script.
-if ! ssh -o ConnectTimeout=$SSH_TIMEOUT \
+if ! ssh -p "$SERVER_PORT" \
+         -i "$SSH_KEY" \
+         -o ConnectTimeout=$SSH_TIMEOUT \
          -o ServerAliveInterval=30 \
          "$SERVER_USER@$SERVER_IP" \
          "REMOTE_PATH='$SERVER_PATH' SERVICE_NAME='$SERVICE_NAME' bash -s" <<'REMOTE_EOF'
@@ -171,11 +177,12 @@ ok "Remote force-sync ve servis restart başarılı"
 # ──────────────────────────────────────────────────────────────────────
 step "Step 4/4 — Bağımsız sağlık kontrolü"
 
-if ssh -o ConnectTimeout=10 "$SERVER_USER@$SERVER_IP" "systemctl is-active --quiet $SERVICE_NAME"; then
+if ssh -p "$SERVER_PORT" -i "$SSH_KEY" -o ConnectTimeout=10 \
+       "$SERVER_USER@$SERVER_IP" "systemctl is-active --quiet $SERVICE_NAME"; then
   ok "minerva servisi aktif çalışıyor"
 else
   warn "Servis durumu doğrulanamadı. Manuel kontrol:"
-  echo "    ssh $SERVER_USER@$SERVER_IP 'systemctl status $SERVICE_NAME'"
+  echo "    ssh -p $SERVER_PORT $SERVER_USER@$SERVER_IP 'systemctl status $SERVICE_NAME'"
 fi
 
 # ──────────────────────────────────────────────────────────────────────
@@ -183,7 +190,7 @@ fi
 # ──────────────────────────────────────────────────────────────────────
 echo
 echo -e "${GREEN}${BOLD}🎉 Deployment tamamlandı.${NC}"
-echo -e "   ${DIM}Server: ${NC} $SERVER_USER@$SERVER_IP"
+echo -e "   ${DIM}Server: ${NC} $SERVER_USER@$SERVER_IP:$SERVER_PORT"
 echo -e "   ${DIM}Path:   ${NC} $SERVER_PATH"
 echo -e "   ${DIM}Service:${NC} $SERVICE_NAME"
 echo -e "   ${DIM}Local:  ${NC} $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
