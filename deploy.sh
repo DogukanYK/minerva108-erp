@@ -1,23 +1,190 @@
 #!/bin/bash
+# ──────────────────────────────────────────────────────────────────────
+# Minerva108 — robust deployment script
+# Force-syncs the Turhost server with this Mac's main branch.
+# Verbose, fail-fast, surfaces remote errors instead of swallowing them.
+# ──────────────────────────────────────────────────────────────────────
 
-echo "🚀 Minerva108 Canlı Sunucusuna (Turhost) deployment başlatılıyor..."
+set -euo pipefail
 
-# 1. Tüm değişiklikleri Git'e ekle
+# ── Config ────────────────────────────────────────────────────────────
+SERVER_IP="136.144.251.26"
+SERVER_USER="root"
+SERVER_PATH="/var/www/minerva"
+SERVICE_NAME="minerva"
+SSH_TIMEOUT=15
+
+# ── Pretty output helpers ─────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
+
+step() { echo -e "\n${BLUE}${BOLD}━━━ $* ━━━${NC}"; }
+ok()   { echo -e "${GREEN}✓${NC} $*"; }
+warn() { echo -e "${YELLOW}⚠${NC} $*"; }
+fail() { echo -e "${RED}✗ $*${NC}" >&2; exit 1; }
+info() { echo -e "${DIM}  $*${NC}"; }
+
+# Catch unexpected errors with line number
+trap 'fail "Script line $LINENO sırasında hata oluştu — yukarıdaki çıktıyı kontrol edin."' ERR
+
+# ──────────────────────────────────────────────────────────────────────
+# STEP 1 — Local commit & push
+# ──────────────────────────────────────────────────────────────────────
+step "Step 1/4 — Yerel commit & GitHub push"
+
 git add .
 
-# 2. Commit mesajını sor (Boş bırakılırsa varsayılan mesajı kullanır)
-read -p "Commit mesajini girin (Bos birakirsaniz 'feat: auto-deploy update' olacaktir): " commit_msg
-if [ -z "$commit_msg" ]; then
-  commit_msg="feat: auto-deploy update"
+# Decide whether anything is staged worth committing
+if git diff --cached --quiet; then
+  warn "Yerelde commit edilecek değişiklik yok — mevcut HEAD push edilecek."
+else
+  read -p "Commit mesajını girin (boş bırakırsanız 'feat: auto-deploy update'): " commit_msg
+  commit_msg="${commit_msg:-feat: auto-deploy update}"
+  git commit -m "$commit_msg"
+  ok "Local commit oluşturuldu — $(git rev-parse --short HEAD)"
 fi
 
-# 3. Commit ve Push işlemleri
-git commit -m "$commit_msg"
-git push origin main
+info "Local HEAD: $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
 
-echo "🌍 Turhost sunucusuna bağlanılıyor (136.144.251.26)..."
+if ! git push origin main; then
+  fail "GitHub push başarısız. Internet bağlantısı / SSH key / yetki kontrolü yapın."
+fi
+ok "GitHub'a push tamamlandı"
 
-# 4. SSH ile bağlan, klasöre git, güncellemeyi çek ve servisi yeniden başlat
-ssh root@136.144.251.26 "cd /var/www/minerva && git pull origin main && systemctl restart minerva"
+# ──────────────────────────────────────────────────────────────────────
+# STEP 2 — Pre-flight: SSH connectivity check
+# ──────────────────────────────────────────────────────────────────────
+step "Step 2/4 — Sunucu erişim testi"
 
-echo "✅ Fırlatma Başarılı! Fabrika şu an en güncel haliyle canlıda."
+# Quick connection sanity-check — fails loud if SSH is broken
+if ! ssh -o ConnectTimeout=$SSH_TIMEOUT \
+       -o StrictHostKeyChecking=accept-new \
+       -o BatchMode=no \
+       "$SERVER_USER@$SERVER_IP" "echo READY" > /tmp/_minerva_ssh_test 2>&1; then
+  echo -e "${DIM}-- SSH error output --${NC}"
+  cat /tmp/_minerva_ssh_test
+  rm -f /tmp/_minerva_ssh_test
+  fail "$SERVER_USER@$SERVER_IP adresine bağlanılamadı (port 22). Sunucu / SSH key / firewall kontrol edin."
+fi
+rm -f /tmp/_minerva_ssh_test
+ok "SSH bağlantısı çalışıyor — $SERVER_USER@$SERVER_IP"
+
+# ──────────────────────────────────────────────────────────────────────
+# STEP 3 — Remote force-sync + service restart (verbose, fail-fast)
+# ──────────────────────────────────────────────────────────────────────
+step "Step 3/4 — Sunucuda force-sync + servis restart"
+echo -e "${DIM}-- Sunucudan canlı çıktı --${NC}"
+
+# Heredoc with quoted EOF prevents local variable expansion;
+# `bash -s` ensures we're in a real bash session on the remote.
+# All remote commands run with `set -euo pipefail` so they fail loud and
+# their non-zero exit code is propagated back through SSH to this script.
+if ! ssh -o ConnectTimeout=$SSH_TIMEOUT \
+         -o ServerAliveInterval=30 \
+         "$SERVER_USER@$SERVER_IP" \
+         "REMOTE_PATH='$SERVER_PATH' SERVICE_NAME='$SERVICE_NAME' bash -s" <<'REMOTE_EOF'
+set -euo pipefail
+
+echo "→ Host: $(hostname) · User: $(whoami) · UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+echo
+
+# ── Directory check — explicit, friendly error ──
+if [ ! -d "$REMOTE_PATH" ]; then
+  echo "✗ HATA: Klasör bulunamadı: $REMOTE_PATH" >&2
+  exit 2
+fi
+if [ ! -d "$REMOTE_PATH/.git" ]; then
+  echo "✗ HATA: $REMOTE_PATH bir git deposu değil (.git klasörü yok)" >&2
+  exit 3
+fi
+
+cd "$REMOTE_PATH"
+echo "→ Working directory: $(pwd)"
+echo "→ Eski commit:        $(git rev-parse --short HEAD) — $(git log -1 --format='%s' | cut -c1-60)"
+echo
+
+# ── FORCE SYNC: discards any local modifications on the server ──
+# Equivalent to "make this server identical to origin/main".
+# Local hand-edits to tracked files (e.g. database.py) are wiped.
+# Untracked files (e.g. minerva108.db) are preserved.
+echo "→ git fetch --all --prune"
+git fetch --all --prune
+
+echo
+echo "→ git reset --hard origin/main"
+git reset --hard origin/main
+
+echo
+echo "→ Yeni commit:        $(git rev-parse --short HEAD) — $(git log -1 --format='%s' | cut -c1-60)"
+echo
+
+# ── Optional: dependency install if requirements.txt changed ──
+if git diff --name-only HEAD@{1} HEAD 2>/dev/null | grep -q '^requirements\.txt$'; then
+  echo "→ requirements.txt değişti — pip install -r requirements.txt"
+  if [ -f "$REMOTE_PATH/.venv/bin/pip" ]; then
+    "$REMOTE_PATH/.venv/bin/pip" install -q -r requirements.txt && echo "  ✓ venv içine kuruldu"
+  elif command -v pip3 >/dev/null 2>&1; then
+    pip3 install -q -r requirements.txt && echo "  ✓ pip3 ile kuruldu"
+  else
+    echo "  ⚠ pip bulunamadı, dependency install atlandı"
+  fi
+  echo
+fi
+
+# ── Service restart ──
+echo "→ systemctl restart $SERVICE_NAME"
+if ! systemctl restart "$SERVICE_NAME"; then
+  echo "✗ HATA: systemctl restart başarısız" >&2
+  echo "-- son 25 log satırı --" >&2
+  journalctl -u "$SERVICE_NAME" -n 25 --no-pager >&2 || true
+  exit 4
+fi
+
+# Brief settle period for the service to come back up
+sleep 2
+
+echo
+echo "→ Servis durumu:"
+if systemctl is-active --quiet "$SERVICE_NAME"; then
+  echo "  ✓ active (running)"
+else
+  echo "  ✗ servis aktif değil!" >&2
+  systemctl status "$SERVICE_NAME" --no-pager --lines=20 >&2 || true
+  exit 5
+fi
+echo
+systemctl status "$SERVICE_NAME" --no-pager --lines=5 || true
+
+echo
+echo "✓ Sunucu güncellemesi tamamlandı."
+REMOTE_EOF
+then
+  echo -e "${DIM}-- Remote çıktısı sonu --${NC}"
+  fail "Remote komutları başarısız oldu — yukarıdaki sunucu çıktısını inceleyin."
+fi
+
+echo -e "${DIM}-- Remote çıktısı sonu --${NC}"
+ok "Remote force-sync ve servis restart başarılı"
+
+# ──────────────────────────────────────────────────────────────────────
+# STEP 4 — Final independent health check
+# ──────────────────────────────────────────────────────────────────────
+step "Step 4/4 — Bağımsız sağlık kontrolü"
+
+if ssh -o ConnectTimeout=10 "$SERVER_USER@$SERVER_IP" "systemctl is-active --quiet $SERVICE_NAME"; then
+  ok "minerva servisi aktif çalışıyor"
+else
+  warn "Servis durumu doğrulanamadı. Manuel kontrol:"
+  echo "    ssh $SERVER_USER@$SERVER_IP 'systemctl status $SERVICE_NAME'"
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+# Summary
+# ──────────────────────────────────────────────────────────────────────
+echo
+echo -e "${GREEN}${BOLD}🎉 Deployment tamamlandı.${NC}"
+echo -e "   ${DIM}Server: ${NC} $SERVER_USER@$SERVER_IP"
+echo -e "   ${DIM}Path:   ${NC} $SERVER_PATH"
+echo -e "   ${DIM}Service:${NC} $SERVICE_NAME"
+echo -e "   ${DIM}Local:  ${NC} $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
+echo
