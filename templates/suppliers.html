@@ -233,6 +233,11 @@
       <a href="/traceability" class="nav-link-item">
         <i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik
       </a>
+      {% if role in ['SuperAdmin', 'Manager'] %}
+      <a href="/quotations" class="nav-link-item">
+        <i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler
+      </a>
+      {% endif %}
     </nav>
     <div class="sidebar-footer">
       <p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p>

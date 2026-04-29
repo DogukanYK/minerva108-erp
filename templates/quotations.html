@@ -1,0 +1,1558 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minerva108 ERP — B2B Teklifler / Proforma</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+
+  <style>
+    :root {
+      --navy:  #2C2C73;
+      --gold:  #b8965a;
+      --gold2: #d4af72;
+      --cream: #f5f0e8;
+      --white: #ffffff;
+      --sidebar-width: 240px;
+      --navbar-height: 64px;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Jost', sans-serif; background-color: var(--cream); color: #1f2937; }
+
+    /* ══ SIDEBAR ══ */
+    .sidebar { position: fixed; top: 0; left: 0; width: var(--sidebar-width); height: 100vh; background: var(--navy); display: flex; flex-direction: column; z-index: 100; }
+    .sidebar-brand { padding: 1.6rem 1.5rem 1.4rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-brand-name { font-family: 'Playfair Display', serif; font-size: 1.25rem; font-weight: 700; color: var(--white); letter-spacing: 0.04em; margin: 0; }
+    .sidebar-brand-sub { font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); margin-top: 0.3rem; }
+    .sidebar-nav { flex: 1; padding: 1.25rem 0.75rem; overflow-y: auto; }
+    .nav-section-label { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.3); padding: 0.5rem 0.75rem 0.4rem; margin-top: 0.5rem; }
+    .nav-link-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.85rem; border-radius: 8px; color: rgba(255,255,255,0.65); font-size: 0.88rem; font-weight: 500; text-decoration: none; transition: background 0.15s, color 0.15s; margin-bottom: 2px; }
+    .nav-link-item:hover { background: rgba(255,255,255,0.07); color: var(--white); }
+    .nav-link-item.active { background: rgba(184,150,90,0.18); color: var(--gold2); }
+    .nav-link-item.active .nav-icon { color: var(--gold); }
+    .nav-icon { font-size: 1rem; width: 18px; text-align: center; flex-shrink: 0; }
+    .sidebar-footer { padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-footer-text { font-size: 0.7rem; color: rgba(255,255,255,0.25); text-align: center; }
+
+    /* ══ TOPNAV ══ */
+    .topnav { position: fixed; top: 0; left: var(--sidebar-width); right: 0; height: var(--navbar-height); background: var(--white); border-bottom: 1px solid #f0ece4; display: flex; align-items: center; justify-content: space-between; padding: 0 1.75rem; z-index: 90; box-shadow: 0 1px 8px rgba(0,0,0,0.05); }
+    .topnav-title { font-family: 'Playfair Display', serif; font-size: 1.15rem; font-weight: 600; color: var(--navy); }
+    .topnav-right { display: flex; align-items: center; gap: 1rem; }
+    .user-chip { display: flex; align-items: center; gap: 0.5rem; background: var(--cream); border-radius: 20px; padding: 0.35rem 0.9rem 0.35rem 0.5rem; }
+    .user-avatar { width: 28px; height: 28px; background: var(--navy); color: var(--gold2); border-radius: 50%; font-size: 0.7rem; font-weight: 700; display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', serif; }
+    .user-name { font-size: 0.85rem; font-weight: 500; color: #374151; }
+    .btn-logout { display: flex; align-items: center; gap: 0.4rem; padding: 0.42rem 1rem; border: 1.5px solid #e5e7eb; border-radius: 8px; background: var(--white); color: #6b7280; font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 500; cursor: pointer; transition: border-color 0.2s, color 0.2s, background 0.2s; }
+    .btn-logout:hover { border-color: #ef4444; color: #ef4444; background: #fff5f5; }
+
+    /* ══ MAIN ══ */
+    .main-content { margin-left: var(--sidebar-width); padding-top: var(--navbar-height); min-height: 100vh; background: var(--cream); }
+    .content-inner { padding: 2rem 2rem 3rem; }
+    .page-header { margin-bottom: 1.25rem; }
+    .page-title { font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 700; color: var(--navy); margin: 0 0 0.25rem; }
+    .page-subtitle { font-size: 0.88rem; color: #6b7280; margin: 0; }
+
+    /* ══ LIVE RATES STRIP ══ */
+    .rates-strip {
+      background: linear-gradient(90deg, rgba(44,44,115,0.04), rgba(184,150,90,0.06));
+      border: 1px solid #f0ece4; border-radius: 10px;
+      padding: 0.65rem 1.1rem; margin-bottom: 1.25rem;
+      display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;
+      font-size: 0.85rem;
+    }
+    .rates-strip-label {
+      font-size: 0.66rem; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: #6b7280;
+    }
+    .rate-pill {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 4px 12px; background: var(--white);
+      border: 1px solid #f0ece4; border-radius: 20px;
+      font-weight: 600; color: #1f2937;
+    }
+    .rate-pill .ccy { color: var(--gold); font-weight: 700; }
+    .rates-strip-meta { margin-left: auto; font-size: 0.74rem; color: #9ca3af; }
+    .rate-stale-warn {
+      background: #fffbeb; border: 1px solid #fde68a;
+      border-radius: 6px; padding: 2px 9px;
+      color: #92400e; font-size: 0.74rem; font-weight: 600;
+    }
+
+    /* ══ PANEL CARD ══ */
+    .panel-card {
+      background: var(--white); border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06);
+      margin-bottom: 1.25rem;
+    }
+    .panel-header { padding: 0.9rem 1.3rem; border-bottom: 1px solid #f0ece4; display: flex; align-items: center; gap: 0.6rem; }
+    .panel-title { font-family: 'Playfair Display', serif; font-size: 1rem; font-weight: 700; color: var(--navy); margin: 0; flex: 1; }
+    .panel-title-icon { width: 30px; height: 30px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.95rem; flex-shrink: 0; }
+    .icon-navy  { background: rgba(44,44,115,0.10); color: var(--navy); }
+    .icon-gold  { background: rgba(184,150,90,0.16); color: #92750e; }
+    .icon-green { background: #dcfce7; color: #15803d; }
+    .panel-body { padding: 1.1rem 1.3rem; }
+
+    /* ══ FORM ══ */
+    .form-label-sm { font-size: 0.72rem; font-weight: 700; color: #6b7280; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.3rem; display: block; }
+    .form-control, .form-select {
+      border: 1.5px solid #e5e7eb; border-radius: 8px;
+      padding: 0.55rem 0.85rem; font-family: 'Jost', sans-serif;
+      font-size: 0.88rem; color: #1f2937; transition: border-color 0.2s, box-shadow 0.2s;
+      width: 100%;
+    }
+    .form-control:focus, .form-select:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(44,44,115,0.10); outline: none; }
+
+    /* ══ CURRENCY SELECTOR (segmented) ══ */
+    .ccy-segments {
+      display: inline-flex; background: #f3f0ea; padding: 4px;
+      border-radius: 9px; gap: 2px;
+    }
+    .ccy-seg {
+      padding: 6px 18px; border-radius: 6px; cursor: pointer;
+      font-weight: 700; font-size: 0.86rem; color: #6b7280;
+      border: none; background: transparent; transition: all 0.15s;
+      font-family: 'Jost', sans-serif; min-width: 70px;
+    }
+    .ccy-seg.active {
+      background: var(--white); color: var(--navy);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    }
+
+    /* ══ LINE ITEMS BUILDER ══ */
+    .line-items-table { width: 100%; border-collapse: collapse; }
+    .line-items-table th {
+      background: #f9f7f3; padding: 0.55rem 0.7rem;
+      font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #6b7280;
+      border-bottom: 2px solid #f0ece4; text-align: left; white-space: nowrap;
+    }
+    .line-items-table td {
+      padding: 0.45rem 0.7rem; border-bottom: 1px solid #f5f3ef;
+      font-size: 0.85rem; vertical-align: middle;
+    }
+    .line-items-table tbody tr:last-child td { border-bottom: none; }
+    .line-items-table input, .line-items-table select {
+      border: 1.5px solid #e5e7eb; border-radius: 6px;
+      padding: 0.4rem 0.6rem; font-family: 'Jost', sans-serif;
+      font-size: 0.85rem; width: 100%;
+    }
+    .line-items-table input:focus, .line-items-table select:focus {
+      outline: none; border-color: var(--navy); box-shadow: 0 0 0 2px rgba(44,44,115,0.08);
+    }
+    .line-cost-hint {
+      font-size: 0.72rem; color: #15803d; font-weight: 600; margin-top: 2px;
+    }
+    .line-total-cell { font-weight: 700; color: var(--navy); white-space: nowrap; }
+
+    .btn-add-row {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      padding: 0.42rem 0.95rem;
+      background: rgba(184,150,90,0.10); color: var(--gold);
+      border: 1.5px solid rgba(184,150,90,0.35); border-radius: 8px;
+      font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 600;
+      cursor: pointer; transition: background 0.18s;
+    }
+    .btn-add-row:hover { background: rgba(184,150,90,0.18); }
+
+    .btn-row-remove {
+      width: 28px; height: 28px; border-radius: 6px; border: none;
+      background: #fff1f1; color: #dc2626; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s;
+    }
+    .btn-row-remove:hover { background: #fee2e2; }
+
+    .empty-line-row {
+      padding: 1.5rem; text-align: center; color: #9ca3af;
+      font-size: 0.85rem; border: 1.5px dashed #e5e7eb; border-radius: 8px;
+    }
+
+    /* ══ INVOICE PREVIEW ══ */
+    .invoice-doc {
+      background: var(--white);
+      border-radius: 14px;
+      box-shadow: 0 4px 32px rgba(44,44,115,0.10);
+      padding: 2.5rem 2.75rem;
+      margin-bottom: 1.25rem;
+      max-width: 920px; margin-left: auto; margin-right: auto;
+      font-size: 0.93rem;
+      color: #1f2937;
+    }
+    .inv-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 1rem; padding-bottom: 1.25rem; border-bottom: 3px double var(--gold);
+    }
+    .inv-brand { flex: 1; }
+    .inv-logo {
+      width: 56px; height: 56px; border-radius: 12px;
+      background: var(--navy); color: var(--gold);
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Playfair Display', serif; font-size: 1.7rem; font-weight: 700;
+      margin-bottom: 0.6rem;
+    }
+    .inv-brand-name {
+      font-family: 'Playfair Display', serif; font-size: 1.5rem;
+      font-weight: 700; color: var(--navy); letter-spacing: 0.02em; margin: 0;
+    }
+    .inv-brand-tagline {
+      font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase;
+      color: var(--gold); margin-top: 1px;
+    }
+    .inv-brand-info {
+      font-size: 0.78rem; color: #6b7280; line-height: 1.5; margin-top: 0.45rem;
+    }
+    .inv-doc-meta { text-align: right; }
+    .inv-doc-title {
+      font-family: 'Playfair Display', serif; font-size: 2rem;
+      font-weight: 700; color: var(--navy); letter-spacing: 0.04em;
+      line-height: 1; margin: 0;
+    }
+    .inv-doc-subtitle {
+      font-size: 0.76rem; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--gold); margin-top: 4px; font-weight: 600;
+    }
+    .inv-doc-meta-grid {
+      margin-top: 1rem; font-size: 0.82rem; line-height: 1.55;
+      color: #374151;
+    }
+    .inv-doc-meta-grid strong { color: #1f2937; }
+
+    .inv-parties {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;
+      margin: 1.5rem 0;
+    }
+    .inv-party-block { padding: 0.85rem 1rem; background: #f9f7f3; border-radius: 10px; border-left: 4px solid var(--gold); }
+    .inv-party-label {
+      font-size: 0.65rem; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--gold); margin-bottom: 0.35rem;
+    }
+    .inv-party-name {
+      font-family: 'Playfair Display', serif; font-size: 1rem;
+      font-weight: 700; color: #1f2937;
+    }
+    .inv-party-info {
+      font-size: 0.82rem; color: #6b7280; line-height: 1.5; margin-top: 4px;
+      white-space: pre-line;
+    }
+
+    table.inv-items {
+      width: 100%; border-collapse: collapse; margin-top: 0.5rem;
+      font-size: 0.85rem;
+    }
+    table.inv-items th {
+      padding: 0.7rem 0.85rem; background: var(--navy); color: var(--white);
+      font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; text-align: left;
+    }
+    table.inv-items th:nth-child(3),
+    table.inv-items th:nth-child(4),
+    table.inv-items th:nth-child(5) { text-align: right; }
+    table.inv-items td {
+      padding: 0.65rem 0.85rem; border-bottom: 1px solid #f0ece4;
+    }
+    table.inv-items tbody tr:nth-child(even) { background: #faf8f4; }
+    table.inv-items td:nth-child(3),
+    table.inv-items td:nth-child(4),
+    table.inv-items td:nth-child(5) { text-align: right; font-variant-numeric: tabular-nums; }
+    table.inv-items td.col-no { color: #9ca3af; font-weight: 600; width: 40px; }
+    table.inv-items td.col-name { font-weight: 600; color: #1f2937; }
+    table.inv-items td.col-name .item-sub { font-size: 0.74rem; color: #9ca3af; font-weight: 400; margin-top: 1px; }
+    table.inv-items tr.empty-row td {
+      padding: 1.5rem; text-align: center; color: #9ca3af; font-style: italic;
+    }
+
+    .inv-totals {
+      margin-top: 1rem; display: flex; justify-content: flex-end;
+    }
+    .inv-totals-table {
+      min-width: 320px; font-size: 0.9rem;
+    }
+    .inv-totals-table tr td {
+      padding: 0.4rem 0.85rem;
+    }
+    .inv-totals-table tr td:first-child { color: #6b7280; text-align: right; }
+    .inv-totals-table tr td:last-child { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .inv-totals-table tr.grand-total td {
+      padding-top: 0.7rem; border-top: 2px solid var(--navy);
+      font-size: 1.05rem; font-weight: 700; color: var(--navy);
+    }
+    .inv-totals-table tr.grand-total td:first-child {
+      letter-spacing: 0.06em; text-transform: uppercase;
+      font-size: 0.78rem;
+    }
+
+    .inv-footer {
+      margin-top: 2rem; padding-top: 1rem;
+      border-top: 1px solid #f0ece4;
+      font-size: 0.78rem; color: #6b7280; line-height: 1.55;
+    }
+    .inv-footer-section { margin-bottom: 0.75rem; }
+    .inv-footer-label {
+      font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--gold); margin-bottom: 3px;
+    }
+    .inv-stamp {
+      margin-top: 1.25rem; text-align: center;
+      font-size: 0.75rem; color: #9ca3af; font-style: italic;
+    }
+
+    /* ══ ACTION BAR ══ */
+    .action-bar {
+      display: flex; gap: 0.7rem; align-items: center; flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+    .btn-primary-navy {
+      display: inline-flex; align-items: center; gap: 0.45rem;
+      padding: 0.68rem 1.5rem; background: var(--navy); color: var(--white);
+      border: none; border-radius: 9px; font-family: 'Jost', sans-serif;
+      font-size: 0.92rem; font-weight: 700; cursor: pointer;
+      transition: background 0.2s, box-shadow 0.2s;
+      box-shadow: 0 3px 10px rgba(44,44,115,0.22);
+    }
+    .btn-primary-navy:hover { background: #23236b; }
+    .btn-secondary {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.62rem 1.2rem; background: var(--white);
+      border: 1.5px solid #e5e7eb; border-radius: 9px;
+      font-family: 'Jost', sans-serif; font-size: 0.86rem; font-weight: 600;
+      color: #374151; cursor: pointer;
+    }
+    .btn-secondary:hover { border-color: var(--navy); color: var(--navy); }
+
+    /* ══ SAVED QUOTES TABLE ══ */
+    .saved-quotes-table {
+      width: 100%; border-collapse: collapse;
+    }
+    .saved-quotes-table th {
+      padding: 0.55rem 0.85rem; background: #f9f7f3;
+      font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #6b7280;
+      border-bottom: 2px solid #f0ece4; text-align: left; white-space: nowrap;
+    }
+    .saved-quotes-table td {
+      padding: 0.55rem 0.85rem; border-bottom: 1px solid #f5f3ef;
+      font-size: 0.85rem; vertical-align: middle;
+    }
+    .saved-quotes-table tbody tr:last-child td { border-bottom: none; }
+    .saved-quotes-table tbody tr:hover { background: #faf8f4; }
+    .saved-quotes-table tbody tr.confirmed-row {
+      background: #f0fdf4 !important; opacity: 0.95;
+    }
+    .saved-quotes-table tbody tr.confirmed-row:hover { background: #dcfce7 !important; }
+    .quote-num-cell {
+      font-family: monospace; font-weight: 700; color: #1f2937;
+      background: #f3f4f6; padding: 2px 8px; border-radius: 5px;
+      font-size: 0.78rem; display: inline-block;
+    }
+    .quote-status-pill {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      padding: 3px 11px; border-radius: 20px;
+      font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em;
+    }
+    .quote-status-draft     { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+    .quote-status-confirmed { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .saved-quotes-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+    .btn-row-action {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      padding: 0.32rem 0.65rem; border-radius: 6px;
+      font-family: 'Jost', sans-serif; font-size: 0.74rem; font-weight: 600;
+      cursor: pointer; transition: all 0.15s; border: 1.5px solid transparent;
+      white-space: nowrap;
+    }
+    .btn-row-view    { background: rgba(44,44,115,0.07); color: var(--navy);
+                       border-color: rgba(44,44,115,0.2); }
+    .btn-row-view:hover { background: rgba(44,44,115,0.14); }
+    .btn-row-confirm { background: #15803d; color: #fff; }
+    .btn-row-confirm:hover { background: #166534; }
+    .btn-row-delete  { background: #fff1f1; color: #dc2626; border-color: #fca5a5;
+                       width: 28px; height: 28px; padding: 0; justify-content: center; }
+    .btn-row-delete:hover { background: #fee2e2; }
+    .empty-quotes-state {
+      padding: 2.5rem 1rem; text-align: center; color: #9ca3af;
+      font-size: 0.86rem;
+    }
+    .empty-quotes-state i {
+      font-size: 2rem; display: block; margin-bottom: 0.5rem; color: #d1d5db;
+    }
+    .builder-locked-banner {
+      background: #f0fdf4; border: 1px solid #bbf7d0;
+      color: #15803d; padding: 0.6rem 1rem; border-radius: 8px;
+      font-size: 0.84rem; font-weight: 600; margin-bottom: 1rem;
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .editing-banner {
+      background: #fffbeb; border: 1px solid #fde68a;
+      color: #92400e; padding: 0.55rem 1rem; border-radius: 8px;
+      font-size: 0.83rem; font-weight: 600; margin-bottom: 1rem;
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .editing-banner button {
+      margin-left: auto; background: transparent; border: none;
+      color: #92400e; cursor: pointer; font-size: 0.78rem; font-weight: 600;
+      text-decoration: underline;
+    }
+    .btn-save-draft {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.62rem 1.3rem; background: var(--gold); color: #fff;
+      border: none; border-radius: 9px; font-family: 'Jost', sans-serif;
+      font-size: 0.86rem; font-weight: 700; cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-save-draft:hover  { background: #a08144; }
+    .btn-save-draft:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* ══ TOAST ══ */
+    #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
+    .toast-msg { min-width: 260px; max-width: 360px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
+    .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
+    .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ══════════════════════════════════════════════════════════════════
+       PRINT — only the invoice document is rendered, everything else
+       hidden so window.print() produces a clean PDF.
+    ══════════════════════════════════════════════════════════════════ */
+    @media print {
+      body { background: white !important; }
+      .sidebar, .topnav, .page-header, .rates-strip,
+      .builder-section, .action-bar, #toast-container,
+      #savedQuotesSection, .editing-banner, .builder-locked-banner { display: none !important; }
+      .main-content { margin-left: 0 !important; padding-top: 0 !important; }
+      .content-inner { padding: 0 !important; }
+      .invoice-doc {
+        box-shadow: none !important; border-radius: 0 !important;
+        padding: 1.5cm 1.8cm !important; margin: 0 !important;
+        max-width: 100% !important;
+      }
+      table.inv-items thead { display: table-header-group; }
+      tr { page-break-inside: avoid; }
+      @page { size: A4; margin: 0; }
+    }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+</head>
+<body>
+
+  <!-- ════ SIDEBAR ════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <p class="sidebar-brand-name">Minerva108</p>
+      <p class="sidebar-brand-sub">Kozmetik &nbsp;·&nbsp; ERP</p>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      <a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>
+      <a href="/suppliers" class="nav-link-item"><i class="bi bi-truck nav-icon"></i>Tedarikçiler</a>
+      <a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>
+      <a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
+      <a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
+      <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
+      <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
+      <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+      <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
+      {% if role in ['SuperAdmin', 'Manager'] %}
+      <a href="/quotations" class="nav-link-item active"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
+      {% endif %}
+      {% if role == 'SuperAdmin' %}
+      <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>
+      <a href="/admin" class="nav-link-item"><i class="bi bi-shield-lock nav-icon"></i>Yönetim Paneli</a>
+      {% endif %}
+    </nav>
+    <div class="sidebar-footer"><p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p></div>
+  </aside>
+
+  <!-- ════ TOPNAV ════ -->
+  <header class="topnav">
+    <span class="topnav-title">B2B Teklifler &amp; Proforma Faturalar</span>
+    <div class="topnav-right">
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+      <button class="btn-logout" id="logoutBtn"><i class="bi bi-box-arrow-right"></i>Çıkış Yap</button>
+    </div>
+  </header>
+
+  <!-- ════ MAIN ════ -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <!-- Page Header -->
+      <div class="page-header">
+        <h1 class="page-title">Proforma Fatura Düzenleyici</h1>
+        <p class="page-subtitle">Uluslararası distribütörler için profesyonel teklif formu — TCMB canlı kuru, çoklu para birimi, anında PDF.</p>
+      </div>
+
+      <!-- Live Rates Strip -->
+      <div class="rates-strip">
+        <span class="rates-strip-label"><i class="bi bi-currency-exchange"></i> Canlı Kur</span>
+        <span class="rate-pill"><span class="ccy">USD</span> 1 USD = <strong id="rateUSD">—</strong> ₺</span>
+        <span class="rate-pill"><span class="ccy">EUR</span> 1 EUR = <strong id="rateEUR">—</strong> ₺</span>
+        <span class="rates-strip-meta" id="ratesMeta">Yükleniyor…</span>
+        <button class="btn-secondary" style="padding:4px 12px;font-size:0.78rem;" onclick="loadRates(true)">
+          <i class="bi bi-arrow-clockwise"></i> Yenile
+        </button>
+      </div>
+
+      <!-- ════════════════ SAVED QUOTES PANEL (hidden in print) ════════════════ -->
+      <div id="savedQuotesSection" class="panel-card">
+        <div class="panel-header">
+          <span class="panel-title-icon icon-green"><i class="bi bi-archive-fill"></i></span>
+          <h2 class="panel-title">Kayıtlı Teklifler</h2>
+          <span style="font-size:0.74rem;color:#9ca3af;font-weight:600;" id="savedQuotesMeta">—</span>
+          <button class="btn-secondary" style="padding:4px 12px;font-size:0.78rem;margin-left:0.5rem;" onclick="loadSavedQuotes()">
+            <i class="bi bi-arrow-clockwise"></i> Yenile
+          </button>
+        </div>
+        <div class="panel-body" style="padding:0;">
+          <div id="savedQuotesHost">
+            <div class="empty-quotes-state">
+              <i class="bi bi-hourglass-split"></i>
+              Yükleniyor…
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Editing banner — appears when a saved quote is loaded into the builder -->
+      <div id="editingBanner" class="editing-banner" style="display:none;">
+        <i class="bi bi-info-circle-fill"></i>
+        <span id="editingBannerText">—</span>
+        <button onclick="clearEditingState()">Yeni teklif başlat</button>
+      </div>
+
+      <!-- Locked banner — when viewing a CONFIRMED quote -->
+      <div id="lockedBanner" class="builder-locked-banner" style="display:none;">
+        <i class="bi bi-lock-fill"></i>
+        <span id="lockedBannerText">—</span>
+      </div>
+
+      <!-- ════════════════ BUILDER SECTION (hidden in print) ════════════════ -->
+      <div class="builder-section">
+
+        <!-- Settings + Customer -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title-icon icon-navy"><i class="bi bi-sliders"></i></span>
+            <h2 class="panel-title">Teklif Ayarları &amp; Müşteri Bilgisi</h2>
+          </div>
+          <div class="panel-body">
+            <div class="row g-3">
+
+              <div class="col-12 col-md-4">
+                <label class="form-label-sm">Para Birimi</label>
+                <div class="ccy-segments" role="tablist">
+                  <button class="ccy-seg" data-ccy="USD">$ USD</button>
+                  <button class="ccy-seg" data-ccy="EUR">€ EUR</button>
+                  <button class="ccy-seg active" data-ccy="TRY">₺ TRY</button>
+                </div>
+              </div>
+
+              <div class="col-12 col-md-4">
+                <label class="form-label-sm">Teklif No</label>
+                <input type="text" class="form-control" id="quoteNumber" />
+              </div>
+
+              <div class="col-6 col-md-2">
+                <label class="form-label-sm">Tarih</label>
+                <input type="date" class="form-control" id="quoteDate" />
+              </div>
+
+              <div class="col-6 col-md-2">
+                <label class="form-label-sm">Geçerlilik (gün)</label>
+                <input type="number" class="form-control" id="quoteValidDays" value="30" min="1" max="180" />
+              </div>
+
+              <!-- Customer fields -->
+              <div class="col-12 col-md-6">
+                <label class="form-label-sm">Müşteri / Şirket Adı *</label>
+                <input type="text" class="form-control" id="custCompany" placeholder="Örn: ABC Distribution Ltd." />
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label-sm">İlgili Kişi</label>
+                <input type="text" class="form-control" id="custContact" placeholder="Örn: John Smith" />
+              </div>
+              <div class="col-12 col-md-8">
+                <label class="form-label-sm">Adres</label>
+                <input type="text" class="form-control" id="custAddress" placeholder="Sokak, No, Mahalle, Şehir" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label-sm">Ülke</label>
+                <input type="text" class="form-control" id="custCountry" placeholder="UK" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label-sm">Vergi / VAT No</label>
+                <input type="text" class="form-control" id="custVat" placeholder="—" />
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label-sm">E-posta</label>
+                <input type="email" class="form-control" id="custEmail" placeholder="contact@company.com" />
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label-sm">Telefon</label>
+                <input type="text" class="form-control" id="custPhone" placeholder="+44 ..." />
+              </div>
+
+              <!-- Tax / shipping -->
+              <div class="col-6 col-md-3">
+                <label class="form-label-sm">KDV / VAT (%)</label>
+                <input type="number" class="form-control" id="quoteTaxPct" value="0" min="0" max="100" step="0.5" />
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label-sm">Kargo / Nakliye</label>
+                <input type="number" class="form-control" id="quoteShipping" value="0" min="0" step="0.01" placeholder="0.00" />
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label-sm">Notlar / Şartlar</label>
+                <input type="text" class="form-control" id="quoteNotes"
+                       value="Ödeme: %50 sipariş — %50 yükleme öncesi · Teslimat: Sipariş onayından sonra 21 gün · Incoterms: FOB Istanbul" />
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- Line Items Builder -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title-icon icon-gold"><i class="bi bi-list-check"></i></span>
+            <h2 class="panel-title">Kalemler</h2>
+            <button class="btn-add-row" id="addLineBtn">
+              <i class="bi bi-plus-circle"></i> Kalem Ekle
+            </button>
+          </div>
+          <div class="panel-body">
+            <div id="lineItemsHost">
+              <div class="empty-line-row" id="emptyLines">
+                Henüz kalem yok. Yukarıdaki <strong>Kalem Ekle</strong> butonu ile başlayın.
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <!-- /builder-section -->
+
+      <!-- ════════════════ INVOICE PREVIEW (printable) ════════════════ -->
+      <div class="invoice-doc" id="invoiceDoc">
+
+        <div class="inv-header">
+          <div class="inv-brand">
+            <div class="inv-logo">M</div>
+            <p class="inv-brand-name">Minerva108 Kozmetik</p>
+            <p class="inv-brand-tagline">Premium · Cosmetics · Manufacturing</p>
+            <div class="inv-brand-info">
+              Adres satırı 1 · Adres satırı 2 · İstanbul · Türkiye<br>
+              Tel: +90 (212) 000 00 00 &nbsp;·&nbsp; export@minerva108.com.tr<br>
+              Vergi No: 0000000000 · Mersis: 0-0000-0000-0000000
+            </div>
+          </div>
+          <div class="inv-doc-meta">
+            <h2 class="inv-doc-title">PROFORMA</h2>
+            <div class="inv-doc-subtitle">Invoice / Teklif Formu</div>
+            <div class="inv-doc-meta-grid">
+              <div><strong>Teklif No:</strong> <span id="invQuoteNumber">—</span></div>
+              <div><strong>Tarih:</strong> <span id="invDate">—</span></div>
+              <div><strong>Geçerlilik:</strong> <span id="invValidUntil">—</span></div>
+              <div style="margin-top:0.4rem;"><strong>Para Birimi:</strong> <span id="invCcy">—</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="inv-parties">
+          <div class="inv-party-block">
+            <div class="inv-party-label">Bill To / Müşteri</div>
+            <div class="inv-party-name" id="invCustName">—</div>
+            <div class="inv-party-info" id="invCustInfo">—</div>
+          </div>
+          <div class="inv-party-block" style="border-left-color:var(--navy);">
+            <div class="inv-party-label" style="color:var(--navy);">Reference</div>
+            <div class="inv-party-info">
+              <strong>Currency Rate (TCMB)</strong><br>
+              <span id="invRateNote">—</span>
+            </div>
+          </div>
+        </div>
+
+        <table class="inv-items">
+          <thead>
+            <tr>
+              <th style="width:42px;">#</th>
+              <th>Description / Açıklama</th>
+              <th style="width:80px;">Qty</th>
+              <th style="width:110px;">Unit Price</th>
+              <th style="width:120px;">Line Total</th>
+            </tr>
+          </thead>
+          <tbody id="invItemsBody">
+            <tr class="empty-row"><td colspan="5">Kalem eklenince burada görünecek.</td></tr>
+          </tbody>
+        </table>
+
+        <div class="inv-totals">
+          <table class="inv-totals-table">
+            <tr><td>Subtotal / Ara Toplam</td><td id="invSubtotal">—</td></tr>
+            <tr><td>Shipping / Nakliye</td><td id="invShipping">—</td></tr>
+            <tr id="invTaxRow"><td>VAT / KDV (<span id="invTaxPctLbl">0</span>%)</td><td id="invTax">—</td></tr>
+            <tr class="grand-total"><td>Total / Genel Toplam</td><td id="invTotal">—</td></tr>
+          </table>
+        </div>
+
+        <div class="inv-footer">
+          <div class="inv-footer-section">
+            <div class="inv-footer-label">Banking Details / Ödeme Bilgileri</div>
+            Banka: Türkiye İş Bankası A.Ş. · Şube: İstanbul Merkez<br>
+            IBAN (USD): TR00 0000 0000 0000 0000 0000 00 · Swift: ISBKTRIS<br>
+            Hesap Adı: Minerva108 Kozmetik San. ve Tic. A.Ş.
+          </div>
+          <div class="inv-footer-section">
+            <div class="inv-footer-label">Terms / Şartlar</div>
+            <span id="invTerms">—</span>
+          </div>
+          <div class="inv-stamp">
+            <i class="bi bi-shield-check"></i>
+            Bu doküman elektronik ortamda hazırlanmıştır — Minerva108 ERP · {{ full_name }}
+          </div>
+        </div>
+
+      </div>
+      <!-- /invoice-doc -->
+
+      <!-- Action Bar -->
+      <div class="action-bar">
+        <button class="btn-save-draft" id="saveDraftBtn">
+          <i class="bi bi-floppy-fill"></i> Taslak Olarak Kaydet
+        </button>
+        <button class="btn-primary-navy" id="pdfBtn">
+          <i class="bi bi-download"></i> PDF İndir / Yazdır
+        </button>
+        <button class="btn-secondary" id="resetBtn">
+          <i class="bi bi-arrow-counterclockwise"></i> Formu Sıfırla
+        </button>
+        <span style="font-size:0.78rem;color:#9ca3af;margin-left:auto;">
+          <i class="bi bi-info-circle"></i>
+          Kaydedilen taslaklar yukarıdaki tablodan onaylanabilir.
+        </span>
+      </div>
+
+    </div>
+  </main>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    /* ════════════════════════════════════════════════════════════════════
+       MINERVA108 — B2B Quotation Builder
+       Currency: USD, EUR, TRY · Source: TCMB live (cached 1h)
+    ════════════════════════════════════════════════════════════════════ */
+
+    /* ── State ── */
+    let LIVE_RATES   = { USD: null, EUR: null };  // TRY per 1 unit foreign
+    let RATES_META   = { source: '—', fetched_at: null, stale: false };
+    let CURRENCY     = 'TRY';
+    let allItems     = [];
+    let lineRowCount = 0;
+
+    /* ── Saved quotation state ─────────────────────────────────────────── */
+    let savedQuotes        = [];     // populated by loadSavedQuotes()
+    let viewedQuoteId      = null;   // when a quote is loaded into the builder
+    let viewedQuoteLocked  = false;  // true for CONFIRMED quotes (read-only)
+
+    /* ── Utilities ── */
+    function escHtml(str) {
+      return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function showToast(msg, type = 'error') {
+      const c = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      el.className = `toast-msg toast-${type}`;
+      el.innerHTML = `<span>${type === 'error' ? '✕' : '✓'}</span><span>${escHtml(msg)}</span>`;
+      c.appendChild(el);
+      setTimeout(() => { el.style.transition='opacity .4s'; el.style.opacity='0'; setTimeout(()=>el.remove(),400); }, 3500);
+    }
+
+    /* ── Currency formatting ── */
+    function ccySymbol(c) { return c === 'USD' ? '$' : c === 'EUR' ? '€' : '₺'; }
+    function fmtMoney(amt, ccy) {
+      if (amt == null || isNaN(amt)) return '—';
+      const sym = ccySymbol(ccy);
+      const num = Math.abs(amt).toLocaleString('tr-TR',
+        { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const sign = amt < 0 ? '-' : '';
+      // USD/EUR: symbol prefix · TRY: symbol suffix (Turkish convention)
+      return ccy === 'TRY' ? `${sign}${num} ${sym}` : `${sign}${sym}${num}`;
+    }
+
+    /* ── Convert TRY price to selected currency ── */
+    function convertFromTRY(tryAmount, targetCcy) {
+      if (tryAmount == null) return null;
+      if (targetCcy === 'TRY') return tryAmount;
+      const rate = LIVE_RATES[targetCcy];
+      if (!rate || rate <= 0) return null;
+      return tryAmount / rate;
+    }
+
+    /* ── Load live rates ── */
+    async function loadRates(forceRefresh = false) {
+      const meta = document.getElementById('ratesMeta');
+      meta.innerHTML = '<i class="bi bi-hourglass-split"></i> Yükleniyor…';
+      try {
+        const res = await fetch('/api/currency-rates' + (forceRefresh ? '?_=' + Date.now() : ''));
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        LIVE_RATES.USD = data.USD;
+        LIVE_RATES.EUR = data.EUR;
+        RATES_META = {
+          source:     data.source,
+          fetched_at: data.fetched_at,
+          stale:      !!data.stale,
+          warning:    data.warning,
+          cached:     !!data.cached,
+        };
+
+        document.getElementById('rateUSD').textContent =
+          data.USD ? data.USD.toLocaleString('tr-TR',{minimumFractionDigits:4,maximumFractionDigits:4}) : '—';
+        document.getElementById('rateEUR').textContent =
+          data.EUR ? data.EUR.toLocaleString('tr-TR',{minimumFractionDigits:4,maximumFractionDigits:4}) : '—';
+
+        const dt = data.fetched_at ? new Date(data.fetched_at).toLocaleString('tr-TR') : '—';
+        const stale = data.stale
+          ? `<span class="rate-stale-warn"><i class="bi bi-exclamation-triangle-fill"></i> ${escHtml(data.warning || 'Bayat veri')}</span>`
+          : '';
+        meta.innerHTML = `<i class="bi bi-clock"></i> ${escHtml(data.source)} · ${dt} ${data.cached ? '(önbellek)' : ''} ${stale}`;
+
+        renderInvoice();
+        // Re-render every line row so cost-hints update under the new rate
+        document.querySelectorAll('.line-row').forEach(row => updateLineRow(row));
+      } catch {
+        meta.innerHTML = `<span class="rate-stale-warn"><i class="bi bi-exclamation-triangle-fill"></i> Kur yüklenemedi</span>`;
+        showToast('Kur servisi yüklenemedi.');
+      }
+    }
+
+    /* ── Load Bitmiş Ürün items (variations + standalones, NOT abstract parents) ── */
+    async function loadProducts() {
+      try {
+        const res = await fetch('/api/items');
+        if (!res.ok) throw new Error();
+        allItems = await res.json();
+      } catch {
+        showToast('Ürün listesi yüklenemedi.');
+      }
+    }
+
+    /* ── Build product <select> with optgroups ── */
+    function buildProductOptions() {
+      // Eligible: Bitmiş Ürün AND not an abstract parent (is_parent=false)
+      const eligible = allItems.filter(i => i.category === 'Bitmiş Ürün' && !i.is_parent);
+      // Group by parent_name (variations) vs standalones
+      const byParent = {};
+      const standalones = [];
+      eligible.forEach(i => {
+        if (i.parent_id && i.parent_name) {
+          if (!byParent[i.parent_name]) byParent[i.parent_name] = [];
+          byParent[i.parent_name].push(i);
+        } else {
+          standalones.push(i);
+        }
+      });
+
+      let html = '<option value="">— Ürün seçiniz —</option>';
+
+      // Variations grouped by parent — prioritised at top
+      Object.keys(byParent).sort().forEach(parentName => {
+        html += `<optgroup label="${escHtml(parentName)} — Varyasyonlar">`;
+        byParent[parentName].forEach(i => {
+          html += `<option value="${i.id}">${escHtml(i.variation_name || i.name)} — ${escHtml(i.name)}</option>`;
+        });
+        html += '</optgroup>';
+      });
+
+      if (standalones.length) {
+        html += '<optgroup label="Bağımsız Bitmiş Ürünler">';
+        standalones.forEach(i => {
+          html += `<option value="${i.id}">${escHtml(i.name)}</option>`;
+        });
+        html += '</optgroup>';
+      }
+      return html;
+    }
+
+    /* ── Add a new line row ── */
+    function addLineRow(preset = null) {
+      const host = document.getElementById('lineItemsHost');
+      const empty = document.getElementById('emptyLines');
+      if (empty) empty.remove();
+
+      // Ensure host has the table skeleton
+      let tbody = document.getElementById('lineItemsBody');
+      if (!tbody) {
+        host.innerHTML = `
+          <div style="overflow-x:auto;">
+            <table class="line-items-table">
+              <thead>
+                <tr>
+                  <th style="width:30%;">Ürün / Varyasyon</th>
+                  <th style="width:90px;">Adet</th>
+                  <th style="width:130px;">Birim Maliyet</th>
+                  <th style="width:140px;">Satış Fiyatı</th>
+                  <th style="width:120px;text-align:right;">Toplam</th>
+                  <th style="width:36px;"></th>
+                </tr>
+              </thead>
+              <tbody id="lineItemsBody"></tbody>
+            </table>
+          </div>`;
+        tbody = document.getElementById('lineItemsBody');
+      }
+
+      lineRowCount++;
+      const rowId = `lr-${lineRowCount}`;
+      const tr = document.createElement('tr');
+      tr.className = 'line-row';
+      tr.dataset.rowId = rowId;
+      tr.innerHTML = `
+        <td>
+          <select class="line-product">${buildProductOptions()}</select>
+        </td>
+        <td><input type="number" class="line-qty" min="1" step="1" value="1" /></td>
+        <td>
+          <div style="font-weight:700;color:#1f2937;" class="line-cost-display">—</div>
+          <div class="line-cost-hint" style="display:none;"></div>
+        </td>
+        <td><input type="number" class="line-price" min="0" step="0.01" value="0.00" /></td>
+        <td class="line-total-cell" style="text-align:right;">—</td>
+        <td>
+          <button class="btn-row-remove" onclick="removeLineRow('${rowId}')" title="Kalemi sil">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </td>`;
+      tbody.appendChild(tr);
+
+      // Wire change listeners on this row
+      tr.querySelector('.line-product').addEventListener('change', () => {
+        autofillSuggestedPrice(tr);
+        updateLineRow(tr);
+      });
+      tr.querySelector('.line-qty').addEventListener('input',   () => updateLineRow(tr));
+      tr.querySelector('.line-price').addEventListener('input', () => updateLineRow(tr));
+
+      // ── Pre-fill from preset (used when loading a saved quotation) ──
+      if (preset) {
+        tr.querySelector('.line-product').value = String(preset.item_id);
+        tr.querySelector('.line-qty').value     = preset.quantity;
+        tr.querySelector('.line-price').value   = (preset.unit_price_foreign ?? 0).toFixed(2);
+      }
+
+      updateLineRow(tr);
+      return tr;
+    }
+
+    function removeLineRow(rowId) {
+      const tr = document.querySelector(`.line-row[data-row-id="${rowId}"]`);
+      if (tr) tr.remove();
+      // Restore empty state if no rows left
+      if (!document.querySelector('.line-row')) {
+        document.getElementById('lineItemsHost').innerHTML =
+          `<div class="empty-line-row" id="emptyLines">
+             Henüz kalem yok. Yukarıdaki <strong>Kalem Ekle</strong> butonu ile başlayın.
+           </div>`;
+      }
+      renderInvoice();
+    }
+
+    /* ── Auto-fill a sensible default selling price (cost × 2) on product change ── */
+    function autofillSuggestedPrice(tr) {
+      const sel = tr.querySelector('.line-product');
+      const itemId = parseInt(sel.value);
+      if (!itemId) return;
+      const item = allItems.find(i => i.id === itemId);
+      if (!item) return;
+      const costInCcy = convertFromTRY(item.cost_price || 0, CURRENCY);
+      if (costInCcy != null && costInCcy > 0) {
+        // Suggest 2× cost as starting selling price
+        tr.querySelector('.line-price').value = (costInCcy * 2).toFixed(2);
+      }
+    }
+
+    /* ── Recompute a single line ── */
+    function updateLineRow(tr) {
+      const sel    = tr.querySelector('.line-product');
+      const itemId = parseInt(sel.value);
+      const qty    = parseFloat(tr.querySelector('.line-qty').value) || 0;
+      const price  = parseFloat(tr.querySelector('.line-price').value) || 0;
+
+      const costDisplay = tr.querySelector('.line-cost-display');
+      const costHint    = tr.querySelector('.line-cost-hint');
+      const totalCell   = tr.querySelector('.line-total-cell');
+
+      if (itemId) {
+        const item = allItems.find(i => i.id === itemId);
+        const costInCcy = item ? convertFromTRY(item.cost_price || 0, CURRENCY) : null;
+        costDisplay.textContent = costInCcy != null ? fmtMoney(costInCcy, CURRENCY) : '—';
+        if (item && item.cost_price > 0 && CURRENCY !== 'TRY') {
+          costHint.style.display = 'block';
+          costHint.textContent = `≈ ${fmtMoney(item.cost_price, 'TRY')} (TRY)`;
+        } else {
+          costHint.style.display = 'none';
+        }
+      } else {
+        costDisplay.textContent = '—';
+        costHint.style.display = 'none';
+      }
+
+      const total = qty * price;
+      totalCell.textContent = total > 0 ? fmtMoney(total, CURRENCY) : '—';
+
+      renderInvoice();
+    }
+
+    /* ── Gather all line items into an array ── */
+    function gatherLines() {
+      const lines = [];
+      document.querySelectorAll('.line-row').forEach(tr => {
+        const itemId = parseInt(tr.querySelector('.line-product').value);
+        const qty    = parseFloat(tr.querySelector('.line-qty').value) || 0;
+        const price  = parseFloat(tr.querySelector('.line-price').value) || 0;
+        if (!itemId || qty <= 0) return;
+        const item = allItems.find(i => i.id === itemId);
+        if (!item) return;
+        const displayName = item.parent_name
+          ? `${item.parent_name} — ${item.variation_name || ''}`.trim()
+          : item.name;
+        lines.push({
+          item_id:      itemId,
+          name:         displayName,
+          full_name:    item.name,
+          unit:         item.unit,
+          qty,
+          price,
+          total:        qty * price,
+        });
+      });
+      return lines;
+    }
+
+    /* ── Render invoice preview ── */
+    function renderInvoice() {
+      // Header meta
+      document.getElementById('invQuoteNumber').textContent = document.getElementById('quoteNumber').value || '—';
+      const date = document.getElementById('quoteDate').value;
+      const validDays = parseInt(document.getElementById('quoteValidDays').value) || 30;
+      const dateObj = date ? new Date(date) : new Date();
+      const validUntil = new Date(dateObj);
+      validUntil.setDate(validUntil.getDate() + validDays);
+      const fmtD = d => d.toLocaleDateString('tr-TR');
+      document.getElementById('invDate').textContent       = date ? fmtD(dateObj) : fmtD(new Date());
+      document.getElementById('invValidUntil').textContent = fmtD(validUntil);
+      document.getElementById('invCcy').textContent        = CURRENCY;
+
+      // Customer block
+      const company = document.getElementById('custCompany').value.trim();
+      document.getElementById('invCustName').textContent = company || '—';
+      const infoLines = [
+        document.getElementById('custContact').value.trim(),
+        document.getElementById('custAddress').value.trim(),
+        document.getElementById('custCountry').value.trim(),
+        document.getElementById('custVat').value.trim() ? 'VAT: ' + document.getElementById('custVat').value.trim() : '',
+        document.getElementById('custEmail').value.trim(),
+        document.getElementById('custPhone').value.trim(),
+      ].filter(Boolean);
+      document.getElementById('invCustInfo').textContent = infoLines.length ? infoLines.join('\n') : '—';
+
+      // Rate note
+      let rateNote = '';
+      if (CURRENCY === 'TRY') {
+        rateNote = 'Fatura TRY (₺) cinsindendir. Kur dönüşümü uygulanmaz.';
+      } else {
+        const r = LIVE_RATES[CURRENCY];
+        rateNote = r
+          ? `1 ${CURRENCY} = ${r.toLocaleString('tr-TR',{minimumFractionDigits:4,maximumFractionDigits:4})} ₺ · Kaynak: ${RATES_META.source}`
+          : `${CURRENCY} kuru henüz yüklenmedi.`;
+      }
+      document.getElementById('invRateNote').textContent = rateNote;
+
+      // Items
+      const lines = gatherLines();
+      const tbody = document.getElementById('invItemsBody');
+      if (!lines.length) {
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="5">Kalem eklenince burada görünecek.</td></tr>`;
+      } else {
+        tbody.innerHTML = lines.map((l, i) => `
+          <tr>
+            <td class="col-no">${i + 1}</td>
+            <td class="col-name">
+              ${escHtml(l.name)}
+              ${l.full_name && l.full_name !== l.name ? `<div class="item-sub">${escHtml(l.full_name)}</div>` : ''}
+            </td>
+            <td>${l.qty} ${escHtml(l.unit || '')}</td>
+            <td>${fmtMoney(l.price, CURRENCY)}</td>
+            <td>${fmtMoney(l.total, CURRENCY)}</td>
+          </tr>`).join('');
+      }
+
+      // Totals
+      const subtotal = lines.reduce((s, l) => s + l.total, 0);
+      const shipping = parseFloat(document.getElementById('quoteShipping').value) || 0;
+      const taxPct   = parseFloat(document.getElementById('quoteTaxPct').value)   || 0;
+      const taxAmt   = (subtotal + shipping) * (taxPct / 100);
+      const grand    = subtotal + shipping + taxAmt;
+
+      document.getElementById('invSubtotal').textContent  = fmtMoney(subtotal, CURRENCY);
+      document.getElementById('invShipping').textContent  = shipping > 0 ? fmtMoney(shipping, CURRENCY) : '—';
+      document.getElementById('invTaxPctLbl').textContent = taxPct;
+      document.getElementById('invTax').textContent       = taxAmt > 0 ? fmtMoney(taxAmt, CURRENCY) : '—';
+      document.getElementById('invTotal').textContent     = fmtMoney(grand, CURRENCY);
+      document.getElementById('invTaxRow').style.display  = taxPct > 0 ? '' : 'none';
+
+      // Terms
+      document.getElementById('invTerms').textContent = document.getElementById('quoteNotes').value.trim() || '—';
+    }
+
+    /* ── Currency segmented control ── */
+    document.querySelectorAll('.ccy-seg').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.ccy-seg').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        CURRENCY = btn.dataset.ccy;
+        // Update all line cost displays + invoice
+        document.querySelectorAll('.line-row').forEach(tr => {
+          // Re-suggest price on currency change too
+          autofillSuggestedPrice(tr);
+          updateLineRow(tr);
+        });
+        renderInvoice();
+      });
+    });
+
+    /* ── Wire all settings inputs to re-render preview live ── */
+    [
+      'quoteNumber', 'quoteDate', 'quoteValidDays',
+      'custCompany', 'custContact', 'custAddress', 'custCountry',
+      'custVat', 'custEmail', 'custPhone',
+      'quoteTaxPct', 'quoteShipping', 'quoteNotes',
+    ].forEach(id => {
+      document.getElementById(id).addEventListener('input', renderInvoice);
+    });
+
+    /* ── Add Row button ── */
+    document.getElementById('addLineBtn').addEventListener('click', addLineRow);
+
+    /* ── PDF / Print ── */
+    document.getElementById('pdfBtn').addEventListener('click', () => {
+      // Validate at least one line + company name before printing
+      if (!gatherLines().length) {
+        showToast('Önce en az bir kalem ekleyin.');
+        return;
+      }
+      if (!document.getElementById('custCompany').value.trim()) {
+        showToast('Müşteri / Şirket adı girilmelidir.');
+        return;
+      }
+      window.print();
+    });
+
+    /* ── Reset ── */
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      if (!confirm('Form ve tüm kalemler sıfırlanacak. Devam edilsin mi?')) return;
+      ['custCompany','custContact','custAddress','custCountry','custVat',
+       'custEmail','custPhone'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('lineItemsHost').innerHTML =
+        `<div class="empty-line-row" id="emptyLines">Henüz kalem yok. Yukarıdaki <strong>Kalem Ekle</strong> butonu ile başlayın.</div>`;
+      lineRowCount = 0;
+      initDefaults();
+      renderInvoice();
+    });
+
+    /* ── Logout ── */
+    document.getElementById('logoutBtn').addEventListener('click', async function () {
+      this.disabled = true;
+      try {
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.href = '/login';
+      } catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
+    });
+
+    /* ════════════════════════════════════════════════════════════════════
+       SAVED QUOTATIONS — list, save, view, confirm, delete
+    ════════════════════════════════════════════════════════════════════ */
+
+    /* Programmatic currency switch (also updates the segmented control) */
+    function setCurrency(ccy) {
+      if (!['USD','EUR','TRY'].includes(ccy)) return;
+      CURRENCY = ccy;
+      document.querySelectorAll('.ccy-seg').forEach(b => {
+        b.classList.toggle('active', b.dataset.ccy === ccy);
+      });
+    }
+
+    function showEditingBanner(text, locked = false) {
+      const eb = document.getElementById('editingBanner');
+      const lb = document.getElementById('lockedBanner');
+      if (locked) {
+        document.getElementById('lockedBannerText').textContent = text;
+        lb.style.display = 'flex';
+        eb.style.display = 'none';
+      } else {
+        document.getElementById('editingBannerText').textContent = text;
+        eb.style.display = 'flex';
+        lb.style.display = 'none';
+      }
+    }
+
+    function hideEditingBanners() {
+      document.getElementById('editingBanner').style.display = 'none';
+      document.getElementById('lockedBanner').style.display  = 'none';
+    }
+
+    function clearEditingState() {
+      viewedQuoteId     = null;
+      viewedQuoteLocked = false;
+      hideEditingBanners();
+      document.getElementById('saveDraftBtn').disabled = false;
+      // Reset the form to fresh state
+      ['custCompany','custContact','custAddress','custCountry','custVat',
+       'custEmail','custPhone'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('lineItemsHost').innerHTML =
+        `<div class="empty-line-row" id="emptyLines">Henüz kalem yok. Yukarıdaki <strong>Kalem Ekle</strong> butonu ile başlayın.</div>`;
+      lineRowCount = 0;
+      initDefaults();
+      renderInvoice();
+    }
+
+    /* ── Load saved quotes from API ── */
+    async function loadSavedQuotes() {
+      const host = document.getElementById('savedQuotesHost');
+      try {
+        const res = await fetch('/api/quotations?limit=50');
+        if (!res.ok) throw new Error();
+        savedQuotes = await res.json();
+        renderSavedQuotesTable();
+      } catch {
+        host.innerHTML = `<div class="empty-quotes-state">
+          <i class="bi bi-exclamation-circle" style="color:#dc2626;"></i>
+          Kayıtlı teklifler yüklenemedi.</div>`;
+      }
+    }
+
+    function renderSavedQuotesTable() {
+      const host = document.getElementById('savedQuotesHost');
+      const meta = document.getElementById('savedQuotesMeta');
+      if (!savedQuotes.length) {
+        host.innerHTML = `<div class="empty-quotes-state">
+          <i class="bi bi-inbox"></i>
+          Henüz kaydedilmiş teklif yok. Aşağıdaki yapılandırıcıdan oluşturup
+          <strong>Taslak Olarak Kaydet</strong> deyiniz.</div>`;
+        meta.textContent = '0 kayıt';
+        return;
+      }
+
+      const drafts    = savedQuotes.filter(q => q.status === 'DRAFT').length;
+      const confirmed = savedQuotes.filter(q => q.status === 'CONFIRMED').length;
+      meta.textContent = `${savedQuotes.length} kayıt — ${drafts} taslak, ${confirmed} onaylı`;
+
+      host.innerHTML = `
+        <div style="overflow-x:auto;">
+          <table class="saved-quotes-table">
+            <thead>
+              <tr>
+                <th>Teklif No</th>
+                <th>Müşteri</th>
+                <th style="text-align:center;">Kalem</th>
+                <th>Para Birimi</th>
+                <th style="text-align:right;">Toplam</th>
+                <th>Durum</th>
+                <th>Tarih · Yapan</th>
+                <th style="text-align:right;">İşlemler</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${savedQuotes.map(q => renderSavedQuoteRow(q)).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    function renderSavedQuoteRow(q) {
+      const isConfirmed = q.status === 'CONFIRMED';
+      const statusPill = isConfirmed
+        ? `<span class="quote-status-pill quote-status-confirmed"><i class="bi bi-lock-fill"></i> Onaylandı</span>`
+        : `<span class="quote-status-pill quote-status-draft"><i class="bi bi-pencil-square"></i> Taslak</span>`;
+
+      const total = fmtMoney(q.total_amount, q.currency);
+
+      const customerLine = q.customer_country
+        ? `<div style="font-weight:600;">${escHtml(q.customer_name)}</div><div style="font-size:0.74rem;color:#9ca3af;">${escHtml(q.customer_country)}</div>`
+        : `<div style="font-weight:600;">${escHtml(q.customer_name)}</div>`;
+
+      // Action buttons
+      const viewBtn = `<button class="btn-row-action btn-row-view" onclick="viewQuote(${q.id})" title="Yapılandırıcıya yükle">
+                         <i class="bi bi-eye"></i> Görüntüle
+                       </button>`;
+      const confirmBtn = !isConfirmed
+        ? `<button class="btn-row-action btn-row-confirm" onclick="confirmQuote(${q.id}, '${escHtml(q.quote_number)}')" title="Stoktan düş ve onayla">
+             <i class="bi bi-check-circle-fill"></i> Onayla &amp; Düş
+           </button>`
+        : '';
+      const deleteBtn = !isConfirmed
+        ? `<button class="btn-row-action btn-row-delete" onclick="deleteQuote(${q.id}, '${escHtml(q.quote_number)}')" title="Taslağı sil">
+             <i class="bi bi-trash3"></i>
+           </button>`
+        : '';
+
+      return `
+        <tr class="${isConfirmed ? 'confirmed-row' : ''}">
+          <td><span class="quote-num-cell">${escHtml(q.quote_number)}</span></td>
+          <td>${customerLine}</td>
+          <td style="text-align:center;color:#6b7280;">${q.item_count}</td>
+          <td>${escHtml(q.currency)}</td>
+          <td style="text-align:right;font-weight:700;font-variant-numeric:tabular-nums;">${total}</td>
+          <td>${statusPill}</td>
+          <td>
+            <div style="font-size:0.78rem;color:#374151;">${escHtml(q.created_at)}</div>
+            <div style="font-size:0.74rem;color:#9ca3af;">${escHtml(q.created_by)}</div>
+            ${q.confirmed_at ? `<div style="font-size:0.7rem;color:#15803d;margin-top:2px;">✓ ${escHtml(q.confirmed_at)} · ${escHtml(q.confirmed_by || '—')}</div>` : ''}
+          </td>
+          <td style="text-align:right;">
+            <div class="saved-quotes-actions" style="justify-content:flex-end;">
+              ${viewBtn}${confirmBtn}${deleteBtn}
+            </div>
+          </td>
+        </tr>`;
+    }
+
+    /* ── View / load a quote into the builder ── */
+    async function viewQuote(quoteId) {
+      try {
+        const res = await fetch(`/api/quotations/${quoteId}`);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          showToast(err.detail || 'Teklif yüklenemedi.');
+          return;
+        }
+        const q = await res.json();
+        populateBuilderFromQuote(q);
+        const isConfirmed = q.status === 'CONFIRMED';
+        viewedQuoteId     = q.id;
+        viewedQuoteLocked = isConfirmed;
+        if (isConfirmed) {
+          showEditingBanner(
+            `Onaylanmış teklif #${q.quote_number} görüntüleniyor — değişiklik yapılamaz, sadece PDF için açıldı.`,
+            true,
+          );
+          document.getElementById('saveDraftBtn').disabled = true;
+        } else {
+          showEditingBanner(
+            `Kayıtlı taslak #${q.quote_number} yüklendi. Düzenleme sonrası "Taslak Kaydet" YENİ bir kayıt oluşturur (numarayı değiştiriniz).`,
+            false,
+          );
+          document.getElementById('saveDraftBtn').disabled = false;
+        }
+        // Smooth-scroll to the builder
+        document.querySelector('.builder-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch {
+        showToast('Sunucuya bağlanılamadı.');
+      }
+    }
+
+    /* ── Repaint every builder field from a saved quote ── */
+    function populateBuilderFromQuote(q) {
+      // Currency (also re-sets segmented control)
+      setCurrency(q.currency);
+
+      // Header meta
+      document.getElementById('quoteNumber').value    = q.quote_number;
+      document.getElementById('quoteDate').value      = (() => {
+        // q.created_at is dd.mm.yyyy hh:mm → backend format. Parse defensively.
+        const parts = (q.created_at || '').split(' ')[0].split('.');
+        if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
+        const t = new Date(); return t.toISOString().slice(0,10);
+      })();
+      document.getElementById('quoteValidDays').value = q.valid_days ?? 30;
+
+      // Customer
+      document.getElementById('custCompany').value = q.customer_name || '';
+      document.getElementById('custContact').value = q.customer_contact || '';
+      document.getElementById('custAddress').value = q.customer_address || '';
+      document.getElementById('custCountry').value = q.customer_country || '';
+      document.getElementById('custVat').value     = q.customer_vat     || '';
+      document.getElementById('custEmail').value   = q.customer_email   || '';
+      document.getElementById('custPhone').value   = q.customer_phone   || '';
+
+      // Tax / shipping / notes
+      document.getElementById('quoteTaxPct').value   = q.tax_percentage  ?? 0;
+      document.getElementById('quoteShipping').value = q.shipping_amount ?? 0;
+      document.getElementById('quoteNotes').value    = q.notes           || '';
+
+      // Reset and re-add line rows
+      document.getElementById('lineItemsHost').innerHTML =
+        `<div class="empty-line-row" id="emptyLines">Henüz kalem yok.</div>`;
+      lineRowCount = 0;
+      (q.items || []).forEach(line => addLineRow(line));
+
+      renderInvoice();
+    }
+
+    /* ── Save current builder state as a DRAFT ── */
+    async function saveDraft() {
+      // Validate
+      const customer = document.getElementById('custCompany').value.trim();
+      const lines = gatherLines();
+      const quoteNumber = document.getElementById('quoteNumber').value.trim();
+
+      if (!quoteNumber)         { showToast('Teklif numarası boş bırakılamaz.'); return; }
+      if (!customer)            { showToast('Müşteri / Şirket adı zorunludur.'); return; }
+      if (!lines.length)        { showToast('En az bir kalem eklemelisiniz.'); return; }
+
+      // Compute totals (mirror of renderInvoice math)
+      const subtotal = lines.reduce((s, l) => s + l.total, 0);
+      const shipping = parseFloat(document.getElementById('quoteShipping').value) || 0;
+      const taxPct   = parseFloat(document.getElementById('quoteTaxPct').value)   || 0;
+      const taxAmt   = (subtotal + shipping) * (taxPct / 100);
+      const grand    = subtotal + shipping + taxAmt;
+
+      const payload = {
+        quote_number:     quoteNumber,
+        customer_name:    customer,
+        customer_contact: document.getElementById('custContact').value.trim() || null,
+        customer_email:   document.getElementById('custEmail').value.trim()   || null,
+        customer_phone:   document.getElementById('custPhone').value.trim()   || null,
+        customer_address: document.getElementById('custAddress').value.trim() || null,
+        customer_country: document.getElementById('custCountry').value.trim() || null,
+        customer_vat:     document.getElementById('custVat').value.trim()     || null,
+
+        currency:        CURRENCY,
+        exchange_rate:   CURRENCY === 'TRY' ? null : (LIVE_RATES[CURRENCY] || null),
+        subtotal_amount: round2(subtotal),
+        tax_percentage:  taxPct,
+        tax_amount:      round2(taxAmt),
+        shipping_amount: round2(shipping),
+        total_amount:    round2(grand),
+
+        notes:      document.getElementById('quoteNotes').value.trim() || null,
+        valid_days: parseInt(document.getElementById('quoteValidDays').value) || 30,
+
+        items: lines.map(l => {
+          // Resolve TRY cost snapshot for margin reporting
+          const item = allItems.find(i => i.id === l.item_id);
+          const costTry = item ? (item.cost_price || 0) : 0;
+          return {
+            item_id:            l.item_id,
+            quantity:           l.qty,
+            unit_price_foreign: l.price,
+            unit_cost_try:      round2(costTry),
+            item_name_snapshot: l.full_name,
+          };
+        }),
+      };
+
+      const btn = document.getElementById('saveDraftBtn');
+      btn.disabled  = true;
+      btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Kaydediliyor…';
+
+      try {
+        const res  = await fetch('/api/quotations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:   JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data.detail || 'Teklif kaydedilemedi.');
+          return;
+        }
+        showToast(data.message || 'Teklif kaydedildi.', 'success');
+        await loadSavedQuotes();
+        // After successful save, generate a fresh quote number for the next draft
+        initDefaults();
+        viewedQuoteId = null;
+        viewedQuoteLocked = false;
+        hideEditingBanners();
+      } catch {
+        showToast('Sunucuya bağlanılamadı.');
+      } finally {
+        btn.disabled  = false;
+        btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Taslak Olarak Kaydet';
+      }
+    }
+
+    /* ── Confirm a draft (deduct stock) ── */
+    async function confirmQuote(quoteId, quoteNumber) {
+      const msg = `"${quoteNumber}" numaralı teklifi ONAYLAYIP siparişi stoktan düşmek üzeresiniz.\n\n` +
+                  `• Bu işlem geri alınamaz.\n` +
+                  `• Tüm kalem miktarları stoktan düşülecek.\n` +
+                  `• Her kalem için Output transaction kaydı oluşturulacak.\n\n` +
+                  `Devam etmek istiyor musunuz?`;
+      if (!confirm(msg)) return;
+
+      try {
+        const res  = await fetch(`/api/quotations/${quoteId}/confirm`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.issues && data.issues.length) {
+            // Multi-line stock-failure toast
+            data.issues.forEach((issue, i) => setTimeout(() => showToast(issue), i * 300));
+          } else {
+            showToast(data.detail || 'Onay başarısız.');
+          }
+          return;
+        }
+        showToast(data.message, 'success');
+        loadSavedQuotes();
+        // If the confirmed quote was loaded in the builder, lock it
+        if (viewedQuoteId === quoteId) {
+          viewedQuoteLocked = true;
+          showEditingBanner(`Bu teklif onaylandı — sadece PDF için açık.`, true);
+          document.getElementById('saveDraftBtn').disabled = true;
+        }
+      } catch {
+        showToast('Sunucuya bağlanılamadı.');
+      }
+    }
+
+    /* ── Delete a draft ── */
+    async function deleteQuote(quoteId, quoteNumber) {
+      if (!confirm(`"${quoteNumber}" numaralı taslağı silmek istediğinizden emin misiniz?`)) return;
+      try {
+        const res  = await fetch(`/api/quotations/${quoteId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Silme başarısız.'); return; }
+        showToast(data.message || 'Taslak silindi.', 'success');
+        loadSavedQuotes();
+        if (viewedQuoteId === quoteId) clearEditingState();
+      } catch {
+        showToast('Sunucuya bağlanılamadı.');
+      }
+    }
+
+    /* ── Tiny rounding helper ── */
+    function round2(v) { return Math.round((v || 0) * 100) / 100; }
+
+    /* ── Wire Save Draft button ── */
+    document.getElementById('saveDraftBtn').addEventListener('click', saveDraft);
+
+    /* ── Initialise default quote number, date ── */
+    function initDefaults() {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm   = String(today.getMonth() + 1).padStart(2, '0');
+      const dd   = String(today.getDate()).padStart(2, '0');
+      document.getElementById('quoteDate').value = `${yyyy}-${mm}-${dd}`;
+      document.getElementById('quoteNumber').value = `PROF-${yyyy}${mm}${dd}-001`;
+    }
+
+    /* ── Init ── */
+    (async function init() {
+      initDefaults();
+      await Promise.all([loadRates(), loadProducts(), loadSavedQuotes()]);
+      renderInvoice();
+    })();
+  </script>
+
+</body>
+</html>

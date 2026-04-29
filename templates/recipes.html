@@ -192,6 +192,9 @@
       <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
       <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
       <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
+      {% if role in ['SuperAdmin', 'Manager'] %}
+      <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
+      {% endif %}
     </nav>
     <div class="sidebar-footer"><p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p></div>
   </aside>
@@ -241,12 +244,14 @@
                 <th class="sortable" data-col="target_item_name">Hedef Ürün <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="ingredient_count">Bileşen Sayısı <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="expected_yield">Üretim Miktarı <span class="sort-icon"></span></th>
+                {% if role in ['SuperAdmin', 'Manager'] %}
                 <th class="sortable" data-col="unit_cost">Birim Maliyet <span class="sort-icon"></span></th>
+                {% endif %}
                 <th style="width:96px; text-align:center;">İşlemler</th>
               </tr>
             </thead>
             <tbody id="recipesBody">
-              <tr><td colspan="7"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+              <tr><td colspan="{{ 7 if role in ['SuperAdmin', 'Manager'] else 6 }}"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -346,6 +351,7 @@
   <script>
     /* ── Globals ── */
     const USER_ROLE = "{{ role }}";
+    const CAN_SEE_FINANCE = ['SuperAdmin', 'Manager'].includes(USER_ROLE);   // Cost / margin visibility
     let allRecipes  = [];
     let allItems    = [];   // /api/items'tan yüklenir
     let sortCol     = null, sortDir = 'asc';
@@ -376,8 +382,9 @@
     /* ── Render table ── */
     function renderTable(data) {
       const tbody = document.getElementById('recipesBody');
+      const cspan = CAN_SEE_FINANCE ? 7 : 6;
       if (!data.length) {
-        tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">
+        tbody.innerHTML = `<tr><td colspan="${cspan}"><div class="empty-state">
           <i class="bi bi-journal-text"></i>
           <p>Henüz reçete yok. Yeni reçete ekleyerek başlayın.</p>
         </div></td></tr>`;
@@ -385,12 +392,23 @@
         return;
       }
       tbody.innerHTML = data.map(r => {
-        const hasCost    = r.unit_cost > 0;
-        const costBadge  = hasCost
+        // Finance-gated: cost cell + Maliyet Analizi button + clickable row → all hidden for lab roles
+        const hasCost   = r.unit_cost > 0;
+        const costBadge = hasCost
           ? `<span class="badge-cost">${fmtCurrency(r.unit_cost)} / ${r.target_item_unit || 'birim'}</span>`
           : `<span class="badge-cost-zero">Fiyat girilmedi</span>`;
+        const costCellTd  = CAN_SEE_FINANCE ? `<td>${costBadge}</td>` : '';
+        const detailBtn   = CAN_SEE_FINANCE
+          ? `<button class="btn-icon" onclick="openDetailModal(${r.id})" title="Maliyet Analizi"
+                     style="background:#f0fdf4;color:#15803d;margin-right:4px;">
+               <i class="bi bi-bar-chart-line"></i>
+             </button>`
+          : '';
+        const rowClick = CAN_SEE_FINANCE
+          ? `style="cursor:pointer;" onclick="openDetailModal(${r.id})"`
+          : '';
         return `
-        <tr data-id="${r.id}" style="cursor:pointer;" onclick="openDetailModal(${r.id})">
+        <tr data-id="${r.id}" ${rowClick}>
           <td class="td-id" style="padding-left:1.1rem;">#${r.id}</td>
           <td class="td-name">${escHtml(r.name)}</td>
           <td class="td-muted">${escHtml(r.target_item_name) || '—'}</td>
@@ -401,12 +419,9 @@
               ? `<span class="badge-fire">🔥 %${r.waste_percentage} fire</span>`
               : ''}
           </td>
-          <td>${costBadge}</td>
+          ${costCellTd}
           <td style="text-align:center;" onclick="event.stopPropagation()">
-            <button class="btn-icon" onclick="openDetailModal(${r.id})" title="Maliyet Analizi"
-              style="background:#f0fdf4;color:#15803d;margin-right:4px;">
-              <i class="bi bi-bar-chart-line"></i>
-            </button>
+            ${detailBtn}
             ${['SuperAdmin','LabLead'].includes(USER_ROLE) ? `
             <button class="btn-icon btn-icon-delete" onclick="deleteRecipe(${r.id}, '${escHtml(r.name)}')" title="Sil">
               <i class="bi bi-trash3"></i>

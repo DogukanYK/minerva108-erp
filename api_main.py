@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 
-from database import get_db, init_db, User, Item, Supplier, Recipe, RecipeIngredient, ProductionHistory, Inventory, Transaction
+from database import get_db, init_db, User, Item, Supplier, Recipe, RecipeIngredient, ProductionHistory, Inventory, Transaction, Quotation, QuotationItem
 from core.auth import (
     verify_password, create_access_token,
     set_auth_cookie, decode_token, get_current_user, require_role
@@ -35,8 +35,15 @@ _ROLE_LABELS = {
 _CAN_DELETE       = ["SuperAdmin", "LabLead"]
 _CAN_EDIT_RECIPES = ["SuperAdmin", "LabLead"]
 _SUPERADMIN_ONLY  = ["SuperAdmin"]
+_FINANCE_ROLES    = ["SuperAdmin", "Manager"]   # Costs / margins / quotations / currency rates
 
 _VALID_ROLES = {"SuperAdmin", "Manager", "LabLead", "LabTech", "Staff"}
+
+
+def _can_see_finance(payload_or_role) -> bool:
+    """True if the user's role is allowed to view financial data."""
+    role = payload_or_role.get("role") if isinstance(payload_or_role, dict) else payload_or_role
+    return role in _FINANCE_ROLES
 
 
 def _page_ctx(request: Request, payload: dict) -> dict:
@@ -175,7 +182,10 @@ def logout(response: Response):
 # ─── Items Endpoints ─────────────────────────────────────────────────────────
 
 @app.get("/api/items")
-def list_items(db: Session = Depends(get_db)):
+def list_items(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     items = db.query(Item).filter(Item.is_active == True).order_by(Item.id.desc()).all()
 
     # Resolve parent names + child counts in O(n) — avoids N+1 queries
@@ -185,6 +195,7 @@ def list_items(db: Session = Depends(get_db)):
         if i.parent_id:
             child_count[i.parent_id] = child_count.get(i.parent_id, 0) + 1
 
+    finance_ok = _can_see_finance(current_user)
     return [
         {
             "id":              i.id,
@@ -193,7 +204,8 @@ def list_items(db: Session = Depends(get_db)):
             "unit":            i.unit,
             "min_stock_level": i.min_stock_level,
             "current_stock":   i.current_stock,
-            "cost_price":      round(i.cost_price or 0.0, 4),
+            # ── Finance-gated: zeroed for lab roles (defense in depth vs. DevTools snooping) ──
+            "cost_price":      round(i.cost_price or 0.0, 4) if finance_ok else 0.0,
             "parent_id":       i.parent_id,
             "parent_name":     name_by_id.get(i.parent_id) if i.parent_id else None,
             "variation_name":  i.variation_name,
@@ -400,12 +412,16 @@ def _calc_recipe_costs(recipe: Recipe, db: Session) -> dict:
 
 
 @app.get("/api/recipes")
-def list_recipes(db: Session = Depends(get_db)):
+def list_recipes(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     rows = db.query(Recipe).filter(Recipe.is_active == True).order_by(Recipe.id.desc()).all()
+    finance_ok = _can_see_finance(current_user)
     result = []
     for r in rows:
         target = db.query(Item).filter(Item.id == r.target_item_id).first() if r.target_item_id else None
-        costs  = _calc_recipe_costs(r, db)
+        costs  = _calc_recipe_costs(r, db) if finance_ok else {"total_cost": 0.0, "unit_cost": 0.0, "ingredient_costs": []}
         result.append({
             "id":               r.id,
             "name":             r.name,
@@ -478,12 +494,33 @@ def delete_recipe(recipe_id: int, db: Session = Depends(get_db), _: dict = Depen
 
 
 @app.get("/api/recipes/{recipe_id}")
-def get_recipe_detail(recipe_id: int, db: Session = Depends(get_db)):
+def get_recipe_detail(
+    recipe_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     recipe = db.query(Recipe).filter(Recipe.id == recipe_id).first()
     if not recipe:
         return JSONResponse(status_code=404, content={"detail": "Reçete bulunamadı."})
     target = db.query(Item).filter(Item.id == recipe.target_item_id).first() if recipe.target_item_id else None
     costs  = _calc_recipe_costs(recipe, db)
+
+    # ── Strip cost fields for non-finance users (defense in depth) ──
+    if not _can_see_finance(current_user):
+        ingredients_redacted = []
+        for ic in costs["ingredient_costs"]:
+            ic2 = dict(ic)
+            ic2["cost_price"] = 0.0
+            ic2["line_cost"]  = 0.0
+            ingredients_redacted.append(ic2)
+        total_cost = 0.0
+        unit_cost  = 0.0
+        ingredients = ingredients_redacted
+    else:
+        total_cost  = costs["total_cost"]
+        unit_cost   = costs["unit_cost"]
+        ingredients = costs["ingredient_costs"]
+
     return {
         "id":               recipe.id,
         "name":             recipe.name,
@@ -492,9 +529,9 @@ def get_recipe_detail(recipe_id: int, db: Session = Depends(get_db)):
         "target_item_id":   recipe.target_item_id,
         "target_item_name": target.name if target else recipe.description,
         "target_item_unit": target.unit if target else recipe.output_unit,
-        "total_cost":       costs["total_cost"],
-        "unit_cost":        costs["unit_cost"],
-        "ingredients":      costs["ingredient_costs"],   # full breakdown incl. gross_qty, cost_price, line_cost
+        "total_cost":       total_cost,
+        "unit_cost":        unit_cost,
+        "ingredients":      ingredients,
     }
 
 
@@ -1026,6 +1063,371 @@ def list_expiring(db: Session = Depends(get_db), _: dict = Depends(get_current_u
 
     result.sort(key=lambda x: x["days_left"])
     return result
+
+
+# ─── Currency Rates (Phase 3 / Task 2 — TCMB live feed) ─────────────────────
+
+_rate_cache = {"data": None, "fetched_at": None}
+_RATE_TTL_SECONDS = 3600   # 1 hour
+
+# Last-known-good fallback (overwritten on first successful TCMB fetch)
+_RATE_FALLBACK = {"USD": 34.50, "EUR": 37.20}
+
+
+def _fetch_tcmb_rates():
+    """
+    Fetch today's USD/EUR forex selling rates from TCMB.
+    Returns dict like {"USD": 34.61, "EUR": 37.25} on success, None on failure.
+    Uses stdlib only — no extra deps.
+    """
+    import urllib.request
+    import xml.etree.ElementTree as ET
+
+    url = "https://www.tcmb.gov.tr/kurlar/today.xml"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Minerva108-ERP/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            xml_data = resp.read().decode("utf-8")
+
+        root = ET.fromstring(xml_data)
+        out = {}
+        for currency in root.findall("Currency"):
+            code = currency.get("CurrencyCode")
+            if code in ("USD", "EUR"):
+                node = currency.find("ForexSelling")
+                if node is not None and node.text:
+                    out[code] = float(node.text.strip())
+        return out if {"USD", "EUR"}.issubset(out.keys()) else None
+    except Exception:
+        return None
+
+
+@app.get("/api/currency-rates")
+def get_currency_rates(_: dict = Depends(require_role(_FINANCE_ROLES))):
+    """
+    Live USD & EUR rates against TRY (TCMB ForexSelling).
+    Cached 1 hour in-memory; falls back to last cache or hardcoded values on outage.
+
+    Response:
+      { source, USD, EUR, fetched_at, cached, stale?, warning? }
+    All rates are TRY per 1 unit of foreign currency.
+    e.g. usd_amount = try_amount / response.USD
+    """
+    from datetime import datetime as _dt
+    now = _dt.utcnow()
+    cached_data = _rate_cache.get("data")
+    cached_at   = _rate_cache.get("fetched_at")
+
+    # ── Serve fresh cache ───────────────────────────────────────────────
+    if cached_data and cached_at and (now - cached_at).total_seconds() < _RATE_TTL_SECONDS:
+        return {
+            **cached_data,
+            "fetched_at": cached_at.isoformat() + "Z",
+            "cached": True,
+        }
+
+    # ── Try live fetch ──────────────────────────────────────────────────
+    fresh = _fetch_tcmb_rates()
+    if fresh and "USD" in fresh and "EUR" in fresh:
+        data = {"source": "TCMB", "USD": fresh["USD"], "EUR": fresh["EUR"]}
+        _rate_cache["data"]       = data
+        _rate_cache["fetched_at"] = now
+        return {**data, "fetched_at": now.isoformat() + "Z", "cached": False}
+
+    # ── Fall back to stale cache if available ──────────────────────────
+    if cached_data:
+        return {
+            **cached_data,
+            "fetched_at": cached_at.isoformat() + "Z" if cached_at else None,
+            "cached": True,
+            "stale":  True,
+            "warning": "TCMB'ye ulaşılamadı; önceki kur kullanılıyor.",
+        }
+
+    # ── Final hardcoded fallback ───────────────────────────────────────
+    return {
+        "source":     "fallback",
+        "USD":        _RATE_FALLBACK["USD"],
+        "EUR":        _RATE_FALLBACK["EUR"],
+        "fetched_at": now.isoformat() + "Z",
+        "cached":     False,
+        "stale":      True,
+        "warning":    "TCMB'ye ulaşılamadı; varsayılan kurlar kullanılıyor. Manuel doğrulama önerilir.",
+    }
+
+
+# ─── Quotations / Order Fulfillment (Phase 3 / Task 3) ──────────────────────
+
+class QuotationLineRequest(BaseModel):
+    item_id:            int
+    quantity:           float
+    unit_price_foreign: float
+    unit_cost_try:      Optional[float] = None
+    item_name_snapshot: Optional[str]   = None
+
+
+class QuotationCreateRequest(BaseModel):
+    quote_number:     str
+    customer_name:    str
+    customer_contact: Optional[str] = None
+    customer_email:   Optional[str] = None
+    customer_phone:   Optional[str] = None
+    customer_address: Optional[str] = None
+    customer_country: Optional[str] = None
+    customer_vat:     Optional[str] = None
+
+    currency:        str   = "TRY"   # USD / EUR / TRY
+    exchange_rate:   Optional[float] = None
+    subtotal_amount: float = 0.0
+    tax_percentage:  float = 0.0
+    tax_amount:      float = 0.0
+    shipping_amount: float = 0.0
+    total_amount:    float
+
+    notes:      Optional[str] = None
+    valid_days: int           = 30
+
+    items: List[QuotationLineRequest]
+
+
+def _serialize_quotation_summary(q: Quotation) -> dict:
+    return {
+        "id":               q.id,
+        "quote_number":     q.quote_number,
+        "customer_name":    q.customer_name,
+        "customer_country": q.customer_country or "",
+        "currency":         q.currency,
+        "total_amount":     q.total_amount,
+        "status":           q.status,
+        "created_at":       q.created_at.strftime("%d.%m.%Y %H:%M") if q.created_at else "",
+        "created_by":       q.created_by or "—",
+        "confirmed_at":     q.confirmed_at.strftime("%d.%m.%Y %H:%M") if q.confirmed_at else None,
+        "confirmed_by":     q.confirmed_by,
+        "item_count":       len(q.items),
+    }
+
+
+def _serialize_quotation_full(q: Quotation) -> dict:
+    return {
+        **_serialize_quotation_summary(q),
+        "customer_contact": q.customer_contact,
+        "customer_email":   q.customer_email,
+        "customer_phone":   q.customer_phone,
+        "customer_address": q.customer_address,
+        "customer_vat":     q.customer_vat,
+        "exchange_rate":    q.exchange_rate,
+        "subtotal_amount":  q.subtotal_amount,
+        "tax_percentage":   q.tax_percentage,
+        "tax_amount":       q.tax_amount,
+        "shipping_amount":  q.shipping_amount,
+        "notes":            q.notes,
+        "valid_days":       q.valid_days,
+        "items": [
+            {
+                "id":                 i.id,
+                "item_id":            i.item_id,
+                "item_name_snapshot": i.item_name_snapshot,
+                "quantity":           i.quantity,
+                "unit_price_foreign": i.unit_price_foreign,
+                "unit_cost_try":      i.unit_cost_try,
+                "line_total":         i.line_total,
+            }
+            for i in q.items
+        ],
+    }
+
+
+@app.post("/api/quotations", status_code=201)
+def create_quotation(
+    data: QuotationCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role(_FINANCE_ROLES)),
+):
+    """Save a quotation as DRAFT. Validates quote_number uniqueness + at least one line."""
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
+
+    if data.currency not in ("USD", "EUR", "TRY"):
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz para birimi (USD/EUR/TRY)."})
+    if not data.items:
+        return JSONResponse(status_code=400, content={"detail": "Teklifte en az bir kalem olmalıdır."})
+    if not data.customer_name or not data.customer_name.strip():
+        return JSONResponse(status_code=400, content={"detail": "Müşteri / şirket adı zorunludur."})
+
+    if db.query(Quotation).filter(Quotation.quote_number == data.quote_number).first():
+        return JSONResponse(status_code=400, content={
+            "detail": f"Teklif numarası '{data.quote_number}' zaten kullanımda. Lütfen farklı bir numara giriniz."
+        })
+
+    try:
+        q = Quotation(
+            quote_number=data.quote_number.strip(),
+            customer_name=data.customer_name.strip(),
+            customer_contact=data.customer_contact,
+            customer_email=data.customer_email,
+            customer_phone=data.customer_phone,
+            customer_address=data.customer_address,
+            customer_country=data.customer_country,
+            customer_vat=data.customer_vat,
+            currency=data.currency,
+            exchange_rate=data.exchange_rate,
+            subtotal_amount=data.subtotal_amount,
+            tax_percentage=data.tax_percentage,
+            tax_amount=data.tax_amount,
+            shipping_amount=data.shipping_amount,
+            total_amount=data.total_amount,
+            notes=data.notes,
+            valid_days=data.valid_days,
+            status="DRAFT",
+            created_by=actor,
+        )
+        db.add(q)
+        db.flush()  # Need q.id for items
+
+        for line in data.items:
+            line_total = round(line.quantity * line.unit_price_foreign, 4)
+            db.add(QuotationItem(
+                quotation_id=q.id,
+                item_id=line.item_id,
+                item_name_snapshot=line.item_name_snapshot,
+                quantity=line.quantity,
+                unit_price_foreign=line.unit_price_foreign,
+                unit_cost_try=line.unit_cost_try,
+                line_total=line_total,
+            ))
+
+        db.commit()
+        db.refresh(q)
+        return {
+            "id":           q.id,
+            "quote_number": q.quote_number,
+            "message":      f"Teklif #{q.quote_number} taslak olarak kaydedildi.",
+        }
+    except Exception:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"detail": "Teklif kaydedilemedi."})
+
+
+@app.get("/api/quotations")
+def list_quotations(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_role(_FINANCE_ROLES)),
+    limit:  int = 50,
+    status: Optional[str] = None,
+):
+    q = db.query(Quotation).order_by(Quotation.id.desc())
+    if status:
+        q = q.filter(Quotation.status == status.upper())
+    return [_serialize_quotation_summary(r) for r in q.limit(limit).all()]
+
+
+@app.get("/api/quotations/{quote_id}")
+def get_quotation(quote_id: int, db: Session = Depends(get_db), _: dict = Depends(require_role(_FINANCE_ROLES))):
+    q = db.query(Quotation).filter(Quotation.id == quote_id).first()
+    if not q:
+        return JSONResponse(status_code=404, content={"detail": "Teklif bulunamadı."})
+    return _serialize_quotation_full(q)
+
+
+@app.post("/api/quotations/{quote_id}/confirm")
+def confirm_quotation(
+    quote_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role(_FINANCE_ROLES)),
+):
+    """
+    The CRITICAL endpoint. Flips DRAFT → CONFIRMED and:
+      1) Pre-flight stock check across ALL lines (collects every issue, no partial state)
+      2) Atomically deducts current_stock for each line
+      3) Logs an Output Transaction for each deduction (audit trail)
+      4) Stamps confirmed_at + confirmed_by
+    Idempotent: re-confirming a CONFIRMED quote is rejected.
+    """
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
+
+    quote = db.query(Quotation).filter(Quotation.id == quote_id).first()
+    if not quote:
+        return JSONResponse(status_code=404, content={"detail": "Teklif bulunamadı."})
+    if quote.status != "DRAFT":
+        return JSONResponse(status_code=400, content={
+            "detail": f"Bu teklif zaten {quote.status} durumunda — tekrar onaylanamaz."
+        })
+    if not quote.items:
+        return JSONResponse(status_code=400, content={"detail": "Teklifte hiç kalem yok."})
+
+    # ── Stage 1: pre-flight stock check (no mutation yet) ──────────────────
+    issues = []
+    item_lookup = {}
+    for line in quote.items:
+        item = db.query(Item).filter(Item.id == line.item_id).with_for_update().first()
+        if not item or item.is_active is False:
+            issues.append(f"Ürün artık mevcut değil veya pasif (ID: {line.item_id})")
+            continue
+        # Defense in depth: block abstract parents (shouldn't happen via UI, but…)
+        if db.query(Item).filter(Item.parent_id == item.id).count() > 0:
+            issues.append(f"'{item.name}' bir ana üründür — varyasyon olarak siparişe alınamaz")
+            continue
+        if (item.current_stock or 0) < line.quantity:
+            issues.append(
+                f"'{item.name}' yetersiz stok: gereken {line.quantity} {item.unit}, "
+                f"mevcut {item.current_stock} {item.unit}"
+            )
+            continue
+        item_lookup[line.item_id] = item
+
+    if issues:
+        db.rollback()
+        return JSONResponse(status_code=400, content={
+            "detail": "Stok kontrolü başarısız — sipariş onaylanamadı.",
+            "issues": issues,
+        })
+
+    # ── Stage 2: atomic deduction + transaction logging ───────────────────
+    try:
+        from datetime import datetime as _dt
+        for line in quote.items:
+            item = item_lookup[line.item_id]
+            item.current_stock = round((item.current_stock or 0) - line.quantity, 6)
+            db.add(Transaction(
+                item_id=line.item_id,
+                transaction_type="Output",
+                quantity=line.quantity,
+                notes=f"Export Sale: Quotation #{quote.quote_number} → {quote.customer_name}",
+                performed_by=actor,
+            ))
+
+        quote.status       = "CONFIRMED"
+        quote.confirmed_at = _dt.utcnow()
+        quote.confirmed_by = actor
+        db.commit()
+
+        return {
+            "message":         f"Sipariş onaylandı — Teklif #{quote.quote_number} stoktan düşüldü.",
+            "quote_number":    quote.quote_number,
+            "items_deducted":  len(quote.items),
+            "confirmed_by":    actor,
+        }
+    except Exception:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"detail": "Onay sırasında hata oluştu — değişiklikler geri alındı."})
+
+
+@app.delete("/api/quotations/{quote_id}")
+def delete_quotation(
+    quote_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_role(_FINANCE_ROLES)),
+):
+    """Delete a draft. CONFIRMED quotes are immutable for audit and cannot be deleted."""
+    quote = db.query(Quotation).filter(Quotation.id == quote_id).first()
+    if not quote:
+        return JSONResponse(status_code=404, content={"detail": "Teklif bulunamadı."})
+    if quote.status != "DRAFT":
+        return JSONResponse(status_code=400, content={
+            "detail": "Onaylanmış teklifler silinemez (denetim izi gereği)."
+        })
+    db.delete(quote)
+    db.commit()
+    return {"message": f"Taslak #{quote.quote_number} silindi."}
 
 
 # ─── Excel Import Endpoints ──────────────────────────────────────────────────
@@ -1626,6 +2028,15 @@ def traceability_page(request: Request):
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
     return templates.TemplateResponse("traceability.html", _page_ctx(request, payload))
+
+
+@app.get("/quotations", response_class=HTMLResponse)
+def quotations_page(request: Request):
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    if not _can_see_finance(payload):
+        return RedirectResponse(url="/", status_code=302)   # non-finance → dashboard
+    return templates.TemplateResponse("quotations.html", _page_ctx(request, payload))
 
 
 @app.get("/admin", response_class=HTMLResponse)

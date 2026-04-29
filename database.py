@@ -141,6 +141,69 @@ def get_db():
         db.close()
 
 
+# ─── Phase 3 / Task 3 — Order Fulfillment & Sales ────────────────────────────
+
+class Quotation(Base):
+    """B2B proforma / quotation. Lifecycle: DRAFT → CONFIRMED (immutable)."""
+    __tablename__ = "quotations"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    quote_number  = Column(String(50), unique=True, nullable=False, index=True)
+
+    # Customer (snapshot at save time)
+    customer_name    = Column(String(150), nullable=False)
+    customer_contact = Column(String(150), nullable=True)
+    customer_email   = Column(String(150), nullable=True)
+    customer_phone   = Column(String(50),  nullable=True)
+    customer_address = Column(Text,        nullable=True)
+    customer_country = Column(String(100), nullable=True)
+    customer_vat     = Column(String(50),  nullable=True)
+
+    # Money
+    currency        = Column(String(3),  nullable=False, default="TRY")  # USD / EUR / TRY
+    exchange_rate   = Column(Float,      nullable=True)                  # TRY per 1 unit foreign at save time
+    subtotal_amount = Column(Float,      default=0.0)
+    tax_percentage  = Column(Float,      default=0.0)
+    tax_amount      = Column(Float,      default=0.0)
+    shipping_amount = Column(Float,      default=0.0)
+    total_amount    = Column(Float,      nullable=False, default=0.0)
+
+    # Meta
+    notes      = Column(Text,    nullable=True)
+    valid_days = Column(Integer, default=30)
+
+    # Lifecycle audit
+    status       = Column(String(20),  nullable=False, default="DRAFT", index=True)  # DRAFT / CONFIRMED
+    created_at   = Column(DateTime,    default=datetime.utcnow)
+    created_by   = Column(String(50),  nullable=True)
+    confirmed_at = Column(DateTime,    nullable=True)
+    confirmed_by = Column(String(50),  nullable=True)
+
+    items = relationship(
+        "QuotationItem",
+        back_populates="quotation",
+        cascade="all, delete-orphan",
+    )
+
+
+class QuotationItem(Base):
+    """Single line of a quotation. Snapshots item_name + unit_cost_try at save time for audit/margin reporting."""
+    __tablename__ = "quotation_items"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    quotation_id = Column(Integer, ForeignKey("quotations.id"), nullable=False, index=True)
+    item_id      = Column(Integer, ForeignKey("items.id"),       nullable=False)
+
+    item_name_snapshot = Column(String(200), nullable=True)   # Frozen at save time — survives item rename/delete
+    quantity           = Column(Float,       nullable=False)
+    unit_price_foreign = Column(Float,       nullable=False)  # In quotation.currency
+    unit_cost_try      = Column(Float,       nullable=True)   # Cost in TRY at quote time (for margin analytics)
+    line_total         = Column(Float,       nullable=False)  # quantity × unit_price_foreign
+
+    quotation = relationship("Quotation", back_populates="items")
+    item      = relationship("Item",      foreign_keys=[item_id])
+
+
 class ProductionHistory(Base):
     __tablename__ = "production_history"
 

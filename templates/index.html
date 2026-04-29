@@ -593,6 +593,12 @@
         <i class="bi bi-diagram-3 nav-icon"></i>
         İzlenebilirlik
       </a>
+      {% if role in ['SuperAdmin', 'Manager'] %}
+      <a href="/quotations" class="nav-link-item">
+        <i class="bi bi-file-earmark-text nav-icon"></i>
+        B2B Teklifler
+      </a>
+      {% endif %}
       {% if role == 'SuperAdmin' %}
       <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>
       <a href="/admin" class="nav-link-item">

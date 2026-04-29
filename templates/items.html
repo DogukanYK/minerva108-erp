@@ -502,6 +502,11 @@
       <a href="/traceability" class="nav-link-item">
         <i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik
       </a>
+      {% if role in ['SuperAdmin', 'Manager'] %}
+      <a href="/quotations" class="nav-link-item">
+        <i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler
+      </a>
+      {% endif %}
     </nav>
     <div class="sidebar-footer">
       <p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p>
@@ -588,7 +593,9 @@
                 <th class="sortable" data-col="category">Kategori <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="unit">Birim <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="min_stock_level">Min. Stok <span class="sort-icon"></span></th>
+                {% if role in ['SuperAdmin', 'Manager'] %}
                 <th class="sortable" data-col="cost_price" style="text-align:right;">Maliyet <span class="sort-icon"></span></th>
+                {% endif %}
                 <th style="width:90px; text-align:center;">İşlemler</th>
               </tr>
             </thead>
@@ -674,8 +681,10 @@
               </div>
             </div>
 
+            {# Col widths: 3-up when finance can see costs, 2-up (50/50) otherwise #}
+            {% set fin_col = '4' if role in ['SuperAdmin', 'Manager'] else '6' %}
             <div class="row g-3">
-              <div class="col-4">
+              <div class="col-{{ fin_col }}">
                 <label class="form-label-sm">Birim</label>
                 <select class="form-select" id="itemUnit">
                   <option value="adet">Adet</option>
@@ -687,14 +696,16 @@
                   <option value="rulo">Rulo</option>
                 </select>
               </div>
-              <div class="col-4">
+              <div class="col-{{ fin_col }}">
                 <label class="form-label-sm">Min. Stok Seviyesi</label>
                 <input type="number" class="form-control" id="itemMinStock" min="0" step="0.01" placeholder="0" />
               </div>
+              {% if role in ['SuperAdmin', 'Manager'] %}
               <div class="col-4">
                 <label class="form-label-sm">Birim Maliyet (₺)</label>
                 <input type="number" class="form-control" id="itemCostPrice" min="0" step="0.01" placeholder="0.00" />
               </div>
+              {% endif %}
             </div>
           </form>
         </div>
@@ -771,6 +782,7 @@
   <script>
     /* ── Globals ── */
     const USER_ROLE = "{{ role }}";
+    const CAN_SEE_FINANCE = ['SuperAdmin', 'Manager'].includes(USER_ROLE);   // Cost / margin visibility
     let allItems    = [];
     let sortCol     = null;
     let sortDir     = 'asc';
@@ -831,9 +843,12 @@
     /* ── Single-row renderer — `mode` ∈ {'parent','variation','standalone'} ── */
     function renderItemRow(item, mode) {
       const cp = item.cost_price ?? 0;
-      const costCell = cp > 0
+      const costCellRaw = cp > 0
         ? `<span style="font-size:0.82rem;font-weight:700;color:#15803d;">${cp.toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2})} ₺</span>`
         : `<span style="color:#d1d5db;font-size:0.8rem;">—</span>`;
+      // ── Finance-gated cell. Empty string → cell entirely omitted from output ──
+      const costCellTd       = CAN_SEE_FINANCE ? `<td style="text-align:right;padding-right:1.1rem;">${costCellRaw}</td>` : '';
+      const parentCostCellTd = CAN_SEE_FINANCE ? `<td style="text-align:right;padding-right:1.1rem;"><span class="parent-muted-cell">—</span></td>` : '';
 
       const canDelete = ['SuperAdmin','LabLead'].includes(USER_ROLE);
 
@@ -862,7 +877,7 @@
           <td>${catBadge(item.category)}</td>
           <td><span class="parent-muted-cell">—</span></td>
           <td><span class="parent-muted-cell">—</span></td>
-          <td style="text-align:right;padding-right:1.1rem;"><span class="parent-muted-cell">—</span></td>
+          ${parentCostCellTd}
           <td style="text-align:center;">${actions}</td>
         </tr>`;
       }
@@ -886,7 +901,7 @@
           <td>${catBadge(item.category)}</td>
           <td>${escHtml(item.unit)}</td>
           <td>${item.min_stock_level ?? 0}</td>
-          <td style="text-align:right;padding-right:1.1rem;">${costCell}</td>
+          ${costCellTd}
           <td style="text-align:center;">${actions}</td>
         </tr>`;
       }
@@ -904,7 +919,7 @@
           <td>${catBadge(item.category)}</td>
           <td>${escHtml(item.unit)}</td>
           <td>${item.min_stock_level ?? 0}</td>
-          <td style="text-align:right;padding-right:1.1rem;">${costCell}</td>
+          ${costCellTd}
           <td style="text-align:center;">${actions}</td>
         </tr>`;
     }
@@ -915,7 +930,8 @@
       const tabCfg  = TABS[activeTab];
 
       if (!data.length) {
-        tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state">
+        const cspan = CAN_SEE_FINANCE ? 8 : 7;   // Dynamic — drops by 1 when Maliyet column hidden
+        tbody.innerHTML = `<tr><td colspan="${cspan}"><div class="empty-state">
           <i class="bi ${tabCfg.emptyIcon}"></i>
           <p>${tabCfg.emptyText}</p>
         </div></td></tr>`;
@@ -1158,7 +1174,10 @@
       document.getElementById('itemCategory').value  = item.category || '';
       document.getElementById('itemUnit').value      = item.unit || 'adet';
       document.getElementById('itemMinStock').value  = item.min_stock_level ?? 0;
-      document.getElementById('itemCostPrice').value = item.cost_price ?? 0;
+      // Cost field exists in the DOM only when finance can see it
+      if (CAN_SEE_FINANCE) {
+        document.getElementById('itemCostPrice').value = item.cost_price ?? 0;
+      }
 
       // ── Variation state ─────────────────────────────────────────────────
       resetVariationFields();
@@ -1249,7 +1268,10 @@
         category:       document.getElementById('itemCategory').value  || null,
         unit:           document.getElementById('itemUnit').value,
         min_stock:      parseFloat(document.getElementById('itemMinStock').value)  || 0,
-        cost_price:     parseFloat(document.getElementById('itemCostPrice').value) || 0,
+        // Finance-gated: input only exists in the DOM for SuperAdmin/Manager
+        cost_price:     CAN_SEE_FINANCE
+          ? (parseFloat(document.getElementById('itemCostPrice').value) || 0)
+          : undefined,
         parent_id,
         variation_name,
       };
