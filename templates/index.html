@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minerva108 ERP — Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+
+  <style>
+    :root {
+      --navy:  #2C2C73;
+      --navy-dark: #1f1f56;
+      --gold:  #b8965a;
+      --gold2: #d4af72;
+      --cream: #f5f0e8;
+      --white: #ffffff;
+      --sidebar-width: 240px;
+      --navbar-height: 64px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: 'Jost', sans-serif;
+      background-color: var(--cream);
+      color: #1f2937;
+    }
+
+    /* ══════════════════════════════════════════
+       SIDEBAR
+    ══════════════════════════════════════════ */
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: var(--sidebar-width);
+      height: 100vh;
+      background: var(--navy);
+      display: flex;
+      flex-direction: column;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    /* Brand */
+    .sidebar-brand {
+      padding: 1.6rem 1.5rem 1.4rem;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .sidebar-brand-name {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--white);
+      letter-spacing: 0.04em;
+      line-height: 1;
+      margin: 0;
+    }
+
+    .sidebar-brand-sub {
+      font-size: 0.7rem;
+      font-weight: 400;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-top: 0.3rem;
+    }
+
+    /* Nav */
+    .sidebar-nav {
+      flex: 1;
+      padding: 1.25rem 0.75rem;
+      overflow-y: auto;
+    }
+
+    .sidebar-nav .nav-section-label {
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.3);
+      padding: 0.5rem 0.75rem 0.4rem;
+      margin-top: 0.5rem;
+    }
+
+    .nav-link-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.6rem 0.85rem;
+      border-radius: 8px;
+      color: rgba(255,255,255,0.65);
+      font-size: 0.88rem;
+      font-weight: 500;
+      text-decoration: none;
+      transition: background 0.15s, color 0.15s;
+      margin-bottom: 2px;
+      cursor: pointer;
+    }
+
+    .nav-link-item:hover {
+      background: rgba(255,255,255,0.07);
+      color: var(--white);
+    }
+
+    .nav-link-item.active {
+      background: rgba(184,150,90,0.18);
+      color: var(--gold2);
+    }
+
+    .nav-link-item.active .nav-icon { color: var(--gold); }
+
+    .nav-icon {
+      font-size: 1rem;
+      width: 18px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    /* Coming Soon Badge */
+    .badge-soon {
+      margin-left: auto;
+      font-size: 0.6rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: rgba(184,150,90,0.15);
+      color: var(--gold);
+      border: 1px solid rgba(184,150,90,0.3);
+      border-radius: 20px;
+      padding: 2px 8px;
+      line-height: 1.5;
+    }
+
+    /* Sidebar Footer */
+    .sidebar-footer {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .sidebar-footer-text {
+      font-size: 0.7rem;
+      color: rgba(255,255,255,0.25);
+      text-align: center;
+    }
+
+    /* ══════════════════════════════════════════
+       NAVBAR
+    ══════════════════════════════════════════ */
+    .topnav {
+      position: fixed;
+      top: 0;
+      left: var(--sidebar-width);
+      right: 0;
+      height: var(--navbar-height);
+      background: var(--white);
+      border-bottom: 1px solid #f0ece4;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 1.75rem;
+      z-index: 90;
+      box-shadow: 0 1px 8px rgba(0,0,0,0.05);
+    }
+
+    .topnav-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: var(--navy);
+    }
+
+    .topnav-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .user-chip {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--cream);
+      border-radius: 20px;
+      padding: 0.35rem 0.9rem 0.35rem 0.5rem;
+    }
+
+    .user-avatar {
+      width: 28px;
+      height: 28px;
+      background: var(--navy);
+      color: var(--gold2);
+      border-radius: 50%;
+      font-size: 0.7rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Playfair Display', serif;
+    }
+
+    .user-name {
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #374151;
+    }
+
+    .btn-logout {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.42rem 1rem;
+      border: 1.5px solid #e5e7eb;
+      border-radius: 8px;
+      background: var(--white);
+      color: #6b7280;
+      font-family: 'Jost', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s, background 0.2s;
+    }
+
+    .btn-logout:hover {
+      border-color: #ef4444;
+      color: #ef4444;
+      background: #fff5f5;
+    }
+
+    /* ══════════════════════════════════════════
+       MAIN CONTENT
+    ══════════════════════════════════════════ */
+    .main-content {
+      margin-left: var(--sidebar-width);
+      padding-top: var(--navbar-height);
+      min-height: 100vh;
+      background: var(--cream);
+    }
+
+    .content-inner {
+      padding: 2rem 2rem 3rem;
+    }
+
+    .page-header {
+      margin-bottom: 1.75rem;
+    }
+
+    .page-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--navy);
+      margin: 0 0 0.25rem;
+    }
+
+    .page-subtitle {
+      font-size: 0.88rem;
+      color: #6b7280;
+      margin: 0;
+    }
+
+    /* ── KPI Cards ── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    .kpi-card {
+      background: var(--white);
+      border-radius: 12px;
+      padding: 1.4rem 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06);
+      border: 1.5px solid transparent;
+      transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+      cursor: default;
+    }
+
+    .kpi-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.07), 0 12px 32px rgba(44,44,115,0.10);
+      border-color: var(--gold);
+    }
+
+    .kpi-card.kpi-alert {
+      border-color: #fca5a5;
+      background: #fff8f8;
+      box-shadow: 0 2px 6px rgba(239,68,68,0.10), 0 8px 24px rgba(239,68,68,0.08);
+    }
+    .kpi-card.kpi-alert .kpi-value { color: #dc2626; }
+
+    .kpi-icon-wrap {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+    }
+
+    .kpi-icon-navy  { background: rgba(44,44,115,0.08); color: var(--navy); }
+    .kpi-icon-gold  { background: rgba(184,150,90,0.12); color: var(--gold); }
+    .kpi-icon-green { background: rgba(16,185,129,0.10); color: #059669; }
+    .kpi-icon-rose  { background: rgba(239,68,68,0.09);  color: #dc2626; }
+
+    .kpi-value {
+      font-family: 'Playfair Display', serif;
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--navy);
+      line-height: 1;
+      margin-bottom: 0.35rem;
+    }
+
+    .kpi-label {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #6b7280;
+      letter-spacing: 0.03em;
+    }
+
+    .kpi-trend {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-top: 0.5rem;
+      padding: 2px 8px;
+      border-radius: 20px;
+    }
+
+    .trend-neutral { background: #f3f4f6; color: #6b7280; }
+
+    /* ── Info Panel ── */
+    .info-panel {
+      background: var(--white);
+      border-radius: 12px;
+      padding: 1.5rem 1.75rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06);
+      border-left: 4px solid var(--gold);
+    }
+
+    .info-panel-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--navy);
+      margin-bottom: 0.5rem;
+    }
+
+    .info-panel-text {
+      font-size: 0.88rem;
+      color: #6b7280;
+      margin: 0;
+      line-height: 1.6;
+    }
+
+    /* ── Toast ── */
+    #toast-container {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .toast-msg {
+      min-width: 260px;
+      max-width: 360px;
+      padding: 0.8rem 1rem;
+      border-radius: 10px;
+      font-family: 'Jost', sans-serif;
+      font-size: 0.88rem;
+      font-weight: 500;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      animation: slideUp 0.3s ease;
+    }
+
+    .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
+    .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+</head>
+<body>
+
+  <!-- ════════════════════════════════════════
+       SIDEBAR
+  ════════════════════════════════════════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <p class="sidebar-brand-name">Minerva108</p>
+      <p class="sidebar-brand-sub">Kozmetik &nbsp;·&nbsp; ERP</p>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+
+      <a href="/" class="nav-link-item active">
+        <i class="bi bi-grid-1x2-fill nav-icon"></i>
+        Dashboard
+      </a>
+
+      <a href="/items" class="nav-link-item">
+        <i class="bi bi-box-seam nav-icon"></i>
+        Ürünler
+      </a>
+
+      <a href="/suppliers" class="nav-link-item">
+        <i class="bi bi-truck nav-icon"></i>
+        Tedarikçiler
+      </a>
+      <a href="/receiving" class="nav-link-item">
+        <i class="bi bi-box-arrow-in-down nav-icon"></i>
+        Mal Kabul
+      </a>
+
+      <a href="/recipes" class="nav-link-item">
+        <i class="bi bi-journal-text nav-icon"></i>
+        Reçeteler
+      </a>
+
+      <a href="/production" class="nav-link-item">
+        <i class="bi bi-gear nav-icon"></i>
+        Üretim
+      </a>
+      <a href="/qc" class="nav-link-item">
+        <i class="bi bi-patch-check nav-icon"></i>
+        Kalite Kontrol
+      </a>
+      <a href="/ledger" class="nav-link-item">
+        <i class="bi bi-journal-bookmark nav-icon"></i>
+        İşlem Defteri
+      </a>
+      <a href="/reports" class="nav-link-item">
+        <i class="bi bi-bar-chart-line nav-icon"></i>
+        Raporlar
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p>
+    </div>
+  </aside>
+
+  <!-- ════════════════════════════════════════
+       TOPNAV
+  ════════════════════════════════════════ -->
+  <header class="topnav">
+    <span class="topnav-title">Dashboard</span>
+
+    <div class="topnav-right">
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+
+      <button class="btn-logout" id="logoutBtn">
+        <i class="bi bi-box-arrow-right"></i>
+        Çıkış Yap
+      </button>
+    </div>
+  </header>
+
+  <!-- ════════════════════════════════════════
+       MAIN CONTENT
+  ════════════════════════════════════════ -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <!-- Page Header -->
+      <div class="page-header">
+        <h1 class="page-title">Genel Bakış</h1>
+        <p class="page-subtitle">Hoş geldiniz, {{ full_name }}. İşte bugünkü özet.</p>
+      </div>
+
+      <!-- KPI Cards -->
+      <div class="kpi-grid">
+
+        <div class="kpi-card" id="cardItems">
+          <div class="kpi-icon-wrap kpi-icon-navy">
+            <i class="bi bi-box-seam"></i>
+          </div>
+          <div class="kpi-value" id="kpiItems">—</div>
+          <div class="kpi-label">Toplam Ürün</div>
+          <div class="kpi-trend trend-neutral" id="trendItems">
+            <i class="bi bi-dash"></i> Yükleniyor
+          </div>
+        </div>
+
+        <div class="kpi-card" id="cardSuppliers">
+          <div class="kpi-icon-wrap kpi-icon-gold">
+            <i class="bi bi-truck"></i>
+          </div>
+          <div class="kpi-value" id="kpiSuppliers">—</div>
+          <div class="kpi-label">Aktif Tedarikçi</div>
+          <div class="kpi-trend trend-neutral" id="trendSuppliers">
+            <i class="bi bi-dash"></i> Yükleniyor
+          </div>
+        </div>
+
+        <div class="kpi-card" id="cardRecipes">
+          <div class="kpi-icon-wrap kpi-icon-green">
+            <i class="bi bi-journal-text"></i>
+          </div>
+          <div class="kpi-value" id="kpiRecipes">—</div>
+          <div class="kpi-label">Kayıtlı Reçete</div>
+          <div class="kpi-trend trend-neutral" id="trendRecipes">
+            <i class="bi bi-dash"></i> Yükleniyor
+          </div>
+        </div>
+
+        <div class="kpi-card" id="cardCritical">
+          <div class="kpi-icon-wrap kpi-icon-rose">
+            <i class="bi bi-exclamation-triangle"></i>
+          </div>
+          <div class="kpi-value" id="kpiCritical">—</div>
+          <div class="kpi-label">Kritik Stok Uyarısı</div>
+          <div class="kpi-trend trend-neutral" id="trendCritical">
+            <i class="bi bi-dash"></i> Yükleniyor
+          </div>
+        </div>
+
+      </div>
+      <!-- /KPI Cards -->
+
+      <!-- Son Üretim Faaliyetleri -->
+      <div class="table-card" style="border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05),0 4px 16px rgba(44,44,115,0.06);">
+        <div style="padding:1rem 1.4rem 0.75rem;border-bottom:1px solid #f0ece4;display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-family:'Playfair Display',serif;font-size:1rem;font-weight:600;color:var(--navy);">Son Üretim Faaliyetleri</span>
+          <a href="/production" style="font-size:0.8rem;font-weight:600;color:var(--gold);text-decoration:none;">Tümünü Gör →</a>
+        </div>
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr style="background:#f9f7f3;border-bottom:2px solid #f0ece4;">
+              <th style="padding:0.7rem 1.1rem;font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">Reçete</th>
+              <th style="padding:0.7rem 1rem;font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">Hedef Ürün</th>
+              <th style="padding:0.7rem 1rem;font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">Miktar</th>
+              <th style="padding:0.7rem 1rem;font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">Tarih</th>
+            </tr>
+          </thead>
+          <tbody id="recentProductionBody">
+            <tr><td colspan="4" style="padding:2rem;text-align:center;color:#9ca3af;font-size:0.88rem;">Yükleniyor…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+
+  <script>
+    function showToast(message, type = 'error') {
+      const container = document.getElementById('toast-container');
+      const icon = type === 'error' ? '✕' : '✓';
+      const el = document.createElement('div');
+      el.className = `toast-msg toast-${type}`;
+      el.innerHTML = `<span>${icon}</span><span>${message}</span>`;
+      container.appendChild(el);
+      setTimeout(() => {
+        el.style.transition = 'opacity 0.4s';
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 400);
+      }, 3500);
+    }
+
+    async function loadDashboard() {
+      try {
+        const res  = await fetch('/api/dashboard/stats');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // KPI değerleri
+        document.getElementById('kpiItems').textContent     = data.total_items;
+        document.getElementById('kpiSuppliers').textContent = data.total_suppliers;
+        document.getElementById('kpiRecipes').textContent   = data.total_recipes;
+        document.getElementById('kpiCritical').textContent  = data.critical_stock_count;
+
+        // Trend metinleri
+        document.getElementById('trendItems').innerHTML     = `<i class="bi bi-box-seam"></i> Aktif ürün`;
+        document.getElementById('trendSuppliers').innerHTML = `<i class="bi bi-truck"></i> Kayıtlı tedarikçi`;
+        document.getElementById('trendRecipes').innerHTML   = `<i class="bi bi-journal-text"></i> Formülasyon`;
+        document.getElementById('trendCritical').innerHTML  = data.critical_stock_count > 0
+          ? `<i class="bi bi-exclamation-triangle-fill"></i> Müdahale gerekiyor`
+          : `<i class="bi bi-check-circle"></i> Stok seviyeleri normal`;
+
+        // Kritik stok uyarısı rengi
+        const critCard = document.getElementById('cardCritical');
+        if (data.critical_stock_count > 0) critCard.classList.add('kpi-alert');
+        else critCard.classList.remove('kpi-alert');
+
+        // Son üretim tablosu
+        const tbody = document.getElementById('recentProductionBody');
+        if (!data.recent_productions.length) {
+          tbody.innerHTML = `<tr><td colspan="4" style="padding:2rem;text-align:center;color:#9ca3af;font-size:0.88rem;">Henüz üretim kaydı yok.</td></tr>`;
+        } else {
+          tbody.innerHTML = data.recent_productions.map(p => `
+            <tr style="border-bottom:1px solid #f3f0ea;">
+              <td style="padding:0.75rem 1.1rem;font-weight:600;font-size:0.88rem;color:#1f2937;">${p.recipe_name}</td>
+              <td style="padding:0.75rem 1rem;font-size:0.85rem;color:#6b7280;">${p.target_item_name || '—'}</td>
+              <td style="padding:0.75rem 1rem;">
+                <span style="background:#f0fdf4;color:#15803d;border-radius:20px;padding:2px 10px;font-size:0.75rem;font-weight:600;">${p.produced_quantity} birim</span>
+              </td>
+              <td style="padding:0.75rem 1rem;font-size:0.82rem;color:#9ca3af;">${p.produced_at}</td>
+            </tr>`).join('');
+        }
+      } catch { /* sessiz hata — dashboard kritik değil */ }
+    }
+
+    document.getElementById('logoutBtn').addEventListener('click', async function () {
+      this.disabled = true;
+      try {
+        const res = await fetch('/api/logout', { method: 'POST' });
+        if (res.ok) {
+          showToast('Çıkış yapıldı. Yönlendiriliyorsunuz…', 'success');
+          setTimeout(() => { window.location.href = '/login'; }, 800);
+        } else {
+          showToast('Çıkış yapılırken bir hata oluştu.');
+          this.disabled = false;
+        }
+      } catch {
+        showToast('Sunucuya bağlanılamadı.');
+        this.disabled = false;
+      }
+    });
+
+    loadDashboard();
+  </script>
+
+</body>
+</html>

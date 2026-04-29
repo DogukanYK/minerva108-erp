@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minerva108 ERP — İşlem Defteri</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+
+  <style>
+    :root {
+      --navy:  #2C2C73;
+      --gold:  #b8965a;
+      --gold2: #d4af72;
+      --cream: #f5f0e8;
+      --white: #ffffff;
+      --sidebar-width: 240px;
+      --navbar-height: 64px;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Jost', sans-serif; background-color: var(--cream); color: #1f2937; }
+
+    /* ══ SIDEBAR ══ */
+    .sidebar { position: fixed; top: 0; left: 0; width: var(--sidebar-width); height: 100vh; background: var(--navy); display: flex; flex-direction: column; z-index: 100; }
+    .sidebar-brand { padding: 1.6rem 1.5rem 1.4rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-brand-name { font-family: 'Playfair Display', serif; font-size: 1.25rem; font-weight: 700; color: var(--white); letter-spacing: 0.04em; margin: 0; }
+    .sidebar-brand-sub { font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); margin-top: 0.3rem; }
+    .sidebar-nav { flex: 1; padding: 1.25rem 0.75rem; overflow-y: auto; }
+    .nav-section-label { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.3); padding: 0.5rem 0.75rem 0.4rem; margin-top: 0.5rem; }
+    .nav-link-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.85rem; border-radius: 8px; color: rgba(255,255,255,0.65); font-size: 0.88rem; font-weight: 500; text-decoration: none; transition: background 0.15s, color 0.15s; margin-bottom: 2px; }
+    .nav-link-item:hover { background: rgba(255,255,255,0.07); color: var(--white); }
+    .nav-link-item.active { background: rgba(184,150,90,0.18); color: var(--gold2); }
+    .nav-link-item.active .nav-icon { color: var(--gold); }
+    .nav-icon { font-size: 1rem; width: 18px; text-align: center; flex-shrink: 0; }
+    .sidebar-footer { padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-footer-text { font-size: 0.7rem; color: rgba(255,255,255,0.25); text-align: center; }
+
+    /* ══ TOPNAV ══ */
+    .topnav { position: fixed; top: 0; left: var(--sidebar-width); right: 0; height: var(--navbar-height); background: var(--white); border-bottom: 1px solid #f0ece4; display: flex; align-items: center; justify-content: space-between; padding: 0 1.75rem; z-index: 90; box-shadow: 0 1px 8px rgba(0,0,0,0.05); }
+    .topnav-title { font-family: 'Playfair Display', serif; font-size: 1.15rem; font-weight: 600; color: var(--navy); }
+    .topnav-right { display: flex; align-items: center; gap: 1rem; }
+    .user-chip { display: flex; align-items: center; gap: 0.5rem; background: var(--cream); border-radius: 20px; padding: 0.35rem 0.9rem 0.35rem 0.5rem; }
+    .user-avatar { width: 28px; height: 28px; background: var(--navy); color: var(--gold2); border-radius: 50%; font-size: 0.7rem; font-weight: 700; display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', serif; }
+    .user-name { font-size: 0.85rem; font-weight: 500; color: #374151; }
+    .btn-logout { display: flex; align-items: center; gap: 0.4rem; padding: 0.42rem 1rem; border: 1.5px solid #e5e7eb; border-radius: 8px; background: var(--white); color: #6b7280; font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 500; cursor: pointer; transition: border-color 0.2s, color 0.2s, background 0.2s; }
+    .btn-logout:hover { border-color: #ef4444; color: #ef4444; background: #fff5f5; }
+
+    /* ══ MAIN CONTENT ══ */
+    .main-content { margin-left: var(--sidebar-width); padding-top: var(--navbar-height); min-height: 100vh; background: var(--cream); }
+    .content-inner { padding: 2rem 2rem 3rem; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.75rem; }
+    .page-title { font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 700; color: var(--navy); margin: 0 0 0.25rem; }
+    .page-subtitle { font-size: 0.88rem; color: #6b7280; margin: 0; }
+
+    /* ══ KPI CARDS ══ */
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.75rem; }
+    @media (max-width: 1100px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+    .kpi-card { background: var(--white); border-radius: 12px; padding: 1.25rem 1.4rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 14px rgba(44,44,115,0.07); border-top: 3px solid transparent; }
+    .kpi-card.kpi-navy  { border-top-color: var(--navy); }
+    .kpi-card.kpi-gold  { border-top-color: var(--gold); }
+    .kpi-card.kpi-green { border-top-color: #22c55e; }
+    .kpi-card.kpi-amber { border-top-color: #f59e0b; }
+    .kpi-label { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #9ca3af; margin-bottom: 0.5rem; }
+    .kpi-value { font-family: 'Playfair Display', serif; font-size: 2rem; font-weight: 700; color: var(--navy); line-height: 1; }
+    .kpi-sub   { font-size: 0.78rem; color: #9ca3af; margin-top: 0.35rem; }
+
+    /* ══ TABS ══ */
+    .ledger-tabs { background: var(--white); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06); overflow: hidden; }
+    .tab-header { border-bottom: 2px solid #f0ece4; padding: 0 1.5rem; display: flex; align-items: center; gap: 0; }
+    .tab-btn { padding: 1rem 1.25rem; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 600; color: #6b7280; background: none; border: none; border-bottom: 3px solid transparent; margin-bottom: -2px; cursor: pointer; transition: color 0.15s, border-color 0.15s; white-space: nowrap; display: flex; align-items: center; gap: 0.4rem; }
+    .tab-btn:hover { color: var(--navy); }
+    .tab-btn.active { color: var(--navy); border-bottom-color: var(--navy); }
+    .tab-pane { display: none; padding: 1.5rem; }
+    .tab-pane.active { display: block; }
+
+    /* ══ FILTER BUTTONS ══ */
+    .filter-bar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .btn-filter { padding: 0.38rem 1rem; border-radius: 20px; border: 1.5px solid #e5e7eb; background: var(--white); color: #6b7280; font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+    .btn-filter:hover { border-color: var(--navy); color: var(--navy); }
+    .btn-filter.active { background: var(--navy); border-color: var(--navy); color: var(--white); }
+    .search-box { margin-left: auto; position: relative; }
+    .search-box input { padding: 0.45rem 1rem 0.45rem 2.1rem; border: 1.5px solid #e5e7eb; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.85rem; color: #374151; background: var(--white); width: 200px; transition: border-color 0.2s; }
+    .search-box input:focus { outline: none; border-color: var(--navy); }
+    .search-box .bi-search { position: absolute; left: 0.65rem; top: 50%; transform: translateY(-50%); color: #9ca3af; font-size: 0.82rem; }
+
+    /* ══ TABLES ══ */
+    .table-responsive { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: #f9f7f3; border-bottom: 2px solid #f0ece4; }
+    thead th { padding: 0.8rem 1rem; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #6b7280; white-space: nowrap; }
+    tbody tr { border-bottom: 1px solid #f3f0ea; transition: background 0.12s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #faf8f4; }
+    td { padding: 0.8rem 1rem; font-size: 0.88rem; color: #374151; vertical-align: middle; }
+    td.td-name { font-weight: 600; color: #1f2937; }
+    td.td-mono { font-family: monospace; font-size: 0.82rem; }
+    td.td-num  { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--navy); }
+    .table-footer { padding: 0.65rem 1rem; border-top: 1px solid #f0ece4; font-size: 0.78rem; color: #9ca3af; }
+
+    /* Category badges */
+    .cat-badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em; }
+    .cat-hammadde  { background: #eff6ff; color: #1d4ed8; }
+    .cat-ambalaj   { background: #f0fdf4; color: #15803d; }
+    .cat-kimyasal  { background: #fefce8; color: #a16207; }
+    .cat-yardimci  { background: #fdf4ff; color: #7e22ce; }
+    .cat-bitmisurun{ background: #fff7ed; color: #c2410c; }
+    .cat-diger     { background: #f3f4f6; color: #4b5563; }
+
+    /* TX type badges */
+    .tx-badge { display: inline-flex; align-items: center; gap: 0.3rem; padding: 3px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; white-space: nowrap; }
+    .tx-input    { background: #f0fdf4; color: #15803d; }
+    .tx-output   { background: #fff1f1; color: #b91c1c; }
+    .tx-qc-ok    { background: #eff6ff; color: #1d4ed8; }
+    .tx-qc-rej   { background: #fefce8; color: #a16207; }
+    .tx-other    { background: #f3f4f6; color: #4b5563; }
+
+    /* Stock level indicator */
+    .stock-bar-wrap { width: 80px; height: 6px; background: #f3f4f6; border-radius: 3px; display: inline-block; vertical-align: middle; margin-left: 8px; }
+    .stock-bar { height: 100%; border-radius: 3px; background: #22c55e; }
+    .stock-bar.low { background: #f59e0b; }
+    .stock-bar.critical { background: #ef4444; }
+
+    /* Empty state */
+    .empty-state { padding: 3.5rem 2rem; text-align: center; color: #9ca3af; }
+    .empty-state i { font-size: 2.2rem; margin-bottom: 0.85rem; display: block; color: #d1d5db; }
+    .empty-state p { font-size: 0.88rem; margin: 0; }
+
+    /* ══ TOAST ══ */
+    #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
+    .toast-msg { min-width: 260px; max-width: 360px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
+    .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
+    .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+</head>
+<body>
+
+  <!-- ════ SIDEBAR ════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <p class="sidebar-brand-name">Minerva108</p>
+      <p class="sidebar-brand-sub">Kozmetik &nbsp;·&nbsp; ERP</p>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      <a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>
+      <a href="/suppliers" class="nav-link-item"><i class="bi bi-truck nav-icon"></i>Tedarikçiler</a>
+      <a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>
+      <a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
+      <a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
+      <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
+      <a href="/ledger" class="nav-link-item active"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
+      <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+    </nav>
+    <div class="sidebar-footer">
+      <p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p>
+    </div>
+  </aside>
+
+  <!-- ════ TOPNAV ════ -->
+  <header class="topnav">
+    <span class="topnav-title">İşlem Defteri</span>
+    <div class="topnav-right">
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+      <button class="btn-logout" id="logoutBtn"><i class="bi bi-box-arrow-right"></i>Çıkış Yap</button>
+    </div>
+  </header>
+
+  <!-- ════ MAIN ════ -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">İşlem Defteri</h1>
+          <p class="page-subtitle">Onaylı stok seviyeleri ve tüm hareket geçmişi.</p>
+        </div>
+      </div>
+
+      <!-- KPI Grid -->
+      <div class="kpi-grid">
+        <div class="kpi-card kpi-navy">
+          <div class="kpi-label">Toplam Kalem</div>
+          <div class="kpi-value" id="kpiTotalItems">—</div>
+          <div class="kpi-sub">aktif ürün</div>
+        </div>
+        <div class="kpi-card kpi-gold">
+          <div class="kpi-label">Hammadde / Ambalaj</div>
+          <div class="kpi-value" id="kpiRawCount">—</div>
+          <div class="kpi-sub">onaylı lot'ta</div>
+        </div>
+        <div class="kpi-card kpi-green">
+          <div class="kpi-label">Bitmiş Ürün</div>
+          <div class="kpi-value" id="kpiFinishedCount">—</div>
+          <div class="kpi-sub">stokta</div>
+        </div>
+        <div class="kpi-card kpi-amber">
+          <div class="kpi-label">İşlem Sayısı</div>
+          <div class="kpi-value" id="kpiTxCount">—</div>
+          <div class="kpi-sub">toplam hareket</div>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="ledger-tabs">
+        <div class="tab-header">
+          <button class="tab-btn active" data-tab="stocks">
+            <i class="bi bi-boxes"></i>Mevcut Stoklar
+          </button>
+          <button class="tab-btn" data-tab="txs">
+            <i class="bi bi-clock-history"></i>İşlem Geçmişi
+          </button>
+        </div>
+
+        <!-- ── Tab 1: Stoklar ── -->
+        <div class="tab-pane active" id="tab-stocks">
+          <div class="filter-bar">
+            <button class="btn-filter active" data-filter="all">Hepsi</button>
+            <button class="btn-filter" data-filter="raw">Hammadde / Ambalaj</button>
+            <button class="btn-filter" data-filter="finished">Bitmiş Ürün</button>
+            <div class="search-box">
+              <i class="bi bi-search"></i>
+              <input type="text" id="stockSearch" placeholder="Ürün ara…" />
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ürün Adı</th>
+                  <th>Kategori</th>
+                  <th>Birim</th>
+                  <th style="text-align:right;">Toplam Stok (Onaylı)</th>
+                </tr>
+              </thead>
+              <tbody id="stockBody">
+                <tr><td colspan="4"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-footer"><span id="stockInfo">—</span></div>
+        </div>
+
+        <!-- ── Tab 2: İşlem Geçmişi ── -->
+        <div class="tab-pane" id="tab-txs">
+          <div class="filter-bar">
+            <div class="search-box" style="margin-left:0;">
+              <i class="bi bi-search"></i>
+              <input type="text" id="txSearch" placeholder="Ürün veya lot ara…" />
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:50px;">ID</th>
+                  <th>Ürün</th>
+                  <th>Lot</th>
+                  <th>İşlem Türü</th>
+                  <th style="text-align:right;">Miktar</th>
+                  <th>Not</th>
+                  <th style="white-space:nowrap;">Tarih</th>
+                </tr>
+              </thead>
+              <tbody id="txBody">
+                <tr><td colspan="7"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-footer"><span id="txInfo">—</span></div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    /* ── Data ── */
+    let allStock = [];
+    let allTx    = [];
+    let stockFilter = 'all';
+
+    /* ── Toast ── */
+    function showToast(msg, type = 'error') {
+      const c = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      el.className = `toast-msg toast-${type}`;
+      el.innerHTML = `<span>${type === 'error' ? '✕' : '✓'}</span><span>${msg}</span>`;
+      c.appendChild(el);
+      setTimeout(() => { el.style.transition='opacity .4s'; el.style.opacity='0'; setTimeout(()=>el.remove(),400); }, 3500);
+    }
+
+    /* ── escHtml ── */
+    function escHtml(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    /* ── Category badge ── */
+    function catBadge(cat) {
+      const map = {
+        'Hammadde': 'cat-hammadde', 'Ambalaj': 'cat-ambalaj',
+        'Kimyasal': 'cat-kimyasal', 'Yardımcı': 'cat-yardimci',
+        'Bitmiş Ürün': 'cat-bitmisurun',
+      };
+      return `<span class="cat-badge ${map[cat] || 'cat-diger'}">${escHtml(cat)}</span>`;
+    }
+
+    /* ── TX type badge ── */
+    function txBadge(type) {
+      if (type === 'Input')        return `<span class="tx-badge tx-input"><i class="bi bi-arrow-down-circle-fill"></i>${escHtml(type)}</span>`;
+      if (type === 'Output')       return `<span class="tx-badge tx-output"><i class="bi bi-arrow-up-circle-fill"></i>${escHtml(type)}</span>`;
+      if (type === 'QC Approval')  return `<span class="tx-badge tx-qc-ok"><i class="bi bi-patch-check-fill"></i>${escHtml(type)}</span>`;
+      if (type === 'QC Rejection') return `<span class="tx-badge tx-qc-rej"><i class="bi bi-patch-exclamation-fill"></i>${escHtml(type)}</span>`;
+      return `<span class="tx-badge tx-other">${escHtml(type)}</span>`;
+    }
+
+    /* ── Load all data ── */
+    async function loadAll() {
+      try {
+        const [sRes, tRes] = await Promise.all([
+          fetch('/api/inventory/summary'),
+          fetch('/api/transactions'),
+        ]);
+        allStock = await sRes.json();
+        allTx    = await tRes.json();
+        updateKPIs();
+        renderStock();
+        renderTx();
+      } catch {
+        showToast('Veriler yüklenirken hata oluştu.');
+      }
+    }
+
+    /* ── KPIs ── */
+    function updateKPIs() {
+      document.getElementById('kpiTotalItems').textContent  = allStock.length;
+      document.getElementById('kpiRawCount').textContent    = allStock.filter(i => i.category === 'Hammadde' || i.category === 'Ambalaj').length;
+      document.getElementById('kpiFinishedCount').textContent = allStock.filter(i => i.category === 'Bitmiş Ürün').length;
+      document.getElementById('kpiTxCount').textContent     = allTx.length;
+    }
+
+    /* ── Render stock table ── */
+    function renderStock() {
+      const q = document.getElementById('stockSearch').value.toLowerCase();
+      let data = allStock;
+
+      if (stockFilter === 'raw')      data = data.filter(i => i.category === 'Hammadde' || i.category === 'Ambalaj');
+      if (stockFilter === 'finished') data = data.filter(i => i.category === 'Bitmiş Ürün');
+      if (q) data = data.filter(i => i.name.toLowerCase().includes(q) || (i.category || '').toLowerCase().includes(q));
+
+      const tbody = document.getElementById('stockBody');
+      const info  = document.getElementById('stockInfo');
+
+      if (!data.length) {
+        tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state"><i class="bi bi-boxes"></i><p>Bu filtre için kayıt bulunamadı.</p></div></td></tr>`;
+        info.textContent = '0 kayıt';
+        return;
+      }
+
+      // max stock for relative bar
+      const maxStock = Math.max(...data.map(i => i.total_stock), 1);
+
+      tbody.innerHTML = data.map(i => {
+        const pct = Math.min(100, (i.total_stock / maxStock) * 100);
+        const barClass = pct < 15 ? 'critical' : pct < 30 ? 'low' : '';
+        return `<tr>
+          <td class="td-name">${escHtml(i.name)}</td>
+          <td>${catBadge(i.category)}</td>
+          <td style="color:#6b7280;">${escHtml(i.unit)}</td>
+          <td style="text-align:right;">
+            <span class="td-num">${i.total_stock.toLocaleString('tr-TR', {maximumFractionDigits:4})}</span>
+            <span class="stock-bar-wrap"><span class="stock-bar ${barClass}" style="width:${pct.toFixed(1)}%;"></span></span>
+          </td>
+        </tr>`;
+      }).join('');
+      info.textContent = `${data.length} ürün listeleniyor`;
+    }
+
+    /* ── Render transactions table ── */
+    function renderTx() {
+      const q = document.getElementById('txSearch').value.toLowerCase();
+      let data = allTx;
+      if (q) data = data.filter(r =>
+        r.item_name.toLowerCase().includes(q) ||
+        r.lot_number.toLowerCase().includes(q) ||
+        r.notes.toLowerCase().includes(q)
+      );
+
+      const tbody = document.getElementById('txBody');
+      const info  = document.getElementById('txInfo');
+
+      if (!data.length) {
+        tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i class="bi bi-clock-history"></i><p>İşlem geçmişi bulunamadı.</p></div></td></tr>`;
+        info.textContent = '0 kayıt';
+        return;
+      }
+
+      tbody.innerHTML = data.map(r => `<tr>
+        <td style="color:#9ca3af;font-size:0.78rem;">#${r.id}</td>
+        <td class="td-name">${escHtml(r.item_name)}</td>
+        <td class="td-mono">${escHtml(r.lot_number)}</td>
+        <td>${txBadge(r.transaction_type)}</td>
+        <td style="text-align:right;" class="td-num">${r.quantity.toLocaleString('tr-TR', {maximumFractionDigits:4})}</td>
+        <td style="color:#6b7280;font-size:0.82rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(r.notes)}">${escHtml(r.notes) || '—'}</td>
+        <td style="color:#6b7280;white-space:nowrap;font-size:0.82rem;">${escHtml(r.timestamp)}</td>
+      </tr>`).join('');
+      info.textContent = `${data.length} işlem listeleniyor`;
+    }
+
+    /* ── Tab switching ── */
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+        this.classList.add('active');
+        document.getElementById('tab-' + this.dataset.tab).classList.add('active');
+      });
+    });
+
+    /* ── Filter buttons ── */
+    document.querySelectorAll('.btn-filter').forEach(btn => {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.btn-filter').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        stockFilter = this.dataset.filter;
+        renderStock();
+      });
+    });
+
+    /* ── Search ── */
+    document.getElementById('stockSearch').addEventListener('input', renderStock);
+    document.getElementById('txSearch').addEventListener('input', renderTx);
+
+    /* ── Logout ── */
+    document.getElementById('logoutBtn').addEventListener('click', async function () {
+      this.disabled = true;
+      try { await fetch('/api/logout', { method: 'POST' }); window.location.href = '/login'; }
+      catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
+    });
+
+    loadAll();
+  </script>
+</body>
+</html>

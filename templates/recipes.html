@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minerva108 ERP — Reçeteler</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+
+  <style>
+    :root {
+      --navy:  #2C2C73;
+      --gold:  #b8965a;
+      --gold2: #d4af72;
+      --cream: #f5f0e8;
+      --white: #ffffff;
+      --sidebar-width: 240px;
+      --navbar-height: 64px;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Jost', sans-serif; background-color: var(--cream); color: #1f2937; }
+
+    /* ══ SIDEBAR ══ */
+    .sidebar { position: fixed; top: 0; left: 0; width: var(--sidebar-width); height: 100vh; background: var(--navy); display: flex; flex-direction: column; z-index: 100; }
+    .sidebar-brand { padding: 1.6rem 1.5rem 1.4rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-brand-name { font-family: 'Playfair Display', serif; font-size: 1.25rem; font-weight: 700; color: var(--white); letter-spacing: 0.04em; margin: 0; }
+    .sidebar-brand-sub { font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); margin-top: 0.3rem; }
+    .sidebar-nav { flex: 1; padding: 1.25rem 0.75rem; overflow-y: auto; }
+    .nav-section-label { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.3); padding: 0.5rem 0.75rem 0.4rem; margin-top: 0.5rem; }
+    .nav-link-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.85rem; border-radius: 8px; color: rgba(255,255,255,0.65); font-size: 0.88rem; font-weight: 500; text-decoration: none; transition: background 0.15s, color 0.15s; margin-bottom: 2px; }
+    .nav-link-item:hover { background: rgba(255,255,255,0.07); color: var(--white); }
+    .nav-link-item.active { background: rgba(184,150,90,0.18); color: var(--gold2); }
+    .nav-link-item.active .nav-icon { color: var(--gold); }
+    .nav-icon { font-size: 1rem; width: 18px; text-align: center; flex-shrink: 0; }
+    .badge-soon { margin-left: auto; font-size: 0.6rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; background: rgba(184,150,90,0.15); color: var(--gold); border: 1px solid rgba(184,150,90,0.3); border-radius: 20px; padding: 2px 8px; }
+    .sidebar-footer { padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-footer-text { font-size: 0.7rem; color: rgba(255,255,255,0.25); text-align: center; }
+
+    /* ══ TOPNAV ══ */
+    .topnav { position: fixed; top: 0; left: var(--sidebar-width); right: 0; height: var(--navbar-height); background: var(--white); border-bottom: 1px solid #f0ece4; display: flex; align-items: center; justify-content: space-between; padding: 0 1.75rem; z-index: 90; box-shadow: 0 1px 8px rgba(0,0,0,0.05); }
+    .topnav-title { font-family: 'Playfair Display', serif; font-size: 1.15rem; font-weight: 600; color: var(--navy); }
+    .topnav-right { display: flex; align-items: center; gap: 1rem; }
+    .user-chip { display: flex; align-items: center; gap: 0.5rem; background: var(--cream); border-radius: 20px; padding: 0.35rem 0.9rem 0.35rem 0.5rem; }
+    .user-avatar { width: 28px; height: 28px; background: var(--navy); color: var(--gold2); border-radius: 50%; font-size: 0.7rem; font-weight: 700; display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', serif; }
+    .user-name { font-size: 0.85rem; font-weight: 500; color: #374151; }
+    .btn-logout { display: flex; align-items: center; gap: 0.4rem; padding: 0.42rem 1rem; border: 1.5px solid #e5e7eb; border-radius: 8px; background: var(--white); color: #6b7280; font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 500; cursor: pointer; transition: border-color 0.2s, color 0.2s, background 0.2s; }
+    .btn-logout:hover { border-color: #ef4444; color: #ef4444; background: #fff5f5; }
+
+    /* ══ MAIN ══ */
+    .main-content { margin-left: var(--sidebar-width); padding-top: var(--navbar-height); min-height: 100vh; background: var(--cream); }
+    .content-inner { padding: 2rem 2rem 3rem; }
+    .page-header { margin-bottom: 1.75rem; }
+    .page-title { font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 700; color: var(--navy); margin: 0 0 0.25rem; }
+    .page-subtitle { font-size: 0.88rem; color: #6b7280; margin: 0; }
+
+    /* ══ TOOLBAR ══ */
+    .toolbar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .btn-primary-gold { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.52rem 1.15rem; background: var(--navy); color: var(--white); border: none; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 600; cursor: pointer; transition: background 0.2s, box-shadow 0.2s; box-shadow: 0 2px 8px rgba(44,44,115,0.22); }
+    .btn-primary-gold:hover { background: #23236b; }
+    .search-box { margin-left: auto; position: relative; }
+    .search-box input { padding: 0.5rem 1rem 0.5rem 2.2rem; border: 1.5px solid #e5e7eb; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.88rem; color: #374151; background: var(--white); width: 220px; transition: border-color 0.2s; }
+    .search-box input:focus { outline: none; border-color: var(--navy); }
+    .search-box .bi-search { position: absolute; left: 0.7rem; top: 50%; transform: translateY(-50%); color: #9ca3af; font-size: 0.85rem; }
+
+    /* ══ TABLE ══ */
+    .table-card { background: var(--white); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06); overflow: hidden; }
+    .table-responsive { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: #f9f7f3; border-bottom: 2px solid #f0ece4; }
+    thead th { padding: 0.85rem 1rem; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #6b7280; white-space: nowrap; user-select: none; }
+    thead th.sortable { cursor: pointer; }
+    thead th.sortable:hover { color: var(--navy); }
+    thead th .sort-icon { margin-left: 4px; opacity: 0.4; font-size: 0.7rem; }
+    thead th.sort-asc .sort-icon::before  { content: "▲"; opacity: 1; }
+    thead th.sort-desc .sort-icon::before { content: "▼"; opacity: 1; }
+    tbody tr { border-bottom: 1px solid #f3f0ea; transition: background 0.12s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #faf8f4; }
+    td { padding: 0.85rem 1rem; font-size: 0.9rem; color: #374151; vertical-align: middle; }
+    td.td-id { color: #9ca3af; font-size: 0.8rem; font-weight: 500; }
+    td.td-name { font-weight: 600; color: #1f2937; }
+    td.td-muted { color: #6b7280; font-size: 0.85rem; }
+    .badge-count { display: inline-flex; align-items: center; gap: 0.3rem; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; background: rgba(44,44,115,0.07); color: var(--navy); }
+    .badge-yield { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; background: rgba(184,150,90,0.12); color: #7a5c1e; }
+    .btn-icon { width: 30px; height: 30px; border-radius: 6px; border: none; display: inline-flex; align-items: center; justify-content: center; font-size: 0.85rem; cursor: pointer; transition: background 0.15s; }
+    .btn-icon-delete { background: #fff1f1; color: #dc2626; }
+    .btn-icon-delete:hover { background: #fee2e2; }
+    .empty-state { padding: 4rem 2rem; text-align: center; color: #9ca3af; }
+    .empty-state i { font-size: 2.5rem; margin-bottom: 1rem; display: block; color: #d1d5db; }
+    .empty-state p { font-size: 0.9rem; margin: 0; }
+    .table-footer { padding: 0.75rem 1.25rem; border-top: 1px solid #f0ece4; font-size: 0.8rem; color: #9ca3af; }
+
+    /* ══ MODAL ══ */
+    .modal-content { border: none; border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
+    .modal-header { border-bottom: 1px solid #f0ece4; padding: 1.25rem 1.5rem; }
+    .modal-title { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 700; color: var(--navy); }
+    .modal-body { padding: 1.5rem; }
+    .modal-footer { border-top: 1px solid #f0ece4; padding: 1rem 1.5rem; }
+    .form-label-sm { font-size: 0.78rem; font-weight: 600; color: #6b7280; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.35rem; display: block; }
+    .form-control, .form-select { border: 1.5px solid #e5e7eb; border-radius: 8px; padding: 0.6rem 0.9rem; font-family: 'Jost', sans-serif; font-size: 0.9rem; color: #1f2937; transition: border-color 0.2s, box-shadow 0.2s; width: 100%; }
+    .form-control:focus, .form-select:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(44,44,115,0.10); outline: none; }
+    .btn-save { padding: 0.6rem 1.5rem; background: var(--navy); color: var(--white); border: none; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+    .btn-save:hover { background: #23236b; }
+    .btn-save:disabled { opacity: 0.65; cursor: not-allowed; }
+    .btn-cancel { padding: 0.6rem 1.2rem; background: transparent; color: #6b7280; border: 1.5px solid #e5e7eb; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.9rem; font-weight: 500; cursor: pointer; }
+    .btn-cancel:hover { border-color: #9ca3af; color: #374151; }
+
+    /* ══ INGREDIENT ROWS ══ */
+    .ingredients-section { margin-top: 1.25rem; }
+    .ingredients-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; }
+    .ingredients-label { font-size: 0.78rem; font-weight: 600; color: #6b7280; letter-spacing: 0.06em; text-transform: uppercase; }
+    .btn-add-row { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.32rem 0.85rem; background: rgba(184,150,90,0.1); color: var(--gold); border: 1.5px solid rgba(184,150,90,0.35); border-radius: 7px; font-family: 'Jost', sans-serif; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+    .btn-add-row:hover { background: rgba(184,150,90,0.18); }
+    #ingredientRows { display: flex; flex-direction: column; gap: 0.5rem; max-height: 260px; overflow-y: auto; padding-right: 2px; }
+    .ingredient-row { display: grid; grid-template-columns: 1fr 110px 32px; gap: 0.5rem; align-items: center; }
+    .btn-remove-row { width: 32px; height: 32px; border-radius: 6px; border: none; background: #fff1f1; color: #dc2626; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 0.85rem; flex-shrink: 0; transition: background 0.15s; }
+    .btn-remove-row:hover { background: #fee2e2; }
+    .empty-ingredients { padding: 1rem; text-align: center; color: #9ca3af; font-size: 0.85rem; border: 1.5px dashed #e5e7eb; border-radius: 8px; }
+
+    /* ══ TOAST ══ */
+    #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
+    .toast-msg { min-width: 260px; max-width: 360px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
+    .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
+    .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+    @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+</head>
+<body>
+
+  <!-- ════ SIDEBAR ════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <p class="sidebar-brand-name">Minerva108</p>
+      <p class="sidebar-brand-sub">Kozmetik &nbsp;·&nbsp; ERP</p>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      <a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>
+      <a href="/suppliers" class="nav-link-item"><i class="bi bi-truck nav-icon"></i>Tedarikçiler</a>
+      <a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>
+      <a href="/recipes" class="nav-link-item active"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
+      <a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
+      <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
+      <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
+      <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+    </nav>
+    <div class="sidebar-footer"><p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p></div>
+  </aside>
+
+  <!-- ════ TOPNAV ════ -->
+  <header class="topnav">
+    <span class="topnav-title">Reçeteler</span>
+    <div class="topnav-right">
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+      <button class="btn-logout" id="logoutBtn"><i class="bi bi-box-arrow-right"></i>Çıkış Yap</button>
+    </div>
+  </header>
+
+  <!-- ════ MAIN CONTENT ════ -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <div class="page-header">
+        <h1 class="page-title">Formülasyon Merkezi</h1>
+        <p class="page-subtitle">Ürün reçeteleri ve hammadde bileşenlerinin yönetimi.</p>
+      </div>
+
+      <!-- Toolbar -->
+      <div class="toolbar">
+        {% if role in ['SuperAdmin', 'LabLead'] %}
+        <button class="btn-primary-gold" data-bs-toggle="modal" data-bs-target="#addRecipeModal">
+          <i class="bi bi-plus-lg"></i> Yeni Reçete Ekle
+        </button>
+        {% endif %}
+        <div class="search-box">
+          <i class="bi bi-search"></i>
+          <input type="text" id="searchInput" placeholder="Reçete ara…" />
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="table-card">
+        <div class="table-responsive">
+          <table id="recipesTable">
+            <thead>
+              <tr>
+                <th style="width:60px; padding-left:1.1rem;">ID</th>
+                <th class="sortable" data-col="name">Reçete Adı <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="target_item_name">Hedef Ürün <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="ingredient_count">Bileşen Sayısı <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="expected_yield">Beklenen Verim <span class="sort-icon"></span></th>
+                <th style="width:80px; text-align:center;">İşlemler</th>
+              </tr>
+            </thead>
+            <tbody id="recipesBody">
+              <tr><td colspan="6"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-footer"><span id="tableInfo">—</span></div>
+      </div>
+
+    </div>
+  </main>
+
+  <div id="toast-container"></div>
+
+  <!-- ════ MODAL: YENİ REÇETE EKLE ════ -->
+  <div class="modal fade" id="addRecipeModal" tabindex="-1" aria-labelledby="addRecipeModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="addRecipeModalLabel">Yeni Reçete Oluştur</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body">
+          <form id="addRecipeForm" novalidate>
+
+            <!-- Reçete Adı -->
+            <div class="row g-3 mb-1">
+              <div class="col-12">
+                <label class="form-label-sm">Reçete Adı *</label>
+                <input type="text" class="form-control" id="recipeName" placeholder="Örn: Argan Yağlı Krem Formülü" required />
+              </div>
+            </div>
+
+            <!-- Hedef Ürün + Verim + Fire -->
+            <div class="row g-3 mt-0">
+              <div class="col-12 col-md-5">
+                <label class="form-label-sm">Hedef Ürün * <small style="color:#9ca3af;font-weight:400;">(Bitmiş Ürün)</small></label>
+                <select class="form-select" id="recipeTargetItem" onchange="onTargetItemChange()">
+                  <option value="">— Ürün seçiniz —</option>
+                </select>
+              </div>
+              <div class="col-7 col-md-4">
+                <label class="form-label-sm">Beklenen Verim <small style="color:#9ca3af;font-weight:400;">(manuel giriş)</small></label>
+                <div class="input-group">
+                  <input type="number" class="form-control" id="recipeYield" min="0.01" step="0.01" placeholder="Örn: 500" />
+                  <span class="input-group-text" id="yieldUnitAddon" style="background:#f3f0ea;border:1.5px solid #e5e7eb;color:#6b7280;font-size:0.82rem;min-width:44px;justify-content:center;">—</span>
+                </div>
+                <small id="yieldHelper" style="display:block;margin-top:4px;font-family:'Jost',sans-serif;font-size:0.78rem;color:#6b7280;"></small>
+              </div>
+              <div class="col-5 col-md-3">
+                <label class="form-label-sm">Fire Oranı (%)</label>
+                <input type="number" class="form-control" id="recipeWaste" min="0" max="100" step="0.1" placeholder="0" value="0" oninput="calculateYield()" />
+              </div>
+            </div>
+
+            <!-- Dinamik Hammadde Alanı -->
+            <div class="ingredients-section">
+              <div class="ingredients-header">
+                <span class="ingredients-label">Hammadde Bileşenleri <small style="color:#9ca3af;font-weight:400;">(Hammadde / Ambalaj)</small></span>
+                <button type="button" class="btn-add-row" id="addRowBtn">
+                  <i class="bi bi-plus-circle"></i> Hammadde Ekle
+                </button>
+              </div>
+              <div id="ingredientRows">
+                <div class="empty-ingredients" id="emptyIngredients">
+                  Henüz hammadde eklenmedi. Yukarıdaki butonu kullanın.
+                </div>
+              </div>
+            </div>
+
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" data-bs-dismiss="modal">İptal</button>
+          <button type="button" class="btn-save" id="saveRecipeBtn">Reçeteyi Kaydet</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- /MODAL -->
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    /* ── Globals ── */
+    const USER_ROLE = "{{ role }}";
+    let allRecipes  = [];
+    let allItems    = [];   // /api/items'tan yüklenir
+    let sortCol     = null, sortDir = 'asc';
+    let rowCounter  = 0;
+
+    /* ── Toast ── */
+    function showToast(msg, type = 'error') {
+      const c = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      el.className = `toast-msg toast-${type}`;
+      el.innerHTML = `<span>${type === 'error' ? '✕' : '✓'}</span><span>${msg}</span>`;
+      c.appendChild(el);
+      setTimeout(() => { el.style.transition='opacity .4s'; el.style.opacity='0'; setTimeout(()=>el.remove(),400); }, 3500);
+    }
+
+    function escHtml(str) {
+      return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    /* ── Render table ── */
+    function renderTable(data) {
+      const tbody = document.getElementById('recipesBody');
+      if (!data.length) {
+        tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">
+          <i class="bi bi-journal-text"></i>
+          <p>Henüz reçete yok. Yeni reçete ekleyerek başlayın.</p>
+        </div></td></tr>`;
+        document.getElementById('tableInfo').textContent = '0 reçete';
+        return;
+      }
+      tbody.innerHTML = data.map(r => `
+        <tr data-id="${r.id}">
+          <td class="td-id" style="padding-left:1.1rem;">#${r.id}</td>
+          <td class="td-name">${escHtml(r.name)}</td>
+          <td class="td-muted">${escHtml(r.target_item_name) || '—'}</td>
+          <td><span class="badge-count"><i class="bi bi-boxes"></i> ${r.ingredient_count}</span></td>
+          <td><span class="badge-yield">${r.expected_yield} ml/gr</span></td>
+          <td style="text-align:center;">
+            ${['SuperAdmin','LabLead'].includes(USER_ROLE) ? `
+            <button class="btn-icon btn-icon-delete" onclick="deleteRecipe(${r.id}, '${escHtml(r.name)}')" title="Sil">
+              <i class="bi bi-trash3"></i>
+            </button>` : ''}
+          </td>
+        </tr>`).join('');
+      document.getElementById('tableInfo').textContent = `${data.length} reçete listeleniyor`;
+    }
+
+    /* ── Filter + Sort ── */
+    function applyFiltersAndSort() {
+      const q = document.getElementById('searchInput').value.toLowerCase();
+      let data = allRecipes.filter(r =>
+        r.name.toLowerCase().includes(q) ||
+        (r.target_item_name || '').toLowerCase().includes(q)
+      );
+      if (sortCol) {
+        data = [...data].sort((a, b) => {
+          let va = a[sortCol] ?? '', vb = b[sortCol] ?? '';
+          if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
+          if (va < vb) return sortDir === 'asc' ? -1 : 1;
+          if (va > vb) return sortDir === 'asc' ? 1 : -1;
+          return 0;
+        });
+      }
+      renderTable(data);
+    }
+
+    document.querySelectorAll('thead th.sortable').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        sortDir = sortCol === col && sortDir === 'asc' ? 'desc' : 'asc';
+        sortCol = col;
+        document.querySelectorAll('thead th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+        th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+        applyFiltersAndSort();
+      });
+    });
+
+    document.getElementById('searchInput').addEventListener('input', applyFiltersAndSort);
+
+    /* ── Load recipes ── */
+    async function loadRecipes() {
+      try {
+        const res = await fetch('/api/recipes');
+        allRecipes = await res.json();
+        applyFiltersAndSort();
+      } catch { showToast('Reçeteler yüklenirken hata oluştu.'); }
+    }
+
+    /* ── Load items for modal selects ── */
+    async function loadItemsForModal() {
+      try {
+        const res = await fetch('/api/items');
+        allItems = await res.json();
+
+        // Hedef Ürün → sadece "Bitmiş Ürün" kategorisi
+        const targetSel = document.getElementById('recipeTargetItem');
+        const finished  = allItems.filter(i => i.category === 'Bitmiş Ürün');
+        finished.forEach(item => {
+          const opt = document.createElement('option');
+          opt.value       = item.id;
+          opt.textContent = item.name;
+          opt.dataset.unit = item.unit || '';
+          targetSel.appendChild(opt);
+        });
+      } catch { showToast('Ürün listesi yüklenemedi.'); }
+    }
+
+    /* ── Hedef ürün seçilince birimi güncelle ── */
+    function onTargetItemChange() {
+      const sel  = document.getElementById('recipeTargetItem');
+      const opt  = sel.options[sel.selectedIndex];
+      const unit = opt ? (opt.dataset.unit || '—') : '—';
+      document.getElementById('yieldUnitAddon').textContent = unit;
+      calculateYield();
+    }
+
+    /* ── Hammadde dropdown seçenekleri (Hammadde + Ambalaj) ── */
+    function buildIngredientOptions() {
+      let opts = '<option value="">— Hammadde seçiniz —</option>';
+      const hammadde = allItems.filter(i => i.category === 'Hammadde');
+      const ambalaj  = allItems.filter(i => i.category === 'Ambalaj');
+      if (hammadde.length) {
+        opts += '<optgroup label="Hammadde">';
+        hammadde.forEach(item => {
+          opts += `<option value="${item.id}" data-category="Hammadde">${escHtml(item.name)}${item.unit ? ' (' + item.unit + ')' : ''}</option>`;
+        });
+        opts += '</optgroup>';
+      }
+      if (ambalaj.length) {
+        opts += '<optgroup label="Ambalaj">';
+        ambalaj.forEach(item => {
+          opts += `<option value="${item.id}" data-category="Ambalaj">${escHtml(item.name)}${item.unit ? ' (' + item.unit + ')' : ''}</option>`;
+        });
+        opts += '</optgroup>';
+      }
+      return opts;
+    }
+
+    /* ── Verim hesaplama (Fire sadece Hammadde'ye uygulanır) ── */
+    function calculateYield() {
+      let hammaddeTotal = 0;
+      let ambalajTotal  = 0;
+      document.querySelectorAll('.ingredient-row').forEach(row => {
+        const sel = row.querySelector('.ing-item');
+        const qty = parseFloat(row.querySelector('.ing-qty').value);
+        if (!sel || isNaN(qty) || qty <= 0) return;
+        const cat = sel.options[sel.selectedIndex]?.dataset?.category || '';
+        if (cat === 'Ambalaj') ambalajTotal += qty;
+        else hammaddeTotal += qty;
+      });
+      const total  = hammaddeTotal + ambalajTotal;
+      const helper = document.getElementById('yieldHelper');
+      if (total <= 0) { helper.innerHTML = ''; return; }
+      const waste = parseFloat(document.getElementById('recipeWaste').value) || 0;
+      const netHammadde = parseFloat((hammaddeTotal * (1 - waste / 100)).toFixed(4));
+      const unit  = document.getElementById('yieldUnitAddon').textContent.trim();
+      const u     = (unit && unit !== '—') ? ' ' + unit : '';
+      let html = `Hammadde: <strong>${parseFloat(hammaddeTotal.toFixed(4))}${u}</strong>`;
+      if (ambalajTotal > 0) html += ` &nbsp;+&nbsp; Ambalaj: <strong>${parseFloat(ambalajTotal.toFixed(4))}</strong> (fire hesabı dışı)`;
+      if (waste > 0) html += ` &nbsp;|&nbsp; %${waste} Fire Sonrası Net Hammadde: <strong style="color:#15803d;">${netHammadde}${u}</strong>`;
+      helper.innerHTML = html;
+    }
+
+    /* ── Hammadde satırı ekle ── */
+    function addIngredientRow() {
+      const container = document.getElementById('ingredientRows');
+      const empty     = document.getElementById('emptyIngredients');
+      if (empty) empty.remove();
+
+      rowCounter++;
+      const row = document.createElement('div');
+      row.className    = 'ingredient-row';
+      row.dataset.rowId = rowCounter;
+      row.innerHTML = `
+        <select class="form-select ing-item">${buildIngredientOptions()}</select>
+        <input type="number" class="form-control ing-qty" min="0.001" step="0.001" placeholder="Miktar" oninput="calculateYield()" />
+        <button type="button" class="btn-remove-row" onclick="removeRow(${rowCounter})">
+          <i class="bi bi-x-lg"></i>
+        </button>`;
+      container.appendChild(row);
+    }
+
+    function removeRow(rowId) {
+      const row = document.querySelector(`.ingredient-row[data-row-id="${rowId}"]`);
+      if (row) row.remove();
+      if (!document.querySelector('.ingredient-row')) {
+        document.getElementById('ingredientRows').innerHTML =
+          `<div class="empty-ingredients" id="emptyIngredients">Henüz hammadde eklenmedi. Yukarıdaki butonu kullanın.</div>`;
+      }
+      calculateYield();
+    }
+
+    document.getElementById('addRowBtn').addEventListener('click', addIngredientRow);
+    document.getElementById('recipeWaste').addEventListener('input', calculateYield);
+
+    /* ── Modal kapanınca sıfırla ── */
+    document.getElementById('addRecipeModal').addEventListener('hidden.bs.modal', function () {
+      document.getElementById('addRecipeForm').reset();
+      document.getElementById('ingredientRows').innerHTML =
+        `<div class="empty-ingredients" id="emptyIngredients">Henüz hammadde eklenmedi. Yukarıdaki butonu kullanın.</div>`;
+      document.getElementById('yieldUnitAddon').textContent = '—';
+      rowCounter = 0;
+    });
+
+    /* ── Kaydet ── */
+    document.getElementById('saveRecipeBtn').addEventListener('click', async function () {
+      const name         = document.getElementById('recipeName').value.trim();
+      const targetItemId = parseInt(document.getElementById('recipeTargetItem').value);
+      const yieldVal     = parseFloat(document.getElementById('recipeYield').value);
+
+      if (!name)                       { showToast('Reçete adı zorunludur.'); return; }
+      if (!targetItemId)               { showToast('Lütfen bir hedef ürün seçiniz.'); return; }
+      if (!yieldVal || yieldVal <= 0)  { showToast('Verim hesaplanabilmesi için en az bir hammadde miktarı giriniz.'); return; }
+
+      const rows = document.querySelectorAll('.ingredient-row');
+      if (!rows.length) { showToast('En az bir hammadde eklemelisiniz.'); return; }
+
+      const ingredients = [];
+      let valid = true;
+      rows.forEach(row => {
+        const itemId = parseInt(row.querySelector('.ing-item').value);
+        const qty    = parseFloat(row.querySelector('.ing-qty').value);
+        if (!itemId || !qty || qty <= 0) { valid = false; }
+        else ingredients.push({ item_id: itemId, quantity: qty });
+      });
+      if (!valid) { showToast('Tüm hammadde satırlarını eksiksiz doldurunuz.'); return; }
+
+      this.disabled = true; this.textContent = 'Kaydediliyor…';
+      try {
+        const res = await fetch('/api/recipes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, target_item_id: targetItemId, expected_yield: yieldVal, ingredients }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Kayıt başarısız.'); return; }
+        showToast('Reçete başarıyla oluşturuldu.', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('addRecipeModal')).hide();
+        loadRecipes();
+      } catch { showToast('Kayıt sırasında hata oluştu.');
+      } finally { this.disabled = false; this.textContent = 'Reçeteyi Kaydet'; }
+    });
+
+    /* ── Sil ── */
+    async function deleteRecipe(id, name) {
+      if (!confirm(`"${name}" reçetesini kalıcı olarak silmek istediğinizden emin misiniz?\n\nBu işlem tüm bileşen kayıtlarını da siler ve geri alınamaz.`)) return;
+      try {
+        const res = await fetch(`/api/recipes/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Silme başarısız.'); return; }
+        showToast('Reçete silindi.', 'success');
+        loadRecipes();
+      } catch { showToast('Silme işlemi sırasında hata oluştu.'); }
+    }
+
+    /* ── Logout ── */
+    document.getElementById('logoutBtn').addEventListener('click', async function () {
+      this.disabled = true;
+      try { await fetch('/api/logout', { method: 'POST' }); window.location.href = '/login'; }
+      catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
+    });
+
+    /* ── Init ── */
+    loadItemsForModal();
+    loadRecipes();
+  </script>
+
+</body>
+</html>

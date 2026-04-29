@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minerva108 ERP — Ürünler</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+
+  <style>
+    :root {
+      --navy:  #2C2C73;
+      --gold:  #b8965a;
+      --gold2: #d4af72;
+      --cream: #f5f0e8;
+      --white: #ffffff;
+      --sidebar-width: 240px;
+      --navbar-height: 64px;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Jost', sans-serif;
+      background-color: var(--cream);
+      color: #1f2937;
+    }
+
+    /* ══ SIDEBAR ══ */
+    .sidebar {
+      position: fixed; top: 0; left: 0;
+      width: var(--sidebar-width); height: 100vh;
+      background: var(--navy);
+      display: flex; flex-direction: column;
+      z-index: 100;
+    }
+    .sidebar-brand {
+      padding: 1.6rem 1.5rem 1.4rem;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .sidebar-brand-name {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.25rem; font-weight: 700;
+      color: var(--white); letter-spacing: 0.04em; margin: 0;
+    }
+    .sidebar-brand-sub {
+      font-size: 0.7rem; letter-spacing: 0.16em;
+      text-transform: uppercase; color: var(--gold); margin-top: 0.3rem;
+    }
+    .sidebar-nav { flex: 1; padding: 1.25rem 0.75rem; overflow-y: auto; }
+    .nav-section-label {
+      font-size: 0.65rem; font-weight: 600; letter-spacing: 0.14em;
+      text-transform: uppercase; color: rgba(255,255,255,0.3);
+      padding: 0.5rem 0.75rem 0.4rem; margin-top: 0.5rem;
+    }
+    .nav-link-item {
+      display: flex; align-items: center; gap: 0.75rem;
+      padding: 0.6rem 0.85rem; border-radius: 8px;
+      color: rgba(255,255,255,0.65);
+      font-size: 0.88rem; font-weight: 500;
+      text-decoration: none;
+      transition: background 0.15s, color 0.15s;
+      margin-bottom: 2px;
+    }
+    .nav-link-item:hover { background: rgba(255,255,255,0.07); color: var(--white); }
+    .nav-link-item.active { background: rgba(184,150,90,0.18); color: var(--gold2); }
+    .nav-link-item.active .nav-icon { color: var(--gold); }
+    .nav-icon { font-size: 1rem; width: 18px; text-align: center; flex-shrink: 0; }
+    .badge-soon {
+      margin-left: auto; font-size: 0.6rem; font-weight: 600;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      background: rgba(184,150,90,0.15); color: var(--gold);
+      border: 1px solid rgba(184,150,90,0.3);
+      border-radius: 20px; padding: 2px 8px;
+    }
+    .sidebar-footer {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+    .sidebar-footer-text { font-size: 0.7rem; color: rgba(255,255,255,0.25); text-align: center; }
+
+    /* ══ TOPNAV ══ */
+    .topnav {
+      position: fixed; top: 0; left: var(--sidebar-width); right: 0;
+      height: var(--navbar-height);
+      background: var(--white); border-bottom: 1px solid #f0ece4;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 1.75rem; z-index: 90;
+      box-shadow: 0 1px 8px rgba(0,0,0,0.05);
+    }
+    .topnav-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.15rem; font-weight: 600; color: var(--navy);
+    }
+    .topnav-right { display: flex; align-items: center; gap: 1rem; }
+    .user-chip {
+      display: flex; align-items: center; gap: 0.5rem;
+      background: var(--cream); border-radius: 20px;
+      padding: 0.35rem 0.9rem 0.35rem 0.5rem;
+    }
+    .user-avatar {
+      width: 28px; height: 28px; background: var(--navy); color: var(--gold2);
+      border-radius: 50%; font-size: 0.7rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Playfair Display', serif;
+    }
+    .user-name { font-size: 0.85rem; font-weight: 500; color: #374151; }
+    .btn-logout {
+      display: flex; align-items: center; gap: 0.4rem;
+      padding: 0.42rem 1rem; border: 1.5px solid #e5e7eb; border-radius: 8px;
+      background: var(--white); color: #6b7280;
+      font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 500;
+      cursor: pointer; transition: border-color 0.2s, color 0.2s, background 0.2s;
+    }
+    .btn-logout:hover { border-color: #ef4444; color: #ef4444; background: #fff5f5; }
+
+    /* ══ MAIN CONTENT ══ */
+    .main-content {
+      margin-left: var(--sidebar-width);
+      padding-top: var(--navbar-height);
+      min-height: 100vh;
+      background: var(--cream);
+    }
+    .content-inner { padding: 2rem 2rem 3rem; }
+    .page-header {
+      display: flex; align-items: flex-start;
+      justify-content: space-between; flex-wrap: wrap;
+      gap: 1rem; margin-bottom: 1.75rem;
+    }
+    .page-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.6rem; font-weight: 700; color: var(--navy); margin: 0 0 0.25rem;
+    }
+    .page-subtitle { font-size: 0.88rem; color: #6b7280; margin: 0; }
+
+    /* ══ TOOLBAR ══ */
+    .toolbar {
+      display: flex; align-items: center; gap: 0.75rem;
+      margin-bottom: 1rem; flex-wrap: wrap;
+    }
+    .btn-primary-gold {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.52rem 1.15rem; background: var(--navy); color: var(--white);
+      border: none; border-radius: 8px;
+      font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 600;
+      cursor: pointer; transition: background 0.2s, box-shadow 0.2s;
+      box-shadow: 0 2px 8px rgba(44,44,115,0.22);
+    }
+    .btn-primary-gold:hover { background: #23236b; box-shadow: 0 4px 14px rgba(44,44,115,0.28); }
+
+    .btn-danger-soft {
+      display: none; align-items: center; gap: 0.4rem;
+      padding: 0.52rem 1.1rem;
+      background: #fff1f1; color: #b91c1c;
+      border: 1.5px solid #fca5a5; border-radius: 8px;
+      font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 600;
+      cursor: pointer; transition: background 0.2s, border-color 0.2s;
+    }
+    .btn-danger-soft:hover { background: #fee2e2; border-color: #ef4444; }
+    .btn-danger-soft.visible { display: inline-flex; }
+
+    .search-box {
+      margin-left: auto;
+      position: relative;
+    }
+    .search-box input {
+      padding: 0.5rem 1rem 0.5rem 2.2rem;
+      border: 1.5px solid #e5e7eb; border-radius: 8px;
+      font-family: 'Jost', sans-serif; font-size: 0.88rem; color: #374151;
+      background: var(--white); width: 220px;
+      transition: border-color 0.2s;
+    }
+    .search-box input:focus { outline: none; border-color: var(--navy); }
+    .search-box .bi-search {
+      position: absolute; left: 0.7rem; top: 50%; transform: translateY(-50%);
+      color: #9ca3af; font-size: 0.85rem;
+    }
+
+    /* ══ TABLE CARD ══ */
+    .table-card {
+      background: var(--white); border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06);
+      overflow: hidden;
+    }
+    .table-responsive { overflow-x: auto; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead tr {
+      background: #f9f7f3;
+      border-bottom: 2px solid #f0ece4;
+    }
+    thead th {
+      padding: 0.85rem 1rem;
+      font-size: 0.72rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: #6b7280; white-space: nowrap;
+      user-select: none;
+    }
+    thead th.sortable { cursor: pointer; }
+    thead th.sortable:hover { color: var(--navy); }
+    thead th .sort-icon { margin-left: 4px; opacity: 0.4; font-size: 0.7rem; }
+    thead th.sort-asc .sort-icon::before  { content: "▲"; opacity: 1; }
+    thead th.sort-desc .sort-icon::before { content: "▼"; opacity: 1; }
+
+    tbody tr {
+      border-bottom: 1px solid #f3f0ea;
+      transition: background 0.12s;
+    }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #faf8f4; }
+    tbody tr.selected { background: #fdf8f0; }
+
+    td {
+      padding: 0.85rem 1rem;
+      font-size: 0.9rem; color: #374151; vertical-align: middle;
+    }
+    td.td-id { color: #9ca3af; font-size: 0.8rem; font-weight: 500; }
+    td.td-name { font-weight: 600; color: #1f2937; }
+
+    /* Category badges */
+    .cat-badge {
+      display: inline-block;
+      padding: 3px 10px; border-radius: 20px;
+      font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em;
+    }
+    .cat-hammadde    { background: #eff6ff; color: #1d4ed8; }
+    .cat-ambalaj     { background: #f0fdf4; color: #15803d; }
+    .cat-kimyasal    { background: #fefce8; color: #a16207; }
+    .cat-yardimci    { background: #fdf4ff; color: #7e22ce; }
+    .cat-diger       { background: #f3f4f6; color: #4b5563; }
+
+    /* Action buttons in table */
+    .btn-icon {
+      width: 30px; height: 30px; border-radius: 6px; border: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 0.85rem; cursor: pointer; transition: background 0.15s;
+    }
+    .btn-icon-delete { background: #fff1f1; color: #dc2626; }
+    .btn-icon-delete:hover { background: #fee2e2; }
+    .btn-icon-edit { background: #eff6ff; color: #1d4ed8; margin-right: 4px; }
+    .btn-icon-edit:hover { background: #dbeafe; }
+
+    /* Empty state */
+    .empty-state {
+      padding: 4rem 2rem; text-align: center; color: #9ca3af;
+    }
+    .empty-state i { font-size: 2.5rem; margin-bottom: 1rem; display: block; color: #d1d5db; }
+    .empty-state p { font-size: 0.9rem; margin: 0; }
+
+    /* Table footer */
+    .table-footer {
+      padding: 0.75rem 1.25rem;
+      border-top: 1px solid #f0ece4;
+      font-size: 0.8rem; color: #9ca3af;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+
+    /* ══ MODAL ══ */
+    .modal-content {
+      border: none; border-radius: 14px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    }
+    .modal-header {
+      border-bottom: 1px solid #f0ece4;
+      padding: 1.25rem 1.5rem;
+    }
+    .modal-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.1rem; font-weight: 700; color: var(--navy);
+    }
+    .modal-body { padding: 1.5rem; }
+    .modal-footer {
+      border-top: 1px solid #f0ece4;
+      padding: 1rem 1.5rem;
+    }
+    .form-label-sm {
+      font-size: 0.78rem; font-weight: 600; color: #6b7280;
+      letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.35rem;
+    }
+    .form-control, .form-select {
+      border: 1.5px solid #e5e7eb; border-radius: 8px;
+      padding: 0.6rem 0.9rem;
+      font-family: 'Jost', sans-serif; font-size: 0.9rem; color: #1f2937;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .form-control:focus, .form-select:focus {
+      border-color: var(--navy);
+      box-shadow: 0 0 0 3px rgba(44,44,115,0.10);
+      outline: none;
+    }
+    .btn-save {
+      padding: 0.6rem 1.5rem; background: var(--navy); color: var(--white);
+      border: none; border-radius: 8px;
+      font-family: 'Jost', sans-serif; font-size: 0.9rem; font-weight: 600;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .btn-save:hover { background: #23236b; }
+    .btn-cancel {
+      padding: 0.6rem 1.2rem; background: transparent; color: #6b7280;
+      border: 1.5px solid #e5e7eb; border-radius: 8px;
+      font-family: 'Jost', sans-serif; font-size: 0.9rem; font-weight: 500;
+      cursor: pointer; transition: border-color 0.2s;
+    }
+    .btn-cancel:hover { border-color: #9ca3af; color: #374151; }
+
+    /* ══ TOAST ══ */
+    #toast-container {
+      position: fixed; bottom: 1.5rem; right: 1.5rem;
+      z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem;
+    }
+    .toast-msg {
+      min-width: 260px; max-width: 360px;
+      padding: 0.8rem 1rem; border-radius: 10px;
+      font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+      display: flex; align-items: center; gap: 0.6rem;
+      animation: slideUp 0.3s ease;
+    }
+    .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
+    .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+</head>
+<body>
+
+  <!-- ════ SIDEBAR ════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <p class="sidebar-brand-name">Minerva108</p>
+      <p class="sidebar-brand-sub">Kozmetik &nbsp;·&nbsp; ERP</p>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item">
+        <i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard
+      </a>
+      <a href="/items" class="nav-link-item active">
+        <i class="bi bi-box-seam nav-icon"></i>Ürünler
+      </a>
+      <a href="/suppliers" class="nav-link-item">
+        <i class="bi bi-truck nav-icon"></i>Tedarikçiler
+      </a>
+      <a href="/receiving" class="nav-link-item">
+        <i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul
+      </a>
+      <a href="/recipes" class="nav-link-item">
+        <i class="bi bi-journal-text nav-icon"></i>Reçeteler
+      </a>
+      <a href="/production" class="nav-link-item">
+        <i class="bi bi-gear nav-icon"></i>Üretim
+      </a>
+      <a href="/qc" class="nav-link-item">
+        <i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol
+      </a>
+      <a href="/ledger" class="nav-link-item">
+        <i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri
+      </a>
+      <a href="/reports" class="nav-link-item">
+        <i class="bi bi-bar-chart-line nav-icon"></i>Raporlar
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p>
+    </div>
+  </aside>
+
+  <!-- ════ TOPNAV ════ -->
+  <header class="topnav">
+    <span class="topnav-title">Ürünler</span>
+    <div class="topnav-right">
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+      <button class="btn-logout" id="logoutBtn">
+        <i class="bi bi-box-arrow-right"></i>Çıkış Yap
+      </button>
+    </div>
+  </header>
+
+  <!-- ════ MAIN CONTENT ════ -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Ürün Listesi</h1>
+          <p class="page-subtitle">Hammadde, ambalaj ve yardımcı malzemelerin kaydı.</p>
+        </div>
+      </div>
+
+      <!-- Toolbar -->
+      <div class="toolbar">
+        {% if role in ['SuperAdmin', 'LabLead'] %}
+        <button class="btn-primary-gold" data-bs-toggle="modal" data-bs-target="#addItemModal">
+          <i class="bi bi-plus-lg"></i> Yeni Ürün Ekle
+        </button>
+        {% endif %}
+        {% if role in ['SuperAdmin', 'LabLead'] %}
+        <button class="btn-danger-soft" id="bulkDeleteBtn">
+          <i class="bi bi-trash3"></i> Seçilenleri Sil
+          (<span id="selectedCount">0</span>)
+        </button>
+        {% endif %}
+        <div class="search-box">
+          <i class="bi bi-search"></i>
+          <input type="text" id="searchInput" placeholder="Ürün ara…" />
+        </div>
+      </div>
+
+      <!-- Table Card -->
+      <div class="table-card">
+        <div class="table-responsive">
+          <table id="itemsTable">
+            <thead>
+              <tr>
+                <th style="width:42px; padding-left:1.1rem;">
+                  <input type="checkbox" id="selectAll" style="accent-color: var(--navy);" />
+                </th>
+                <th style="width:60px;">ID</th>
+                <th class="sortable" data-col="name">Ürün Adı <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="category">Kategori <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="unit">Birim <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="min_stock_level">Min. Stok <span class="sort-icon"></span></th>
+                <th style="width:80px; text-align:center;">İşlemler</th>
+              </tr>
+            </thead>
+            <tbody id="itemsBody">
+              <tr>
+                <td colspan="7">
+                  <div class="empty-state">
+                    <i class="bi bi-hourglass-split"></i>
+                    <p>Yükleniyor…</p>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-footer">
+          <span id="tableInfo">—</span>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <div id="toast-container"></div>
+
+  <!-- ════ MODAL: YENİ ÜRÜN EKLE ════ -->
+  <div class="modal fade" id="addItemModal" tabindex="-1" aria-labelledby="addItemModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="addItemModalLabel">Yeni Ürün Ekle</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body">
+          <form id="addItemForm" novalidate>
+            <div class="mb-3">
+              <label class="form-label-sm">Ürün Adı *</label>
+              <input type="text" class="form-control" id="itemName" placeholder="Örn: Argan Yağı" required />
+            </div>
+            <div class="mb-3">
+              <label class="form-label-sm">Kategori</label>
+              <select class="form-select" id="itemCategory">
+                <option value="">— Seçiniz —</option>
+                <option value="Hammadde">Hammadde</option>
+                <option value="Bitmiş Ürün">Bitmiş Ürün</option>
+                <option value="Ambalaj">Ambalaj</option>
+                <option value="Kimyasal">Kimyasal</option>
+                <option value="Yardımcı">Yardımcı</option>
+                <option value="Diğer">Diğer</option>
+              </select>
+            </div>
+            <div class="row g-3">
+              <div class="col-6">
+                <label class="form-label-sm">Birim</label>
+                <select class="form-select" id="itemUnit">
+                  <option value="adet">Adet</option>
+                  <option value="kg">Kilogram (kg)</option>
+                  <option value="g">Gram (g)</option>
+                  <option value="lt">Litre (lt)</option>
+                  <option value="ml">Mililitre (ml)</option>
+                  <option value="kutu">Kutu</option>
+                  <option value="rulo">Rulo</option>
+                </select>
+              </div>
+              <div class="col-6">
+                <label class="form-label-sm">Min. Stok Seviyesi</label>
+                <input type="number" class="form-control" id="itemMinStock" min="0" step="0.01" placeholder="0" />
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" data-bs-dismiss="modal">İptal</button>
+          <button type="button" class="btn-save" id="saveItemBtn">Kaydet</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- /MODAL -->
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    /* ── Globals ── */
+    const USER_ROLE = "{{ role }}";
+    let allItems = [];
+    let sortCol = null;
+    let sortDir = 'asc';
+    const selectedIds = new Set();
+    let editingItemId = null;
+
+    /* ── Toast ── */
+    function showToast(msg, type = 'error') {
+      const c = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      el.className = `toast-msg toast-${type}`;
+      el.innerHTML = `<span>${type === 'error' ? '✕' : '✓'}</span><span>${msg}</span>`;
+      c.appendChild(el);
+      setTimeout(() => { el.style.transition='opacity .4s'; el.style.opacity='0'; setTimeout(()=>el.remove(),400); }, 3500);
+    }
+
+    /* ── Category badge ── */
+    function catBadge(cat) {
+      if (!cat) return '<span style="color:#9ca3af;font-size:0.8rem;">—</span>';
+      const map = {
+        'Hammadde': 'cat-hammadde', 'Ambalaj': 'cat-ambalaj',
+        'Kimyasal': 'cat-kimyasal', 'Yardımcı': 'cat-yardimci'
+      };
+      const cls = map[cat] || 'cat-diger';
+      return `<span class="cat-badge ${cls}">${cat}</span>`;
+    }
+
+    /* ── Render table ── */
+    function renderTable(data) {
+      const tbody = document.getElementById('itemsBody');
+      const info  = document.getElementById('tableInfo');
+
+      if (!data.length) {
+        tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">
+          <i class="bi bi-box-seam"></i><p>Henüz kayıtlı ürün yok. Yeni ürün ekleyerek başlayın.</p>
+        </div></td></tr>`;
+        info.textContent = '0 ürün';
+        return;
+      }
+
+      tbody.innerHTML = data.map(item => `
+        <tr data-id="${item.id}" class="${selectedIds.has(item.id) ? 'selected' : ''}">
+          <td style="padding-left:1.1rem;">
+            <input type="checkbox" class="row-check" data-id="${item.id}"
+              style="accent-color:var(--navy);"
+              ${selectedIds.has(item.id) ? 'checked' : ''} />
+          </td>
+          <td class="td-id">#${item.id}</td>
+          <td class="td-name">${escHtml(item.name)}</td>
+          <td>${catBadge(item.category)}</td>
+          <td>${escHtml(item.unit)}</td>
+          <td>${item.min_stock_level ?? 0}</td>
+          <td style="text-align:center;">
+            <button class="btn-icon btn-icon-edit" onclick="editItem(${item.id})" title="Düzenle">
+              <i class="bi bi-pencil"></i>
+            </button>
+            ${['SuperAdmin','LabLead'].includes(USER_ROLE) ? `
+            <button class="btn-icon btn-icon-delete" onclick="deleteItem(${item.id}, '${escHtml(item.name)}')" title="Sil">
+              <i class="bi bi-trash3"></i>
+            </button>` : ''}
+          </td>
+        </tr>`).join('');
+
+      info.textContent = `${data.length} ürün listeleniyor`;
+      attachCheckboxListeners();
+    }
+
+    /* ── Escape HTML ── */
+    function escHtml(str) {
+      return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    /* ── Load items from API ── */
+    async function loadItems() {
+      try {
+        const res = await fetch('/api/items');
+        allItems = await res.json();
+        applyFiltersAndSort();
+      } catch {
+        showToast('Ürünler yüklenirken hata oluştu.');
+      }
+    }
+
+    /* ── Filter + Sort ── */
+    function applyFiltersAndSort() {
+      const q = document.getElementById('searchInput').value.toLowerCase();
+      let data = allItems.filter(i =>
+        i.name.toLowerCase().includes(q) ||
+        (i.category || '').toLowerCase().includes(q)
+      );
+      if (sortCol) {
+        data = [...data].sort((a, b) => {
+          let va = a[sortCol] ?? '', vb = b[sortCol] ?? '';
+          if (typeof va === 'string') va = va.toLowerCase();
+          if (typeof vb === 'string') vb = vb.toLowerCase();
+          if (va < vb) return sortDir === 'asc' ? -1 : 1;
+          if (va > vb) return sortDir === 'asc' ? 1 : -1;
+          return 0;
+        });
+      }
+      renderTable(data);
+    }
+
+    /* ── Sort headers ── */
+    document.querySelectorAll('thead th.sortable').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (sortCol === col) {
+          sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          sortCol = col; sortDir = 'asc';
+        }
+        document.querySelectorAll('thead th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+        th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+        applyFiltersAndSort();
+      });
+    });
+
+    /* ── Search ── */
+    document.getElementById('searchInput').addEventListener('input', applyFiltersAndSort);
+
+    /* ── Checkbox logic ── */
+    function updateBulkBtn() {
+      const btn = document.getElementById('bulkDeleteBtn');
+      const cnt = document.getElementById('selectedCount');
+      if (cnt) cnt.textContent = selectedIds.size;
+      if (!btn) return;
+      if (selectedIds.size > 0) btn.classList.add('visible');
+      else btn.classList.remove('visible');
+    }
+
+    function attachCheckboxListeners() {
+      document.querySelectorAll('.row-check').forEach(cb => {
+        cb.addEventListener('change', function () {
+          const id = parseInt(this.dataset.id);
+          const row = this.closest('tr');
+          if (this.checked) { selectedIds.add(id); row.classList.add('selected'); }
+          else { selectedIds.delete(id); row.classList.remove('selected'); }
+          updateBulkBtn();
+          const allChecked = document.querySelectorAll('.row-check').length === selectedIds.size;
+          document.getElementById('selectAll').checked = allChecked && selectedIds.size > 0;
+        });
+      });
+    }
+
+    document.getElementById('selectAll').addEventListener('change', function () {
+      document.querySelectorAll('.row-check').forEach(cb => {
+        const id = parseInt(cb.dataset.id);
+        cb.checked = this.checked;
+        const row = cb.closest('tr');
+        if (this.checked) { selectedIds.add(id); row.classList.add('selected'); }
+        else { selectedIds.delete(id); row.classList.remove('selected'); }
+      });
+      updateBulkBtn();
+    });
+
+    /* ── Edit item ── */
+    function editItem(id) {
+      const item = allItems.find(i => i.id === id);
+      if (!item) return;
+      editingItemId = id;
+      document.getElementById('addItemModalLabel').textContent = 'Ürün Düzenle';
+      document.getElementById('itemName').value = item.name;
+      document.getElementById('itemCategory').value = item.category || '';
+      document.getElementById('itemUnit').value = item.unit || 'adet';
+      document.getElementById('itemMinStock').value = item.min_stock_level ?? 0;
+      new bootstrap.Modal(document.getElementById('addItemModal')).show();
+    }
+
+    document.getElementById('addItemModal').addEventListener('hidden.bs.modal', function () {
+      editingItemId = null;
+      document.getElementById('addItemModalLabel').textContent = 'Yeni Ürün Ekle';
+      document.getElementById('addItemForm').reset();
+    });
+
+    /* ── Delete single ── */
+    async function deleteItem(id, name) {
+      if (!confirm(`"${name}" adlı ürünü silmek istediğinizden emin misiniz?`)) return;
+      try {
+        const res = await fetch(`/api/items/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Silme başarısız.'); return; }
+        showToast('Ürün silindi.', 'success');
+        selectedIds.delete(id);
+        updateBulkBtn();
+        loadItems();
+      } catch { showToast('Silme işlemi sırasında hata oluştu.'); }
+    }
+
+    /* ── Bulk delete ── */
+    document.getElementById('bulkDeleteBtn')?.addEventListener('click', async function () {
+      if (!selectedIds.size) return;
+      if (!confirm(`Seçilen ${selectedIds.size} ürünü silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.`)) return;
+      try {
+        const res = await fetch('/api/items/bulk-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ item_ids: [...selectedIds] }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Toplu silme başarısız.'); return; }
+        showToast(data.message, 'success');
+        selectedIds.clear();
+        document.getElementById('selectAll').checked = false;
+        updateBulkBtn();
+        loadItems();
+      } catch { showToast('Toplu silme sırasında hata oluştu.'); }
+    });
+
+    /* ── Save item (create or update) ── */
+    document.getElementById('saveItemBtn').addEventListener('click', async function () {
+      const name = document.getElementById('itemName').value.trim();
+      if (!name) { showToast('Ürün adı zorunludur.'); return; }
+      this.disabled = true;
+      this.textContent = 'Kaydediliyor…';
+      const payload = {
+        name,
+        category: document.getElementById('itemCategory').value || null,
+        unit: document.getElementById('itemUnit').value,
+        min_stock: parseFloat(document.getElementById('itemMinStock').value) || 0,
+      };
+      try {
+        const url    = editingItemId ? `/api/items/${editingItemId}` : '/api/items';
+        const method = editingItemId ? 'PUT' : 'POST';
+        const res  = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Kayıt başarısız.'); return; }
+        showToast(editingItemId ? 'Ürün güncellendi.' : 'Ürün başarıyla eklendi.', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('addItemModal')).hide();
+        loadItems();
+      } catch { showToast('Kayıt sırasında hata oluştu.');
+      } finally {
+        this.disabled = false;
+        this.textContent = 'Kaydet';
+      }
+    });
+
+    /* ── Logout ── */
+    document.getElementById('logoutBtn').addEventListener('click', async function () {
+      this.disabled = true;
+      try {
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.href = '/login';
+      } catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
+    });
+
+    loadItems();
+  </script>
+
+</body>
+</html>

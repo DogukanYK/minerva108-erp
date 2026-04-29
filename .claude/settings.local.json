@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(ngrok version *)",
+      "Bash(ngrok http *)",
+      "Bash(echo \"ngrok PID: $!\")",
+      "Bash(curl -s http://127.0.0.1:4040/api/tunnels)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(t['public_url']\\) for t in d['tunnels']]\")",
+      "Read(//private/tmp/**)"
+    ]
+  }
+}

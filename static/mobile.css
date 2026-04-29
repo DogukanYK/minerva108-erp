@@ -1,0 +1,181 @@
+/* ══════════════════════════════════════════════════════════
+   Minerva108 — Mobile / Responsive Layer
+   Applied AFTER page-level <style> blocks.
+   Breakpoint: 768 px (phones & small tablets)
+══════════════════════════════════════════════════════════ */
+
+/* Hamburger button — hidden on desktop, shown on mobile */
+.btn-hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--navy, #2C2C73);
+  font-size: 1.35rem;
+  flex-shrink: 0;
+  padding: 0;
+  margin-right: 0.25rem;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+.btn-hamburger:hover { background: rgba(44,44,115,0.06); }
+
+/* Sidebar overlay (shown when sidebar is open on mobile) */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.50);
+  z-index: 150;
+  -webkit-tap-highlight-color: transparent;
+}
+.sidebar-overlay.active { display: block; }
+
+
+/* ──────────────────────────────────────────────────────
+   MOBILE BREAKPOINT
+────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+
+  /* ── Hamburger ────────────────────────────── */
+  .btn-hamburger { display: flex; }
+
+  /* ── Sidebar ──────────────────────────────── */
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.28s ease;
+    z-index: 200;
+  }
+  .sidebar.mobile-open {
+    transform: translateX(0);
+    box-shadow: 6px 0 32px rgba(0, 0, 0, 0.22);
+  }
+
+  /* ── Topnav ───────────────────────────────── */
+  .topnav {
+    left: 0 !important;
+    padding: 0 0.75rem !important;
+  }
+  .topnav-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+    font-size: 1rem !important;
+  }
+  .topnav-right { gap: 0.4rem !important; }
+
+  /* Hide user name text — keep avatar */
+  .user-name { display: none !important; }
+  .user-chip {
+    padding: 0.3rem 0.4rem !important;
+    gap: 0 !important;
+  }
+
+  /* Logout button — icon only */
+  .btn-logout {
+    font-size: 0 !important;
+    padding: 0 0.55rem !important;
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    gap: 0 !important;
+  }
+  .btn-logout i { font-size: 1.1rem !important; }
+
+  /* ── Main content ─────────────────────────── */
+  .main-content { margin-left: 0 !important; }
+  .content-inner { padding: 1.25rem 0.875rem 2.5rem !important; }
+
+  /* ── Touch-friendly tap targets ───────────── */
+  .btn-primary-gold,
+  .btn-danger-soft,
+  .btn-submit,
+  .btn-save,
+  .btn-reset,
+  .btn-cancel,
+  .btn-filter,
+  .tab-btn,
+  .pill {
+    min-height: 44px;
+  }
+  .nav-link-item { min-height: 44px; }
+
+  /* ── KPI grids ────────────────────────────── */
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* ── Tables ───────────────────────────────── */
+  /* Allow horizontal scroll (table-card has overflow:hidden by default) */
+  .table-card { overflow: visible !important; }
+  /* Inner scrollable wrapper */
+  .table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ── Toolbar ──────────────────────────────── */
+  .toolbar { gap: 0.5rem; }
+  .toolbar .search-box,
+  .table-card-header .search-box {
+    margin-left: 0 !important;
+    width: 100%;
+  }
+  .toolbar .search-box input,
+  .table-card-header .search-box input,
+  .filter-bar .search-box input {
+    width: 100% !important;
+  }
+
+  /* Filter bar */
+  .filter-bar { gap: 0.4rem; }
+  .filter-bar .search-box {
+    margin-left: 0 !important;
+    width: 100%;
+  }
+
+  /* ── Tabs (ledger) ────────────────────────── */
+  .tab-header {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tab-btn { flex-shrink: 0; }
+
+  /* ── Login page ───────────────────────────── */
+  .login-card {
+    padding: 2rem 1.25rem 1.75rem !important;
+    margin: 0 0.75rem !important;
+  }
+
+  /* ── Info panel ───────────────────────────── */
+  .info-panel { padding: 1.25rem 1rem !important; }
+
+  /* ── Reports page ─────────────────────────── */
+  .period-pills { flex-wrap: wrap; }
+  .page-header { flex-direction: column !important; align-items: flex-start !important; }
+
+  /* ── Modal ────────────────────────────────── */
+  .modal-dialog { margin: 0.5rem !important; }
+
+  /* ── Images ───────────────────────────────── */
+  img { max-width: 100%; height: auto; }
+
+  /* ── Ingredient row in recipe modal ──────── */
+  .ingredient-row {
+    grid-template-columns: 1fr 90px 32px !important;
+  }
+
+  /* ── Stock bar in ledger ──────────────────── */
+  .stock-bar-wrap { width: 50px !important; }
+}
+
+/* Extra small screens (iPhone SE etc.) */
+@media (max-width: 380px) {
+  .topnav-title { max-width: 110px; font-size: 0.92rem !important; }
+  .content-inner { padding: 1rem 0.75rem 2rem !important; }
+}
