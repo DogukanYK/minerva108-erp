@@ -4,16 +4,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Minerva108 ERP — Dashboard</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
 
   <style>
     :root {
-      --navy:  #2C2C73;
-      --navy-dark: #1f1f56;
-      --gold:  #b8965a;
-      --gold2: #d4af72;
+      --navy:  #232E6E;
+      --navy-dark: #1A2456;
+      --gold:  #C9AC6F;
+      --gold2: #D9BE85;
       --cream: #f5f0e8;
       --white: #ffffff;
       --sidebar-width: 240px;
@@ -47,8 +48,18 @@
 
     /* Brand */
     .sidebar-brand {
-      padding: 1.6rem 1.5rem 1.4rem;
+      padding: 1.4rem 1.25rem 1.2rem;
       border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .sidebar-brand-logo {
+      width: 100%;
+      max-width: 168px;
+      height: auto;
+      opacity: 0.96;
     }
 
     .sidebar-brand-name {
@@ -542,8 +553,7 @@
   ════════════════════════════════════════ -->
   <aside class="sidebar">
     <div class="sidebar-brand">
-      <p class="sidebar-brand-name">Minerva108</p>
-      <p class="sidebar-brand-sub">Kozmetik &nbsp;·&nbsp; ERP</p>
+      <img src="/static/images/logo_sidebar.png" alt="Minerva 108 Vegan Cosmetics" class="sidebar-brand-logo" />
     </div>
 
     <nav class="sidebar-nav">
@@ -609,7 +619,7 @@
     </nav>
 
     <div class="sidebar-footer">
-      <p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p>
+      <p class="sidebar-footer-text">v2.0.0 &nbsp;·&nbsp; 2026</p>
     </div>
   </aside>
 

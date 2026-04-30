@@ -4,15 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Minerva108 ERP — Raporlar</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
 
   <style>
     :root {
-      --navy:  #2C2C73;
-      --gold:  #b8965a;
-      --gold2: #d4af72;
+      --navy:  #232E6E;
+      --gold:  #C9AC6F;
+      --gold2: #D9BE85;
       --cream: #f5f0e8;
       --white: #ffffff;
       --sidebar-width: 240px;
@@ -23,7 +24,20 @@
 
     /* ══ SIDEBAR ══ */
     .sidebar { position: fixed; top: 0; left: 0; width: var(--sidebar-width); height: 100vh; background: var(--navy); display: flex; flex-direction: column; z-index: 100; }
-    .sidebar-brand { padding: 1.6rem 1.5rem 1.4rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-brand {
+      padding: 1.4rem 1.25rem 1.2rem;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .sidebar-brand-logo {
+      width: 100%;
+      max-width: 168px;
+      height: auto;
+      opacity: 0.96;
+    }
     .sidebar-brand-name { font-family: 'Playfair Display', serif; font-size: 1.25rem; font-weight: 700; color: var(--white); letter-spacing: 0.04em; margin: 0; }
     .sidebar-brand-sub { font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); margin-top: 0.3rem; }
     .sidebar-nav { flex: 1; padding: 1.25rem 0.75rem; overflow-y: auto; }
@@ -133,8 +147,7 @@
   <!-- ════ SIDEBAR ════ -->
   <aside class="sidebar">
     <div class="sidebar-brand">
-      <p class="sidebar-brand-name">Minerva108</p>
-      <p class="sidebar-brand-sub">Kozmetik &nbsp;·&nbsp; ERP</p>
+      <img src="/static/images/logo_sidebar.png" alt="Minerva 108 Vegan Cosmetics" class="sidebar-brand-logo" />
     </div>
     <nav class="sidebar-nav">
       <div class="nav-section-label">Ana Menü</div>
@@ -153,7 +166,7 @@
       {% endif %}
     </nav>
     <div class="sidebar-footer">
-      <p class="sidebar-footer-text">v1.0.0 &nbsp;·&nbsp; 2025</p>
+      <p class="sidebar-footer-text">v2.0.0 &nbsp;·&nbsp; 2026</p>
     </div>
   </aside>
 
