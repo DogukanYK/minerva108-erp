@@ -11,7 +11,9 @@
       "Bash(python3 -c \"import api_main; print\\('✅ api_main OK'\\)\")",
       "Bash(python3 -c \"import api_main; import database; print\\('✅ All imports OK'\\)\")",
       "Bash(bash -n /Users/dogukan/Desktop/MINERVA108IMSV2/deploy.sh)",
-      "Bash(shellcheck --severity=warning /Users/dogukan/Desktop/MINERVA108IMSV2/deploy.sh)"
+      "Bash(shellcheck --severity=warning /Users/dogukan/Desktop/MINERVA108IMSV2/deploy.sh)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -c \"import pypdf; print\\('✅ pypdf', pypdf.__version__\\)\")"
     ]
   }
 }

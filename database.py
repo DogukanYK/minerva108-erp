@@ -70,9 +70,7 @@ class Item(Base):
     unit = Column(String(20), default="adet")
     current_stock = Column(Float, default=0.0)
     min_stock_level = Column(Float, default=0.0)
-    cost_price = Column(Float, default=0.0)              # Total = ingredient + packaging (kept in sync)
-    ingredient_cost = Column(Float, default=0.0)         # TL — formula/recipe ingredients only
-    packaging_cost = Column(Float, default=0.0)          # TL — bottle, cap, label, etc.
+    cost_price = Column(Float, default=0.0)
     selling_price = Column(Float, default=0.0)
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
     parent_id = Column(Integer, ForeignKey("items.id"), nullable=True, index=True)   # Variations: points to parent product
@@ -272,9 +270,6 @@ def init_db():
             "ALTER TABLE items              ADD COLUMN variation_name VARCHAR(100)",
             # Phase 4 / Task 2 — Granular RBAC 2.0
             "ALTER TABLE users              ADD COLUMN permissions TEXT",
-            # Cost breakdown (ingredient vs packaging)
-            "ALTER TABLE items              ADD COLUMN ingredient_cost REAL DEFAULT 0.0",
-            "ALTER TABLE items              ADD COLUMN packaging_cost  REAL DEFAULT 0.0",
         ):
             alter_safe(stmt)
 
