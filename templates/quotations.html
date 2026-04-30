@@ -402,6 +402,35 @@
     .btn-save-draft:hover  { background: #a08144; }
     .btn-save-draft:disabled { opacity: 0.6; cursor: not-allowed; }
 
+    /* ══ BANK ACCOUNT INFO TABLE (footer, 3 banks side-by-side) ══ */
+    .inv-banks-table {
+      width: 100%; border-collapse: collapse; margin-top: 0.4rem;
+      font-size: 0.7rem;
+    }
+    .inv-banks-table th, .inv-banks-table td {
+      padding: 5px 8px; border: 1px solid #e5e7eb; vertical-align: top;
+    }
+    .inv-banks-table thead th {
+      background: var(--navy); color: #fff;
+      text-align: center; font-weight: 700; letter-spacing: 0.06em;
+    }
+    .inv-banks-table tbody td:first-child {
+      background: #f9f7f3; font-weight: 700; color: #6b7280;
+      font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
+      white-space: nowrap; width: 110px;
+    }
+    .inv-banks-table tbody td {
+      font-family: 'Jost', sans-serif; color: #1f2937;
+    }
+    .inv-banks-table .iban {
+      font-family: 'SF Mono', Menlo, monospace; font-size: 0.66rem;
+      letter-spacing: 0.01em; color: #374151;
+    }
+    .inv-banks-table tr.bank-owner-row td {
+      background: #faf8f4; text-align: center; font-weight: 700;
+      color: var(--navy);
+    }
+
     /* ══ TOAST ══ */
     #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
     .toast-msg { min-width: 260px; max-width: 360px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
@@ -608,7 +637,7 @@
               <div class="col-12 col-md-6">
                 <label class="form-label-sm">Notlar / Şartlar</label>
                 <input type="text" class="form-control" id="quoteNotes"
-                       value="Ödeme: %50 sipariş — %50 yükleme öncesi · Teslimat: Sipariş onayından sonra 21 gün · Incoterms: FOB Istanbul" />
+                       value="Payment Terms: 100% IN ADVANCE · Type of Delivery: EX-FACTORY · Time of Delivery: 2 months after receiving payment · Shipment: BY SEA / BY AIR · Transportation: EXCLUDING. These prices are calculated for partial loading. Above prices are valid for only this offer." />
               </div>
 
             </div>
@@ -642,12 +671,12 @@
         <div class="inv-header">
           <div class="inv-brand">
             <div class="inv-logo">M</div>
-            <p class="inv-brand-name">Minerva108 Kozmetik</p>
-            <p class="inv-brand-tagline">Premium · Cosmetics · Manufacturing</p>
+            <p class="inv-brand-name">MİNERVA 108 YÖNETİM &amp; DANIŞMANLIK A.Ş.</p>
+            <p class="inv-brand-tagline">Cosmetics · Manufacturing · Export</p>
             <div class="inv-brand-info">
-              Adres satırı 1 · Adres satırı 2 · İstanbul · Türkiye<br>
-              Tel: +90 (212) 000 00 00 &nbsp;·&nbsp; export@minerva108.com.tr<br>
-              Vergi No: 0000000000 · Mersis: 0-0000-0000-0000000
+              Kireçburnu Mah. Raif Bey Sk. No:8/A · Sarıyer · İstanbul · Türkiye<br>
+              Tel: +90 (212) 299 20 70 &nbsp;·&nbsp; +90 (542) 471 74 19 &nbsp;·&nbsp; +90 (544) 910 49 19 &nbsp;·&nbsp; +90 (544) 510 45 49<br>
+              www.minerva108cosmetics.com &nbsp;·&nbsp; info@minerva108cosmetics.com
             </div>
           </div>
           <div class="inv-doc-meta">
@@ -703,15 +732,73 @@
 
         <div class="inv-footer">
           <div class="inv-footer-section">
-            <div class="inv-footer-label">Banking Details / Ödeme Bilgileri</div>
-            Banka: Türkiye İş Bankası A.Ş. · Şube: İstanbul Merkez<br>
-            IBAN (USD): TR00 0000 0000 0000 0000 0000 00 · Swift: ISBKTRIS<br>
-            Hesap Adı: Minerva108 Kozmetik San. ve Tic. A.Ş.
+            <div class="inv-footer-label">Bank Account Info / Ödeme Bilgileri</div>
+            <table class="inv-banks-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>1</th>
+                  <th>2</th>
+                  <th>3</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Bank</td>
+                  <td>KUVEYT TÜRK KATILIM BANKASI</td>
+                  <td>TÜRKİYE İŞ BANKASI A.Ş.</td>
+                  <td>TÜRKİYE VAKIFLAR BANKASI T.A.O.</td>
+                </tr>
+                <tr>
+                  <td>Branch</td>
+                  <td>214 LEVENT - SANAYİ</td>
+                  <td>151 YENİKÖY</td>
+                  <td>1106 TARABYA</td>
+                </tr>
+                <tr>
+                  <td>Swift Code</td>
+                  <td class="iban">KTEFTRISXXX</td>
+                  <td class="iban">ISBKTRIS</td>
+                  <td class="iban">TVBATR2A</td>
+                </tr>
+                <tr>
+                  <td>USD IBAN</td>
+                  <td class="iban">TR09 0020 5000 0909 6875 2001 01</td>
+                  <td class="iban">TR37 0006 4000 0021 1510 5912 99</td>
+                  <td class="iban">TR36 0001 5001 5804 8023 3113 21</td>
+                </tr>
+                <tr>
+                  <td>EUR IBAN</td>
+                  <td class="iban">TR79 0020 5000 0909 6875 2001 02</td>
+                  <td class="iban">TR53 0006 4000 0021 1510 5913 02</td>
+                  <td class="iban">TR85 0001 5001 5804 8023 3113 12</td>
+                </tr>
+                <tr class="bank-owner-row">
+                  <td>Account Owner</td>
+                  <td colspan="3">MİNERVA 108 YÖNETİM &amp; DANIŞMANLIK A.Ş.</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
           <div class="inv-footer-section">
             <div class="inv-footer-label">Terms / Şartlar</div>
             <span id="invTerms">—</span>
           </div>
+
+          <!-- Sample stamp + Signature block (mirrors physical proforma) -->
+          <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:1.5rem; padding-top:1rem; border-top:1px dashed #d1d5db;">
+            <div style="font-size:0.78rem; color:#6b7280; line-height:1.55; max-width:55%;">
+              If you need any further details or information, do not hesitate to contact us.<br>
+              <strong>Best Regards.</strong><br>
+              <span style="color:var(--navy); font-weight:700; letter-spacing:0.04em;">EXPORT-SALES DEPARTMENT</span>
+            </div>
+            <div style="text-align:right;">
+              <div style="display:inline-block; padding:0.35rem 0.9rem; border:1.5px solid #dc2626; color:#dc2626; font-weight:700; font-size:0.78rem; letter-spacing:0.08em; transform:rotate(-2deg); border-radius:4px;">
+                SAMPLE — NO COMMERCIAL VALUE
+              </div>
+            </div>
+          </div>
+
           <div class="inv-stamp">
             <i class="bi bi-shield-check"></i>
             Bu doküman elektronik ortamda hazırlanmıştır — Minerva108 ERP · {{ full_name }}
