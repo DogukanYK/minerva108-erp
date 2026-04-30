@@ -206,10 +206,12 @@ class ItemCreateRequest(BaseModel):
     name: str
     category: Optional[str] = None
     unit: str = "adet"
-    min_stock:      Optional[float] = 0.0
-    cost_price:     Optional[float] = 0.0
-    parent_id:      Optional[int]   = None    # Variation hierarchy — null for parents/standalones
-    variation_name: Optional[str]   = None    # e.g. "200ml" — required if parent_id set
+    min_stock:       Optional[float] = 0.0
+    cost_price:      Optional[float] = 0.0
+    ingredient_cost: Optional[float] = 0.0
+    packaging_cost:  Optional[float] = 0.0
+    parent_id:       Optional[int]   = None    # Variation hierarchy — null for parents/standalones
+    variation_name:  Optional[str]   = None    # e.g. "200ml" — required if parent_id set
 
 
 class BulkDeleteRequest(BaseModel):
@@ -343,6 +345,8 @@ def list_items(
             "current_stock":   i.current_stock,
             # ── Finance-gated: zeroed for lab roles (defense in depth vs. DevTools snooping) ──
             "cost_price":      round(i.cost_price or 0.0, 4) if finance_ok else 0.0,
+            "ingredient_cost": round(i.ingredient_cost or 0.0, 4) if finance_ok else 0.0,
+            "packaging_cost":  round(i.packaging_cost or 0.0, 4) if finance_ok else 0.0,
             "parent_id":       i.parent_id,
             "parent_name":     name_by_id.get(i.parent_id) if i.parent_id else None,
             "variation_name":  i.variation_name,
@@ -391,12 +395,19 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db), _: dict 
     err = _validate_variation(db, data.parent_id, data.variation_name)
     if err: return err
 
+    # Cost breakdown — auto-sync cost_price to ingredient + packaging if either is given
+    ing  = data.ingredient_cost or 0.0
+    pkg  = data.packaging_cost  or 0.0
+    cost = (ing + pkg) if (ing or pkg) else (data.cost_price or 0.0)
+
     item = Item(
         name=data.name,
         category=data.category,
         unit=data.unit,
-        min_stock_level=data.min_stock  or 0.0,
-        cost_price=data.cost_price or 0.0,
+        min_stock_level=data.min_stock or 0.0,
+        cost_price=cost,
+        ingredient_cost=ing,
+        packaging_cost=pkg,
         parent_id=data.parent_id,
         variation_name=(data.variation_name.strip() if data.parent_id and data.variation_name else None),
     )
@@ -433,11 +444,18 @@ def update_item(item_id: int, data: ItemCreateRequest, db: Session = Depends(get
     err = _validate_variation(db, data.parent_id, data.variation_name, self_id=item_id)
     if err: return err
 
+    # Cost breakdown — auto-sync cost_price = ingredient + packaging if either provided
+    ing  = data.ingredient_cost or 0.0
+    pkg  = data.packaging_cost  or 0.0
+    cost = (ing + pkg) if (ing or pkg) else (data.cost_price or 0.0)
+
     item.name            = data.name
     item.category        = data.category
     item.unit            = data.unit
-    item.min_stock_level = data.min_stock  or 0.0
-    item.cost_price      = data.cost_price or 0.0
+    item.min_stock_level = data.min_stock or 0.0
+    item.cost_price      = cost
+    item.ingredient_cost = ing
+    item.packaging_cost  = pkg
     item.parent_id       = data.parent_id
     item.variation_name  = (data.variation_name.strip() if data.parent_id and data.variation_name else None)
     db.commit()
