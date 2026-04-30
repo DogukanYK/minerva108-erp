@@ -550,6 +550,7 @@ def _calc_recipe_costs(recipe: Recipe, db: Session) -> dict:
 
 @app.get("/api/recipes")
 def list_recipes(
+    include_ingredients: bool = False,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -559,7 +560,7 @@ def list_recipes(
     for r in rows:
         target = db.query(Item).filter(Item.id == r.target_item_id).first() if r.target_item_id else None
         costs  = _calc_recipe_costs(r, db) if finance_ok else {"total_cost": 0.0, "unit_cost": 0.0, "ingredient_costs": []}
-        result.append({
+        row = {
             "id":               r.id,
             "name":             r.name,
             "description":      r.description,
@@ -572,7 +573,12 @@ def list_recipes(
             "total_cost":       costs["total_cost"],
             "unit_cost":        costs["unit_cost"],
             "created_at":       r.created_at.strftime("%d.%m.%Y") if r.created_at else "",
-        })
+        }
+        if include_ingredients:
+            row["ingredient_names"] = [
+                (ing.item.name if ing.item else "") for ing in r.ingredients
+            ]
+        result.append(row)
     return result
 
 

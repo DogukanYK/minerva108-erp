@@ -1,0 +1,882 @@
+/* ═══════════════════════════════════════════════════════════════
+   Minerva 108 — Dark Theme Overrides
+   Applied when <html data-theme="dark">.
+   Uses high specificity + variable overrides to flip the chrome
+   (body, cards, tables, inputs, modals, dropdowns, sidebar) without
+   touching individual inline styles. Status badges keep their
+   semantic pastels — they read fine on dark.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root[data-theme="dark"] {
+  --navy:        #1A2456;
+  --navy-dark:   #131B40;
+  --gold:        #D9BE85;
+  --gold2:       #E6CFA0;
+  --cream:       #0E1322;     /* page background */
+  --white:       #1A2138;     /* "card" surface */
+  --surface-2:   #232B45;     /* secondary surface (table head, input bg) */
+  --border:      #2A3454;
+  --border-soft: #1F2842;
+  --text:        #E2E5EC;
+  --text-muted:  #8A93AB;
+  --text-faint:  #5D6786;
+}
+
+/* ── Body & global text ─────────────────────────────────────── */
+:root[data-theme="dark"] body {
+  background-color: var(--cream);
+  color: var(--text);
+}
+
+/* Default any unstyled <p> / <span> / <div> / <td> to light text.
+   Inline-styled colors get specifically targeted below. */
+:root[data-theme="dark"] p,
+:root[data-theme="dark"] span,
+:root[data-theme="dark"] div,
+:root[data-theme="dark"] li,
+:root[data-theme="dark"] dt,
+:root[data-theme="dark"] dd,
+:root[data-theme="dark"] small,
+:root[data-theme="dark"] strong,
+:root[data-theme="dark"] b {
+  color: inherit;
+}
+
+/* ── Override hardcoded LIGHT-MODE TEXT COLORS in inline styles ── */
+/* Slate/Gray scale → light variants */
+:root[data-theme="dark"] [style*="color:#1f2937"],
+:root[data-theme="dark"] [style*="color: #1f2937"],
+:root[data-theme="dark"] [style*="color:#111827"],
+:root[data-theme="dark"] [style*="color: #111827"],
+:root[data-theme="dark"] [style*="color:#0f172a"],
+:root[data-theme="dark"] [style*="color: #0f172a"] {
+  color: var(--text) !important;
+}
+:root[data-theme="dark"] [style*="color:#374151"],
+:root[data-theme="dark"] [style*="color: #374151"],
+:root[data-theme="dark"] [style*="color:#4b5563"],
+:root[data-theme="dark"] [style*="color: #4b5563"] {
+  color: #C4CAD8 !important;
+}
+:root[data-theme="dark"] [style*="color:#6b7280"],
+:root[data-theme="dark"] [style*="color: #6b7280"] {
+  color: var(--text-muted) !important;
+}
+:root[data-theme="dark"] [style*="color:#9ca3af"],
+:root[data-theme="dark"] [style*="color: #9ca3af"],
+:root[data-theme="dark"] [style*="color:#d1d5db"],
+:root[data-theme="dark"] [style*="color: #d1d5db"] {
+  color: var(--text-faint) !important;
+}
+
+/* ── In-CSS hardcoded text colors (covers <style> blocks) ── */
+/* These selectors hit elements that were styled via class with hex literals. */
+:root[data-theme="dark"] .td-name,
+:root[data-theme="dark"] .form-control,
+:root[data-theme="dark"] .form-select,
+:root[data-theme="dark"] td {
+  color: var(--text) !important;
+}
+/* Page / topnav / modal titles + KPI/stat values use var(--navy) in light;
+   in dark we promote them to gold for contrast against dark surfaces. */
+:root[data-theme="dark"] .page-title,
+:root[data-theme="dark"] .topnav-title,
+:root[data-theme="dark"] .modal-title,
+:root[data-theme="dark"] .stat-card-value,
+:root[data-theme="dark"] .kpi-value,
+:root[data-theme="dark"] .cost-card-total .cost-card-value {
+  color: var(--gold) !important;
+}
+/* Headlines that should remain neutral light (not gold): keep them as text */
+:root[data-theme="dark"] .ingredients-label { color: var(--text-muted) !important; }
+:root[data-theme="dark"] .page-subtitle,
+:root[data-theme="dark"] .stat-card-label,
+:root[data-theme="dark"] .kpi-label,
+:root[data-theme="dark"] .form-label,
+:root[data-theme="dark"] .form-label-sm,
+:root[data-theme="dark"] .filter-label,
+:root[data-theme="dark"] .filter-label-mini,
+:root[data-theme="dark"] .table-footer,
+:root[data-theme="dark"] .td-muted,
+:root[data-theme="dark"] .td-id,
+:root[data-theme="dark"] .text-faded,
+:root[data-theme="dark"] .ingredients-label,
+:root[data-theme="dark"] .nav-section-label,
+:root[data-theme="dark"] .empty-state {
+  color: var(--text-muted) !important;
+}
+:root[data-theme="dark"] .empty-state i { color: var(--text-faint) !important; }
+
+/* Anything explicitly using var(--navy) for text (page titles etc) */
+:root[data-theme="dark"] .modal-title,
+:root[data-theme="dark"] .cost-card-total .cost-card-value,
+:root[data-theme="dark"] .badge-count {
+  color: var(--gold) !important;
+}
+
+/* ── Pastel "alert/info" backgrounds — keep semantic but DARKEN ── */
+/* Green (success / positive) */
+:root[data-theme="dark"] [style*="background:#f0fdf4"],
+:root[data-theme="dark"] [style*="background: #f0fdf4"],
+:root[data-theme="dark"] [style*="background:#dcfce7"],
+:root[data-theme="dark"] [style*="background: #dcfce7"] {
+  background: #0E2A1A !important;
+  color: #6EE7B7 !important;
+  border-color: #1f5538 !important;
+}
+:root[data-theme="dark"] [style*="color:#15803d"],
+:root[data-theme="dark"] [style*="color: #15803d"],
+:root[data-theme="dark"] [style*="color:#22c55e"],
+:root[data-theme="dark"] [style*="color: #22c55e"] {
+  color: #6EE7B7 !important;
+}
+
+/* Red (error / danger) */
+:root[data-theme="dark"] [style*="background:#fff1f1"],
+:root[data-theme="dark"] [style*="background: #fff1f1"],
+:root[data-theme="dark"] [style*="background:#fff5f5"],
+:root[data-theme="dark"] [style*="background: #fff5f5"],
+:root[data-theme="dark"] [style*="background:#fee2e2"],
+:root[data-theme="dark"] [style*="background: #fee2e2"] {
+  background: #2E1414 !important;
+  color: #FCA5A5 !important;
+  border-color: #5A1F1F !important;
+}
+:root[data-theme="dark"] [style*="color:#b91c1c"],
+:root[data-theme="dark"] [style*="color: #b91c1c"],
+:root[data-theme="dark"] [style*="color:#dc2626"],
+:root[data-theme="dark"] [style*="color: #dc2626"],
+:root[data-theme="dark"] [style*="color:#ef4444"],
+:root[data-theme="dark"] [style*="color: #ef4444"] {
+  color: #FCA5A5 !important;
+}
+
+/* Amber / Orange (warning) */
+:root[data-theme="dark"] [style*="background:#fff7ed"],
+:root[data-theme="dark"] [style*="background: #fff7ed"],
+:root[data-theme="dark"] [style*="background:#fffbeb"],
+:root[data-theme="dark"] [style*="background: #fffbeb"],
+:root[data-theme="dark"] [style*="background:#fef3c7"],
+:root[data-theme="dark"] [style*="background: #fef3c7"],
+:root[data-theme="dark"] [style*="background:#fefce8"],
+:root[data-theme="dark"] [style*="background: #fefce8"] {
+  background: #2D2114 !important;
+  color: #FCD34D !important;
+  border-color: #5A4520 !important;
+}
+:root[data-theme="dark"] [style*="color:#c2410c"],
+:root[data-theme="dark"] [style*="color: #c2410c"],
+:root[data-theme="dark"] [style*="color:#92400e"],
+:root[data-theme="dark"] [style*="color: #92400e"],
+:root[data-theme="dark"] [style*="color:#a16207"],
+:root[data-theme="dark"] [style*="color: #a16207"],
+:root[data-theme="dark"] [style*="color:#b45309"],
+:root[data-theme="dark"] [style*="color: #b45309"] {
+  color: #FCD34D !important;
+}
+
+/* Blue (info) */
+:root[data-theme="dark"] [style*="background:#eff6ff"],
+:root[data-theme="dark"] [style*="background: #eff6ff"],
+:root[data-theme="dark"] [style*="background:#dbeafe"],
+:root[data-theme="dark"] [style*="background: #dbeafe"],
+:root[data-theme="dark"] [style*="background:#f0f9ff"],
+:root[data-theme="dark"] [style*="background: #f0f9ff"] {
+  background: #142036 !important;
+  color: #93C5FD !important;
+  border-color: #1E3A5F !important;
+}
+:root[data-theme="dark"] [style*="color:#1d4ed8"],
+:root[data-theme="dark"] [style*="color: #1d4ed8"],
+:root[data-theme="dark"] [style*="color:#1e40af"],
+:root[data-theme="dark"] [style*="color: #1e40af"] {
+  color: #93C5FD !important;
+}
+
+/* Purple/Indigo (used by some chips) */
+:root[data-theme="dark"] [style*="background:#eef2ff"],
+:root[data-theme="dark"] [style*="background: #eef2ff"] {
+  background: #1A1F3F !important;
+  color: #C7B5F9 !important;
+}
+:root[data-theme="dark"] [style*="color:#4338ca"],
+:root[data-theme="dark"] [style*="color: #4338ca"] {
+  color: #C7B5F9 !important;
+}
+
+/* Cream-ish neutral panel surfaces (recipes, info panels) */
+:root[data-theme="dark"] [style*="background:#fdfcfa"],
+:root[data-theme="dark"] [style*="background: #fdfcfa"],
+:root[data-theme="dark"] [style*="background:#fdf8f0"],
+:root[data-theme="dark"] [style*="background: #fdf8f0"] {
+  background: var(--surface-2) !important;
+  color: var(--text) !important;
+}
+
+/* Hardcoded "white" cards / dropdowns */
+:root[data-theme="dark"] [style*="background:#fff"],
+:root[data-theme="dark"] [style*="background: #fff"],
+:root[data-theme="dark"] [style*="background:white"],
+:root[data-theme="dark"] [style*="background: white"],
+:root[data-theme="dark"] [style*="background-color:#fff"],
+:root[data-theme="dark"] [style*="background-color: #fff"],
+:root[data-theme="dark"] [style*="background-color:white"],
+:root[data-theme="dark"] [style*="background-color: white"] {
+  background: var(--white) !important;
+  color: var(--text) !important;
+}
+
+/* ── Class-defined colors found across templates ── */
+/* Most-used dark text classes (caught directly so we don't depend on inline styles) */
+:root[data-theme="dark"] .activity-item-name,
+:root[data-theme="dark"] .ing-name,
+:root[data-theme="dark"] .lot-info-cell-value,
+:root[data-theme="dark"] .preview-item-name,
+:root[data-theme="dark"] .usage-item-name,
+:root[data-theme="dark"] .filter-label {
+  color: var(--text) !important;
+}
+:root[data-theme="dark"] .activity-qty,
+:root[data-theme="dark"] .q-text,
+:root[data-theme="dark"] .tl-body {
+  color: #C4CAD8 !important;
+}
+:root[data-theme="dark"] .btn-cancel,
+:root[data-theme="dark"] .btn-filter,
+:root[data-theme="dark"] .btn-logout,
+:root[data-theme="dark"] .pill,
+:root[data-theme="dark"] .tab-btn,
+:root[data-theme="dark"] .trend-day,
+:root[data-theme="dark"] .empty-state-title,
+:root[data-theme="dark"] .usage-item-val {
+  color: var(--text-muted) !important;
+}
+:root[data-theme="dark"] .btn-cancel,
+:root[data-theme="dark"] .btn-filter,
+:root[data-theme="dark"] .btn-logout,
+:root[data-theme="dark"] .pill {
+  background: var(--white) !important;
+  border-color: var(--border) !important;
+}
+:root[data-theme="dark"] .btn-cancel:hover,
+:root[data-theme="dark"] .btn-filter:hover,
+:root[data-theme="dark"] .btn-logout:hover,
+:root[data-theme="dark"] .pill:hover {
+  border-color: var(--gold) !important;
+  color: var(--gold) !important;
+}
+:root[data-theme="dark"] .pill.active,
+:root[data-theme="dark"] .btn-filter.active,
+:root[data-theme="dark"] .tab-btn.active {
+  background: var(--surface-2) !important;
+  color: var(--gold) !important;
+  border-color: var(--gold) !important;
+}
+
+/* Category / role / status chips with light gray neutrals → dark surface */
+:root[data-theme="dark"] .cat-diger,
+:root[data-theme="dark"] .role-staff,
+:root[data-theme="dark"] .perm-source-default,
+:root[data-theme="dark"] .tx-other,
+:root[data-theme="dark"] .trend-neutral {
+  background: var(--surface-2) !important;
+  color: var(--text-muted) !important;
+  border-color: var(--border) !important;
+}
+
+/* Dashboard cards (index.html and beyond) */
+:root[data-theme="dark"] .kpi-card,
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .panel-card,
+:root[data-theme="dark"] .table-card,
+:root[data-theme="dark"] .info-panel,
+:root[data-theme="dark"] .toolbar,
+:root[data-theme="dark"] .filter-bar {
+  background: var(--white) !important;
+  border-color: var(--border) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.30), 0 4px 14px rgba(0,0,0,0.25);
+}
+:root[data-theme="dark"] .panel-header,
+:root[data-theme="dark"] .panel-footer,
+:root[data-theme="dark"] .table-card-header,
+:root[data-theme="dark"] .table-footer {
+  background: transparent !important;
+  border-color: var(--border) !important;
+  color: var(--text-muted) !important;
+}
+:root[data-theme="dark"] .panel-icon-navy {
+  background: rgba(217,190,133,0.12) !important;
+  color: var(--gold) !important;
+}
+:root[data-theme="dark"] .panel-icon-gold {
+  background: rgba(217,190,133,0.18) !important;
+}
+:root[data-theme="dark"] .kpi-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.45), 0 8px 24px rgba(0,0,0,0.30);
+}
+
+/* Search box (toolbar) */
+:root[data-theme="dark"] .search-box input,
+:root[data-theme="dark"] .search-box {
+  background: var(--surface-2) !important;
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+:root[data-theme="dark"] .search-box i { color: var(--text-faint) !important; }
+
+/* Cost summary cards (recipes detail modal) */
+:root[data-theme="dark"] .cost-card {
+  background: var(--surface-2) !important;
+  border-color: var(--border) !important;
+}
+:root[data-theme="dark"] .cost-card-label,
+:root[data-theme="dark"] .cost-card-sub {
+  color: var(--text-muted) !important;
+}
+
+/* Recipes table-card hover row (overrides #faf8f4) */
+:root[data-theme="dark"] tbody tr:hover { background: var(--surface-2) !important; }
+
+/* Brand pill (recipes 2.0 filter bar) */
+:root[data-theme="dark"] .brand-pill {
+  background: transparent !important;
+  border-color: var(--border) !important;
+  color: var(--text-muted) !important;
+}
+:root[data-theme="dark"] .brand-pill:hover {
+  border-color: var(--gold) !important;
+  color: var(--gold) !important;
+}
+:root[data-theme="dark"] .brand-pill.active {
+  background: var(--gold) !important;
+  border-color: var(--gold) !important;
+  color: #1A1208 !important;
+}
+:root[data-theme="dark"] .brand-pill .pill-count {
+  background: rgba(255,255,255,0.06) !important;
+}
+:root[data-theme="dark"] .brand-pill.active .pill-count {
+  background: rgba(0,0,0,0.20) !important;
+}
+:root[data-theme="dark"] .filter-bar-2 {
+  background: var(--white) !important;
+  border-color: var(--border) !important;
+}
+:root[data-theme="dark"] .filter-divider { background: var(--border) !important; }
+:root[data-theme="dark"] .ing-search-wrap input {
+  background: var(--surface-2) !important;
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+
+/* Legacy navy-hover (#23236b) used in btn-save:hover etc. */
+:root[data-theme="dark"] .btn-save:hover,
+:root[data-theme="dark"] .btn-submit:hover,
+:root[data-theme="dark"] .btn-primary-gold:hover {
+  background: var(--gold) !important;
+  color: #1A1208 !important;
+}
+:root[data-theme="dark"] .btn-save,
+:root[data-theme="dark"] .btn-submit,
+:root[data-theme="dark"] .btn-primary-gold {
+  background: var(--navy) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--gold) !important;
+}
+
+/* Login form bg (#fafafa) → keep dark surface */
+:root[data-theme="dark"] [style*="background:#fafafa"],
+:root[data-theme="dark"] [style*="background: #fafafa"] {
+  background: var(--surface-2) !important;
+}
+
+/* Sidebar nav active state — gold tint should still pop */
+:root[data-theme="dark"] .nav-link-item.active {
+  background: rgba(217,190,133,0.16) !important;
+  color: var(--gold) !important;
+}
+:root[data-theme="dark"] .nav-link-item.active .nav-icon { color: var(--gold) !important; }
+
+/* Sidebar nav badge "Coming Soon" — adjust on dark */
+:root[data-theme="dark"] .badge-soon {
+  background: rgba(217,190,133,0.10) !important;
+  border-color: rgba(217,190,133,0.30) !important;
+  color: var(--gold) !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Dashboard-specific class overrides (index.html)
+   These rules are defined inside template <style> blocks with
+   hardcoded hex values, so we have to flip them by class.
+   ══════════════════════════════════════════════════════════ */
+
+/* Critical / alert banner at top of dashboard */
+:root[data-theme="dark"] .critical-banner {
+  background: #2E1414 !important;
+  border-color: #5A1F1F !important;
+  color: #FCA5A5 !important;
+}
+:root[data-theme="dark"] .critical-banner a {
+  color: #FCA5A5 !important;
+  border-color: #5A1F1F !important;
+}
+:root[data-theme="dark"] .critical-banner a:hover {
+  background: #3A1A1A !important;
+  color: #FECACA !important;
+}
+
+/* Critical stock table */
+:root[data-theme="dark"] .critical-table th {
+  background: var(--surface-2) !important;
+  color: var(--text-muted) !important;
+  border-color: var(--border) !important;
+}
+:root[data-theme="dark"] .critical-table td {
+  color: var(--text) !important;
+  border-color: var(--border-soft) !important;
+}
+:root[data-theme="dark"] .critical-table tr:hover td {
+  background: var(--surface-2) !important;
+}
+:root[data-theme="dark"] .stock-critical { color: #FCA5A5 !important; }
+:root[data-theme="dark"] .stock-low      { color: #FCD34D !important; }
+
+/* Deficit / category pills */
+:root[data-theme="dark"] .deficit-badge {
+  background: #2E1414 !important;
+  color: #FCA5A5 !important;
+  border-color: #5A1F1F !important;
+}
+:root[data-theme="dark"] .cat-pill {
+  background: var(--surface-2) !important;
+  color: var(--text-muted) !important;
+}
+
+/* Safe-state ("everything ok" card) */
+:root[data-theme="dark"] .safe-icon {
+  background: #0E2A1A !important;
+  color: #6EE7B7 !important;
+}
+:root[data-theme="dark"] .safe-state p { color: #6EE7B7 !important; }
+:root[data-theme="dark"] .safe-state small { color: var(--text-muted) !important; }
+
+/* Panel title icons */
+:root[data-theme="dark"] .icon-red {
+  background: rgba(252,165,165,0.10) !important;
+  color: #FCA5A5 !important;
+}
+:root[data-theme="dark"] .icon-navy {
+  background: rgba(217,190,133,0.12) !important;
+  color: var(--gold) !important;
+}
+:root[data-theme="dark"] .icon-teal {
+  background: rgba(110,231,183,0.10) !important;
+  color: #6EE7B7 !important;
+}
+:root[data-theme="dark"] .panel-title { color: var(--text) !important; }
+:root[data-theme="dark"] .panel-link { color: var(--gold) !important; }
+:root[data-theme="dark"] .panel-link:hover { color: var(--gold2) !important; }
+
+/* Activity / transaction feed (Son İşlemler) */
+:root[data-theme="dark"] .activity-row {
+  border-color: var(--border-soft) !important;
+}
+:root[data-theme="dark"] .activity-row:hover {
+  background: var(--surface-2) !important;
+}
+:root[data-theme="dark"] .activity-notes,
+:root[data-theme="dark"] .activity-time {
+  color: var(--text-faint) !important;
+}
+:root[data-theme="dark"] .feed-empty {
+  color: var(--text-muted) !important;
+}
+
+/* Activity tx badges */
+:root[data-theme="dark"] .badge-input    { background: #0E2A1A !important; color: #6EE7B7 !important; }
+:root[data-theme="dark"] .badge-output   { background: #2E1414 !important; color: #FCA5A5 !important; }
+:root[data-theme="dark"] .badge-qc-ok    { background: #142036 !important; color: #93C5FD !important; }
+:root[data-theme="dark"] .badge-qc-fail  { background: #2D2114 !important; color: #FCD34D !important; }
+
+/* ══════════════════════════════════════════════════════════
+   Class-defined PASTEL BADGES (across pages)
+   These show as faint blobs in dark mode because the pastel BG
+   blends with the dark surface and text becomes unreadable.
+   ══════════════════════════════════════════════════════════ */
+
+/* items.html — category pills */
+:root[data-theme="dark"] .cat-hammadde {
+  background: #142036 !important; color: #93C5FD !important;
+}
+:root[data-theme="dark"] .cat-ambalaj {
+  background: #0E2A1A !important; color: #6EE7B7 !important;
+}
+:root[data-theme="dark"] .cat-bitmis {
+  background: #2D1426 !important; color: #F9A8D4 !important;
+}
+
+/* receiving.html — status pills */
+:root[data-theme="dark"] .status-approved {
+  background: #0E2A1A !important; color: #6EE7B7 !important;
+  border-color: #1F5538 !important;
+}
+:root[data-theme="dark"] .status-quarantine {
+  background: #2D2114 !important; color: #FCD34D !important;
+  border-color: #5A4520 !important;
+}
+
+/* production.html — qty badges */
+:root[data-theme="dark"] .badge-success {
+  background: #0E2A1A !important; color: #6EE7B7 !important;
+}
+:root[data-theme="dark"] .badge-pill {
+  background: var(--surface-2) !important; color: var(--text) !important;
+}
+
+/* recipes.html — cost / yield / fire / count badges */
+:root[data-theme="dark"] .badge-cost {
+  background: #0E2A1A !important; color: #6EE7B7 !important;
+  border-color: #1F5538 !important;
+}
+:root[data-theme="dark"] .badge-cost-zero {
+  background: var(--surface-2) !important; color: var(--text-faint) !important;
+  border-color: var(--border) !important;
+}
+:root[data-theme="dark"] .badge-yield {
+  background: rgba(217,190,133,0.15) !important;
+  color: var(--gold2) !important;
+}
+:root[data-theme="dark"] .badge-fire {
+  background: #2D2114 !important; color: #FCD34D !important;
+}
+:root[data-theme="dark"] .badge-count {
+  background: rgba(217,190,133,0.10) !important;
+  color: var(--gold) !important;
+}
+
+/* Generic catch-all for any other class with light pastel BG patterns
+   (in case page authors create new pastel pills) */
+:root[data-theme="dark"] [class*="badge-"][class*="green"],
+:root[data-theme="dark"] [class*="badge-"][class*="success"],
+:root[data-theme="dark"] [class*="badge-"][class*="ok"],
+:root[data-theme="dark"] [class*="status-"][class*="ok"] {
+  background: #0E2A1A !important; color: #6EE7B7 !important;
+}
+:root[data-theme="dark"] [class*="badge-"][class*="red"],
+:root[data-theme="dark"] [class*="badge-"][class*="error"],
+:root[data-theme="dark"] [class*="badge-"][class*="danger"],
+:root[data-theme="dark"] [class*="badge-"][class*="fail"] {
+  background: #2E1414 !important; color: #FCA5A5 !important;
+}
+:root[data-theme="dark"] [class*="badge-"][class*="warn"],
+:root[data-theme="dark"] [class*="badge-"][class*="amber"],
+:root[data-theme="dark"] [class*="badge-"][class*="orange"] {
+  background: #2D2114 !important; color: #FCD34D !important;
+}
+:root[data-theme="dark"] [class*="badge-"][class*="blue"],
+:root[data-theme="dark"] [class*="badge-"][class*="info"] {
+  background: #142036 !important; color: #93C5FD !important;
+}
+
+/* Toolbar buttons (Yeni Reçete Ekle / Excel Aktar / etc.) — blue/green tints */
+:root[data-theme="dark"] .btn-primary-gold {
+  background: var(--gold) !important; color: #1A1208 !important;
+  border: 1px solid var(--gold2) !important;
+}
+:root[data-theme="dark"] .btn-primary-gold:hover {
+  background: var(--gold2) !important;
+}
+:root[data-theme="dark"] .btn-import,
+:root[data-theme="dark"] .btn-export {
+  background: #0E2A1A !important; color: #6EE7B7 !important;
+  border: 1.5px solid #1F5538 !important;
+}
+:root[data-theme="dark"] .btn-import:hover,
+:root[data-theme="dark"] .btn-export:hover {
+  background: #163C26 !important; border-color: #2D6A47 !important;
+}
+
+/* Borders inline */
+:root[data-theme="dark"] [style*="border:1px solid #e5e7eb"],
+:root[data-theme="dark"] [style*="border: 1px solid #e5e7eb"],
+:root[data-theme="dark"] [style*="border:1.5px solid #e5e7eb"],
+:root[data-theme="dark"] [style*="border: 1.5px solid #e5e7eb"],
+:root[data-theme="dark"] [style*="border:1px solid #f0ece4"],
+:root[data-theme="dark"] [style*="border: 1px solid #f0ece4"],
+:root[data-theme="dark"] [style*="border-bottom:1px solid #f0ece4"],
+:root[data-theme="dark"] [style*="border-top:1px solid #f0ece4"],
+:root[data-theme="dark"] [style*="border-color:#e5e7eb"],
+:root[data-theme="dark"] [style*="border-color: #e5e7eb"] {
+  border-color: var(--border) !important;
+}
+
+:root[data-theme="dark"] body::before,
+:root[data-theme="dark"] body::after {
+  /* kill any decorative light-mode gradients */
+  display: none !important;
+}
+
+/* ── Sidebar ────────────────────────────────────────────────── */
+:root[data-theme="dark"] .sidebar {
+  background: #0A0F1F;
+  border-right: 1px solid var(--border-soft);
+}
+:root[data-theme="dark"] .sidebar-brand {
+  border-bottom-color: rgba(255,255,255,0.06);
+}
+:root[data-theme="dark"] .sidebar-footer {
+  border-top-color: rgba(255,255,255,0.06);
+}
+
+/* ── Topnav / header bars ───────────────────────────────────── */
+:root[data-theme="dark"] .topnav,
+:root[data-theme="dark"] .top-nav,
+:root[data-theme="dark"] .navbar {
+  background: var(--white) !important;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .page-title,
+:root[data-theme="dark"] h1, :root[data-theme="dark"] h2,
+:root[data-theme="dark"] h3, :root[data-theme="dark"] h4,
+:root[data-theme="dark"] h5, :root[data-theme="dark"] h6 {
+  color: var(--text);
+}
+
+/* ── Cards / tiles / surfaces ──────────────────────────────── */
+:root[data-theme="dark"] .card,
+:root[data-theme="dark"] .stat-card,
+:root[data-theme="dark"] .info-card,
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .content-card,
+:root[data-theme="dark"] .data-card {
+  background: var(--white);
+  border-color: var(--border) !important;
+  color: var(--text);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+}
+
+:root[data-theme="dark"] .card-header,
+:root[data-theme="dark"] .card-footer {
+  background: var(--surface-2) !important;
+  border-color: var(--border) !important;
+  color: var(--text);
+}
+
+/* Subtle pastel cream backgrounds → dark surface */
+:root[data-theme="dark"] [style*="background:#f9f7f3"],
+:root[data-theme="dark"] [style*="background: #f9f7f3"],
+:root[data-theme="dark"] [style*="background:#faf8f4"],
+:root[data-theme="dark"] [style*="background: #faf8f4"],
+:root[data-theme="dark"] [style*="background:#f3f0ea"],
+:root[data-theme="dark"] [style*="background: #f3f0ea"],
+:root[data-theme="dark"] [style*="background:#f9fafb"],
+:root[data-theme="dark"] [style*="background: #f9fafb"],
+:root[data-theme="dark"] [style*="background:#f3f4f6"],
+:root[data-theme="dark"] [style*="background: #f3f4f6"] {
+  background: var(--surface-2) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+/* ── Tables ────────────────────────────────────────────────── */
+:root[data-theme="dark"] table,
+:root[data-theme="dark"] .table {
+  color: var(--text);
+  border-color: var(--border);
+}
+:root[data-theme="dark"] thead,
+:root[data-theme="dark"] .table thead,
+:root[data-theme="dark"] thead th,
+:root[data-theme="dark"] .table thead th {
+  background: var(--surface-2) !important;
+  color: var(--text-muted) !important;
+  border-color: var(--border) !important;
+}
+:root[data-theme="dark"] tbody tr,
+:root[data-theme="dark"] .table tbody tr {
+  background: var(--white);
+  border-color: var(--border-soft) !important;
+}
+:root[data-theme="dark"] tbody tr:hover,
+:root[data-theme="dark"] .table tbody tr:hover,
+:root[data-theme="dark"] .table-hover tbody tr:hover {
+  background: var(--surface-2) !important;
+  --bs-table-hover-bg: var(--surface-2);
+}
+:root[data-theme="dark"] tbody td,
+:root[data-theme="dark"] .table tbody td {
+  border-color: var(--border-soft) !important;
+  color: var(--text);
+}
+
+/* ── Inputs ────────────────────────────────────────────────── */
+:root[data-theme="dark"] .form-control,
+:root[data-theme="dark"] .form-select,
+:root[data-theme="dark"] input[type="text"],
+:root[data-theme="dark"] input[type="number"],
+:root[data-theme="dark"] input[type="email"],
+:root[data-theme="dark"] input[type="password"],
+:root[data-theme="dark"] input[type="date"],
+:root[data-theme="dark"] input[type="search"],
+:root[data-theme="dark"] textarea,
+:root[data-theme="dark"] select {
+  background: var(--surface-2) !important;
+  border: 1.5px solid var(--border) !important;
+  color: var(--text) !important;
+}
+:root[data-theme="dark"] .form-control::placeholder,
+:root[data-theme="dark"] textarea::placeholder {
+  color: var(--text-faint) !important;
+}
+:root[data-theme="dark"] .form-control:focus,
+:root[data-theme="dark"] .form-select:focus {
+  background: var(--white) !important;
+  border-color: var(--gold) !important;
+  box-shadow: 0 0 0 3px rgba(217,190,133,0.18) !important;
+  color: var(--text) !important;
+}
+:root[data-theme="dark"] .form-label,
+:root[data-theme="dark"] label {
+  color: var(--text-muted);
+}
+:root[data-theme="dark"] .input-group-text {
+  background: var(--surface-2) !important;
+  border-color: var(--border) !important;
+  color: var(--text-muted) !important;
+}
+
+/* ── Modals ────────────────────────────────────────────────── */
+:root[data-theme="dark"] .modal-content {
+  background: var(--white);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+:root[data-theme="dark"] .modal-header,
+:root[data-theme="dark"] .modal-footer {
+  border-color: var(--border) !important;
+  background: var(--surface-2) !important;
+}
+:root[data-theme="dark"] .modal-title { color: var(--text); }
+:root[data-theme="dark"] .btn-close {
+  filter: invert(1) brightness(1.4);
+}
+
+/* ── Dropdowns ─────────────────────────────────────────────── */
+:root[data-theme="dark"] .dropdown-menu {
+  background: var(--white);
+  border-color: var(--border);
+  color: var(--text);
+}
+:root[data-theme="dark"] .dropdown-item {
+  color: var(--text);
+}
+:root[data-theme="dark"] .dropdown-item:hover,
+:root[data-theme="dark"] .dropdown-item:focus {
+  background: var(--surface-2);
+  color: var(--gold);
+}
+:root[data-theme="dark"] .dropdown-divider {
+  border-top-color: var(--border);
+}
+
+/* ── Buttons (preserve brand primary) ──────────────────────── */
+:root[data-theme="dark"] .btn-secondary,
+:root[data-theme="dark"] .btn-light,
+:root[data-theme="dark"] .btn-outline-secondary {
+  background: var(--surface-2) !important;
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+:root[data-theme="dark"] .btn-secondary:hover,
+:root[data-theme="dark"] .btn-outline-secondary:hover {
+  background: var(--border) !important;
+  color: var(--gold) !important;
+}
+
+/* ── Generic borders & dividers ────────────────────────────── */
+:root[data-theme="dark"] hr {
+  border-color: var(--border);
+  opacity: 0.6;
+}
+:root[data-theme="dark"] .border,
+:root[data-theme="dark"] .border-top,
+:root[data-theme="dark"] .border-bottom,
+:root[data-theme="dark"] .border-start,
+:root[data-theme="dark"] .border-end {
+  border-color: var(--border) !important;
+}
+
+/* ── Bootstrap muted text ──────────────────────────────────── */
+:root[data-theme="dark"] .text-muted,
+:root[data-theme="dark"] .text-secondary {
+  color: var(--text-muted) !important;
+}
+
+/* ── Scrollbars (Webkit) ───────────────────────────────────── */
+:root[data-theme="dark"] ::-webkit-scrollbar {
+  width: 10px; height: 10px;
+}
+:root[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: var(--cream);
+}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+}
+
+/* ── Theme toggle button ───────────────────────────────────── */
+.theme-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.7);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  font-size: 1rem;
+  padding: 0;
+}
+.theme-toggle:hover {
+  background: rgba(255,255,255,0.12);
+  color: var(--gold);
+}
+:root[data-theme="dark"] .theme-toggle {
+  background: rgba(217,190,133,0.10);
+  color: var(--gold);
+}
+.theme-toggle .bi-sun-fill { display: none; }
+.theme-toggle .bi-moon-stars-fill { display: inline-block; }
+:root[data-theme="dark"] .theme-toggle .bi-sun-fill { display: inline-block; }
+:root[data-theme="dark"] .theme-toggle .bi-moon-stars-fill { display: none; }
+
+/* sidebar-footer two-column layout (toggle + version) */
+.sidebar-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+/* ── Login page dark variant ───────────────────────────────── */
+:root[data-theme="dark"] .login-card {
+  background: var(--white);
+  box-shadow:
+    0 4px 6px rgba(0,0,0,0.30),
+    0 12px 40px rgba(0,0,0,0.50),
+    0 1px 0 rgba(217,190,133,0.15);
+}
+:root[data-theme="dark"] .brand-tagline { color: var(--text-muted) !important; }
+:root[data-theme="dark"] .form-check-label { color: var(--text-muted) !important; }
+:root[data-theme="dark"] .card-footer-text { color: var(--text-faint) !important; }
+:root[data-theme="dark"] .toast-error   { background:#3a1414 !important; color:#fca5a5 !important; }
+:root[data-theme="dark"] .toast-success { background:#0f2a18 !important; color:#86efac !important; }

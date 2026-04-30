@@ -3,9 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="/static/theme.js"></script>
   <title>Minerva108 ERP — Reçeteler</title>
   <link rel="icon" type="image/png" href="/static/images/favicon.png" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/dark.css" />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
 
@@ -176,6 +178,77 @@
       display: flex; align-items: center; gap: 0.4rem; margin-bottom: 1rem;
     }
 
+    /* ══ FILTER BAR (Recipes 2.0) ══ */
+    .filter-bar-2 {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 0.65rem;
+      padding: 0.85rem 1rem; margin-bottom: 0.9rem;
+      background: var(--white); border-radius: 12px;
+      border: 1px solid #f0ece4;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    }
+    .filter-label-mini {
+      font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: #9ca3af; margin-right: 0.25rem;
+    }
+    .brand-pill {
+      padding: 0.42rem 0.95rem; border-radius: 20px;
+      background: transparent; border: 1.5px solid #e5e7eb;
+      color: #6b7280; font-family: 'Jost', sans-serif;
+      font-size: 0.83rem; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; display: inline-flex; align-items: center; gap: 0.35rem;
+    }
+    .brand-pill:hover { border-color: var(--gold); color: var(--navy); }
+    .brand-pill.active {
+      background: var(--navy); border-color: var(--navy);
+      color: var(--white); box-shadow: 0 2px 6px rgba(35,46,110,0.20);
+    }
+    .brand-pill .pill-count {
+      font-size: 0.7rem; font-weight: 700; padding: 1px 6px; border-radius: 10px;
+      background: rgba(0,0,0,0.06); color: inherit;
+    }
+    .brand-pill.active .pill-count { background: rgba(255,255,255,0.20); }
+    .filter-divider {
+      width: 1px; height: 26px; background: #e5e7eb; margin: 0 0.25rem;
+    }
+    .ing-search-wrap {
+      flex: 1; min-width: 220px; position: relative;
+      display: flex; align-items: center;
+    }
+    .ing-search-wrap > i {
+      position: absolute; left: 0.85rem; color: #9ca3af; font-size: 0.95rem; pointer-events: none;
+    }
+    .ing-search-wrap input {
+      width: 100%; padding: 0.55rem 2.4rem 0.55rem 2.3rem;
+      border: 1.5px solid #e5e7eb; border-radius: 8px;
+      font-family: 'Jost', sans-serif; font-size: 0.88rem;
+      background: #fafafa; color: #1f2937; outline: none;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .ing-search-wrap input:focus {
+      background: var(--white); border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(201,172,111,0.18);
+    }
+    .ing-search-wrap .ing-clear {
+      position: absolute; right: 0.6rem; width: 24px; height: 24px;
+      border: none; background: transparent; color: #9ca3af; cursor: pointer;
+      border-radius: 50%; display: none; align-items: center; justify-content: center;
+    }
+    .ing-search-wrap .ing-clear:hover { background: #f3f4f6; color: #374151; }
+    .ing-search-wrap.has-value .ing-clear { display: inline-flex; }
+    .filter-active-chip {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      padding: 0.32rem 0.7rem; border-radius: 16px;
+      background: rgba(201,172,111,0.14); color: #7a5c1e;
+      font-size: 0.78rem; font-weight: 600; border: 1px solid rgba(201,172,111,0.30);
+    }
+    @media (max-width: 768px) {
+      .filter-bar-2 { padding: 0.7rem 0.75rem; gap: 0.5rem; }
+      .filter-label-mini { display: none; }
+      .filter-divider { display: none; }
+      .brand-pill { padding: 0.42rem 0.75rem; font-size: 0.8rem; }
+      .ing-search-wrap { min-width: 100%; order: 99; }
+    }
+
     /* ══ TOAST ══ */
     #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
     .toast-msg { min-width: 260px; max-width: 360px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
@@ -209,7 +282,15 @@
       <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
       {% endif %}
     </nav>
-    <div class="sidebar-footer"><p class="sidebar-footer-text">v2.0.0 &nbsp;·&nbsp; 2026</p></div>
+    <div class="sidebar-footer">
+      <div class="sidebar-footer-row">
+        <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir" title="Tema değiştir">
+          <i class="bi bi-moon-stars-fill"></i>
+          <i class="bi bi-sun-fill"></i>
+        </button>
+        <p class="sidebar-footer-text" style="margin:0;">v2.0.0 &nbsp;·&nbsp; 2026</p>
+      </div>
+    </div>
   </aside>
 
   <!-- ════ TOPNAV ════ -->
@@ -242,7 +323,34 @@
         {% endif %}
         <div class="search-box">
           <i class="bi bi-search"></i>
-          <input type="text" id="searchInput" placeholder="Reçete ara…" />
+          <input type="text" id="searchInput" placeholder="Reçete adına göre ara…" />
+        </div>
+      </div>
+
+      <!-- Filter Bar 2.0: brand pills + ingredient search -->
+      <div class="filter-bar-2" id="filterBar2">
+        <span class="filter-label-mini">Marka</span>
+        <button type="button" class="brand-pill active" data-brand="all">
+          Tümü <span class="pill-count" data-pill-count="all">0</span>
+        </button>
+        <button type="button" class="brand-pill" data-brand="evanira">
+          Evanira <span class="pill-count" data-pill-count="evanira">0</span>
+        </button>
+        <button type="button" class="brand-pill" data-brand="serenida">
+          Serenida <span class="pill-count" data-pill-count="serenida">0</span>
+        </button>
+        <button type="button" class="brand-pill" data-brand="minerva">
+          Minerva <span class="pill-count" data-pill-count="minerva">0</span>
+        </button>
+        <span class="filter-divider"></span>
+        <div class="ing-search-wrap" id="ingSearchWrap">
+          <i class="bi bi-droplet-half"></i>
+          <input type="text" id="ingSearchInput"
+                 placeholder="Hammaddeye göre ara — örn: KUŞBURNU, NİASİNAMİD…" />
+          <button type="button" class="ing-clear" id="ingClearBtn"
+                  title="Temizle" aria-label="Hammadde aramasını temizle">
+            <i class="bi bi-x-lg"></i>
+          </button>
         </div>
       </div>
 
@@ -446,16 +554,65 @@
           </td>
         </tr>`;
       }).join('');
-      document.getElementById('tableInfo').textContent = `${data.length} reçete listeleniyor`;
+      const ingQ   = document.getElementById('ingSearchInput')?.value.trim();
+      const parts  = [`${data.length} reçete listeleniyor`];
+      if (activeBrand && activeBrand !== 'all') {
+        parts.push(`<span style="color:var(--gold);font-weight:600;">${activeBrand[0].toUpperCase() + activeBrand.slice(1)}</span>`);
+      }
+      if (ingQ) {
+        parts.push(`<span style="color:var(--gold);font-weight:600;">"${escHtml(ingQ)}" içerenler</span>`);
+      }
+      document.getElementById('tableInfo').innerHTML = parts.join(' · ');
+    }
+
+    /* ── Brand inference (from recipe / target name) ── */
+    function brandOf(r) {
+      const n = ((r.name || '') + ' ' + (r.target_item_name || '')).toLowerCase();
+      if (n.includes('evanira'))  return 'evanira';
+      if (n.includes('serenida')) return 'serenida';
+      if (n.includes('minerva'))  return 'minerva';
+      return 'other';
+    }
+
+    let activeBrand = localStorage.getItem('recipes-brand') || 'all';
+    let ingredientFetched = false;   // lazy-load ingredient_names once
+
+    function recomputePillCounts() {
+      const counts = { all: allRecipes.length, evanira: 0, serenida: 0, minerva: 0 };
+      allRecipes.forEach(r => { counts[brandOf(r)] = (counts[brandOf(r)] || 0) + 1; });
+      ['all','evanira','serenida','minerva'].forEach(b => {
+        const el = document.querySelector(`[data-pill-count="${b}"]`);
+        if (el) el.textContent = counts[b] || 0;
+      });
     }
 
     /* ── Filter + Sort ── */
     function applyFiltersAndSort() {
-      const q = document.getElementById('searchInput').value.toLowerCase();
-      let data = allRecipes.filter(r =>
-        r.name.toLowerCase().includes(q) ||
-        (r.target_item_name || '').toLowerCase().includes(q)
-      );
+      const q   = document.getElementById('searchInput').value.toLowerCase().trim();
+      const ing = document.getElementById('ingSearchInput').value.toLowerCase().trim();
+
+      let data = allRecipes;
+
+      // Brand pill
+      if (activeBrand !== 'all') {
+        data = data.filter(r => brandOf(r) === activeBrand);
+      }
+
+      // Recipe name search
+      if (q) {
+        data = data.filter(r =>
+          r.name.toLowerCase().includes(q) ||
+          (r.target_item_name || '').toLowerCase().includes(q)
+        );
+      }
+
+      // Ingredient search (requires ingredient_names — loaded lazily)
+      if (ing) {
+        data = data.filter(r =>
+          (r.ingredient_names || []).some(n => (n || '').toLowerCase().includes(ing))
+        );
+      }
+
       if (sortCol) {
         data = [...data].sort((a, b) => {
           let va = a[sortCol] ?? '', vb = b[sortCol] ?? '';
@@ -481,11 +638,60 @@
 
     document.getElementById('searchInput').addEventListener('input', applyFiltersAndSort);
 
+    /* ── Brand pills ── */
+    function applyBrandPillState() {
+      document.querySelectorAll('.brand-pill').forEach(p => {
+        p.classList.toggle('active', p.dataset.brand === activeBrand);
+      });
+    }
+    document.querySelectorAll('.brand-pill').forEach(p => {
+      p.addEventListener('click', () => {
+        activeBrand = p.dataset.brand;
+        localStorage.setItem('recipes-brand', activeBrand);
+        applyBrandPillState();
+        applyFiltersAndSort();
+      });
+    });
+
+    /* ── Ingredient search ── */
+    const ingInput   = document.getElementById('ingSearchInput');
+    const ingWrap    = document.getElementById('ingSearchWrap');
+    const ingClearBt = document.getElementById('ingClearBtn');
+
+    async function ensureIngredientsLoaded() {
+      if (ingredientFetched) return;
+      try {
+        const res  = await fetch('/api/recipes?include_ingredients=true');
+        const data = await res.json();
+        const map  = new Map(data.map(r => [r.id, r.ingredient_names || []]));
+        allRecipes.forEach(r => { r.ingredient_names = map.get(r.id) || []; });
+        ingredientFetched = true;
+      } catch { showToast('Hammadde verisi yüklenemedi.'); }
+    }
+
+    let ingDebounce = null;
+    ingInput.addEventListener('input', () => {
+      ingWrap.classList.toggle('has-value', ingInput.value.length > 0);
+      clearTimeout(ingDebounce);
+      ingDebounce = setTimeout(async () => {
+        if (ingInput.value.trim()) await ensureIngredientsLoaded();
+        applyFiltersAndSort();
+      }, 180);
+    });
+    ingClearBt.addEventListener('click', () => {
+      ingInput.value = '';
+      ingWrap.classList.remove('has-value');
+      applyFiltersAndSort();
+      ingInput.focus();
+    });
+
     /* ── Load recipes ── */
     async function loadRecipes() {
       try {
         const res = await fetch('/api/recipes');
         allRecipes = await res.json();
+        recomputePillCounts();
+        applyBrandPillState();
         applyFiltersAndSort();
       } catch { showToast('Reçeteler yüklenirken hata oluştu.'); }
     }

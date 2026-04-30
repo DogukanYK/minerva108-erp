@@ -14,7 +14,7 @@
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--navy, #2C2C73);
+  color: var(--navy, #232E6E);
   font-size: 1.35rem;
   flex-shrink: 0;
   padding: 0;
@@ -22,7 +22,9 @@
   border-radius: 8px;
   transition: background 0.15s;
 }
-.btn-hamburger:hover { background: rgba(44,44,115,0.06); }
+.btn-hamburger:hover { background: rgba(35,46,110,0.07); }
+:root[data-theme="dark"] .btn-hamburger { color: var(--text); }
+:root[data-theme="dark"] .btn-hamburger:hover { background: rgba(255,255,255,0.06); }
 
 /* Sidebar overlay (shown when sidebar is open on mobile) */
 .sidebar-overlay {
@@ -178,4 +180,73 @@
 @media (max-width: 380px) {
   .topnav-title { max-width: 110px; font-size: 0.92rem !important; }
   .content-inner { padding: 1rem 0.75rem 2rem !important; }
+}
+
+/* ──────────────────────────────────────────────────────
+   TABLET BREAKPOINT (iPad portrait, ~768–1024 px)
+   Full sidebar visible but content density reduced.
+────────────────────────────────────────────────────── */
+@media (min-width: 769px) and (max-width: 1024px) {
+  :root { --sidebar-width: 220px; }
+  .content-inner { padding: 1.5rem 1.25rem 3rem !important; }
+  .kpi-grid { grid-template-columns: repeat(3, 1fr) !important; }
+  .topnav-title { font-size: 1.05rem !important; }
+  /* Hide username on narrow tablets too — keep avatar */
+  .user-name { font-size: 0.85rem; max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
+}
+
+/* ──────────────────────────────────────────────────────
+   iOS / iPhone polish
+────────────────────────────────────────────────────── */
+
+/* iOS Safari zooms in on focus when input font-size < 16px */
+@media (max-width: 768px) {
+  input.form-control,
+  textarea.form-control,
+  select.form-select,
+  input[type="text"],
+  input[type="number"],
+  input[type="email"],
+  input[type="password"],
+  input[type="date"],
+  input[type="search"],
+  textarea, select {
+    font-size: 16px !important;
+  }
+}
+
+/* Safe-area insets for iPhone notch / home indicator */
+@supports (padding: max(0px)) {
+  @media (max-width: 768px) {
+    .topnav {
+      padding-left:  max(0.75rem, env(safe-area-inset-left)) !important;
+      padding-right: max(0.75rem, env(safe-area-inset-right)) !important;
+    }
+    .content-inner {
+      padding-bottom: max(2.5rem, calc(env(safe-area-inset-bottom) + 2rem)) !important;
+    }
+    .sidebar {
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+  }
+}
+
+/* Modal becomes near full-bleed on phones (more usable than 0.5rem gutter) */
+@media (max-width: 576px) {
+  .modal-dialog {
+    margin: 0 !important;
+    max-width: 100% !important;
+    min-height: 100vh;
+  }
+  .modal-content {
+    border-radius: 0 !important;
+    min-height: 100vh;
+    border: none !important;
+  }
+}
+
+/* Tap highlight — strip default blue flash on mobile, keep our hover styles */
+@media (max-width: 768px) {
+  * { -webkit-tap-highlight-color: transparent; }
+  a, button, .nav-link-item, .tab-btn { -webkit-tap-highlight-color: rgba(217,190,133,0.18); }
 }
