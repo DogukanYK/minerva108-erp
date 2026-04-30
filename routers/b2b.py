@@ -1,7 +1,7 @@
 """
 B2B router — quotations workflow + TCMB currency rates.
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -9,6 +9,7 @@ from typing import Optional, List
 
 from database import get_db, Item, Transaction, Quotation, QuotationItem
 from core.permissions import require_permission
+from core.notifications import notify_low_stock
 
 router = APIRouter(prefix="/api", tags=["b2b"])
 
@@ -279,6 +280,7 @@ def get_quotation(quote_id: int, db: Session = Depends(get_db), _: dict = Depend
 @router.post("/quotations/{quote_id}/confirm")
 def confirm_quotation(
     quote_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("b2b", "confirm")),
 ):
@@ -347,6 +349,17 @@ def confirm_quotation(
         quote.confirmed_at = _dt.utcnow()
         quote.confirmed_by = actor
         db.commit()
+
+        # ── Low-stock alert: any line that crossed its threshold queues a
+        #     single notification. Primitive snapshots — the BackgroundTask
+        #     fires after the response, no extra latency for the caller.
+        for line in quote.items:
+            item = item_lookup[line.item_id]
+            if item.min_stock_level > 0 and item.current_stock <= item.min_stock_level:
+                background_tasks.add_task(
+                    notify_low_stock,
+                    item.name, item.current_stock, item.min_stock_level, item.unit or "",
+                )
 
         return {
             "message":         f"Sipariş onaylandı — Teklif #{quote.quote_number} stoktan düşüldü.",

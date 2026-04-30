@@ -1,7 +1,7 @@
 """
 Production router — manufacturing workflows + Quality Control (QA).
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -11,6 +11,7 @@ from database import (
     get_db, Item, Recipe, ProductionHistory, Inventory, Transaction,
 )
 from core.permissions import require_permission
+from core.notifications import notify_low_stock
 
 router = APIRouter(prefix="/api", tags=["production"])
 
@@ -57,6 +58,7 @@ def list_production_history(db: Session = Depends(get_db)):
 @router.post("/production", status_code=201)
 def start_production(
     data: ProductionCreateRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("production", "create")),
 ):
@@ -149,6 +151,18 @@ def start_production(
         ))
 
         db.commit()
+
+        # ── Low-stock alert: any consumed ingredient that crossed its threshold
+        #     queues exactly one notification (one per ingredient line, not one
+        #     per stock unit). Snapshots primitive values now; the BackgroundTask
+        #     fires after the response is sent so the user sees no extra latency.
+        for _ing, item, _gross, _amb in ing_plan:
+            if item.min_stock_level > 0 and item.current_stock <= item.min_stock_level:
+                background_tasks.add_task(
+                    notify_low_stock,
+                    item.name, item.current_stock, item.min_stock_level, item.unit or "",
+                )
+
         return {
             "message": f"Üretim tamamlandı. {data.produced_quantity} birim QC onayına gönderildi.",
             "lot_number": produced_lot if recipe.target_item_id else None,

@@ -26,6 +26,7 @@ from database import init_db, get_db, User
 from core.auth import decode_token
 from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions
+from core.scheduler import start_scheduler, stop_scheduler
 
 from routers import auth, users, inventory, recipes, production, b2b, reports
 
@@ -73,6 +74,12 @@ def serve_service_worker():
 @app.on_event("startup")
 def startup_event():
     init_db()
+    start_scheduler()        # daily 09:00 expiry scan + future cron jobs
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    stop_scheduler()
 
 
 # ─── Mount domain routers ───────────────────────────────────────────────────

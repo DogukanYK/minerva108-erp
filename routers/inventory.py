@@ -2,7 +2,7 @@
 Inventory router — items, suppliers, receiving, transactions, traceability,
 and Excel imports (both classic templated import + smart auto-detect import).
 """
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -13,6 +13,7 @@ from database import (
 )
 from core.auth import get_current_user
 from core.permissions import _can_see_finance, require_permission
+from core.notifications import notify_low_stock
 
 router = APIRouter(prefix="/api", tags=["inventory"])
 
@@ -158,6 +159,7 @@ def delete_item(item_id: int, db: Session = Depends(get_db), _: dict = Depends(r
 def update_item(
     item_id: int,
     data: ItemCreateRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("items", "edit")),
 ):
@@ -184,6 +186,15 @@ def update_item(
     item.parent_id       = data.parent_id
     item.variation_name  = (data.variation_name.strip() if data.parent_id and data.variation_name else None)
     db.commit()
+
+    # ── Low-stock alert: if the edit (typically a min_stock_level bump) leaves
+    #     the item at or below threshold, queue a notification on the response.
+    if item.min_stock_level > 0 and item.current_stock <= item.min_stock_level:
+        background_tasks.add_task(
+            notify_low_stock,
+            item.name, item.current_stock, item.min_stock_level, item.unit or "",
+        )
+
     return {"id": item.id, "message": "Ürün güncellendi."}
 
 
