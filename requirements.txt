@@ -9,3 +9,4 @@ python-multipart==0.0.17
 pandas==2.2.3
 openpyxl==3.1.5
 psycopg2-binary==2.9.9
+slowapi==0.1.9

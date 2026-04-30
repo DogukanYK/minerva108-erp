@@ -6,6 +6,10 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+
 from database import get_db, init_db, User, Item, Supplier, Recipe, RecipeIngredient, ProductionHistory, Inventory, Transaction, Quotation, QuotationItem
 from core.auth import (
     verify_password, create_access_token,
@@ -13,6 +17,26 @@ from core.auth import (
 )
 
 app = FastAPI(title="Minerva108 ERP", version="1.0.0", docs_url="/api/docs")
+
+# ─── Rate Limiter (P0 / brute-force protection) ────────────────────────────
+# Uses client IP (via X-Forwarded-For when uvicorn is started with --proxy-headers).
+# In-memory storage — fine for single-process uvicorn; if we ever scale to
+# multiple workers, swap to Redis-backed storage.
+limiter = Limiter(key_func=get_remote_address, default_limits=[])
+app.state.limiter = limiter
+
+@app.exception_handler(RateLimitExceeded)
+def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    """Friendly Turkish error when a client hits the rate limit."""
+    retry_after = getattr(exc, "retry_after", 60)
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Çok fazla deneme. Lütfen biraz bekleyip tekrar deneyin.",
+            "retry_after_seconds": retry_after,
+        },
+        headers={"Retry-After": str(retry_after)},
+    )
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
@@ -266,7 +290,8 @@ class StockReceiveRequest(BaseModel):
 # ─── Auth Endpoints ──────────────────────────────────────────────────────────
 
 @app.post("/api/login")
-def login(data: LoginRequest, response: Response, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")     # Max 5 login attempts per IP per minute → blunts credential stuffing
+def login(request: Request, data: LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = (
         db.query(User)
         .filter(User.username == data.username, User.is_active == True)
