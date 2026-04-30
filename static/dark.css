@@ -882,19 +882,36 @@
 :root[data-theme="dark"] .toast-success { background:#0f2a18 !important; color:#86efac !important; }
 
 /* ── Production preview panel (Bug 3) ──────────────────────────────────
-   Cream-bg + light-grey borders → unreadable on a dark theme. Map the
-   container, rows, and summary states to their dark-mode equivalents. */
+   Explicit hex colors (no `var(--white)` — that variable is itself a
+   "card surface" remap and was failing to override the hard-coded
+   `#faf8f4` in production.html with sufficient specificity in the wild).
+   Targets every nested element so the panel reads end-to-end. */
 :root[data-theme="dark"] #previewPanel {
-  background: var(--white) !important;          /* dark.css already remaps --white to a dark surface */
-  border-color: var(--border) !important;
-  color: var(--text) !important;
+  background:    #1A2138 !important;     /* card surface, matches modal-content */
+  border-color:  #2A3454 !important;
+  color:         #E2E5EC !important;
 }
-:root[data-theme="dark"] .preview-row {
-  border-bottom-color: var(--border) !important;
+:root[data-theme="dark"] #previewPanel .preview-header {
+  background: #131B40 !important;          /* deeper navy, distinguishes from body */
+  color:      #E6CFA0 !important;          /* gold-tinted text on navy */
 }
-:root[data-theme="dark"] .preview-needed { color: var(--gold) !important; }
-:root[data-theme="dark"] .preview-stock-bar { background: var(--border) !important; }
-:root[data-theme="dark"] .stock-ok   { color: #6ee7b7 !important; }
-:root[data-theme="dark"] .stock-warn { color: #fca5a5 !important; }
+:root[data-theme="dark"] #previewPanel .preview-body,
+:root[data-theme="dark"] #previewPanel .preview-row {
+  background: transparent !important;
+  border-bottom-color: #2A3454 !important;
+}
+:root[data-theme="dark"] #previewPanel .preview-item-name { color: #E2E5EC !important; }
+:root[data-theme="dark"] #previewPanel .preview-needed    { color: #E6CFA0 !important; }
+:root[data-theme="dark"] #previewPanel .preview-stock     { color: #C4CAD8 !important; }
+:root[data-theme="dark"] #previewPanel .preview-stock-bar { background: #2A3454 !important; }
+:root[data-theme="dark"] #previewPanel .stock-ok   { color: #6ee7b7 !important; }
+:root[data-theme="dark"] #previewPanel .stock-warn { color: #fca5a5 !important; }
 :root[data-theme="dark"] .summary-ok   { background:#0f2a18 !important; color:#86efac !important; border-color:#14532d !important; }
 :root[data-theme="dark"] .summary-warn { background:#3a1414 !important; color:#fca5a5 !important; border-color:#7f1d1d !important; }
+/* Inline-style addon next to the quantity input (`#prodUnitAddon`) — its
+   inline styles are too specific to override generically; target it directly. */
+:root[data-theme="dark"] #prodUnitAddon {
+  background:    #232B45 !important;
+  border-color:  #2A3454 !important;
+  color:         #C4CAD8 !important;
+}

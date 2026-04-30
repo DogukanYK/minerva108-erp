@@ -433,7 +433,21 @@
                         style="padding:0.5rem 0.75rem;border:1.5px solid #e5e7eb;border-radius:8px;font-family:'Jost',sans-serif;font-size:0.86rem;background:var(--white);color:#374151;">
                   <option value="">Kullanıcı seç…</option>
                 </select>
-                <div style="display:flex;gap:0.5rem;align-items:center;">
+
+                <!-- Mod sekmesi: hızlı pencere VEYA özel tarih aralığı -->
+                <div style="display:flex;gap:6px;font-size:0.78rem;">
+                  <button type="button" id="auditModePreset"
+                          style="flex:1;padding:0.42rem 0.6rem;border:1.5px solid var(--navy);background:var(--navy);color:var(--white);border-radius:6px;font-weight:600;cursor:pointer;">
+                    Hızlı
+                  </button>
+                  <button type="button" id="auditModeCustom"
+                          style="flex:1;padding:0.42rem 0.6rem;border:1.5px solid #e5e7eb;background:var(--white);color:#6b7280;border-radius:6px;font-weight:600;cursor:pointer;">
+                    Özel Tarih
+                  </button>
+                </div>
+
+                <!-- Hızlı pencere -->
+                <div id="auditPresetBlock" style="display:flex;gap:0.5rem;align-items:center;">
                   <label style="font-size:0.8rem;color:#6b7280;flex:1;">Son
                     <select id="auditDaysSelect"
                             style="padding:0.4rem 0.6rem;border:1.5px solid #e5e7eb;border-radius:6px;font-size:0.82rem;background:var(--white);color:#374151;margin-left:0.4rem;">
@@ -444,11 +458,24 @@
                       <option value="1095">3 yıl</option>
                     </select>
                   </label>
-                  <button id="auditFilterBtn"
-                          style="padding:0.5rem 0.95rem;background:var(--navy);color:var(--white);border:none;border-radius:8px;font-family:'Jost',sans-serif;font-size:0.82rem;font-weight:600;cursor:pointer;white-space:nowrap;">
-                    <i class="bi bi-funnel"></i> Filtrele
-                  </button>
                 </div>
+
+                <!-- Özel tarih aralığı (varsayılan gizli) -->
+                <div id="auditCustomBlock" style="display:none;flex-direction:column;gap:0.4rem;">
+                  <label style="font-size:0.78rem;color:#6b7280;">Başlangıç
+                    <input type="date" id="auditDateFrom"
+                           style="display:block;width:100%;margin-top:2px;padding:0.4rem 0.6rem;border:1.5px solid #e5e7eb;border-radius:6px;font-size:0.82rem;background:var(--white);color:#374151;" />
+                  </label>
+                  <label style="font-size:0.78rem;color:#6b7280;">Bitiş
+                    <input type="date" id="auditDateTo"
+                           style="display:block;width:100%;margin-top:2px;padding:0.4rem 0.6rem;border:1.5px solid #e5e7eb;border-radius:6px;font-size:0.82rem;background:var(--white);color:#374151;" />
+                  </label>
+                </div>
+
+                <button id="auditFilterBtn"
+                        style="padding:0.55rem 0.95rem;background:var(--navy);color:var(--white);border:none;border-radius:8px;font-family:'Jost',sans-serif;font-size:0.82rem;font-weight:600;cursor:pointer;white-space:nowrap;">
+                  <i class="bi bi-funnel"></i> Filtrele
+                </button>
               </div>
               <div id="auditResultBody">
                 <div class="empty-state" style="padding:1.4rem 0.5rem;">
@@ -846,10 +873,34 @@
 
     /* ── User Activity panel (Bug 5) — only wired when admin.view_audit ── */
     if (window.can && window.can('admin', 'view_audit')) {
-      const userSel = document.getElementById('auditUserSelect');
-      const daysSel = document.getElementById('auditDaysSelect');
-      const filterBtn = document.getElementById('auditFilterBtn');
-      const resultBox = document.getElementById('auditResultBody');
+      const userSel    = document.getElementById('auditUserSelect');
+      const daysSel    = document.getElementById('auditDaysSelect');
+      const dateFromI  = document.getElementById('auditDateFrom');
+      const dateToI    = document.getElementById('auditDateTo');
+      const presetBlk  = document.getElementById('auditPresetBlock');
+      const customBlk  = document.getElementById('auditCustomBlock');
+      const modePreset = document.getElementById('auditModePreset');
+      const modeCustom = document.getElementById('auditModeCustom');
+      const filterBtn  = document.getElementById('auditFilterBtn');
+      const resultBox  = document.getElementById('auditResultBody');
+
+      let auditMode = 'preset';
+
+      function setMode(m) {
+        auditMode = m;
+        const isPreset = (m === 'preset');
+        presetBlk.style.display = isPreset ? 'flex' : 'none';
+        customBlk.style.display = isPreset ? 'none' : 'flex';
+        // Visual toggle styling
+        modePreset.style.background = isPreset ? 'var(--navy)' : 'var(--white)';
+        modePreset.style.color      = isPreset ? 'var(--white)' : '#6b7280';
+        modePreset.style.borderColor = isPreset ? 'var(--navy)' : '#e5e7eb';
+        modeCustom.style.background = !isPreset ? 'var(--navy)' : 'var(--white)';
+        modeCustom.style.color      = !isPreset ? 'var(--white)' : '#6b7280';
+        modeCustom.style.borderColor = !isPreset ? 'var(--navy)' : '#e5e7eb';
+      }
+      modePreset.addEventListener('click', () => setMode('preset'));
+      modeCustom.addEventListener('click', () => setMode('custom'));
 
       async function populateAuditUsers() {
         try {
@@ -864,9 +915,21 @@
       }
 
       async function runAuditFilter() {
-        const uid  = userSel.value;
-        const days = daysSel.value;
+        const uid = userSel.value;
         if (!uid) { showToast('Önce bir kullanıcı seçin.'); return; }
+
+        let qs;
+        if (auditMode === 'custom') {
+          const f = dateFromI.value, t = dateToI.value;
+          if (!f && !t) { showToast('Başlangıç veya bitiş tarihi girin.'); return; }
+          if (f && t && f > t) { showToast('Başlangıç tarihi bitişten sonra olamaz.'); return; }
+          const params = new URLSearchParams({ user_id: uid });
+          if (f) params.set('date_from', f);
+          if (t) params.set('date_to',   t);
+          qs = params.toString();
+        } else {
+          qs = `user_id=${uid}&days=${daysSel.value}`;
+        }
 
         resultBox.innerHTML = `<div class="empty-state" style="padding:1.4rem 0.5rem;">
           <i class="bi bi-hourglass-split" style="font-size:1.4rem;color:#9ca3af;"></i>
@@ -874,7 +937,7 @@
         </div>`;
 
         try {
-          const r = await fetch(`/api/traceability/user-activity?user_id=${uid}&days=${days}`);
+          const r = await fetch(`/api/traceability/user-activity?${qs}`);
           if (!r.ok) {
             resultBox.innerHTML = `<div class="empty-state" style="padding:1.4rem 0.5rem;">
               <p class="empty-state-sub" style="color:#dc2626;">Yetkisiz veya hata.</p>
@@ -885,12 +948,12 @@
           if (!data.transactions.length) {
             resultBox.innerHTML = `<div class="empty-state" style="padding:1.4rem 0.5rem;">
               <i class="bi bi-inbox" style="font-size:1.4rem;color:#9ca3af;"></i>
-              <p class="empty-state-sub" style="margin-top:0.4rem;">Bu pencerede kayıt yok.</p>
+              <p class="empty-state-sub" style="margin-top:0.4rem;">Bu aralıkta kayıt yok.</p>
             </div>`;
             return;
           }
           const headline = `<div style="font-size:0.78rem;color:#6b7280;margin-bottom:0.6rem;font-weight:600;">
-            ${escHtml(data.user.full_name)} — son ${data.window_days} günde ${data.count} işlem
+            ${escHtml(data.user.full_name)} — ${escHtml(data.range)} · ${data.count} işlem
           </div>`;
           const list = data.transactions.map(t => `
             <div style="padding:0.55rem 0.65rem;border:1px solid #f0ece4;border-radius:8px;margin-bottom:0.45rem;background:var(--cream);">

@@ -349,30 +349,29 @@ def receive_stock(
 
 @router.get("/inventory/summary")
 def inventory_summary(db: Session = Depends(get_db)):
-    from sqlalchemy import func
-    rows = (
-        db.query(
-            Item.id,
-            Item.name,
-            Item.category,
-            Item.unit,
-            func.coalesce(func.sum(Inventory.quantity), 0).label("total_stock"),
-        )
-        .outerjoin(Inventory, (Inventory.item_id == Item.id) & (Inventory.status == "APPROVED"))
+    """
+    Mevcut stok özeti — `Item.current_stock` source-of-truth olarak
+    kullanılır. Önceden APPROVED Inventory satırlarının quantity'lerini
+    topluyorduk; ama production output'u eskiden QUARANTINE'de kalıyordu
+    ve current_stock'a yansımıyordu. Phase 8 / Bug 4'le production direkt
+    current_stock'u arttırıyor — bu endpoint de aynı kanonik değeri okur,
+    böylece /stocks ve canlı önizleme birbirine uyumlu.
+    """
+    items = (
+        db.query(Item)
         .filter(Item.is_active == True)
-        .group_by(Item.id)
         .order_by(Item.category, Item.name)
         .all()
     )
     return [
         {
-            "item_id": r.id,
-            "name": r.name,
-            "category": r.category or "Diğer",
-            "unit": r.unit,
-            "total_stock": round(float(r.total_stock), 4),
+            "item_id":     i.id,
+            "name":        i.name,
+            "category":    i.category or "Diğer",
+            "unit":        i.unit,
+            "total_stock": round(float(i.current_stock or 0), 4),
         }
-        for r in rows
+        for i in items
     ]
 
 
@@ -601,15 +600,21 @@ def list_audit_users(
 @router.get("/traceability/user-activity")
 def user_activity(
     user_id: int,
-    days: int = 30,
+    days:       Optional[int] = None,             # legacy preset support (last N days)
+    date_from:  Optional[str] = None,             # YYYY-MM-DD inclusive (custom range)
+    date_to:    Optional[str] = None,             # YYYY-MM-DD inclusive
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("admin", "view_audit")),
 ):
     """
-    Returns the transaction trail performed by a specific user within the
-    last `days` days. Transaction.performed_by stores `actor` strings
-    (full_name preferred, username fallback) so we match against both
-    candidates of the target user — handles legacy rows with either form.
+    Audit trail for a specific user. Two modes:
+
+      • Preset window:  days=30  → "last 30 days from now"
+      • Custom range:   date_from=2025-01-01 & date_to=2025-12-31
+
+    If both are sent, custom range wins. If neither, defaults to 30 days.
+    Transaction.performed_by stores `actor` strings (full_name preferred,
+    username fallback) so we match against both candidates of the target user.
     """
     from datetime import datetime as _dt, timedelta
     from database import User
@@ -618,8 +623,22 @@ def user_activity(
     if not user:
         return JSONResponse(status_code=404, content={"detail": "Kullanıcı bulunamadı."})
 
-    days = max(1, min(days, 1095))      # clamp 1 day .. 3 years
-    since = _dt.utcnow() - timedelta(days=days)
+    # ── Resolve the window ──────────────────────────────────────────────
+    range_label = None
+    if date_from or date_to:
+        try:
+            since = _dt.strptime(date_from, "%Y-%m-%d") if date_from else _dt(1970, 1, 1)
+            until = _dt.strptime(date_to,   "%Y-%m-%d") + timedelta(days=1) if date_to else _dt.utcnow()
+        except ValueError:
+            return JSONResponse(status_code=422, content={
+                "detail": "Geçersiz tarih formatı. YYYY-MM-DD bekleniyor."
+            })
+        range_label = f"{date_from or '∞'} → {date_to or 'bugün'}"
+    else:
+        n = max(1, min(int(days or 30), 1095))    # clamp 1 day .. 3 years
+        since = _dt.utcnow() - timedelta(days=n)
+        until = _dt.utcnow() + timedelta(days=1)
+        range_label = f"son {n} gün"
 
     candidates = [c for c in (user.full_name, user.username) if c]
 
@@ -628,6 +647,7 @@ def user_activity(
         .filter(
             Transaction.performed_by.in_(candidates),
             Transaction.timestamp >= since,
+            Transaction.timestamp <  until,
         )
         .order_by(Transaction.id.desc())
         .limit(500)
@@ -640,8 +660,9 @@ def user_activity(
             "full_name": user.full_name,
             "role":      user.role,
         },
-        "window_days": days,
+        "range":       range_label,
         "since":       since.isoformat() + "Z",
+        "until":       until.isoformat() + "Z",
         "count":       len(rows),
         "transactions": [
             {
