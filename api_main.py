@@ -15,7 +15,7 @@ respective router modules — see routers/.
 from typing import Optional
 
 from fastapi import FastAPI, Request, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -59,6 +59,15 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+
+
+# ─── PWA service worker ─────────────────────────────────────────────────────
+# Served from `/sw.js` (not `/static/sw.js`) so its default scope is the entire
+# site. A SW mounted under /static/ can only intercept /static/* requests and
+# would never see page navigations — defeating the PWA install model.
+@app.get("/sw.js", include_in_schema=False)
+def serve_service_worker():
+    return FileResponse("static/sw.js", media_type="application/javascript")
 
 
 @app.on_event("startup")

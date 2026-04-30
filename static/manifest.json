@@ -1,0 +1,34 @@
+{
+  "name": "Minerva 108 ERP",
+  "short_name": "Minerva108",
+  "description": "Minerva 108 Vegan Cosmetics — Üretim, Stok ve Kalite Kontrol Sistemi",
+  "lang": "tr",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1A2456",
+  "theme_color": "#232E6E",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/static/images/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/images/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/images/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
