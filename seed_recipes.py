@@ -470,7 +470,7 @@ def main():
                     output_quantity=1.0,
                     output_unit="adet",
                     target_item_id=target_item.id,
-                    waste_percentage=5.0,   # default 5% fire (will be tuned later)
+                    waste_percentage=10.0,   # default 10% fire (production standard)
                     description=f"Hedef: {target_item.name}",
                     is_active=True,
                 )
