@@ -423,6 +423,10 @@
           <td style="text-align:center;" onclick="event.stopPropagation()">
             ${detailBtn}
             ${['SuperAdmin','LabLead'].includes(USER_ROLE) ? `
+            <button class="btn-icon" onclick="editRecipe(${r.id})" title="Düzenle"
+              style="background:#eff6ff;color:#1d4ed8;margin-right:4px;">
+              <i class="bi bi-pencil"></i>
+            </button>
             <button class="btn-icon btn-icon-delete" onclick="deleteRecipe(${r.id}, '${escHtml(r.name)}')" title="Sil">
               <i class="bi bi-trash3"></i>
             </button>` : ''}
@@ -604,12 +608,61 @@
       document.getElementById('ingredientRows').innerHTML =
         `<div class="empty-ingredients" id="emptyIngredients">Henüz hammadde eklenmedi. Yukarıdaki butonu kullanın.</div>`;
       document.getElementById('yieldUnitAddon').textContent = '—';
+      document.getElementById('addRecipeModalLabel').textContent = 'Yeni Reçete Oluştur';
+      document.getElementById('saveRecipeBtn').textContent = 'Reçeteyi Kaydet';
+      editingRecipeId = null;
       rowCounter = 0;
     });
 
-    /* ── Kaydet ── */
+    /* ── Düzenle ──
+       Mevcut Add modalını reuse ederek edit moduna alır:
+         - hedef ürünü, üretim miktarını, fire %'sini önceden doldurur
+         - hammadde satırlarını yükler (item_id + quantity)
+         - editingRecipeId set edilince saveRecipeBtn PUT olarak gönderir */
+    let editingRecipeId = null;
+    async function editRecipe(id) {
+      try {
+        const res = await fetch(`/api/recipes/${id}`);
+        if (!res.ok) { showToast('Reçete yüklenemedi.'); return; }
+        const r = await res.json();
+
+        editingRecipeId = id;
+
+        // Modal başlığı ve buton metnini değiştir
+        document.getElementById('addRecipeModalLabel').textContent = 'Reçete Düzenle';
+        document.getElementById('saveRecipeBtn').textContent = 'Değişiklikleri Kaydet';
+
+        // Hedef ürünü ve birim adını set et
+        const targetSel = document.getElementById('recipeTargetItem');
+        targetSel.value = r.target_item_id;
+        // Birim addon'unu (ml/adet) güncelle
+        const opt = targetSel.options[targetSel.selectedIndex];
+        document.getElementById('yieldUnitAddon').textContent =
+          (opt && opt.dataset.unit) || r.target_item_unit || '—';
+
+        // Üretim miktarı ve fire
+        document.getElementById('recipeYield').value = r.expected_yield;
+        document.getElementById('recipeWaste').value = r.waste_percentage ?? 0;
+
+        // Hammadde satırlarını temizle ve yeniden doldur
+        document.getElementById('ingredientRows').innerHTML = '';
+        rowCounter = 0;
+        for (const ing of r.ingredients) {
+          addIngredientRow();
+          const lastRow = document.querySelector('.ingredient-row:last-child');
+          lastRow.querySelector('.ing-item').value = ing.item_id;
+          lastRow.querySelector('.ing-qty').value  = ing.quantity;
+        }
+        calculateYield();
+
+        new bootstrap.Modal(document.getElementById('addRecipeModal')).show();
+      } catch {
+        showToast('Reçete düzenlenirken hata oluştu.');
+      }
+    }
+
+    /* ── Kaydet (Create veya Update) ── */
     document.getElementById('saveRecipeBtn').addEventListener('click', async function () {
-      // Reçete adı artık manuel girilmez — hedef ürünün adına otomatik eşitlenir.
       const targetSel    = document.getElementById('recipeTargetItem');
       const targetItemId = parseInt(targetSel.value);
       const yieldVal     = parseFloat(document.getElementById('recipeYield').value);
@@ -633,10 +686,14 @@
       });
       if (!valid) { showToast('Tüm hammadde satırlarını eksiksiz doldurunuz.'); return; }
 
-      this.disabled = true; this.textContent = 'Kaydediliyor…';
+      this.disabled = true;
+      const origText = this.textContent;
+      this.textContent = 'Kaydediliyor…';
       try {
-        const res = await fetch('/api/recipes', {
-          method: 'POST',
+        const url    = editingRecipeId ? `/api/recipes/${editingRecipeId}` : '/api/recipes';
+        const method = editingRecipeId ? 'PUT' : 'POST';
+        const res = await fetch(url, {
+          method,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             target_item_id:   targetItemId,
@@ -647,11 +704,15 @@
         });
         const data = await res.json();
         if (!res.ok) { showToast(data.detail || 'Kayıt başarısız.'); return; }
-        showToast('Reçete başarıyla oluşturuldu.', 'success');
+        showToast(editingRecipeId ? 'Reçete güncellendi.' : 'Reçete başarıyla oluşturuldu.', 'success');
         bootstrap.Modal.getInstance(document.getElementById('addRecipeModal')).hide();
         loadRecipes();
-      } catch { showToast('Kayıt sırasında hata oluştu.');
-      } finally { this.disabled = false; this.textContent = 'Reçeteyi Kaydet'; }
+      } catch {
+        showToast('Kayıt sırasında hata oluştu.');
+      } finally {
+        this.disabled = false;
+        this.textContent = origText;
+      }
     });
 
     /* ── Sil ── */

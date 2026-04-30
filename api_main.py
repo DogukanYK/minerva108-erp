@@ -630,6 +630,65 @@ def delete_recipe(recipe_id: int, db: Session = Depends(get_db), _: dict = Depen
     return {"message": "Reçete silindi."}
 
 
+@app.put("/api/recipes/{recipe_id}")
+def update_recipe(
+    recipe_id: int,
+    data: RecipeCreateRequest,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_role(_CAN_EDIT_RECIPES)),
+):
+    recipe = db.query(Recipe).filter(Recipe.id == recipe_id).first()
+    if not recipe:
+        return JSONResponse(status_code=404, content={"detail": "Reçete bulunamadı."})
+
+    target_item = db.query(Item).filter(Item.id == data.target_item_id).first()
+    if not target_item:
+        return JSONResponse(status_code=404, content={"detail": "Hedef ürün bulunamadı."})
+
+    # Block recipes on abstract parents (variations only)
+    has_children = db.query(Item).filter(Item.parent_id == target_item.id).count() > 0
+    if has_children:
+        return JSONResponse(status_code=400, content={
+            "detail": (f"'{target_item.name}' bir ana üründür. "
+                       "Reçete varyasyonlara (örn: 200ml, 500ml) ayrı tanımlanmalıdır.")
+        })
+
+    try:
+        # Update recipe-level fields
+        recipe.name             = target_item.name
+        recipe.output_quantity  = data.expected_yield
+        recipe.output_unit      = target_item.unit or "adet"
+        recipe.target_item_id   = data.target_item_id
+        recipe.waste_percentage = round(data.waste_percentage or 0.0, 4)
+        recipe.description      = f"Hedef: {target_item.name}"
+
+        # Replace ingredients: delete old, add new
+        db.query(RecipeIngredient).filter(
+            RecipeIngredient.recipe_id == recipe_id
+        ).delete()
+        db.flush()
+
+        for ing in data.ingredients:
+            item = db.query(Item).filter(Item.id == ing.item_id).first()
+            if not item:
+                db.rollback()
+                return JSONResponse(status_code=404, content={
+                    "detail": f"Hammadde ID {ing.item_id} bulunamadı."
+                })
+            db.add(RecipeIngredient(
+                recipe_id=recipe.id,
+                item_id=ing.item_id,
+                quantity=ing.quantity,
+                unit=item.unit,
+            ))
+
+        db.commit()
+        return {"id": recipe.id, "message": "Reçete güncellendi."}
+    except Exception:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"detail": "Reçete güncellenemedi."})
+
+
 @app.get("/api/recipes/{recipe_id}")
 def get_recipe_detail(
     recipe_id: int,
