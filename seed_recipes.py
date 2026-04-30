@@ -16,9 +16,17 @@ Usage on server:
     set -a; source .env; set +a
     venv/bin/python seed_recipes.py
 """
-import os, sys, json, re
+import os, sys, json, re, unicodedata
 from difflib import SequenceMatcher
 from database import SessionLocal, Item, Supplier, Recipe, RecipeIngredient
+
+
+def _nkey(s):
+    """Normalize string for case-insensitive dict lookup (handles Turkish unicode quirks)."""
+    if s is None: return ''
+    s = unicodedata.normalize('NFKC', str(s))
+    s = re.sub(r'\s+', ' ', s).strip().upper()
+    return s
 
 
 # ── Essential cosmetic ingredients NOT in the original Hammadde import ──────
@@ -263,6 +271,104 @@ def fuzzy_match(name, db_items):
     return best
 
 
+def import_hammadde_excel(db, here):
+    """Phase 0: bulk-import Hammadde from seed_data_hammadde.xlsx if not already done."""
+    import openpyxl
+    excel_path = os.path.join(here, "seed_data_hammadde.xlsx")
+    if not os.path.exists(excel_path):
+        print(f"   ⚠️  {excel_path} bulunamadı, atlandı")
+        return
+
+    # Skip if already populated (current_stock > 0 means a real Hammadde import happened)
+    has_stocked = db.query(Item).filter(
+        Item.category == "Hammadde", Item.current_stock > 0
+    ).count()
+    if has_stocked > 50:
+        print(f"   ⏭️  Hammadde DB zaten dolu ({has_stocked} stoklu), atlandı")
+        return
+
+    def parse_qty(raw):
+        """Parse '4.276GR' / '1 KG' / '90GR' / '162ML' → (qty_in_g_or_ml, unit)."""
+        if raw is None: return (0.0, "adet")
+        s = str(raw).strip().upper()
+        if not s or s in ("—", "-", "NAN"): return (0.0, "adet")
+        m = re.search(r'(KG|ML|GR|G)\b\s*$', s)
+        if m:
+            unit_str = m.group(1)
+            s = s[:m.start()].strip()
+        else:
+            unit_str = "GR"
+        s = s.replace(",", ".")
+        if re.match(r'^\d+\.\d{3}$', s):
+            s = s.replace(".", "")
+        try:
+            qty = float(s)
+        except ValueError:
+            qty = 0.0
+        if unit_str == "KG":  return (qty * 1000, "g")
+        if unit_str == "ML":  return (qty, "ml")
+        return (qty, "g")
+
+    wb = openpyxl.load_workbook(excel_path, data_only=True)
+    items_created = 0
+    items_updated = 0
+    suppliers_added = 0
+
+    name_index = {_nkey(i.name): i for i in db.query(Item).all()}
+    supp_index = {_nkey(s.name): s for s in db.query(Supplier).all()}
+
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        for row in ws.iter_rows(values_only=True):
+            row_n = [c if c is not None else "" for c in row]
+            if len(row_n) < 4: continue
+            col_a, col_b = str(row_n[0]).strip(), str(row_n[1]).strip()
+            col_c, col_d = row_n[2], (str(row_n[3]).strip() if len(row_n) > 3 else "")
+            if not col_b: continue
+            joined = f"{col_a} {col_b}".upper()
+            if "KONTROL TARİHİ" in joined: continue
+            if "DOLAP" in joined and ("RAF" in joined or "ÜST" in joined): continue
+            if col_b.upper().strip() in ("HAMMADDE İSİM", "HAMMADDE İSIM"): continue
+            if col_b.upper().strip().startswith("DOLAP"): continue
+
+            qty, unit = parse_qty(col_c)
+            supplier_name = col_d if col_d and col_d not in ("—", "-", "NAN") else None
+
+            # Get/create supplier
+            supplier_obj = None
+            if supplier_name:
+                sk = _nkey(supplier_name)
+                supplier_obj = supp_index.get(sk)
+                if not supplier_obj:
+                    supplier_obj = Supplier(name=supplier_name, is_active=True)
+                    db.add(supplier_obj); db.flush()
+                    supp_index[sk] = supplier_obj
+                    suppliers_added += 1
+
+            # Get/create item
+            key = _nkey(col_b)
+            existing = name_index.get(key)
+            if existing:
+                if qty > 0:
+                    existing.current_stock = round((existing.current_stock or 0) + qty, 6)
+                if supplier_obj and not existing.supplier_id:
+                    existing.supplier_id = supplier_obj.id
+                items_updated += 1
+            else:
+                item = Item(
+                    name=col_b, category="Hammadde", unit=unit,
+                    current_stock=qty, cost_price=0.0,
+                    supplier_id=supplier_obj.id if supplier_obj else None,
+                    is_active=True,
+                )
+                db.add(item); db.flush()
+                name_index[key] = item
+                items_created += 1
+
+    db.commit()
+    print(f"   ✅ Hammadde Excel import: {items_created} yeni ürün, {items_updated} güncellendi, {suppliers_added} yeni tedarikçi")
+
+
 def add_missing_hammadde(db):
     """Phase 1: ensure all common essentials exist."""
     added = 0
@@ -289,7 +395,7 @@ def add_missing_hammadde(db):
         ))
         added += 1
     db.commit()
-    print(f"   ✅ Hammadde eklendi: {added} yeni, {skipped} mevcut")
+    print(f"   ✅ Eksik essentials eklendi: {added} yeni, {skipped} mevcut")
 
 
 def main():
@@ -303,8 +409,12 @@ def main():
 
     db = SessionLocal()
     try:
-        # ─── Phase 1: ensure essentials exist ──
-        print(f"\n→ Phase 1: Eksik hammaddeleri ekle")
+        # ─── Phase 0: bulk-import Hammadde from Excel ──
+        print(f"\n→ Phase 0: HAMMADDE Excel'i import et")
+        import_hammadde_excel(db, here)
+
+        # ─── Phase 1: ensure common essentials exist ──
+        print(f"\n→ Phase 1: Eksik essentials'ı ekle")
         add_missing_hammadde(db)
 
         # ─── Phase 2: build hammadde lookup ──
@@ -320,12 +430,16 @@ def main():
         ingredients_added = 0
         unmatched_ingredients = []
 
+        # Build normalized PRODUCT_MAP for unicode-tolerant lookups
+        _norm_product_map = {_nkey(k): v for k, v in PRODUCT_MAP.items()}
+        _norm_overrides   = {_nkey(k): v for k, v in INGREDIENT_OVERRIDES.items()}
+
         for bom in boms:
             cost_file = bom["file"]
             # Skip duplicate
             if "(3)" in cost_file:
                 continue
-            target_products = PRODUCT_MAP.get(cost_file)
+            target_products = _norm_product_map.get(_nkey(cost_file))
             if not target_products:
                 print(f"   ⚠️  '{cost_file}' eşleşmedi, atlandı")
                 continue
@@ -369,12 +483,13 @@ def main():
                     ing_name = ing_data["name"]
                     pct = ing_data["percent"]
 
-                    # 1. Check override
-                    target_db_name = INGREDIENT_OVERRIDES.get(ing_name.upper().strip())
+                    # 1. Check override (normalized lookup)
+                    target_db_name = _norm_overrides.get(_nkey(ing_name))
                     matched = None
                     if target_db_name:
+                        target_norm = _nkey(target_db_name)
                         matched = next(
-                            (i for i in all_hammadde if i.name == target_db_name), None
+                            (i for i in all_hammadde if _nkey(i.name) == target_norm), None
                         )
 
                     # 2. Fuzzy match (lazy fallback)
