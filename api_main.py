@@ -25,7 +25,7 @@ from slowapi.errors import RateLimitExceeded
 from database import init_db, get_db, User
 from core.auth import decode_token
 from core.limiter import limiter
-from core.permissions import _ROLE_LABELS, _has_permission
+from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions
 
 from routers import auth, users, inventory, recipes, production, b2b, reports
 
@@ -79,38 +79,59 @@ app.include_router(reports.router)
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────
 
-def _page_ctx(request: Request, payload: dict) -> dict:
-    role = payload.get("role", "")
-    return {
-        "request":    request,
-        "username":   payload.get("username"),
-        "full_name":  payload.get("full_name"),
-        "role":       role,
-        "role_label": _ROLE_LABELS.get(role, role),
-        "user_id":    int(payload.get("sub", 0)),   # current user ID — used by admin UI self-protection
-    }
-
-
 def _get_user_context(request: Request) -> Optional[dict]:
+    """Decode the access_token cookie into the JWT payload, or None."""
     token = request.cookies.get("access_token")
     if not token:
         return None
     return decode_token(token)
 
 
-def _payload_can(payload: dict, db: Session, category: str, action: str) -> bool:
+def _resolve_active_user(payload: Optional[dict], db: Session) -> Optional[User]:
     """
-    Page-route permission gate. Resolves the request user from the JWT payload,
-    loads the live User row (so DB-stored custom permissions apply), and checks
-    one category.action against the effective permission set.
-
-    Mirrors the logic of `require_permission` used at the API layer, so the
-    routing-layer perimeter and the page-rendering perimeter agree exactly.
+    Load the live User row referenced by a decoded JWT payload.
+    Returns None if the payload is missing or the user has been deleted/deactivated
+    after the token was issued — so mid-session deactivation kicks the user out.
     """
+    if not payload:
+        return None
     user = db.query(User).filter(User.id == int(payload.get("sub", 0))).first()
-    if not user or not user.is_active:
-        return False
-    return _has_permission(user, category, action)
+    return user if (user and user.is_active) else None
+
+
+def _user_can(user: Optional[User], category: str, action: str) -> bool:
+    """Page-level permission gate — mirrors require_permission used at the API layer."""
+    return bool(user) and _has_permission(user, category, action)
+
+
+def _page_ctx(request: Request, payload: dict, user: User) -> dict:
+    """
+    Build the Jinja template context for an authenticated page.
+
+    Resolves the current user's effective permissions ONCE per request and
+    exposes both:
+      • permissions — full {category: {action: bool}} dict (for advanced templates)
+      • can(category, action) — callable shortcut for `{% if can('items', 'create') %}`
+
+    Templates should prefer can() because it gracefully returns False on unknown
+    category/action keys instead of raising — schema drift won't break pages.
+    """
+    role = payload.get("role", "")
+    perms = _resolve_permissions(user)
+
+    def _can(category: str, action: str) -> bool:
+        return bool(perms.get(category, {}).get(action, False))
+
+    return {
+        "request":     request,
+        "username":    payload.get("username"),
+        "full_name":   payload.get("full_name"),
+        "role":        role,
+        "role_label":  _ROLE_LABELS.get(role, role),
+        "user_id":     user.id,
+        "permissions": perms,    # full dict — useful for debug/advanced template logic
+        "can":         _can,     # callable — primary template API
+    }
 
 
 # ─── Page Routes ─────────────────────────────────────────────────────────────
@@ -124,110 +145,122 @@ def login_page(request: Request):
 
 
 @app.get("/", response_class=HTMLResponse)
-def root(request: Request):
+def root(request: Request, db: Session = Depends(get_db)):
     """Dashboard — open to any authenticated user; the data fetched on this
     page is reports.view-gated at the API layer, so users without that perm
     will simply see empty cards rather than be bounced into a redirect loop."""
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
-    return templates.TemplateResponse("index.html", _page_ctx(request, payload))
+    user = _resolve_active_user(payload, db)
+    if not user: return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("index.html", _page_ctx(request, payload, user))
 
 
 @app.get("/items", response_class=HTMLResponse)
 def items_page(request: Request, db: Session = Depends(get_db)):
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
-    if not _payload_can(payload, db, "items", "view"):
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "items", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("items.html", _page_ctx(request, payload))
+    return templates.TemplateResponse("items.html", _page_ctx(request, payload, user))
 
 
 @app.get("/suppliers", response_class=HTMLResponse)
 def suppliers_page(request: Request, db: Session = Depends(get_db)):
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
-    if not _payload_can(payload, db, "items", "view"):
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "items", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("suppliers.html", _page_ctx(request, payload))
+    return templates.TemplateResponse("suppliers.html", _page_ctx(request, payload, user))
 
 
 @app.get("/recipes", response_class=HTMLResponse)
 def recipes_page(request: Request, db: Session = Depends(get_db)):
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
-    if not _payload_can(payload, db, "recipes", "view"):
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "recipes", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("recipes.html", _page_ctx(request, payload))
+    return templates.TemplateResponse("recipes.html", _page_ctx(request, payload, user))
 
 
 @app.get("/production", response_class=HTMLResponse)
 def production_page(request: Request, db: Session = Depends(get_db)):
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
-    if not _payload_can(payload, db, "production", "view"):
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "production", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("production.html", _page_ctx(request, payload))
+    return templates.TemplateResponse("production.html", _page_ctx(request, payload, user))
 
 
 @app.get("/reports", response_class=HTMLResponse)
 def reports_page(request: Request, db: Session = Depends(get_db)):
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
-    if not _payload_can(payload, db, "reports", "view"):
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "reports", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("reports.html", _page_ctx(request, payload))
+    return templates.TemplateResponse("reports.html", _page_ctx(request, payload, user))
 
 
 @app.get("/ledger", response_class=HTMLResponse)
 def ledger_page(request: Request, db: Session = Depends(get_db)):
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
-    if not _payload_can(payload, db, "reports", "view"):
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "reports", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("ledger.html", _page_ctx(request, payload))
+    return templates.TemplateResponse("ledger.html", _page_ctx(request, payload, user))
 
 
 @app.get("/qc", response_class=HTMLResponse)
 def qc_page(request: Request, db: Session = Depends(get_db)):
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
-    if not _payload_can(payload, db, "qc", "view"):
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "qc", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("qc.html", _page_ctx(request, payload))
+    return templates.TemplateResponse("qc.html", _page_ctx(request, payload, user))
 
 
 @app.get("/receiving", response_class=HTMLResponse)
 def receiving_page(request: Request, db: Session = Depends(get_db)):
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
-    if not _payload_can(payload, db, "inventory", "view"):
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "inventory", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("receiving.html", _page_ctx(request, payload))
+    return templates.TemplateResponse("receiving.html", _page_ctx(request, payload, user))
 
 
 @app.get("/traceability", response_class=HTMLResponse)
 def traceability_page(request: Request, db: Session = Depends(get_db)):
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
-    if not _payload_can(payload, db, "inventory", "view"):
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "inventory", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("traceability.html", _page_ctx(request, payload))
+    return templates.TemplateResponse("traceability.html", _page_ctx(request, payload, user))
 
 
 @app.get("/quotations", response_class=HTMLResponse)
 def quotations_page(request: Request, db: Session = Depends(get_db)):
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
-    if not _payload_can(payload, db, "b2b", "view"):
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "b2b", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("quotations.html", _page_ctx(request, payload))
+    return templates.TemplateResponse("quotations.html", _page_ctx(request, payload, user))
 
 
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page(request: Request, db: Session = Depends(get_db)):
     payload = _get_user_context(request)
-    if not payload:
-        return RedirectResponse(url="/login", status_code=302)
-    if not _payload_can(payload, db, "admin", "view"):
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "admin", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("admin.html", _page_ctx(request, payload))
+    return templates.TemplateResponse("admin.html", _page_ctx(request, payload, user))
