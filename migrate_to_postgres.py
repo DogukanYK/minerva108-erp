@@ -110,18 +110,33 @@ def main():
     init_db()
     print("✅ Şema hazır")
 
-    # 3. Safety check — refuse to overwrite existing PG data
+    # 3. Show current PG state — let user decide
     pg = PgSession()
-    existing_items = pg.query(Item).count()
+    pg_counts = {M.__tablename__: pg.query(M).count() for M in TABLES}
     pg.close()
-    if existing_items > 4:   # 4 default users live alongside; >4 means real data
-        print(f"\n⚠️  Hedef PG veritabanında zaten {existing_items} ürün var.")
-        ans = input("   Devam edersen mevcut PG verisi karışacak. Emin misin? (yes/no): ")
+    total_pg = sum(pg_counts.values())
+    print(f"\n→ PG mevcut durum:")
+    for tname, c in pg_counts.items():
+        print(f"   {tname:<25} {c:>6}")
+    print(f"   {'TOPLAM':<25} {total_pg:>6}")
+
+    if total_pg > 0:
+        print(f"\n⚠️  PG'de {total_pg} mevcut satır var. Migration için TRUNCATE edilecek")
+        print(f"   (SQLite gerçek veri olarak kabul ediliyor — PG temizlenip yeniden dolacak).")
+        ans = input("   Devam (yes/no)? ")
         if ans.strip().lower() != "yes":
             print("İptal edildi.")
             sys.exit(0)
 
-    # 4. Copy table by table — uses session.merge() for idempotent upserts by PK
+        # TRUNCATE all tables in one shot — RESTART IDENTITY also resets sequences
+        print(f"\n→ PG tabloları temizleniyor (TRUNCATE CASCADE)…")
+        with pg_engine.connect() as conn:
+            tables_csv = ", ".join(M.__tablename__ for M in TABLES)
+            conn.execute(text(f"TRUNCATE {tables_csv} RESTART IDENTITY CASCADE"))
+            conn.commit()
+        print(f"   ✅ {len(TABLES)} tablo temizlendi, ID sequence'ları sıfırlandı")
+
+    # 4. Copy table by table with simple INSERTs (PG is empty after truncate)
     sqlite = SqliteSession()
     pg     = PgSession()
 
@@ -137,9 +152,8 @@ def main():
                 continue
 
             for row in rows:
-                # Detach from sqlite session, build a fresh dict, merge into PG
                 d = {col.name: getattr(row, col.name) for col in Model.__table__.columns}
-                pg.merge(Model(**d))
+                pg.add(Model(**d))   # explicit IDs preserved
 
             pg.commit()
             counts[tname] = len(rows)

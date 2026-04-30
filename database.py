@@ -241,58 +241,37 @@ class ProductionHistory(Base):
 def init_db():
     Base.metadata.create_all(bind=engine)
     with engine.connect() as conn:
-        try:
-            conn.execute(text("ALTER TABLE recipes ADD COLUMN target_item_id INTEGER"))
-            conn.commit()
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE inventory ADD COLUMN qc_notes TEXT"))
-            conn.commit()
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE recipes ADD COLUMN waste_percentage REAL DEFAULT 0.0"))
-            conn.commit()
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE inventory ADD COLUMN qc_form_data TEXT"))
-            conn.commit()
-        except Exception:
-            pass
+        # ── Helper: idempotent ALTER TABLE that survives PG transaction abort ──
+        # PostgreSQL aborts the transaction on any error; subsequent statements
+        # in the same transaction silently fail until ROLLBACK is called.
+        # SQLite has no such issue, but conn.rollback() is harmless there.
+        def alter_safe(sql: str):
+            try:
+                conn.execute(text(sql))
+                conn.commit()
+            except Exception:
+                conn.rollback()   # ← critical for PG; harmless on SQLite
 
-        # ── Phase 2 / Task 9 — Full traceability columns (idempotent) ────────
+        # ── All schema migrations in chronological order (idempotent) ────────
+        # If a column already exists, alter_safe rolls back & moves on.
         for stmt in (
+            "ALTER TABLE recipes            ADD COLUMN target_item_id INTEGER",
+            "ALTER TABLE inventory          ADD COLUMN qc_notes TEXT",
+            "ALTER TABLE recipes            ADD COLUMN waste_percentage REAL DEFAULT 0.0",
+            "ALTER TABLE inventory          ADD COLUMN qc_form_data TEXT",
+            # Phase 2 / Task 9 — Full traceability columns
             "ALTER TABLE inventory          ADD COLUMN received_by VARCHAR(50)",
             "ALTER TABLE inventory          ADD COLUMN qc_approved_by VARCHAR(50)",
             "ALTER TABLE transactions       ADD COLUMN performed_by VARCHAR(50)",
             "ALTER TABLE production_history ADD COLUMN produced_by VARCHAR(50)",
             "ALTER TABLE production_history ADD COLUMN lot_number VARCHAR(100)",
+            # Phase 3 / Task 1 — Product variations hierarchy
+            "ALTER TABLE items              ADD COLUMN parent_id INTEGER REFERENCES items(id)",
+            "ALTER TABLE items              ADD COLUMN variation_name VARCHAR(100)",
+            # Phase 4 / Task 2 — Granular RBAC 2.0
+            "ALTER TABLE users              ADD COLUMN permissions TEXT",
         ):
-            try:
-                conn.execute(text(stmt))
-                conn.commit()
-            except Exception:
-                pass
-
-        # ── Phase 3 / Task 1 — Product variations hierarchy (idempotent) ─────
-        for stmt in (
-            "ALTER TABLE items ADD COLUMN parent_id INTEGER REFERENCES items(id)",
-            "ALTER TABLE items ADD COLUMN variation_name VARCHAR(100)",
-        ):
-            try:
-                conn.execute(text(stmt))
-                conn.commit()
-            except Exception:
-                pass
-
-        # ── Phase 4 / Task 2 — Granular RBAC 2.0 (idempotent) ────────────────
-        try:
-            conn.execute(text("ALTER TABLE users ADD COLUMN permissions TEXT"))
-            conn.commit()
-        except Exception:
-            pass
+            alter_safe(stmt)
 
     # ── Varsayılan kullanıcıları oluştur (idempotent — her başlatmada güvenli) ──
     import bcrypt
