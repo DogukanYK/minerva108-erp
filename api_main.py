@@ -225,12 +225,30 @@ def reports_page(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/ledger", response_class=HTMLResponse)
 def ledger_page(request: Request, db: Session = Depends(get_db)):
+    """Pure transactions / audit-trail view. Stocks moved out to /stocks (Bug 4)."""
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
     user = _resolve_active_user(payload, db)
     if not _user_can(user, "reports", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("ledger.html", _page_ctx(request, payload, user))
+    ctx = _page_ctx(request, payload, user)
+    ctx["default_tab"] = "txs"
+    ctx["single_view"] = True
+    return templates.TemplateResponse("ledger.html", ctx)
+
+
+@app.get("/stocks", response_class=HTMLResponse)
+def stocks_page(request: Request, db: Session = Depends(get_db)):
+    """Pure inventory view — splits stocks out of the financial ledger (Bug 4)."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "inventory", "view"):
+        return RedirectResponse(url="/", status_code=302)
+    ctx = _page_ctx(request, payload, user)
+    ctx["default_tab"] = "stocks"
+    ctx["single_view"] = True
+    return templates.TemplateResponse("ledger.html", ctx)
 
 
 @app.get("/qc", response_class=HTMLResponse)

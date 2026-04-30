@@ -880,3 +880,21 @@
 :root[data-theme="dark"] .card-footer-text { color: var(--text-faint) !important; }
 :root[data-theme="dark"] .toast-error   { background:#3a1414 !important; color:#fca5a5 !important; }
 :root[data-theme="dark"] .toast-success { background:#0f2a18 !important; color:#86efac !important; }
+
+/* ── Production preview panel (Bug 3) ──────────────────────────────────
+   Cream-bg + light-grey borders → unreadable on a dark theme. Map the
+   container, rows, and summary states to their dark-mode equivalents. */
+:root[data-theme="dark"] #previewPanel {
+  background: var(--white) !important;          /* dark.css already remaps --white to a dark surface */
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+:root[data-theme="dark"] .preview-row {
+  border-bottom-color: var(--border) !important;
+}
+:root[data-theme="dark"] .preview-needed { color: var(--gold) !important; }
+:root[data-theme="dark"] .preview-stock-bar { background: var(--border) !important; }
+:root[data-theme="dark"] .stock-ok   { color: #6ee7b7 !important; }
+:root[data-theme="dark"] .stock-warn { color: #fca5a5 !important; }
+:root[data-theme="dark"] .summary-ok   { background:#0f2a18 !important; color:#86efac !important; border-color:#14532d !important; }
+:root[data-theme="dark"] .summary-warn { background:#3a1414 !important; color:#fca5a5 !important; border-color:#7f1d1d !important; }

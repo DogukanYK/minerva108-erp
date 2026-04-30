@@ -121,14 +121,17 @@ def start_production(
                 performed_by=actor,
             ))
 
-        # Üretilen lot'u QUARANTINE olarak inventory'e ekle (QC onayına kadar stok artmaz)
+        # Üretilen lot doğrudan APPROVED — patron QC quarantine flow'u istemiyor:
+        # üretim biter bitmez stok artmalı (Phase 8 / Bug 4 Logic Fix). QC ekibi
+        # geriye dönük inceleme yapmak isterse history üstünden lot detayına bakabilir.
         if recipe.target_item_id:
             db.add(Inventory(
                 item_id=recipe.target_item_id,
                 lot_number=produced_lot,
                 quantity=data.produced_quantity,
-                status="QUARANTINE",
+                status="APPROVED",
                 received_by=actor,                  # Üretim çıktısını "alan" da üretici
+                qc_approved_by=actor,                # Self-approve at production time
             ))
             db.add(Transaction(
                 item_id=recipe.target_item_id,
@@ -138,6 +141,12 @@ def start_production(
                 notes=f"Üretim çıktısı — Reçete: {recipe.name}, Lot: {produced_lot}",
                 performed_by=actor,
             ))
+            # ── Stoğu anında artır — ledger ile current_stock arasındaki sync gap'i kapanır.
+            target_item_row = db.query(Item).filter(Item.id == recipe.target_item_id).with_for_update().first()
+            if target_item_row:
+                target_item_row.current_stock = round(
+                    (target_item_row.current_stock or 0) + data.produced_quantity, 6
+                )
 
         # Üretim kaydı
         db.add(ProductionHistory(
@@ -164,7 +173,7 @@ def start_production(
                 )
 
         return {
-            "message": f"Üretim tamamlandı. {data.produced_quantity} birim QC onayına gönderildi.",
+            "message": f"Üretim tamamlandı. {data.produced_quantity} birim stoğa eklendi.",
             "lot_number": produced_lot if recipe.target_item_id else None,
         }
 

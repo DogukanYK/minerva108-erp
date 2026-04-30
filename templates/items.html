@@ -239,11 +239,26 @@
       color: #6b7280; white-space: nowrap;
       user-select: none;
     }
-    thead th.sortable { cursor: pointer; }
+    thead th.sortable { cursor: pointer; user-select: none; }
     thead th.sortable:hover { color: var(--navy); }
     thead th .sort-icon { margin-left: 4px; opacity: 0.4; font-size: 0.7rem; }
     thead th.sort-asc .sort-icon::before  { content: "▲"; opacity: 1; }
     thead th.sort-desc .sort-icon::before { content: "▼"; opacity: 1; }
+
+    /* ── Variation accordion (Bug 2) ───────────────────────────────────────
+       Variation rows hidden by default; shown when their parent row carries
+       data-expanded="true" via JS. Chevron rotates 90° on expand. */
+    tr.row-variation { display: none; }
+    tr.row-parent { cursor: pointer; }
+    tr.row-parent:hover { background: rgba(184,150,90,0.06); }
+    .parent-chevron {
+      display: inline-block;
+      margin-right: 6px;
+      font-size: 0.78rem;
+      color: var(--navy);
+      transition: transform 0.18s ease;
+    }
+    tr.row-parent[data-expanded="true"] .parent-chevron { transform: rotate(90deg); }
 
     tbody tr {
       border-bottom: 1px solid #f3f0ea;
@@ -535,6 +550,7 @@
       <a href="/qc" class="nav-link-item">
         <i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol
       </a>
+      <a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>
       <a href="/ledger" class="nav-link-item">
         <i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri
       </a>
@@ -926,10 +942,11 @@
       // ── PARENT row ───────────────────────────────────────────────────────
       if (mode === 'parent') {
         return `
-        <tr data-id="${item.id}" class="row-parent">
+        <tr data-id="${item.id}" class="row-parent" data-expanded="false">
           <td style="padding-left:1.1rem;"></td>
           <td class="td-id">#${item.id}</td>
           <td class="td-name">
+            <i class="bi bi-chevron-right parent-chevron"></i>
             <i class="bi bi-collection-fill" style="color:var(--navy);margin-right:6px;"></i>
             ${escHtml(item.name)}
             <span class="parent-badge"><i class="bi bi-diagram-2"></i> Ana Ürün</span>
@@ -943,10 +960,10 @@
         </tr>`;
       }
 
-      // ── VARIATION row (indented under parent) ────────────────────────────
+      // ── VARIATION row (indented under parent, hidden by default) ────────
       if (mode === 'variation') {
         return `
-        <tr data-id="${item.id}" class="row-variation ${selectedIds.has(item.id) ? 'selected' : ''}">
+        <tr data-id="${item.id}" data-parent-id="${item.parent_id ?? ''}" class="row-variation ${selectedIds.has(item.id) ? 'selected' : ''}">
           <td style="padding-left:1.1rem;">
             <input type="checkbox" class="row-check" data-id="${item.id}"
               style="accent-color:var(--navy);"
@@ -1031,6 +1048,23 @@
       }
 
       attachCheckboxListeners();
+      attachAccordionHandlers();
+    }
+
+    /* ── Accordion: parent row click toggles its variations (Bug 2) ── */
+    function attachAccordionHandlers() {
+      document.querySelectorAll('tr.row-parent').forEach(row => {
+        row.addEventListener('click', (e) => {
+          // Skip if click landed on an action button — preserves Edit/Delete UX
+          if (e.target.closest('.btn-icon')) return;
+          const parentId = row.dataset.id;
+          const open = row.dataset.expanded === 'true';
+          row.dataset.expanded = open ? 'false' : 'true';
+          document.querySelectorAll(`tr.row-variation[data-parent-id="${parentId}"]`).forEach(v => {
+            v.style.display = open ? 'none' : 'table-row';
+          });
+        });
+      });
     }
 
     /* ── Escape HTML ── */
@@ -1089,20 +1123,26 @@
       renderTable(data);
     }
 
-    /* ── Sort headers ── */
-    document.querySelectorAll('thead th.sortable').forEach(th => {
-      th.addEventListener('click', () => {
+    /* ── Sort headers (Bug 1) ─────────────────────────────────────────────
+       Delegated on thead so it survives any DOM rebuild and binds even if
+       this script loads before the thead is fully parsed. */
+    const _itemsThead = document.querySelector('table thead');
+    if (_itemsThead) {
+      _itemsThead.addEventListener('click', (e) => {
+        const th = e.target.closest('th.sortable');
+        if (!th || !th.dataset.col) return;
         const col = th.dataset.col;
         if (sortCol === col) {
           sortDir = sortDir === 'asc' ? 'desc' : 'asc';
         } else {
-          sortCol = col; sortDir = 'asc';
+          sortCol = col;
+          sortDir = 'asc';
         }
-        document.querySelectorAll('thead th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+        _itemsThead.querySelectorAll('th').forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
         th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
         applyFiltersAndSort();
       });
-    });
+    }
 
     /* ── Tab navigation ── */
     document.querySelectorAll('.tab-btn').forEach(btn => {

@@ -326,6 +326,7 @@
       <a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
       <a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
       <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
+      <a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>
       <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
       <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
       <a href="/traceability" class="nav-link-item active"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
@@ -415,8 +416,51 @@
         </div>
         <!-- /left -->
 
-        <!-- ════ RIGHT — EXPIRING SOON ════ -->
+        <!-- ════ RIGHT — USER ACTIVITY (admin.view_audit only) + EXPIRING SOON ════ -->
         <div>
+
+          {% if can('admin', 'view_audit') %}
+          <!-- ── Kullanıcı Aktivitesi (Bug 5) ── -->
+          <div class="panel-card" style="margin-bottom:1.25rem;">
+            <div class="panel-header">
+              <span class="panel-title-icon" style="background:rgba(184,150,90,0.16);color:var(--gold);"><i class="bi bi-person-lines-fill"></i></span>
+              <h2 class="panel-title">Kullanıcı Aktivitesi</h2>
+              <span style="font-size:0.72rem;color:#9ca3af;font-weight:600;">denetim</span>
+            </div>
+            <div class="panel-body" style="padding:1rem;">
+              <div style="display:flex;flex-direction:column;gap:0.6rem;margin-bottom:0.85rem;">
+                <select id="auditUserSelect"
+                        style="padding:0.5rem 0.75rem;border:1.5px solid #e5e7eb;border-radius:8px;font-family:'Jost',sans-serif;font-size:0.86rem;background:var(--white);color:#374151;">
+                  <option value="">Kullanıcı seç…</option>
+                </select>
+                <div style="display:flex;gap:0.5rem;align-items:center;">
+                  <label style="font-size:0.8rem;color:#6b7280;flex:1;">Son
+                    <select id="auditDaysSelect"
+                            style="padding:0.4rem 0.6rem;border:1.5px solid #e5e7eb;border-radius:6px;font-size:0.82rem;background:var(--white);color:#374151;margin-left:0.4rem;">
+                      <option value="7">7 gün</option>
+                      <option value="30" selected>30 gün</option>
+                      <option value="90">90 gün</option>
+                      <option value="365">1 yıl</option>
+                      <option value="1095">3 yıl</option>
+                    </select>
+                  </label>
+                  <button id="auditFilterBtn"
+                          style="padding:0.5rem 0.95rem;background:var(--navy);color:var(--white);border:none;border-radius:8px;font-family:'Jost',sans-serif;font-size:0.82rem;font-weight:600;cursor:pointer;white-space:nowrap;">
+                    <i class="bi bi-funnel"></i> Filtrele
+                  </button>
+                </div>
+              </div>
+              <div id="auditResultBody">
+                <div class="empty-state" style="padding:1.4rem 0.5rem;">
+                  <i class="bi bi-person-badge" style="font-size:1.5rem;color:#9ca3af;"></i>
+                  <p class="empty-state-sub" style="margin-top:0.4rem;">Bir kullanıcı seçip filtrele.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+
+          <!-- ── Yaklaşan SKT'ler ── -->
           <div class="panel-card">
             <div class="panel-header">
               <span class="panel-title-icon icon-amber"><i class="bi bi-hourglass-split"></i></span>
@@ -799,6 +843,75 @@
         window.location.href = '/login';
       } catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
     });
+
+    /* ── User Activity panel (Bug 5) — only wired when admin.view_audit ── */
+    if (window.can && window.can('admin', 'view_audit')) {
+      const userSel = document.getElementById('auditUserSelect');
+      const daysSel = document.getElementById('auditDaysSelect');
+      const filterBtn = document.getElementById('auditFilterBtn');
+      const resultBox = document.getElementById('auditResultBody');
+
+      async function populateAuditUsers() {
+        try {
+          const r = await fetch('/api/traceability/audit-users');
+          if (!r.ok) return;
+          const users = await r.json();
+          userSel.innerHTML = '<option value="">Kullanıcı seç…</option>'
+            + users.map(u =>
+                `<option value="${u.id}">${escHtml(u.full_name)} (${escHtml(u.role)})</option>`
+              ).join('');
+        } catch (e) { /* silent */ }
+      }
+
+      async function runAuditFilter() {
+        const uid  = userSel.value;
+        const days = daysSel.value;
+        if (!uid) { showToast('Önce bir kullanıcı seçin.'); return; }
+
+        resultBox.innerHTML = `<div class="empty-state" style="padding:1.4rem 0.5rem;">
+          <i class="bi bi-hourglass-split" style="font-size:1.4rem;color:#9ca3af;"></i>
+          <p class="empty-state-sub" style="margin-top:0.4rem;">Yükleniyor…</p>
+        </div>`;
+
+        try {
+          const r = await fetch(`/api/traceability/user-activity?user_id=${uid}&days=${days}`);
+          if (!r.ok) {
+            resultBox.innerHTML = `<div class="empty-state" style="padding:1.4rem 0.5rem;">
+              <p class="empty-state-sub" style="color:#dc2626;">Yetkisiz veya hata.</p>
+            </div>`;
+            return;
+          }
+          const data = await r.json();
+          if (!data.transactions.length) {
+            resultBox.innerHTML = `<div class="empty-state" style="padding:1.4rem 0.5rem;">
+              <i class="bi bi-inbox" style="font-size:1.4rem;color:#9ca3af;"></i>
+              <p class="empty-state-sub" style="margin-top:0.4rem;">Bu pencerede kayıt yok.</p>
+            </div>`;
+            return;
+          }
+          const headline = `<div style="font-size:0.78rem;color:#6b7280;margin-bottom:0.6rem;font-weight:600;">
+            ${escHtml(data.user.full_name)} — son ${data.window_days} günde ${data.count} işlem
+          </div>`;
+          const list = data.transactions.map(t => `
+            <div style="padding:0.55rem 0.65rem;border:1px solid #f0ece4;border-radius:8px;margin-bottom:0.45rem;background:var(--cream);">
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.78rem;font-weight:600;color:var(--navy);">
+                <span>${escHtml(t.transaction_type)}</span>
+                <span style="color:#9ca3af;font-weight:500;">${escHtml(t.timestamp)}</span>
+              </div>
+              <div style="font-size:0.85rem;margin-top:2px;">${escHtml(t.item_name)} <span style="color:#9ca3af;font-size:0.78rem;">· ${escHtml(t.lot_number)}</span></div>
+              <div style="font-size:0.76rem;color:#6b7280;margin-top:2px;">${t.quantity} · ${escHtml(t.notes)}</div>
+            </div>`).join('');
+          resultBox.innerHTML = headline + list;
+        } catch (e) {
+          resultBox.innerHTML = `<div class="empty-state" style="padding:1.4rem 0.5rem;">
+            <p class="empty-state-sub" style="color:#dc2626;">Sorgu başarısız.</p>
+          </div>`;
+        }
+      }
+
+      filterBtn.addEventListener('click', runAuditFilter);
+      populateAuditUsers();
+    }
 
     /* ── Init ── */
     loadExpiring();

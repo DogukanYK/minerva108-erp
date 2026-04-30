@@ -574,6 +574,90 @@ def list_expiring(db: Session = Depends(get_db), _: dict = Depends(get_current_u
     return result
 
 
+# ─── User-specific audit feed (Phase 8 / Bug 5) ─────────────────────────────
+# Lets management drill into what a specific user has done over a time window.
+# Gated on admin.view_audit so Manager (Işık Hanım) and SuperAdmin can see it
+# while lab roles cannot.
+
+@router.get("/traceability/audit-users")
+def list_audit_users(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("admin", "view_audit")),
+):
+    """Lightweight user list — drives the dropdown on the traceability page."""
+    from database import User
+    users = (
+        db.query(User)
+        .filter(User.is_active == True)
+        .order_by(User.full_name.asc())
+        .all()
+    )
+    return [
+        {"id": u.id, "username": u.username, "full_name": u.full_name, "role": u.role}
+        for u in users
+    ]
+
+
+@router.get("/traceability/user-activity")
+def user_activity(
+    user_id: int,
+    days: int = 30,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("admin", "view_audit")),
+):
+    """
+    Returns the transaction trail performed by a specific user within the
+    last `days` days. Transaction.performed_by stores `actor` strings
+    (full_name preferred, username fallback) so we match against both
+    candidates of the target user — handles legacy rows with either form.
+    """
+    from datetime import datetime as _dt, timedelta
+    from database import User
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return JSONResponse(status_code=404, content={"detail": "Kullanıcı bulunamadı."})
+
+    days = max(1, min(days, 1095))      # clamp 1 day .. 3 years
+    since = _dt.utcnow() - timedelta(days=days)
+
+    candidates = [c for c in (user.full_name, user.username) if c]
+
+    rows = (
+        db.query(Transaction)
+        .filter(
+            Transaction.performed_by.in_(candidates),
+            Transaction.timestamp >= since,
+        )
+        .order_by(Transaction.id.desc())
+        .limit(500)
+        .all()
+    )
+    return {
+        "user": {
+            "id":        user.id,
+            "username":  user.username,
+            "full_name": user.full_name,
+            "role":      user.role,
+        },
+        "window_days": days,
+        "since":       since.isoformat() + "Z",
+        "count":       len(rows),
+        "transactions": [
+            {
+                "id":               t.id,
+                "item_name":        t.item.name if t.item else "—",
+                "lot_number":       t.lot_number or "—",
+                "transaction_type": t.transaction_type,
+                "quantity":         t.quantity,
+                "notes":            (t.notes or "")[:200],
+                "timestamp":        t.timestamp.strftime("%d.%m.%Y %H:%M") if t.timestamp else "—",
+            }
+            for t in rows
+        ],
+    }
+
+
 # ─── Excel Import Endpoints (classic templated upload) ──────────────────────
 
 _REQUIRED_COLS = {"Item_Name", "SKU", "Category", "Unit", "Stock", "Cost_Price", "Min_Stock_Level"}
