@@ -11,3 +11,4 @@ openpyxl==3.1.5
 psycopg2-binary==2.9.9
 slowapi==0.1.9
 apscheduler==3.10.4
+pywebpush==2.0.0

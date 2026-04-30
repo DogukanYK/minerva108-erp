@@ -238,6 +238,31 @@ class ProductionHistory(Base):
     lot_number = Column(String(100), nullable=True, index=True) # Genealogy: lot of finished good
 
 
+class PushSubscription(Base):
+    """
+    Web Push subscription record. One user can have many subscriptions
+    (Mac Chrome + iPhone Safari + work desktop = 3 separate rows). The
+    `endpoint` URL is globally unique to a single browser/device install
+    of a single user — when a different user logs in on the same browser,
+    the row is reassigned (see /api/notifications/subscribe).
+
+    Cleanup: rows whose endpoint returns 404/410 from the push service
+    are pruned automatically by core.notifications._send_push.
+    """
+    __tablename__ = "push_subscriptions"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    user_id      = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    endpoint     = Column(Text,        nullable=False, unique=True, index=True)
+    p256dh       = Column(String(255), nullable=False)   # client public key (b64url, ~88 chars)
+    auth         = Column(String(64),  nullable=False)   # auth secret (b64url, ~24 chars)
+    user_agent   = Column(String(255), nullable=True)    # for debugging "which device"
+    created_at   = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", backref="push_subscriptions")
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     with engine.connect() as conn:

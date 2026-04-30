@@ -1,35 +1,43 @@
 """
 Minerva108 — Notification dispatcher.
 
-Single point through which the rest of the codebase fires alerts.
-Today's backend is just structured logging (stdout → systemd journal); when
-SMTP / Telegram / Slack land, swap the body of `_emit` and every call-site
-keeps working unchanged.
+Single point through which the rest of the codebase fires alerts. Two
+backends run in parallel for every alert:
+
+  1. Structured log line (always — permanent audit trail in systemd journal).
+  2. Web Push to relevant subscribers (only if VAPID env vars are configured).
+
+If VAPID isn't configured (dev environment, missing env vars), push is
+silently skipped — logs still flow, nothing breaks.
 
 Public API
 ──────────
   notify(level, category, message, **context)
-      Generic sink. Use this for ad-hoc alerts that don't fit a named helper.
+      Generic sink. Logs only — no push dispatch (use named helpers below
+      to ensure audience targeting is consistent).
 
   notify_low_stock(item_name, current_stock, threshold, unit="")
       Fired when a stock-mutating operation drops an item to/below its
-      configured min_stock_level.
+      configured min_stock_level. Pushes to managers (SuperAdmin + Manager).
 
   notify_expiry_summary(lots)
       Daily roll-up of inventory lots whose expiry date is within the watch
       window (default 30 days). Empty list → "all clear" info line.
+      Pushes to managers when ≥1 lot in window.
 
 Design notes
 ────────────
-• No external dependencies — works in any FastAPI worker, scheduler thread,
-  or one-shot script.
-• All call-sites pass primitives (str/float/int/dict). NEVER pass live
-  SQLAlchemy ORM objects: notifications are often delivered from a
-  BackgroundTask whose request session has already closed.
-• The logger name is "minerva108.alerts" so it can be routed to its own
-  handler (file, Sentry, Loki…) without touching app logging defaults.
+• Log emit has no external deps — works even when pywebpush is not installed.
+• All call-sites pass primitives. NEVER pass live SQLAlchemy ORM objects:
+  notifications fire from BackgroundTasks after the request session closes.
+• Push delivery opens its own short-lived DB session, fans out, and prunes
+  any subscription endpoints that respond 404/410 (browser unsubscribed).
+• Browser-side `tag` field collapses duplicate notifications (e.g. the same
+  item triggering low-stock 5 times in a row → user sees one).
 """
+import json
 import logging
+import os
 from typing import Iterable, Optional
 
 logger = logging.getLogger("minerva108.alerts")
@@ -63,10 +71,110 @@ def _emit(level: str, category: str, message: str, **context) -> None:
     log_fn(full, extra={"alert_category": category})
 
 
+# ─── Push delivery ──────────────────────────────────────────────────────────
+
+# Audience → list of role names. Permission-based targeting is a future
+# upgrade; today we use roles because they're the immediate user mental model
+# and match the existing RBAC defaults (Manager/SuperAdmin = decision-makers).
+_AUDIENCE_ROLES = {
+    "managers": ["SuperAdmin", "Manager"],
+    "lab":      ["SuperAdmin", "LabLead", "LabTech"],
+    "all":      ["SuperAdmin", "Manager", "LabLead", "LabTech", "Staff"],
+}
+
+
+def _vapid_config():
+    """Returns (private_key, subject) or None if either env var is unset."""
+    priv    = os.getenv("VAPID_PRIVATE_KEY")
+    subject = os.getenv("VAPID_SUBJECT", "mailto:dev@minerva108.com")
+    if not priv:
+        return None
+    return (priv, subject)
+
+
+def _send_push(audience: str, payload: dict) -> None:
+    """
+    Fan-out a push payload to all active subscriptions of users in the given
+    audience. Silently no-ops if VAPID isn't configured. Prunes dead
+    subscription endpoints (404/410) so the table self-cleans over time.
+
+    `payload` is a dict matching what the SW's push handler expects:
+      { title, body, tag, url, icon?, requireInteraction? }
+    """
+    cfg = _vapid_config()
+    if cfg is None:
+        return                      # dev / unconfigured → log-only path
+
+    priv_key, subject = cfg
+
+    # Lazy imports — pywebpush is heavy and only needed when push is actually
+    # configured. Keeps `core.notifications` importable in minimal envs.
+    try:
+        from pywebpush import webpush, WebPushException
+    except ImportError:
+        logger.warning("pywebpush not installed — install it to enable push delivery")
+        return
+
+    from database import SessionLocal, PushSubscription, User
+
+    roles = _AUDIENCE_ROLES.get(audience, _AUDIENCE_ROLES["managers"])
+    db = SessionLocal()
+    try:
+        subs = (
+            db.query(PushSubscription)
+            .join(User, User.id == PushSubscription.user_id)
+            .filter(User.role.in_(roles), User.is_active == True)
+            .all()
+        )
+        if not subs:
+            return
+
+        sent, dead_ids = 0, []
+        body_json = json.dumps(payload, ensure_ascii=False)
+
+        for sub in subs:
+            try:
+                webpush(
+                    subscription_info={
+                        "endpoint": sub.endpoint,
+                        "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+                    },
+                    data=body_json,
+                    vapid_private_key=priv_key,
+                    vapid_claims={"sub": subject},
+                    ttl=86400,                       # 24h — push service holds while device offline
+                )
+                sent += 1
+            except WebPushException as e:
+                status = e.response.status_code if e.response is not None else None
+                if status in (404, 410):
+                    # Subscription expired / unsubscribed — schedule prune.
+                    dead_ids.append(sub.id)
+                logger.warning("Push send failed (status=%s) for sub#%s", status, sub.id)
+            except Exception as e:
+                logger.warning("Push send error for sub#%s: %s", sub.id, e)
+
+        if dead_ids:
+            db.query(PushSubscription).filter(
+                PushSubscription.id.in_(dead_ids)
+            ).delete(synchronize_session=False)
+            db.commit()
+            logger.info("Pruned %d dead push subscriptions", len(dead_ids))
+
+        logger.info(
+            "Push delivered to %d/%d subscriptions [audience=%s]",
+            sent, len(subs), audience,
+        )
+    except Exception:
+        logger.exception("Push fan-out failed (logging path still succeeded)")
+    finally:
+        db.close()
+
+
 # ─── Public API ─────────────────────────────────────────────────────────────
 
 def notify(level: str, category: str, message: str, **context) -> None:
-    """Generic notification sink — use named helpers below when one fits."""
+    """Generic notification sink — log only, no push dispatch."""
     _emit(level, category, message, **context)
 
 
@@ -81,8 +189,8 @@ def notify_low_stock(
     item edit) leaves an item at or below its min_stock_level.
 
     Idempotency: callers are expected to fire this AT MOST ONCE per item
-    per request. The notification module does not deduplicate — when the
-    SMTP/Telegram backend lands we will add a sliding-window dedup there.
+    per request. Browser-side dedup happens via the `tag` field — same
+    item firing repeatedly collapses to a single visible notification.
     """
     unit_part = f" {unit}" if unit else ""
     _emit(
@@ -90,11 +198,15 @@ def notify_low_stock(
         "LOW-STOCK",
         f"{item_name} kritik seviyede: "
         f"{current_stock}{unit_part} ≤ min {threshold}{unit_part}",
-        item=item_name,
-        current=current_stock,
-        threshold=threshold,
-        unit=unit or None,
+        item=item_name, current=current_stock, threshold=threshold, unit=unit or None,
     )
+    _send_push("managers", {
+        "title": "🔔 Kritik Stok Uyarısı",
+        "body":  f"{item_name}: {current_stock}{unit_part} (min {threshold}{unit_part})",
+        "tag":   f"low-stock-{item_name}",       # collapse duplicates per-item
+        "url":   "/items",
+        "requireInteraction": False,
+    })
 
 
 def notify_expiry_summary(lots: Iterable[dict]) -> None:
@@ -102,8 +214,8 @@ def notify_expiry_summary(lots: Iterable[dict]) -> None:
     Daily roll-up. `lots` is a list of {lot_number, item_name, expiry_date,
     days_left} dicts already filtered to the watch window.
 
-    Empty → emits an INFO "all clear" line so silence in the log doesn't
-    look like a missed cron run.
+    Empty → emits an INFO "all clear" line and skips the push (no need to
+    notify managers when there's nothing to act on).
     """
     lot_list = list(lots)
     n = len(lot_list)
@@ -132,3 +244,10 @@ def notify_expiry_summary(lots: Iterable[dict]) -> None:
         f"{n} lot 30 gün içinde son kullanım tarihine ulaşıyor: {detail}",
         lot_count=n,
     )
+    _send_push("managers", {
+        "title": "⏰ Son Kullanım Tarihi Yaklaşıyor",
+        "body":  f"{n} lot 30 gün içinde son kullanım tarihine ulaşıyor. Detay için izlenebilirlik sayfasına bakın.",
+        "tag":   "expiry-summary",                # one notification, regenerated daily
+        "url":   "/traceability",
+        "requireInteraction": True,                # important — keep on screen until dismissed
+    })

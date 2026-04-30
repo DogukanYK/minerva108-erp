@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# Local DB (dev SQLite — production uses Postgres)
+*.db
+*.sqlite3
+minerva108.db
+
+# Env / secrets — NEVER commit
+.env
+.env.local
+.vapid_private.pem
+.vapid_public.b64
+.vapid_env_snippet
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

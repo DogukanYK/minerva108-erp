@@ -69,3 +69,61 @@ self.addEventListener('fetch', (event) => {
     );
   }
 });
+
+
+// ─── Web Push: incoming notifications ────────────────────────────────────
+// Backend pushes a JSON payload like:
+//   { title, body, tag, url, icon?, requireInteraction? }
+// `tag` collapses duplicates client-side; `data.url` is consumed by the
+// notificationclick handler below.
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (_e) {
+    data = {
+      title: 'Minerva 108 ERP',
+      body:  event.data ? event.data.text() : '',
+    };
+  }
+
+  const title = data.title || 'Minerva 108 ERP';
+  const options = {
+    body:               data.body || '',
+    icon:               data.icon  || '/static/images/icon-192.png',
+    badge:              data.badge || '/static/images/favicon.png',
+    tag:                data.tag,                       // dedup key
+    renotify:           !!data.tag,                     // re-alert even when collapsed
+    data:               { url: data.url || '/' },
+    requireInteraction: !!data.requireInteraction,
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+
+// ─── Notification click: focus / open the app at the alert's deep link ──
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || '/';
+
+  event.waitUntil((async () => {
+    const clients = await self.clients.matchAll({
+      type: 'window',
+      includeUncontrolled: true,
+    });
+
+    // 1) Focus an existing window in our scope and navigate it.
+    for (const c of clients) {
+      if (c.url.startsWith(self.registration.scope) && 'focus' in c) {
+        await c.focus();
+        if ('navigate' in c) await c.navigate(target);
+        return;
+      }
+    }
+    // 2) None open → spawn a new one.
+    if (self.clients.openWindow) {
+      await self.clients.openWindow(target);
+    }
+  })());
+});
