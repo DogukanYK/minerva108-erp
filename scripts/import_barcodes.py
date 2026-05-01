@@ -281,7 +281,10 @@ def main():
                   f"{row['name'][:40]:<40}  {row['qty']:<7}  "
                   f"{s:>5.2f}  {db_id_str:<5}  {action}")
 
-        if args.commit and updates_applied:
+        # FIX: commit if --commit was passed, regardless of which counter moved.
+        # Earlier `args.commit and updates_applied` rolled back when
+        # --create-missing produced 0 updates but many creations.
+        if args.commit:
             db.commit()
         else:
             db.rollback()
