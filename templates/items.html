@@ -1433,18 +1433,50 @@
         showToast('Tarayıcı modülü hazır değil. Sayfayı yenileyin.'); return;
       }
       openBarcodeScanner((scanned) => {
-        const input = document.getElementById('searchInput');
-        input.value = scanned;
-        applyFiltersAndSort();
         const matches = allItems.filter(i =>
           (i.barcode || '').toLowerCase() === scanned.toLowerCase()
         );
-        showToast(
-          matches.length
-            ? `Eşleşme: ${matches[0].name}`
-            : `Bu barkoda sahip ürün yok: ${scanned}`,
-          matches.length ? 'success' : 'error',
-        );
+
+        if (!matches.length) {
+          document.getElementById('searchInput').value = scanned;
+          applyFiltersAndSort();
+          showToast(`Bu barkoda sahip ürün yok: ${scanned}`, 'error');
+          return;
+        }
+
+        const item = matches[0];
+
+        // 1) Eşleşen ürünün kendi tab'ına atla — Bitmiş Ürün'deki bir ürünü
+        //    Hammadde tab'ında ararsak boş tablo görünür. Tab click handler
+        //    activeTab'ı set eder ve searchInput'u sıfırlar.
+        const tab = item.category === 'Ambalaj'    ? 'ambalaj'
+                 : item.category === 'Bitmiş Ürün' ? 'bitmis_urun'
+                 : 'hammadde';
+        if (activeTab !== tab) {
+          document.querySelector(`.tab-btn[data-tab="${tab}"]`)?.click();
+        }
+
+        // 2) Tab atlamadan SONRA search'i set et + filtrele
+        document.getElementById('searchInput').value = scanned;
+        applyFiltersAndSort();
+
+        // 3) Variation ise parent'ı accordion'da aç + satıra scroll + 1.8s gold highlight
+        setTimeout(() => {
+          if (item.parent_id) {
+            const parentRow = document.querySelector(`tr.row-parent[data-id="${item.parent_id}"]`);
+            if (parentRow && parentRow.dataset.expanded !== 'true') {
+              parentRow.click();   // attachAccordionHandlers handler'ını tetikler
+            }
+          }
+          const row = document.querySelector(`tr[data-id="${item.id}"]`);
+          if (row) {
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            row.style.transition = 'background-color 0.4s';
+            row.style.backgroundColor = 'rgba(184,150,90,0.25)';
+            setTimeout(() => { row.style.backgroundColor = ''; }, 1800);
+          }
+          showToast(`Eşleşme: ${item.name}`, 'success');
+        }, 80);
       });
     });
 
