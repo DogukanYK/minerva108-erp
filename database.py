@@ -75,6 +75,7 @@ class Item(Base):
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
     parent_id = Column(Integer, ForeignKey("items.id"), nullable=True, index=True)   # Variations: points to parent product
     variation_name = Column(String(100), nullable=True)                              # e.g. "200ml", "500ml"
+    barcode = Column(String(64), nullable=True, index=True)                          # EAN-13 / QR / Code-128 — phone scanner pre-fill
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -295,6 +296,9 @@ def init_db():
             "ALTER TABLE items              ADD COLUMN variation_name VARCHAR(100)",
             # Phase 4 / Task 2 — Granular RBAC 2.0
             "ALTER TABLE users              ADD COLUMN permissions TEXT",
+            # Phase 9 — Barcode scanning
+            "ALTER TABLE items              ADD COLUMN barcode VARCHAR(64)",
+            "CREATE INDEX IF NOT EXISTS ix_items_barcode ON items(barcode)",
         ):
             alter_safe(stmt)
 

@@ -28,6 +28,7 @@ class ItemCreateRequest(BaseModel):
     cost_price:     Optional[float] = 0.0
     parent_id:      Optional[int]   = None    # Variation hierarchy — null for parents/standalones
     variation_name: Optional[str]   = None    # e.g. "200ml" — required if parent_id set
+    barcode:        Optional[str]   = None    # Phase 9 — phone scanner / pre-printed labels
 
 
 class BulkDeleteRequest(BaseModel):
@@ -85,6 +86,7 @@ def list_items(
             "parent_id":       i.parent_id,
             "parent_name":     name_by_id.get(i.parent_id) if i.parent_id else None,
             "variation_name":  i.variation_name,
+            "barcode":         i.barcode or "",                 # Phase 9
             "child_count":     child_count.get(i.id, 0),
             "is_parent":       child_count.get(i.id, 0) > 0,
             "is_variation":    i.parent_id is not None,
@@ -138,6 +140,7 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db), _: dict 
         cost_price=data.cost_price or 0.0,
         parent_id=data.parent_id,
         variation_name=(data.variation_name.strip() if data.parent_id and data.variation_name else None),
+        barcode=(data.barcode.strip() if data.barcode and data.barcode.strip() else None),
     )
     db.add(item)
     db.commit()
@@ -185,6 +188,7 @@ def update_item(
     item.cost_price      = data.cost_price or 0.0
     item.parent_id       = data.parent_id
     item.variation_name  = (data.variation_name.strip() if data.parent_id and data.variation_name else None)
+    item.barcode         = (data.barcode.strip() if data.barcode and data.barcode.strip() else None)
     db.commit()
 
     # ── Low-stock alert: if the edit (typically a min_stock_level bump) leaves
@@ -196,6 +200,40 @@ def update_item(
         )
 
     return {"id": item.id, "message": "Ürün güncellendi."}
+
+
+@router.get("/items/by-barcode/{barcode}")
+def get_item_by_barcode(
+    barcode: str,
+    db: Session = Depends(get_db),
+    _: dict = Depends(get_current_user),
+):
+    """
+    Server-side resolver — useful when the client doesn't have the full item
+    list cached (e.g. mobile receiving flow on a slow connection). Frontend
+    pages that already loaded /api/items can match locally without this call.
+    Returns 404 when no active item carries the given barcode.
+    """
+    code = (barcode or "").strip()
+    if not code:
+        return JSONResponse(status_code=400, content={"detail": "Barkod boş."})
+    item = (
+        db.query(Item)
+        .filter(Item.barcode == code, Item.is_active == True)
+        .first()
+    )
+    if not item:
+        return JSONResponse(status_code=404, content={"detail": f"Bu barkoda sahip ürün yok: {code}"})
+    return {
+        "id":              item.id,
+        "name":            item.name,
+        "category":        item.category,
+        "unit":            item.unit,
+        "current_stock":   item.current_stock,
+        "barcode":         item.barcode,
+        "parent_id":       item.parent_id,
+        "variation_name":  item.variation_name,
+    }
 
 
 @router.post("/items/bulk-delete")

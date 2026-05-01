@@ -36,6 +36,8 @@
     }
   </script>
   <script src="/static/push.js" defer></script>
+  <script src="/static/scanner.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.10/html5-qrcode.min.js" defer></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
   <link rel="stylesheet" href="/static/dark.css" />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
@@ -632,8 +634,15 @@
         {% endif %}
         <div class="search-box">
           <i class="bi bi-search"></i>
-          <input type="text" id="searchInput" placeholder="Aktif sekmede ara…" />
+          <input type="text" id="searchInput" placeholder="Aktif sekmede ara… (isim, kategori, barkod)" />
         </div>
+        <button id="scanSearchBtn" type="button" title="Barkod Tara"
+                style="display:inline-flex;align-items:center;gap:0.4rem;padding:0.5rem 0.95rem;border:1.5px solid var(--gold);background:var(--white);color:var(--navy);border-radius:8px;font-family:'Jost',sans-serif;font-size:0.85rem;font-weight:600;cursor:pointer;transition:background 0.15s,color 0.15s;"
+                onmouseover="this.style.background='var(--gold)';this.style.color='var(--white)';"
+                onmouseout="this.style.background='var(--white)';this.style.color='var(--navy)';">
+          <i class="bi bi-qr-code-scan"></i>
+          <span>Tara</span>
+        </button>
       </div>
 
       <!-- Segment Tabs -->
@@ -782,6 +791,22 @@
                 <input type="number" class="form-control" id="itemCostPrice" min="0" step="0.01" placeholder="0.00" />
               </div>
               {% endif %}
+            </div>
+
+            <!-- Phase 9 — barcode field with inline scan button -->
+            <div class="row g-3" style="margin-top:0.5rem;">
+              <div class="col-12">
+                <label class="form-label-sm">Barkod (opsiyonel)</label>
+                <div class="input-group">
+                  <input type="text" class="form-control" id="itemBarcode"
+                         placeholder="EAN-13, QR veya elle giriş — telefondan tarayıp doldurabilirsin" />
+                  <button type="button" id="scanItemModalBtn"
+                          title="Kamera ile tara"
+                          style="padding:0 0.95rem;border:1.5px solid #e5e7eb;border-left:none;background:var(--white);color:var(--navy);border-radius:0 8px 8px 0;cursor:pointer;display:inline-flex;align-items:center;gap:0.35rem;font-size:0.85rem;">
+                    <i class="bi bi-qr-code-scan"></i>
+                  </button>
+                </div>
+              </div>
             </div>
           </form>
         </div>
@@ -1100,11 +1125,12 @@
       // 1. Tab filter first
       let data = allItems.filter(tabCfg.filter);
 
-      // 2. Search within the active tab
+      // 2. Search within the active tab — name, category, OR barcode (Phase 9)
       if (q) {
         data = data.filter(i =>
           i.name.toLowerCase().includes(q) ||
-          (i.category || '').toLowerCase().includes(q)
+          (i.category || '').toLowerCase().includes(q) ||
+          (i.barcode  || '').toLowerCase().includes(q)
         );
       }
 
@@ -1279,6 +1305,9 @@
       if (CAN_SEE_FINANCE) {
         document.getElementById('itemCostPrice').value = item.cost_price ?? 0;
       }
+      // Phase 9 — pre-fill barcode if previously set
+      const _bcEl = document.getElementById('itemBarcode');
+      if (_bcEl) _bcEl.value = item.barcode || '';
 
       // ── Variation state ─────────────────────────────────────────────────
       resetVariationFields();
@@ -1375,6 +1404,7 @@
           : undefined,
         parent_id,
         variation_name,
+        barcode:        (document.getElementById('itemBarcode')?.value || '').trim() || null,
       };
       try {
         const url    = editingItemId ? `/api/items/${editingItemId}` : '/api/items';
@@ -1390,6 +1420,42 @@
         this.disabled = false;
         this.textContent = 'Kaydet';
       }
+    });
+
+    /* ── Phase 9 — Barcode scan wiring ─────────────────────────────────────
+       Two entry points share scanner.js's openBarcodeScanner():
+         • Toolbar "Tara" button — push scanned text into the search box and
+           let applyFiltersAndSort do the rest (table auto-filters).
+         • Modal "Tara" button — fill the barcode <input> while editing/adding
+           an item; user reviews, clicks Save. */
+    document.getElementById('scanSearchBtn')?.addEventListener('click', () => {
+      if (typeof openBarcodeScanner !== 'function') {
+        showToast('Tarayıcı modülü hazır değil. Sayfayı yenileyin.'); return;
+      }
+      openBarcodeScanner((scanned) => {
+        const input = document.getElementById('searchInput');
+        input.value = scanned;
+        applyFiltersAndSort();
+        const matches = allItems.filter(i =>
+          (i.barcode || '').toLowerCase() === scanned.toLowerCase()
+        );
+        showToast(
+          matches.length
+            ? `Eşleşme: ${matches[0].name}`
+            : `Bu barkoda sahip ürün yok: ${scanned}`,
+          matches.length ? 'success' : 'error',
+        );
+      });
+    });
+
+    document.getElementById('scanItemModalBtn')?.addEventListener('click', () => {
+      if (typeof openBarcodeScanner !== 'function') {
+        showToast('Tarayıcı modülü hazır değil.'); return;
+      }
+      openBarcodeScanner((scanned) => {
+        document.getElementById('itemBarcode').value = scanned;
+        showToast(`Barkod okundu: ${scanned}`, 'success');
+      });
     });
 
     /* ── Excel Import ── */

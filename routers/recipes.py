@@ -95,9 +95,10 @@ def list_recipes(
             "description":      r.description,
             "expected_yield":   r.output_quantity,
             "waste_percentage": round(r.waste_percentage or 0.0, 2),
-            "target_item_id":   r.target_item_id,
-            "target_item_name": target.name if target else (r.description or r.name),
-            "target_item_unit": target.unit if target else (r.output_unit or ""),
+            "target_item_id":      r.target_item_id,
+            "target_item_name":    target.name if target else (r.description or r.name),
+            "target_item_unit":    target.unit if target else (r.output_unit or ""),
+            "target_item_barcode": (target.barcode or "") if target else "",   # Phase 9 — phone scan → recipe lookup
             "ingredient_count": len(r.ingredients),
             "total_cost":       costs["total_cost"],
             "unit_cost":        costs["unit_cost"],
