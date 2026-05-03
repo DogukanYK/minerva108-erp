@@ -487,8 +487,148 @@
     @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
     /* ══════════════════════════════════════════════════════════════════
-       PRINT — only the invoice document is rendered, everything else
-       hidden so window.print() produces a clean PDF.
+       PDF-FAITHFUL PROFORMA  (mirrors PROFORMA boş.pdf 1:1)
+    ══════════════════════════════════════════════════════════════════ */
+    .pdf-top {
+      display: grid; grid-template-columns: 1fr auto 1fr;
+      align-items: start; gap: 1rem;
+      padding: 0.5rem 0 1.25rem;
+    }
+    .pdf-top-spacer { /* left-side spacer balances the date block on the right */ }
+    .pdf-brand-center {
+      text-align: center;
+      grid-column: 2;
+    }
+    .pdf-logo {
+      max-height: 80px; max-width: 180px; object-fit: contain;
+      margin: 0 auto 0.6rem; display: block;
+    }
+    .pdf-co-name {
+      font-weight: 700; font-size: 0.92rem; color: #1f2937; margin-bottom: 4px;
+    }
+    .pdf-co-line {
+      font-size: 0.78rem; color: #374151; line-height: 1.35;
+    }
+    .pdf-co-line a { color: #1d4ed8; text-decoration: none; }
+    .pdf-date-block {
+      grid-column: 3; justify-self: end; text-align: right;
+      font-size: 0.84rem; color: #1f2937;
+      border: 1.5px solid #1f2937; padding: 0.3rem 0.7rem;
+      align-self: end; margin-bottom: 4px;
+    }
+    .pdf-quote-no {
+      font-size: 0.7rem; color: #6b7280; margin-top: 3px; font-weight: 400;
+    }
+
+    /* Title bar — full-width black border */
+    .pdf-title-bar {
+      border: 1.5px solid #1f2937;
+      padding: 0.4rem 0.6rem;
+      text-align: center;
+      font-weight: 700; font-size: 0.92rem;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.85rem;
+    }
+
+    /* Customer info — 4-line stacked */
+    .pdf-customer { font-size: 0.84rem; line-height: 1.55; margin-bottom: 1rem; }
+    .pdf-customer strong { color: #1f2937; }
+    .pdf-customer span { color: #374151; }
+
+    /* Items table */
+    table.pdf-items {
+      width: 100%; border-collapse: collapse; margin-bottom: 0;
+      font-size: 0.78rem; border: 1px solid #1f2937;
+    }
+    table.pdf-items th {
+      background: #ffffff; color: #1f2937;
+      padding: 0.45rem 0.55rem;
+      border: 1px solid #1f2937;
+      font-size: 0.72rem; font-weight: 700; line-height: 1.25;
+      text-align: center; vertical-align: middle;
+    }
+    table.pdf-items th .th-tr {
+      font-weight: 600; color: #374151; font-style: italic;
+    }
+    table.pdf-items th.col-name { text-align: center; }
+    table.pdf-items th.num     { width: 16%; }
+    table.pdf-items td {
+      padding: 0.32rem 0.55rem;
+      border: 1px solid #c7c7c7;
+      font-size: 0.78rem; color: #1f2937;
+      vertical-align: middle;
+    }
+    table.pdf-items td.col-name { font-weight: 500; }
+    table.pdf-items td.num {
+      text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    table.pdf-items tr.empty-row td {
+      padding: 1rem; text-align: center; color: #9ca3af; font-style: italic;
+    }
+    table.pdf-items tfoot td {
+      border-color: #1f2937;
+      font-weight: 700;
+    }
+    .pdf-total-label { text-align: right; padding-right: 0.85rem; }
+    .pdf-total-amount { font-size: 0.92rem; }
+
+    /* Bottom 2-col grid */
+    .pdf-bottom {
+      display: grid;
+      grid-template-columns: 1fr 1.25fr;
+      gap: 1.25rem;
+      margin-top: 0.85rem;
+    }
+    .pdf-bottom-left {
+      font-size: 0.78rem; color: #1f2937; line-height: 1.5;
+    }
+    .pdf-bottom-left .pdf-line { margin-bottom: 2px; }
+    .pdf-bottom-left strong { color: #1f2937; }
+    .pdf-italic { font-style: italic; color: #4b5563; margin-top: 4px; font-size: 0.74rem; }
+    .pdf-signoff { margin-top: 1rem; font-size: 0.84rem; }
+    .pdf-signoff-dept {
+      font-weight: 700; color: #1f2937; letter-spacing: 0.04em; margin-top: 2px;
+    }
+
+    /* Bank info table on the right */
+    .pdf-bottom-right { font-size: 0.7rem; }
+    table.pdf-bank {
+      width: 100%; border-collapse: collapse;
+      border: 1.5px solid #1f2937;
+    }
+    table.pdf-bank th, table.pdf-bank td {
+      border: 1px solid #1f2937;
+      padding: 3px 6px;
+      font-size: 0.68rem;
+      vertical-align: middle;
+      color: #1f2937;
+    }
+    table.pdf-bank .pdf-bank-title {
+      background: #1f2937; color: #ffffff;
+      text-align: center; font-size: 0.78rem; padding: 4px 6px;
+      letter-spacing: 0.06em;
+    }
+    table.pdf-bank .pdf-bank-owner td:first-child { font-weight: 700; background: #f7f7f7; }
+    table.pdf-bank .pdf-bank-numhdr td {
+      text-align: center; font-weight: 700; background: #f7f7f7;
+    }
+    table.pdf-bank td.lbl {
+      font-weight: 700; white-space: nowrap; background: #f7f7f7;
+      width: 24%;
+    }
+
+    /* Sample stamp at bottom-right */
+    .pdf-sample-stamp {
+      margin-top: 0.85rem;
+      text-align: center;
+      border: 1.5px solid #1f2937;
+      padding: 0.35rem 0.6rem;
+      font-weight: 700; font-size: 0.76rem;
+      letter-spacing: 0.06em;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       PRINT — render only the invoice; tighten margins so it fits A4.
     ══════════════════════════════════════════════════════════════════ */
     @media print {
       body { background: white !important; }
@@ -499,12 +639,12 @@
       .content-inner { padding: 0 !important; }
       .invoice-doc {
         box-shadow: none !important; border-radius: 0 !important;
-        padding: 1.5cm 1.8cm !important; margin: 0 !important;
+        padding: 0.8cm 1cm !important; margin: 0 !important;
         max-width: 100% !important;
       }
-      table.inv-items thead { display: table-header-group; }
+      table.pdf-items thead, table.pdf-bank thead { display: table-header-group; }
       tr { page-break-inside: avoid; }
-      @page { size: A4; margin: 0; }
+      @page { size: A4 portrait; margin: 0; }
     }
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
@@ -731,144 +871,131 @@
       </div>
       <!-- /builder-section -->
 
-      <!-- ════════════════ INVOICE PREVIEW (printable) ════════════════ -->
+      <!-- ════════════════ INVOICE PREVIEW (PDF-faithful, printable) ════════════════ -->
+      <!-- Layout mirrors /Users/dogukan/Downloads/PROFORMA boş.pdf 1:1.            -->
+      <!-- Static company / bank info is hard-coded; only customer + items + date    -->
+      <!-- come from the form (data-bind IDs preserved for the existing JS).         -->
       <div class="invoice-doc" id="invoiceDoc">
 
-        <div class="inv-header">
-          <div class="inv-brand">
-            <div class="inv-logo">M</div>
-            <p class="inv-brand-name">MİNERVA 108 YÖNETİM &amp; DANIŞMANLIK A.Ş.</p>
-            <p class="inv-brand-tagline">Cosmetics · Manufacturing · Export</p>
-            <div class="inv-brand-info">
-              Kireçburnu Mah. Raif Bey Sk. No:8/A · Sarıyer · İstanbul · Türkiye<br>
-              Tel: +90 (212) 299 20 70 &nbsp;·&nbsp; +90 (542) 471 74 19 &nbsp;·&nbsp; +90 (544) 910 49 19 &nbsp;·&nbsp; +90 (544) 510 45 49<br>
-              www.minerva108cosmetics.com &nbsp;·&nbsp; info@minerva108cosmetics.com
-            </div>
+        <!-- ── TOP: centered logo + company info, DATE on right ────────────── -->
+        <div class="pdf-top">
+          <div class="pdf-top-spacer"></div>
+          <div class="pdf-brand-center">
+            <img src="/static/images/logo_full.png" class="pdf-logo" alt="Minerva 108 Cosmetics" />
+            <div class="pdf-co-name">MİNERVA 108 YÖNETİM &amp; DANIŞMANLIK ANONİM ŞİRKETİ</div>
+            <div class="pdf-co-line">Kireçburnu Mah. Raif Bey Sk. No:8/A Sarıyer İstanbul Türkiye</div>
+            <div class="pdf-co-line">Tel: +90 212 299 2070</div>
+            <div class="pdf-co-line">Tel: +90 542 471 74 19</div>
+            <div class="pdf-co-line">Tel: +90 544 910 49 19</div>
+            <div class="pdf-co-line">Tel: +90 544 510 45 49</div>
+            <div class="pdf-co-line"><a href="https://www.minerva108cosmetics.com">www.minerva108cosmetics.com</a></div>
+            <div class="pdf-co-line"><a href="mailto:info@minerva108cosmetics.com">info@minerva108cosmetics.com</a></div>
           </div>
-          <div class="inv-doc-meta">
-            <h2 class="inv-doc-title">PROFORMA</h2>
-            <div class="inv-doc-subtitle">Invoice / Teklif Formu</div>
-            <div class="inv-doc-meta-grid">
-              <div><strong>Teklif No:</strong> <span id="invQuoteNumber">—</span></div>
-              <div><strong>Tarih:</strong> <span id="invDate">—</span></div>
-              <div><strong>Geçerlilik:</strong> <span id="invValidUntil">—</span></div>
-              <div style="margin-top:0.4rem;"><strong>Para Birimi:</strong> <span id="invCcy">—</span></div>
-            </div>
+          <div class="pdf-date-block">
+            <strong>DATE:</strong> <span id="invDate">—</span>
+            <div class="pdf-quote-no">Quote: <span id="invQuoteNumber">—</span></div>
           </div>
         </div>
 
-        <div class="inv-parties">
-          <div class="inv-party-block">
-            <div class="inv-party-label">Bill To / Müşteri</div>
-            <div class="inv-party-name" id="invCustName">—</div>
-            <div class="inv-party-info" id="invCustInfo">—</div>
-          </div>
-          <div class="inv-party-block" style="border-left-color:var(--navy);">
-            <div class="inv-party-label" style="color:var(--navy);">Reference</div>
-            <div class="inv-party-info">
-              <strong>Currency Rate (TCMB)</strong><br>
-              <span id="invRateNote">—</span>
-            </div>
-          </div>
+        <!-- ── Title bar ─────────────────────────────────────────────────── -->
+        <div class="pdf-title-bar">PROFORMA INVOICE / PROFORMA FATURA</div>
+
+        <!-- ── Customer info ─────────────────────────────────────────────── -->
+        <div class="pdf-customer">
+          <div><strong>COMPANY NAME / ŞİRKET ADI:</strong> <span id="invCustName">—</span></div>
+          <div><strong>ADDRESS / ADRES:</strong> <span id="invCustAddr"></span></div>
+          <div><strong>COUNTRY / ÜLKE:</strong> <span id="invCustCountry"></span></div>
+          <div><strong>TEL/FAX:</strong> <span id="invCustTelFax"></span></div>
         </div>
 
-        <table class="inv-items">
+        <!-- ── Items table ───────────────────────────────────────────────── -->
+        <table class="pdf-items">
           <thead>
             <tr>
-              <th style="width:42px;">#</th>
-              <th>Description / Açıklama</th>
-              <th style="width:80px;">Qty</th>
-              <th style="width:110px;">Unit Price</th>
-              <th style="width:120px;">Line Total</th>
+              <th class="col-name">PRODUCT NAME<br><span class="th-tr">ÜRÜN ADI</span></th>
+              <th class="num">WEIGHT / AĞIRLIK<br><span class="th-tr">(ml)</span></th>
+              <th class="num">PIECES<br><span class="th-tr">ADET</span></th>
+              <th class="num">UNIT PRICE<br><span class="th-tr">BİRİM FİYATI</span></th>
+              <th class="num">TOTAL PRICE<br><span class="th-tr">TOTAL TUTAR</span></th>
             </tr>
           </thead>
           <tbody id="invItemsBody">
             <tr class="empty-row"><td colspan="5">Kalem eklenince burada görünecek.</td></tr>
           </tbody>
+          <tfoot id="invTotalRow">
+            <tr>
+              <td colspan="4" class="pdf-total-label">TOTAL</td>
+              <td class="num pdf-total-amount" id="invTotal">—</td>
+            </tr>
+          </tfoot>
         </table>
 
-        <div class="inv-totals">
-          <table class="inv-totals-table">
-            <tr><td>Subtotal / Ara Toplam</td><td id="invSubtotal">—</td></tr>
-            <tr><td>Shipping / Nakliye</td><td id="invShipping">—</td></tr>
-            <tr id="invTaxRow"><td>VAT / KDV (<span id="invTaxPctLbl">0</span>%)</td><td id="invTax">—</td></tr>
-            <tr class="grand-total"><td>Total / Genel Toplam</td><td id="invTotal">—</td></tr>
-          </table>
-        </div>
+        <!-- ── BOTTOM: 2-column block (terms left, bank info right) ─────── -->
+        <div class="pdf-bottom">
 
-        <div class="inv-footer">
-          <div class="inv-footer-section">
-            <div class="inv-footer-label">Bank Account Info / Ödeme Bilgileri</div>
-            <table class="inv-banks-table">
+          <div class="pdf-bottom-left">
+            <div class="pdf-line"><strong>TRANSPORTATION:</strong> EXCLUDING</div>
+            <div class="pdf-line"><strong>PAYMENT TERMS:</strong> % 100 IN ADVANCE</div>
+            <div class="pdf-line"><strong>SHIPMENT:</strong> - BY SEA - BY AİR</div>
+            <div class="pdf-line"><strong>TYPE OF DELIVERY:</strong> EX-FACTORY</div>
+            <div class="pdf-line"><strong>TIME OF DELIVERY:</strong> 2 MONTHS AFTER RECEIVING PAYMENT</div>
+            <div class="pdf-italic">These prices are calculated for partial loading.</div>
+            <div class="pdf-line">If you need any further details or informations, do not hesitate to contact us.</div>
+            <div class="pdf-italic">* Above prices are valid for only this offer, not valid for our general price list.</div>
+            <div class="pdf-signoff">
+              <div>Best Regards.</div>
+              <div class="pdf-signoff-dept">EXPORT-SALES DEPARTMENT</div>
+            </div>
+          </div>
+
+          <div class="pdf-bottom-right">
+            <table class="pdf-bank">
               <thead>
-                <tr>
-                  <th></th>
-                  <th>1</th>
-                  <th>2</th>
-                  <th>3</th>
+                <tr><th colspan="4" class="pdf-bank-title">BANK ACCOUNT INFO</th></tr>
+                <tr class="pdf-bank-owner">
+                  <td class="lbl">ACCOUNT OWNER:</td>
+                  <td colspan="3">MİNERVA 108 YÖNETİM &amp; DANIŞMANLIK A.Ş.</td>
+                </tr>
+                <tr class="pdf-bank-numhdr">
+                  <td></td><td>1</td><td>2</td><td>3</td>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td>Bank</td>
+                  <td class="lbl">BANK:</td>
                   <td>KUVEYT TÜRK KATILIM BANKASI</td>
                   <td>TÜRKİYE İŞ BANKASI A.Ş.</td>
-                  <td>TÜRKİYE VAKIFLAR BANKASI T.A.O.</td>
+                  <td>TURKİYE VAKIFLAR BANKASI T.A.O.</td>
                 </tr>
                 <tr>
-                  <td>Branch</td>
+                  <td class="lbl">BRANCH:</td>
                   <td>214 LEVENT - SANAYİ</td>
-                  <td>151 YENİKÖY</td>
+                  <td>151 YENIKOY</td>
                   <td>1106 TARABYA</td>
                 </tr>
                 <tr>
-                  <td>Swift Code</td>
-                  <td class="iban">KTEFTRISXXX</td>
-                  <td class="iban">ISBKTRIS</td>
-                  <td class="iban">TVBATR2A</td>
+                  <td class="lbl">SWIFT CODE:</td>
+                  <td>KTEFTRISXXX</td>
+                  <td>ISBKTRIS</td>
+                  <td>TVBATR2A</td>
                 </tr>
                 <tr>
-                  <td>USD IBAN</td>
-                  <td class="iban">TR09 0020 5000 0909 6875 2001 01</td>
-                  <td class="iban">TR37 0006 4000 0021 1510 5912 99</td>
-                  <td class="iban">TR36 0001 5001 5804 8023 3113 21</td>
+                  <td class="lbl">USD IBAN NO:</td>
+                  <td>TR090020500009096875200101</td>
+                  <td>TR37 0006 4000 0021 1510 5912 99</td>
+                  <td>TR36 0001 5001 5804 8023 3113 21</td>
                 </tr>
                 <tr>
-                  <td>EUR IBAN</td>
-                  <td class="iban">TR79 0020 5000 0909 6875 2001 02</td>
-                  <td class="iban">TR53 0006 4000 0021 1510 5913 02</td>
-                  <td class="iban">TR85 0001 5001 5804 8023 3113 12</td>
-                </tr>
-                <tr class="bank-owner-row">
-                  <td>Account Owner</td>
-                  <td colspan="3">MİNERVA 108 YÖNETİM &amp; DANIŞMANLIK A.Ş.</td>
+                  <td class="lbl">EURO IBAN NO:</td>
+                  <td>TR790020500009096875200102</td>
+                  <td>TR53 0006 4000 0021 1510 5913 02</td>
+                  <td>TR85 0001 5001 5804 8023 3113 12</td>
                 </tr>
               </tbody>
             </table>
-          </div>
-          <div class="inv-footer-section">
-            <div class="inv-footer-label">Terms / Şartlar</div>
-            <span id="invTerms">—</span>
+            <div class="pdf-sample-stamp">SAMPLE NO COMMERCIAL VALUE</div>
           </div>
 
-          <!-- Sample stamp + Signature block (mirrors physical proforma) -->
-          <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:1.5rem; padding-top:1rem; border-top:1px dashed #d1d5db;">
-            <div style="font-size:0.78rem; color:#6b7280; line-height:1.55; max-width:55%;">
-              If you need any further details or information, do not hesitate to contact us.<br>
-              <strong>Best Regards.</strong><br>
-              <span style="color:var(--navy); font-weight:700; letter-spacing:0.04em;">EXPORT-SALES DEPARTMENT</span>
-            </div>
-            <div style="text-align:right;">
-              <div style="display:inline-block; padding:0.35rem 0.9rem; border:1.5px solid #dc2626; color:#dc2626; font-weight:700; font-size:0.78rem; letter-spacing:0.08em; transform:rotate(-2deg); border-radius:4px;">
-                SAMPLE — NO COMMERCIAL VALUE
-              </div>
-            </div>
-          </div>
-
-          <div class="inv-stamp">
-            <i class="bi bi-shield-check"></i>
-            Bu doküman elektronik ortamda hazırlanmıştır — Minerva108 ERP · {{ full_name }}
-          </div>
         </div>
 
       </div>
@@ -1191,80 +1318,69 @@
       return lines;
     }
 
-    /* ── Render invoice preview ── */
+    /* ── Helpers for the PDF-faithful preview ── */
+    function _weightOf(item) {
+      // Pull the numeric weight (e.g. "200" from "200ml" / "200 ML" / "10 G")
+      const src = item.variation_name || item.unit || '';
+      const m = String(src).match(/(\d+(?:[.,]\d+)?)/);
+      return m ? m[1].replace(',', '.') : '';
+    }
+
+    /* ── Render invoice preview (PDF-faithful layout) ── */
     function renderInvoice() {
-      // Header meta
+      // Header meta — only DATE and a small Quote No are shown (mirrors PDF)
       document.getElementById('invQuoteNumber').textContent = document.getElementById('quoteNumber').value || '—';
       const date = document.getElementById('quoteDate').value;
-      const validDays = parseInt(document.getElementById('quoteValidDays').value) || 30;
       const dateObj = date ? new Date(date) : new Date();
-      const validUntil = new Date(dateObj);
-      validUntil.setDate(validUntil.getDate() + validDays);
       const fmtD = d => d.toLocaleDateString('tr-TR');
-      document.getElementById('invDate').textContent       = date ? fmtD(dateObj) : fmtD(new Date());
-      document.getElementById('invValidUntil').textContent = fmtD(validUntil);
-      document.getElementById('invCcy').textContent        = CURRENCY;
+      document.getElementById('invDate').textContent = fmtD(dateObj);
 
-      // Customer block
+      // Customer block — split into the PDF's 4 stacked lines
       const company = document.getElementById('custCompany').value.trim();
-      document.getElementById('invCustName').textContent = company || '—';
-      const infoLines = [
-        document.getElementById('custContact').value.trim(),
-        document.getElementById('custAddress').value.trim(),
-        document.getElementById('custCountry').value.trim(),
-        document.getElementById('custVat').value.trim() ? 'VAT: ' + document.getElementById('custVat').value.trim() : '',
-        document.getElementById('custEmail').value.trim(),
-        document.getElementById('custPhone').value.trim(),
-      ].filter(Boolean);
-      document.getElementById('invCustInfo').textContent = infoLines.length ? infoLines.join('\n') : '—';
+      const address = document.getElementById('custAddress').value.trim();
+      const country = document.getElementById('custCountry').value.trim();
+      const phone   = document.getElementById('custPhone').value.trim();
+      const email   = document.getElementById('custEmail').value.trim();
+      const vat     = document.getElementById('custVat').value.trim();
 
-      // Rate note
-      let rateNote = '';
-      if (CURRENCY === 'TRY') {
-        rateNote = 'Fatura TRY (₺) cinsindendir. Kur dönüşümü uygulanmaz.';
-      } else {
-        const r = LIVE_RATES[CURRENCY];
-        rateNote = r
-          ? `1 ${CURRENCY} = ${r.toLocaleString('tr-TR',{minimumFractionDigits:4,maximumFractionDigits:4})} ₺ · Kaynak: ${RATES_META.source}`
-          : `${CURRENCY} kuru henüz yüklenmedi.`;
-      }
-      document.getElementById('invRateNote').textContent = rateNote;
+      document.getElementById('invCustName').textContent    = company || '—';
+      document.getElementById('invCustAddr').textContent    = address || '';
+      document.getElementById('invCustCountry').textContent = country || '';
+      // TEL/FAX line — combine phone + email so the PDF's TEL/FAX field is useful
+      const telFax = [phone, email, vat ? 'VAT: ' + vat : ''].filter(Boolean).join(' · ');
+      document.getElementById('invCustTelFax').textContent  = telFax || '';
 
-      // Items
+      // Items — PDF columns: NAME / WEIGHT (ml) / PIECES / UNIT / TOTAL
       const lines = gatherLines();
       const tbody = document.getElementById('invItemsBody');
+      const tfoot = document.getElementById('invTotalRow');
       if (!lines.length) {
         tbody.innerHTML = `<tr class="empty-row"><td colspan="5">Kalem eklenince burada görünecek.</td></tr>`;
+        tfoot.style.display = 'none';
       } else {
-        tbody.innerHTML = lines.map((l, i) => `
+        tfoot.style.display = '';
+        tbody.innerHTML = lines.map(l => {
+          const item = allItems.find(i => i.id === l.item_id) || {};
+          const weight = _weightOf(item);
+          return `
           <tr>
-            <td class="col-no">${i + 1}</td>
-            <td class="col-name">
-              ${escHtml(l.name)}
-              ${l.full_name && l.full_name !== l.name ? `<div class="item-sub">${escHtml(l.full_name)}</div>` : ''}
-            </td>
-            <td>${l.qty} ${escHtml(l.unit || '')}</td>
-            <td>${fmtMoney(l.price, CURRENCY)}</td>
+            <td class="col-name">${escHtml(l.name)}</td>
+            <td class="num">${weight}</td>
+            <td class="num">${l.qty}</td>
+            <td class="num">${fmtMoney(l.price, CURRENCY)}</td>
             <td>${fmtMoney(l.total, CURRENCY)}</td>
           </tr>`).join('');
       }
 
-      // Totals
+      // Totals — PDF only shows a single TOTAL row in the table footer.
+      // We still respect Shipping + VAT inputs from the form (added to grand total).
       const subtotal = lines.reduce((s, l) => s + l.total, 0);
       const shipping = parseFloat(document.getElementById('quoteShipping').value) || 0;
       const taxPct   = parseFloat(document.getElementById('quoteTaxPct').value)   || 0;
       const taxAmt   = (subtotal + shipping) * (taxPct / 100);
       const grand    = subtotal + shipping + taxAmt;
 
-      document.getElementById('invSubtotal').textContent  = fmtMoney(subtotal, CURRENCY);
-      document.getElementById('invShipping').textContent  = shipping > 0 ? fmtMoney(shipping, CURRENCY) : '—';
-      document.getElementById('invTaxPctLbl').textContent = taxPct;
-      document.getElementById('invTax').textContent       = taxAmt > 0 ? fmtMoney(taxAmt, CURRENCY) : '—';
-      document.getElementById('invTotal').textContent     = fmtMoney(grand, CURRENCY);
-      document.getElementById('invTaxRow').style.display  = taxPct > 0 ? '' : 'none';
-
-      // Terms
-      document.getElementById('invTerms').textContent = document.getElementById('quoteNotes').value.trim() || '—';
+      document.getElementById('invTotal').textContent = fmtMoney(grand, CURRENCY);
     }
 
     /* ── Currency segmented control ── */
