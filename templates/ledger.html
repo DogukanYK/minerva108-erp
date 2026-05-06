@@ -161,7 +161,30 @@
     .tx-output   { background: #fff1f1; color: #b91c1c; }
     .tx-qc-ok    { background: #eff6ff; color: #1d4ed8; }
     .tx-qc-rej   { background: #fefce8; color: #a16207; }
+    .tx-adjust   { background: #fef3c7; color: #b45309; }
     .tx-other    { background: #f3f4f6; color: #4b5563; }
+
+    /* "Düzelt" butonu — stok satırının yanında */
+    .btn-adjust {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      padding: 3px 11px; border-radius: 20px;
+      border: 1.5px solid #e5e7eb; background: var(--white);
+      color: #6b7280; font-family: 'Jost', sans-serif;
+      font-size: 0.75rem; font-weight: 600; cursor: pointer;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    .btn-adjust:hover { border-color: var(--gold); color: var(--navy); background: #faf8f4; }
+    .btn-adjust i { font-size: 0.8rem; }
+
+    /* Adjustment modal — delta önizlemesi */
+    .adj-delta-preview {
+      margin-top: 0.6rem; padding: 0.6rem 0.85rem;
+      border-radius: 8px; font-size: 0.85rem; font-weight: 600;
+      display: flex; align-items: center; gap: 0.4rem;
+    }
+    .adj-delta-up   { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .adj-delta-down { background: #fff1f1; color: #b91c1c; border: 1px solid #fecaca; }
+    .adj-delta-zero { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
 
     /* Stock level indicator */
     .stock-bar-wrap { width: 80px; height: 6px; background: #f3f4f6; border-radius: 3px; display: inline-block; vertical-align: middle; margin-left: 8px; }
@@ -308,10 +331,13 @@
                   <th>Kategori</th>
                   <th>Birim</th>
                   <th style="text-align:right;">Toplam Stok (Onaylı)</th>
+                  {% if can('inventory', 'adjust') %}
+                  <th style="text-align:right; width:120px;">İşlem</th>
+                  {% endif %}
                 </tr>
               </thead>
               <tbody id="stockBody">
-                <tr><td colspan="4"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+                <tr><td colspan="5"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
               </tbody>
             </table>
           </div>
@@ -353,6 +379,72 @@
 
   <div id="toast-container"></div>
 
+  {% if can('inventory', 'adjust') %}
+  <!-- ════ MODAL: STOK DÜZELT ════ -->
+  <div class="modal fade" id="adjustStockModal" tabindex="-1" aria-labelledby="adjustStockLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content" style="border:none;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,0.15);">
+        <div class="modal-header" style="border-bottom:1px solid #f0ece4;padding:1.25rem 1.5rem;">
+          <h5 class="modal-title" id="adjustStockLabel"
+            style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:var(--navy);">
+            Stok Düzeltme
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body" style="padding:1.5rem;">
+          <div style="font-size:0.78rem;color:#9ca3af;letter-spacing:0.06em;text-transform:uppercase;font-weight:700;">Ürün</div>
+          <div id="adjItemName" style="font-size:1rem;font-weight:600;color:#1f2937;margin-top:2px;margin-bottom:1.1rem;">—</div>
+
+          <div class="row g-3">
+            <div class="col-6">
+              <label style="font-size:0.78rem;font-weight:600;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:0.35rem;display:block;">
+                Mevcut Stok
+              </label>
+              <input type="text" class="form-control" id="adjOldQty" readonly
+                style="border:1.5px solid #e5e7eb;border-radius:8px;padding:0.6rem 0.9rem;background:#f9f7f3;color:#6b7280;font-family:'Jost',sans-serif;font-size:0.95rem;font-weight:600;width:100%;" />
+            </div>
+            <div class="col-6">
+              <label style="font-size:0.78rem;font-weight:600;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:0.35rem;display:block;">
+                Yeni Toplam Stok *
+              </label>
+              <div style="display:flex;gap:0.4rem;">
+                <input type="number" class="form-control" id="adjNewQty"
+                  min="0" step="0.001" placeholder="örn. 10"
+                  oninput="updateAdjPreview()"
+                  style="border:1.5px solid #e5e7eb;border-radius:8px;padding:0.6rem 0.9rem;font-family:'Jost',sans-serif;font-size:0.95rem;color:#1f2937;flex:1;" />
+                <span id="adjUnit"
+                  style="display:inline-flex;align-items:center;padding:0 0.85rem;background:#f3f0ea;border:1.5px solid #e5e7eb;border-radius:8px;color:#6b7280;font-size:0.85rem;font-weight:600;min-width:54px;justify-content:center;">—</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="adjDeltaPreview" class="adj-delta-preview adj-delta-zero" style="display:none;"></div>
+
+          <label style="font-size:0.78rem;font-weight:600;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;margin-top:1.1rem;margin-bottom:0.35rem;display:block;">
+            Sebep * <span style="text-transform:none;color:#9ca3af;font-weight:500;">(audit kaydına yazılacak — silinemez)</span>
+          </label>
+          <textarea class="form-control" id="adjReason" rows="2"
+            placeholder="örn. yanlış tartı, fiziksel sayım farkı, kırılma…" maxlength="200"
+            style="border:1.5px solid #e5e7eb;border-radius:8px;padding:0.6rem 0.9rem;font-family:'Jost',sans-serif;font-size:0.9rem;color:#1f2937;width:100%;resize:vertical;"></textarea>
+          <div style="font-size:0.72rem;color:#9ca3af;margin-top:0.3rem;text-align:right;">
+            <span id="adjReasonCount">0</span>/200
+          </div>
+        </div>
+        <div class="modal-footer" style="border-top:1px solid #f0ece4;padding:1rem 1.5rem;">
+          <button type="button" class="btn-cancel" data-bs-dismiss="modal"
+            style="padding:0.6rem 1.2rem;background:transparent;color:#6b7280;border:1.5px solid #e5e7eb;border-radius:8px;font-family:'Jost',sans-serif;font-size:0.9rem;font-weight:500;cursor:pointer;">
+            İptal
+          </button>
+          <button type="button" class="btn-save" id="adjSaveBtn"
+            style="padding:0.6rem 1.5rem;background:var(--navy);color:var(--white);border:none;border-radius:8px;font-family:'Jost',sans-serif;font-size:0.9rem;font-weight:600;cursor:pointer;">
+            <i class="bi bi-check2"></i> Düzeltmeyi Kaydet
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     /* ── Data ── */
@@ -391,6 +483,7 @@
       if (type === 'Output')       return `<span class="tx-badge tx-output"><i class="bi bi-arrow-up-circle-fill"></i>${escHtml(type)}</span>`;
       if (type === 'QC Approval')  return `<span class="tx-badge tx-qc-ok"><i class="bi bi-patch-check-fill"></i>${escHtml(type)}</span>`;
       if (type === 'QC Rejection') return `<span class="tx-badge tx-qc-rej"><i class="bi bi-patch-exclamation-fill"></i>${escHtml(type)}</span>`;
+      if (type === 'Adjustment')   return `<span class="tx-badge tx-adjust"><i class="bi bi-pencil-square"></i>${escHtml(type)}</span>`;
       return `<span class="tx-badge tx-other">${escHtml(type)}</span>`;
     }
 
@@ -431,8 +524,11 @@
       const tbody = document.getElementById('stockBody');
       const info  = document.getElementById('stockInfo');
 
+      const canAdjust = !!(window.can && window.can('inventory', 'adjust'));
+      const colCount  = canAdjust ? 5 : 4;
+
       if (!data.length) {
-        tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state"><i class="bi bi-boxes"></i><p>Bu filtre için kayıt bulunamadı.</p></div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${colCount}"><div class="empty-state"><i class="bi bi-boxes"></i><p>Bu filtre için kayıt bulunamadı.</p></div></td></tr>`;
         info.textContent = '0 kayıt';
         return;
       }
@@ -443,6 +539,13 @@
       tbody.innerHTML = data.map(i => {
         const pct = Math.min(100, (i.total_stock / maxStock) * 100);
         const barClass = pct < 15 ? 'critical' : pct < 30 ? 'low' : '';
+        const adjustCell = canAdjust ? `
+          <td style="text-align:right;">
+            <button class="btn-adjust"
+              onclick="openAdjustModal(${i.item_id}, ${JSON.stringify(i.name).replace(/"/g, '&quot;')}, ${i.total_stock}, ${JSON.stringify(i.unit).replace(/"/g, '&quot;')})">
+              <i class="bi bi-pencil-square"></i> Düzelt
+            </button>
+          </td>` : '';
         return `<tr>
           <td class="td-name">${escHtml(i.name)}</td>
           <td>${catBadge(i.category)}</td>
@@ -451,9 +554,102 @@
             <span class="td-num">${i.total_stock.toLocaleString('tr-TR', {maximumFractionDigits:4})}</span>
             <span class="stock-bar-wrap"><span class="stock-bar ${barClass}" style="width:${pct.toFixed(1)}%;"></span></span>
           </td>
+          ${adjustCell}
         </tr>`;
       }).join('');
       info.textContent = `${data.length} ürün listeleniyor`;
+    }
+
+    /* ── Stok Düzeltme akışı ───────────────────────────────────────────────
+       Black-box invariant: backend her düzeltmeyi Transaction(type='Adjustment')
+       olarak audit'e yazar; biz sadece kullanıcıya delta'yı önizlettirip ham
+       sebebi gönderiyoruz. Modal sadece izinli kullanıcılarda render olur. */
+    let _adjState = { itemId: null, oldQty: 0, unit: '' };
+    let _adjModal = null;
+
+    function fmtNum(n) {
+      return Number(n || 0).toLocaleString('tr-TR', { maximumFractionDigits: 4 });
+    }
+
+    function openAdjustModal(itemId, name, oldQty, unit) {
+      _adjState = { itemId, oldQty: Number(oldQty || 0), unit: unit || '' };
+      document.getElementById('adjItemName').textContent = name;
+      document.getElementById('adjOldQty').value = `${fmtNum(oldQty)} ${unit || ''}`;
+      document.getElementById('adjNewQty').value = '';
+      document.getElementById('adjUnit').textContent = unit || '—';
+      document.getElementById('adjReason').value = '';
+      document.getElementById('adjReasonCount').textContent = '0';
+      document.getElementById('adjDeltaPreview').style.display = 'none';
+      if (!_adjModal) _adjModal = new bootstrap.Modal(document.getElementById('adjustStockModal'));
+      _adjModal.show();
+      setTimeout(() => document.getElementById('adjNewQty').focus(), 200);
+    }
+
+    function updateAdjPreview() {
+      const newVal = parseFloat(document.getElementById('adjNewQty').value);
+      const box = document.getElementById('adjDeltaPreview');
+      if (isNaN(newVal)) { box.style.display = 'none'; return; }
+      const delta = +(newVal - _adjState.oldQty).toFixed(6);
+      box.style.display = 'flex';
+      box.classList.remove('adj-delta-up', 'adj-delta-down', 'adj-delta-zero');
+      if (delta > 0) {
+        box.classList.add('adj-delta-up');
+        box.innerHTML = `<i class="bi bi-arrow-up-circle-fill"></i> Stok <b>+${fmtNum(delta)}</b> ${escHtml(_adjState.unit)} artırılacak`;
+      } else if (delta < 0) {
+        box.classList.add('adj-delta-down');
+        box.innerHTML = `<i class="bi bi-arrow-down-circle-fill"></i> Stok <b>${fmtNum(delta)}</b> ${escHtml(_adjState.unit)} azaltılacak`;
+      } else {
+        box.classList.add('adj-delta-zero');
+        box.innerHTML = `<i class="bi bi-info-circle"></i> Mevcut stokla aynı — düzeltme gerekmez`;
+      }
+    }
+
+    /* Reason char counter — sadece izin varsa modal var, dolayısıyla element de var */
+    if (window.can && window.can('inventory', 'adjust')) {
+      document.addEventListener('DOMContentLoaded', () => {
+        const reason = document.getElementById('adjReason');
+        const count  = document.getElementById('adjReasonCount');
+        if (reason && count) {
+          reason.addEventListener('input', () => count.textContent = reason.value.length);
+        }
+        const saveBtn = document.getElementById('adjSaveBtn');
+        if (saveBtn) saveBtn.addEventListener('click', submitAdjustment);
+      });
+    }
+
+    async function submitAdjustment() {
+      const newVal = parseFloat(document.getElementById('adjNewQty').value);
+      const reason = document.getElementById('adjReason').value.trim();
+      if (isNaN(newVal) || newVal < 0) { showToast('Geçerli bir miktar giriniz (0 veya üzeri).'); return; }
+      if (reason.length < 3) { showToast('Sebep en az 3 karakter olmalı.'); return; }
+      if (Math.abs(newVal - _adjState.oldQty) < 1e-9) { showToast('Yeni miktar mevcut stokla aynı.'); return; }
+
+      const btn = document.getElementById('adjSaveBtn');
+      btn.disabled = true;
+      const originalLabel = btn.innerHTML;
+      btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Kaydediliyor…';
+
+      try {
+        const res = await fetch('/api/inventory/adjust', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            item_id: _adjState.itemId,
+            new_quantity: newVal,
+            reason: reason,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Düzeltme başarısız.'); return; }
+        showToast(data.message || 'Düzeltme kaydedildi.', 'success');
+        _adjModal.hide();
+        loadAll();   // KPI + stok + ledger feed yenilensin
+      } catch {
+        showToast('Bağlantı hatası — düzeltme kaydedilmedi.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalLabel;
+      }
     }
 
     /* ── Render transactions table ── */

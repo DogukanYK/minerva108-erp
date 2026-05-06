@@ -44,7 +44,7 @@ def _can_see_finance(payload_or_role) -> bool:
 PERMISSION_CATEGORIES = {
     "items":      ["view", "create", "edit", "delete", "import"],
     "recipes":    ["view", "create", "edit", "delete"],
-    "inventory":  ["view", "receive", "delete"],
+    "inventory":  ["view", "receive", "adjust", "delete"],
     "production": ["view", "create"],
     "qc":         ["view", "approve"],
     "finance":    ["view"],            # Cost prices, recipe BOM costs, margins
@@ -59,7 +59,7 @@ _DEFAULT_PERMISSIONS = {
     "Manager": {
         "items":      {"view": True,  "create": True,  "edit": True,  "delete": False, "import": True},
         "recipes":    {"view": True,  "create": False, "edit": False, "delete": False},
-        "inventory":  {"view": True,  "receive": True, "delete": False},
+        "inventory":  {"view": True,  "receive": True, "adjust": True,  "delete": False},
         "production": {"view": True,  "create": True},
         "qc":         {"view": True,  "approve": True},
         "finance":    {"view": True},
@@ -70,7 +70,7 @@ _DEFAULT_PERMISSIONS = {
     "LabLead": {
         "items":      {"view": True,  "create": True,  "edit": True,  "delete": True,  "import": True},
         "recipes":    {"view": True,  "create": True,  "edit": True,  "delete": True},
-        "inventory":  {"view": True,  "receive": True, "delete": True},
+        "inventory":  {"view": True,  "receive": True, "adjust": True,  "delete": True},
         "production": {"view": True,  "create": True},
         "qc":         {"view": True,  "approve": True},
         "finance":    {"view": False},
@@ -81,7 +81,7 @@ _DEFAULT_PERMISSIONS = {
     "LabTech": {
         "items":      {"view": True,  "create": True,  "edit": False, "delete": False, "import": False},
         "recipes":    {"view": True,  "create": False, "edit": False, "delete": False},
-        "inventory":  {"view": True,  "receive": True, "delete": False},
+        "inventory":  {"view": True,  "receive": True, "adjust": False, "delete": False},
         "production": {"view": True,  "create": True},
         "qc":         {"view": True,  "approve": False},
         "finance":    {"view": False},
@@ -93,7 +93,7 @@ _DEFAULT_PERMISSIONS = {
         # Read-only baseline
         "items":      {"view": True,  "create": False, "edit": False, "delete": False, "import": False},
         "recipes":    {"view": True,  "create": False, "edit": False, "delete": False},
-        "inventory":  {"view": True,  "receive": False, "delete": False},
+        "inventory":  {"view": True,  "receive": False, "adjust": False, "delete": False},
         "production": {"view": True,  "create": False},
         "qc":         {"view": True,  "approve": False},
         "finance":    {"view": False},

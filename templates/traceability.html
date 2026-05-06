@@ -910,9 +910,14 @@
           if (!r.ok) return;
           const users = await r.json();
           userSel.innerHTML = '<option value="">Kullanıcı seç…</option>'
-            + users.map(u =>
-                `<option value="${u.id}">${escHtml(u.full_name)} (${escHtml(u.role)})</option>`
-              ).join('');
+            + users.map(u => {
+                // tx_count gösterimi — Songül seçilince "0 işlem" sürprizini önler
+                const cnt = (typeof u.tx_count === 'number') ? u.tx_count : null;
+                const cntStr = cnt !== null
+                  ? ` — ${cnt} işlem`
+                  : '';
+                return `<option value="${u.id}">${escHtml(u.full_name)} (${escHtml(u.role)})${cntStr}</option>`;
+              }).join('');
         } catch (e) { /* silent */ }
       }
 

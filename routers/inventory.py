@@ -56,6 +56,19 @@ class StockReceiveRequest(BaseModel):
     location: Optional[str] = None
 
 
+class StockAdjustRequest(BaseModel):
+    """
+    Manual stock correction. The user supplies the *target* quantity that
+    Item.current_stock should hold; backend computes the delta and writes
+    an immutable Transaction(type='Adjustment') so the change is auditable.
+    Reason is mandatory — no silent corrections.
+    """
+    item_id: int
+    new_quantity: float          # Yeni TOPLAM stok (delta değil)
+    reason: str                  # Zorunlu — gerekçe
+    lot_number: Optional[str] = None   # Opsiyonel: spesifik lot satırını da güncelle
+
+
 # ─── Items Endpoints ─────────────────────────────────────────────────────────
 
 @router.get("/items")
@@ -383,6 +396,90 @@ def receive_stock(
         return JSONResponse(status_code=500, content={"detail": "Mal kabul sırasında hata oluştu."})
 
 
+# ─── Stock Adjustment (manual correction) ──────────────────────────────────
+# Black-box invariant: stock changes outside of receiving/production/QC must
+# still leave a fingerprint. This endpoint never deletes or rewrites history;
+# it appends an immutable Transaction(type='Adjustment') and updates the
+# canonical Item.current_stock to the requested value. The reason string is
+# required so audit reviewers can see *why* the correction happened.
+
+@router.post("/inventory/adjust", status_code=201)
+def adjust_stock(
+    data: StockAdjustRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("inventory", "adjust")),
+):
+    if data.new_quantity < 0:
+        return JSONResponse(status_code=400, content={"detail": "Stok miktarı negatif olamaz."})
+
+    reason = (data.reason or "").strip()
+    if len(reason) < 3:
+        return JSONResponse(status_code=422, content={"detail": "Sebep en az 3 karakter olmalıdır."})
+
+    item = db.query(Item).filter(Item.id == data.item_id).with_for_update().first()
+    if not item:
+        return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+
+    actor    = current_user.get("full_name") or current_user.get("username") or "—"
+    old_qty  = float(item.current_stock or 0)
+    new_qty  = float(data.new_quantity)
+    delta    = round(new_qty - old_qty, 6)
+
+    if abs(delta) < 1e-9:
+        return JSONResponse(status_code=400, content={
+            "detail": f"Yeni miktar mevcut stokla aynı ({old_qty} {item.unit or ''}). Düzeltme gerekmez."
+        })
+
+    try:
+        # ── Item.current_stock güncelle ────────────────────────────────────
+        item.current_stock = round(new_qty, 6)
+
+        # ── Lot-level adjustment opsiyonel: belirli bir lot'un quantity'sini
+        #     hedef değere düşür/yükselt. Yoksa sadece item-level düzeltme.
+        lot_note = ""
+        if data.lot_number:
+            inv = (
+                db.query(Inventory)
+                .filter(Inventory.item_id == data.item_id, Inventory.lot_number == data.lot_number)
+                .with_for_update()
+                .first()
+            )
+            if inv:
+                # Bu lot için yeni miktar mantıklı mı kontrol etmiyoruz — kullanıcı
+                # zaten gerekçeyi girdi. Sadece lot satırını da güncelleyelim.
+                inv.quantity = round(new_qty, 6)
+                inv.updated_at = __import__("datetime").datetime.utcnow()
+                lot_note = f" | Lot: {data.lot_number}"
+
+        # ── Immutable audit kaydı (delta hem +/- olabilir) ─────────────────
+        sign = "+" if delta > 0 else ""
+        db.add(Transaction(
+            item_id=item.id,
+            lot_number=data.lot_number,
+            transaction_type="Adjustment",
+            quantity=delta,            # signed delta (-8.0 veya +3.0)
+            notes=(
+                f"Stok düzeltme — Eski: {old_qty} {item.unit or ''} → "
+                f"Yeni: {new_qty} {item.unit or ''} "
+                f"(Δ {sign}{delta}){lot_note} | Sebep: {reason[:200]}"
+            ),
+            performed_by=actor,
+        ))
+
+        db.commit()
+        return {
+            "message": f"Stok düzeltildi: {old_qty} → {new_qty} {item.unit or ''} (Δ {sign}{delta}).",
+            "item_id":    item.id,
+            "old_qty":    old_qty,
+            "new_qty":    new_qty,
+            "delta":      delta,
+        }
+
+    except Exception:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"detail": "Stok düzeltme sırasında hata oluştu."})
+
+
 # ─── Inventory summary + transactions feed ──────────────────────────────────
 
 @router.get("/inventory/summary")
@@ -621,18 +718,46 @@ def list_audit_users(
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("admin", "view_audit")),
 ):
-    """Lightweight user list — drives the dropdown on the traceability page."""
+    """
+    Lightweight user list — drives the dropdown on the traceability page.
+    Each entry includes `tx_count` so the UI can show "(N işlem)" hints,
+    avoiding the "Songül seçildi → boş" surprise.
+
+    Match is case-insensitive and tries both full_name and username because
+    the legacy code wrote actor names in mixed casings (e.g. "Doğukan
+    YALÇINKAYA" vs "Doğukan Yalçınkaya").
+    """
+    from sqlalchemy import func
     from database import User
+
     users = (
         db.query(User)
         .filter(User.is_active == True)
         .order_by(User.full_name.asc())
         .all()
     )
-    return [
-        {"id": u.id, "username": u.username, "full_name": u.full_name, "role": u.role}
-        for u in users
-    ]
+
+    # Tek seferde tüm performed_by sayımlarını al — N+1 yok
+    counts_raw = (
+        db.query(func.lower(Transaction.performed_by), func.count(Transaction.id))
+        .filter(Transaction.performed_by.isnot(None))
+        .group_by(func.lower(Transaction.performed_by))
+        .all()
+    )
+    counts = {k: v for k, v in counts_raw}   # {lowercase_name: count}
+
+    out = []
+    for u in users:
+        candidates = [c.lower() for c in (u.full_name, u.username) if c]
+        tx_count = sum(counts.get(c, 0) for c in candidates)
+        out.append({
+            "id":        u.id,
+            "username":  u.username,
+            "full_name": u.full_name,
+            "role":      u.role,
+            "tx_count":  tx_count,
+        })
+    return out
 
 
 @router.get("/traceability/user-activity")
@@ -678,12 +803,15 @@ def user_activity(
         until = _dt.utcnow() + timedelta(days=1)
         range_label = f"son {n} gün"
 
-    candidates = [c for c in (user.full_name, user.username) if c]
+    # Case-insensitive eşleşme — eski veriler "Doğukan YALÇINKAYA" gibi
+    # büyük harf, yeni veriler "Doğukan Yalçınkaya" olabilir; ikisini de yakala.
+    from sqlalchemy import func
+    candidates_lower = [c.lower() for c in (user.full_name, user.username) if c]
 
     rows = (
         db.query(Transaction)
         .filter(
-            Transaction.performed_by.in_(candidates),
+            func.lower(Transaction.performed_by).in_(candidates_lower),
             Transaction.timestamp >= since,
             Transaction.timestamp <  until,
         )
@@ -786,10 +914,12 @@ def download_import_template(_: dict = Depends(require_permission("items", "impo
 async def import_items_from_excel(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
     _: dict = Depends(require_permission("items", "import")),
 ):
     """Excel (.xlsx) dosyasından toplu ürün içe aktarma — SKU bazlı upsert."""
     import io, datetime as _dt
+    actor = current_user.get("full_name") or current_user.get("username") or "Excel Import"
 
     # ── 1. Dosya uzantısı kontrolü ──────────────────────────────────────────
     if not file.filename.lower().endswith(".xlsx"):
@@ -874,11 +1004,13 @@ async def import_items_from_excel(
                     db.add(Inventory(
                         item_id=new_item.id, lot_number=lot,
                         quantity=stock, status="APPROVED",
+                        received_by=actor,
                     ))
                     db.add(Transaction(
                         item_id=new_item.id, lot_number=lot,
                         transaction_type="Input", quantity=stock,
                         notes=f"Excel içe aktarım — SKU: {sku}",
+                        performed_by=actor,
                     ))
                 created += 1
 

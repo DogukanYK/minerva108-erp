@@ -167,29 +167,96 @@
       align-items: center;
       gap: 0.5rem;
     }
-    .preview-body { padding: 0.75rem 1rem; }
-    .preview-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0.45rem 0;
+    .preview-header .waste-pill {
+      margin-left: auto;
+      font-size: 0.7rem;
+      letter-spacing: 0.04em;
+      padding: 2px 10px;
+      border-radius: 20px;
+      background: rgba(201,172,111,0.25);
+      color: var(--gold2);
+      border: 1px solid rgba(201,172,111,0.5);
+      text-transform: none;
+      font-weight: 600;
+    }
+    .preview-body { padding: 0.5rem 0; }
+    .preview-table { width: 100%; border-collapse: collapse; }
+    .preview-table thead th {
+      font-size: 0.65rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #6b7280;
+      font-weight: 700;
+      padding: 0.5rem 0.85rem;
       border-bottom: 1px solid #f0ece4;
-      font-size: 0.875rem;
-      gap: 1rem;
+      text-align: right;
+      background: #f9f7f3;
     }
-    .preview-row:last-child { border-bottom: none; }
-    .preview-item-name { font-weight: 500; color: #1f2937; flex: 1; }
-    .preview-needed { color: var(--navy); font-weight: 600; white-space: nowrap; }
-    .preview-stock { font-size: 0.8rem; white-space: nowrap; }
-    .stock-ok   { color: #15803d; }
-    .stock-warn { color: #b91c1c; font-weight: 600; }
-    .preview-stock-bar {
-      height: 4px; border-radius: 2px; background: #e5e7eb;
-      margin-top: 2px; overflow: hidden; min-width: 60px;
+    .preview-table thead th:first-child { text-align: left; }
+    .preview-table tbody td {
+      padding: 0.5rem 0.85rem;
+      border-bottom: 1px solid #f0ece4;
+      font-size: 0.85rem;
+      vertical-align: middle;
     }
-    .preview-stock-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+    .preview-table tbody tr:last-child td { border-bottom: none; }
+    .preview-table tbody td.col-num {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .preview-item-name { font-weight: 600; color: #1f2937; }
+    .preview-cat-pill {
+      display: inline-block;
+      margin-left: 0.4rem;
+      font-size: 0.65rem;
+      letter-spacing: 0.04em;
+      padding: 1px 8px;
+      border-radius: 20px;
+      vertical-align: middle;
+      font-weight: 600;
+    }
+    .pill-amb  { background: #f5f0e8; color: #92750e; border: 1px solid #e8dcc4; }
+    .pill-raw  { background: #eef0fa; color: #232E6E; border: 1px solid #d6daf3; }
+    .col-net   { color: #6b7280; }
+    .col-gross { color: var(--navy); font-weight: 700; }
+    .col-loss  { color: #b45309; font-weight: 600; }
+    .col-loss.zero { color: #9ca3af; font-weight: 400; }
+    .col-stock-ok   { color: #15803d; font-weight: 600; }
+    .col-stock-warn { color: #b91c1c; font-weight: 700; }
+
+    .preview-totals {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.6rem;
+      padding: 0.85rem 1rem 0.5rem;
+    }
+    .total-card {
+      background: var(--white);
+      border: 1px solid #f0ece4;
+      border-radius: 8px;
+      padding: 0.55rem 0.8rem;
+    }
+    .total-card-label {
+      font-size: 0.62rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #9ca3af;
+      font-weight: 700;
+    }
+    .total-card-value {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-top: 2px;
+      font-variant-numeric: tabular-nums;
+    }
+    .total-net   .total-card-value { color: #6b7280; }
+    .total-gross .total-card-value { color: var(--navy); }
+    .total-loss  .total-card-value { color: #b45309; }
+
     .preview-summary {
-      margin-top: 0.75rem;
+      margin: 0.4rem 1rem 0.85rem;
       padding: 0.65rem 0.9rem;
       border-radius: 8px;
       font-size: 0.83rem;
@@ -200,6 +267,11 @@
     }
     .summary-ok   { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
     .summary-warn { background: #fff1f1; color: #b91c1c; border: 1px solid #fecaca; }
+    @media (max-width: 600px) {
+      .preview-totals { grid-template-columns: 1fr; }
+      .preview-table thead th:nth-child(4),
+      .preview-table tbody td:nth-child(4) { display: none; } /* Fire kaybı sütununu mobilde gizle */
+    }
 
     /* ══ TOAST ══ */
     #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
@@ -355,8 +427,24 @@
               <div class="preview-header">
                 <i class="bi bi-eye"></i>
                 Tüketilecek Hammaddeler — Canlı Önizleme
+                <span class="waste-pill" id="previewWastePill" style="display:none;"></span>
               </div>
-              <div class="preview-body" id="previewBody"></div>
+              <div class="preview-body">
+                <table class="preview-table">
+                  <thead>
+                    <tr>
+                      <th>Hammadde</th>
+                      <th>Net (firesiz)</th>
+                      <th>Brüt (fireli)</th>
+                      <th>Fire Kaybı</th>
+                      <th>Mevcut Stok</th>
+                    </tr>
+                  </thead>
+                  <tbody id="previewBody"></tbody>
+                </table>
+                <div class="preview-totals" id="previewTotals"></div>
+                <div id="previewSummary"></div>
+              </div>
             </div>
 
           </form>
@@ -463,46 +551,114 @@
       } catch { showToast('Reçete detayı yüklenirken hata oluştu.'); }
     }
 
-    /* ── Canlı önizleme hesapla ── */
+    /* ── Sayı formatı (Türkçe locale, 4 ondalık) ── */
+    function fmt(n) {
+      return Number(n || 0).toLocaleString('tr-TR', { maximumFractionDigits: 4 });
+    }
+
+    /* ── Canlı önizleme hesapla — Fire (waste) dahil ───────────────────────
+       Backend (production.py) her bileşenin brüt miktarını şöyle hesaplar:
+         - Hammadde:  net × multiplier × (1 + fire% / 100)
+         - Ambalaj:   net × multiplier              (fire muaf)
+       Önizleme hem net'i hem brüt'ü ayrı sütunlarda gösterir; stok kontrolü
+       backend'in gerçekten düşeceği BRÜT miktara karşı yapılır. */
     function updatePreview() {
       if (!selectedRecipeDetail) return;
       const qty = parseFloat(document.getElementById('prodQuantity').value);
       const panel = document.getElementById('previewPanel');
       const body  = document.getElementById('previewBody');
+      const totalsEl  = document.getElementById('previewTotals');
+      const summaryEl = document.getElementById('previewSummary');
+      const wastePill = document.getElementById('previewWastePill');
 
       if (!qty || qty <= 0) { panel.style.display = 'none'; return; }
 
-      const multiplier   = qty / selectedRecipeDetail.expected_yield;
-      const ingredients  = selectedRecipeDetail.ingredients;
-      let   hasShortage  = false;
+      const wastePct    = parseFloat(selectedRecipeDetail.waste_percentage || 0);
+      const wasteFactor = 1 + wastePct / 100;
+      const multiplier  = qty / selectedRecipeDetail.expected_yield;
+      const ingredients = selectedRecipeDetail.ingredients || [];
 
-      const rows = ingredients.map(ing => {
-        const needed  = parseFloat((ing.quantity * multiplier).toFixed(4));
-        const stock   = ing.current_stock ?? 0;
-        const enough  = stock >= needed;
+      // Fire başlığı pill'i — sadece fire varsa göster
+      if (wastePct > 0) {
+        wastePill.textContent = `Fire: %${wastePct}`;
+        wastePill.style.display = 'inline-block';
+      } else {
+        wastePill.style.display = 'none';
+      }
+
+      let hasShortage = false;
+      // Birim bazlı toplamlar — farklı birimler ayrı toplanır (g, ml, adet karışmaz)
+      const totalsByUnit = {};   // { unit: {net, gross, loss} }
+
+      const rowsHtml = ingredients.map(ing => {
+        const isAmbalaj = !!ing.is_ambalaj;
+        const factor    = isAmbalaj ? 1 : wasteFactor;
+        const net       = ing.quantity * multiplier;
+        const gross     = net * factor;
+        const loss      = gross - net;
+        const stock     = ing.current_stock ?? 0;
+        const enough    = stock >= gross;          // ← BRÜT'e göre kontrol
         if (!enough) hasShortage = true;
-        const pct     = stock > 0 ? Math.min(100, (stock / needed) * 100) : 0;
-        const barColor = enough ? '#22c55e' : '#ef4444';
+
+        const unit = ing.unit || '';
+        if (!totalsByUnit[unit]) totalsByUnit[unit] = { net: 0, gross: 0, loss: 0 };
+        totalsByUnit[unit].net   += net;
+        totalsByUnit[unit].gross += gross;
+        totalsByUnit[unit].loss  += loss;
+
+        const catPill = isAmbalaj
+          ? `<span class="preview-cat-pill pill-amb" title="Ambalaja fire uygulanmaz">Ambalaj</span>`
+          : `<span class="preview-cat-pill pill-raw">Hammadde</span>`;
+
         return `
-          <div class="preview-row">
-            <span class="preview-item-name">${escHtml(ing.item_name)}</span>
-            <span class="preview-needed">${needed} ${escHtml(ing.unit || '')}</span>
-            <div style="text-align:right;">
-              <span class="preview-stock ${enough ? 'stock-ok' : 'stock-warn'}">
-                Stok: ${stock} ${escHtml(ing.unit || '')}
-              </span>
-              <div class="preview-stock-bar">
-                <div class="preview-stock-bar-fill" style="width:${pct}%;background:${barColor};"></div>
-              </div>
-            </div>
-          </div>`;
+          <tr>
+            <td>
+              <span class="preview-item-name">${escHtml(ing.item_name)}</span>
+              ${catPill}
+            </td>
+            <td class="col-num col-net">${fmt(net)} ${escHtml(unit)}</td>
+            <td class="col-num col-gross">${fmt(gross)} ${escHtml(unit)}</td>
+            <td class="col-num ${loss > 0 ? 'col-loss' : 'col-loss zero'}">
+              ${loss > 0 ? '+' + fmt(loss) + ' ' + escHtml(unit) : '—'}
+            </td>
+            <td class="col-num ${enough ? 'col-stock-ok' : 'col-stock-warn'}">
+              ${fmt(stock)} ${escHtml(unit)}
+            </td>
+          </tr>`;
       }).join('');
 
-      const summary = hasShortage
-        ? `<div class="preview-summary summary-warn"><i class="bi bi-exclamation-triangle-fill"></i> Bazı hammaddelerde stok yetersiz! Üretim başlatılamaz.</div>`
-        : `<div class="preview-summary summary-ok"><i class="bi bi-check-circle-fill"></i> Tüm hammaddeler yeterli. Üretim başlatılabilir.</div>`;
+      body.innerHTML = rowsHtml;
 
-      body.innerHTML  = rows + summary;
+      // Birim başına toplam kart(lar)ı
+      const unitKeys = Object.keys(totalsByUnit);
+      const totalsHtml = unitKeys.map(u => {
+        const t = totalsByUnit[u];
+        return `
+          <div class="total-card total-net">
+            <div class="total-card-label">Toplam Firesiz (${escHtml(u)})</div>
+            <div class="total-card-value">${fmt(t.net)}</div>
+          </div>
+          <div class="total-card total-gross">
+            <div class="total-card-label">Toplam Fireli (${escHtml(u)})</div>
+            <div class="total-card-value">${fmt(t.gross)}</div>
+          </div>
+          <div class="total-card total-loss">
+            <div class="total-card-label">Fire Kaybı (${escHtml(u)})</div>
+            <div class="total-card-value">+${fmt(t.loss)}</div>
+          </div>`;
+      }).join('');
+      totalsEl.innerHTML = totalsHtml;
+
+      summaryEl.innerHTML = hasShortage
+        ? `<div class="preview-summary summary-warn">
+             <i class="bi bi-exclamation-triangle-fill"></i>
+             Bazı hammaddelerde stok yetersiz (brüt/fireli miktara göre)! Üretim başlatılamaz.
+           </div>`
+        : `<div class="preview-summary summary-ok">
+             <i class="bi bi-check-circle-fill"></i>
+             Tüm hammaddeler yeterli. Stoktan brüt (fireli) miktarlar düşülecek.
+           </div>`;
+
       panel.style.display = 'block';
     }
 
