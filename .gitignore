@@ -28,3 +28,6 @@ minerva108.db
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code worktrees (her dal kendi .git'iyle çalışır)
+.claude/worktrees/
