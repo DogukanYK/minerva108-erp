@@ -76,6 +76,7 @@ class Item(Base):
     parent_id = Column(Integer, ForeignKey("items.id"), nullable=True, index=True)   # Variations: points to parent product
     variation_name = Column(String(100), nullable=True)                              # e.g. "200ml", "500ml"
     barcode = Column(String(64), nullable=True, index=True)                          # EAN-13 / QR / Code-128 — phone scanner pre-fill
+    pkg_type = Column(String(20), nullable=True)                                     # Ambalaj alt-tipi: şişe / kavanoz / pompa / kapak — sadece kategori=Ambalaj için
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -299,6 +300,8 @@ def init_db():
             # Phase 9 — Barcode scanning
             "ALTER TABLE items              ADD COLUMN barcode VARCHAR(64)",
             "CREATE INDEX IF NOT EXISTS ix_items_barcode ON items(barcode)",
+            # Phase 10 — Ambalaj alt-tipi (şişe / kavanoz / pompa / kapak)
+            "ALTER TABLE items              ADD COLUMN pkg_type VARCHAR(20)",
         ):
             alter_safe(stmt)
 

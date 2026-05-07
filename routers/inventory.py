@@ -29,6 +29,7 @@ class ItemCreateRequest(BaseModel):
     parent_id:      Optional[int]   = None    # Variation hierarchy — null for parents/standalones
     variation_name: Optional[str]   = None    # e.g. "200ml" — required if parent_id set
     barcode:        Optional[str]   = None    # Phase 9 — phone scanner / pre-printed labels
+    pkg_type:       Optional[str]   = None    # Phase 10 — Ambalaj alt-tipi: şişe/kavanoz/pompa/kapak/etiket
 
 
 class BulkDeleteRequest(BaseModel):
@@ -91,6 +92,7 @@ def list_items(
             "id":              i.id,
             "name":            i.name,
             "category":        i.category,
+            "pkg_type":        i.pkg_type or "",                # Phase 10 — Ambalaj alt-tipi
             "unit":            i.unit,
             "min_stock_level": i.min_stock_level,
             "current_stock":   i.current_stock,
@@ -154,6 +156,7 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db), _: dict 
         parent_id=data.parent_id,
         variation_name=(data.variation_name.strip() if data.parent_id and data.variation_name else None),
         barcode=(data.barcode.strip() if data.barcode and data.barcode.strip() else None),
+        pkg_type=(data.pkg_type.strip() if data.pkg_type and data.pkg_type.strip() else None),
     )
     db.add(item)
     db.commit()
@@ -202,6 +205,7 @@ def update_item(
     item.parent_id       = data.parent_id
     item.variation_name  = (data.variation_name.strip() if data.parent_id and data.variation_name else None)
     item.barcode         = (data.barcode.strip() if data.barcode and data.barcode.strip() else None)
+    item.pkg_type        = (data.pkg_type.strip().lower() if data.pkg_type and data.pkg_type.strip() else None)
     db.commit()
 
     # ── Low-stock alert: if the edit (typically a min_stock_level bump) leaves

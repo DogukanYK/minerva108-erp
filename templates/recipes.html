@@ -768,11 +768,25 @@
       calculateYield();
     }
 
-    /* ── Hammadde dropdown seçenekleri (Hammadde + Ambalaj) ── */
+    /* ── Hammadde dropdown seçenekleri (Hammadde + Ambalaj) ──
+       Ambalaj kategorisi pkg_type'a göre 5 alt-gruba bölünür: Şişe / Kavanoz /
+       Pompa / Kapak / Etiket + (Tipsiz).  Lab "kavanoz" reçetesi için
+       kavanoz ailesini, "şişe" reçetesi için şişe + pompa ailesini hızlıca
+       bulur — dropdown'da kayıp sayılmaz. */
+    const _PKG_GROUP_LABEL = {
+      şişe:    'Ambalaj — Şişe',
+      kavanoz: 'Ambalaj — Kavanoz',
+      pompa:   'Ambalaj — Pompa',
+      kapak:   'Ambalaj — Kapak',
+      etiket:  'Ambalaj — Etiket',
+    };
+    const _PKG_ORDER = ['şişe', 'kavanoz', 'pompa', 'kapak', 'etiket'];
+
     function buildIngredientOptions() {
       let opts = '<option value="">— Hammadde seçiniz —</option>';
       const hammadde = allItems.filter(i => i.category === 'Hammadde');
       const ambalaj  = allItems.filter(i => i.category === 'Ambalaj');
+
       if (hammadde.length) {
         opts += '<optgroup label="Hammadde">';
         hammadde.forEach(item => {
@@ -780,12 +794,34 @@
         });
         opts += '</optgroup>';
       }
+
       if (ambalaj.length) {
-        opts += '<optgroup label="Ambalaj">';
+        // Bölümle: pkg_type'a göre indeksle, sıralı şekilde işle, sonra tipsizler
+        const byType = {};
+        const tipless = [];
         ambalaj.forEach(item => {
-          opts += `<option value="${item.id}" data-category="Ambalaj">${escHtml(item.name)}${item.unit ? ' (' + item.unit + ')' : ''}</option>`;
+          const t = (item.pkg_type || '').toLowerCase();
+          if (_PKG_ORDER.includes(t)) {
+            (byType[t] = byType[t] || []).push(item);
+          } else {
+            tipless.push(item);
+          }
         });
-        opts += '</optgroup>';
+        _PKG_ORDER.forEach(t => {
+          if (!byType[t] || !byType[t].length) return;
+          opts += `<optgroup label="${_PKG_GROUP_LABEL[t]}">`;
+          byType[t].forEach(item => {
+            opts += `<option value="${item.id}" data-category="Ambalaj" data-pkg="${t}">${escHtml(item.name)}${item.unit ? ' (' + item.unit + ')' : ''}</option>`;
+          });
+          opts += '</optgroup>';
+        });
+        if (tipless.length) {
+          opts += '<optgroup label="Ambalaj — (Tipsiz)">';
+          tipless.forEach(item => {
+            opts += `<option value="${item.id}" data-category="Ambalaj">${escHtml(item.name)}${item.unit ? ' (' + item.unit + ')' : ''}</option>`;
+          });
+          opts += '</optgroup>';
+        }
       }
       return opts;
     }

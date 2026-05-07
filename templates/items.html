@@ -329,6 +329,45 @@
     .cat-yardimci    { background: #fdf4ff; color: #7e22ce; }
     .cat-diger       { background: #f3f4f6; color: #4b5563; }
 
+    /* Ambalaj alt-tip rozetleri (pkg_type) */
+    .pkg-sise    { background: #ecfeff; color: #0e7490; border: 1px solid #a5f3fc; }
+    .pkg-kavanoz { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .pkg-pompa   { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+    .pkg-kapak   { background: #fefce8; color: #a16207; border: 1px solid #fde68a; }
+    .pkg-etiket  { background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; }
+
+    /* Kategori sütunu — filtre dropdown'ı (Ambalaj sekmesinde aktif) */
+    .col-filter-wrap { position: relative; display: inline-flex; align-items: center; gap: 0.4rem; }
+    .col-filter-btn {
+      border: 1.5px solid transparent; background: transparent;
+      color: #9ca3af; padding: 2px 6px; border-radius: 6px; cursor: pointer;
+      font-size: 0.78rem; line-height: 1; transition: all 0.15s;
+    }
+    .col-filter-btn:hover, .col-filter-btn.active {
+      border-color: var(--gold); color: var(--navy); background: #faf8f4;
+    }
+    .col-filter-btn.has-active {
+      border-color: var(--navy); color: var(--white); background: var(--navy);
+    }
+    .col-filter-menu {
+      display: none; position: absolute; top: calc(100% + 4px); left: 0;
+      background: var(--white); border: 1px solid #e5e7eb; border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12); min-width: 180px; padding: 0.4rem 0;
+      z-index: 50;
+    }
+    .col-filter-menu.open { display: block; }
+    .col-filter-item {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.45rem 0.85rem; cursor: pointer; font-size: 0.85rem;
+      color: #374151; font-weight: 500;
+      text-transform: none; letter-spacing: 0; font-family: 'Jost', sans-serif;
+    }
+    .col-filter-item:hover { background: #faf8f4; color: var(--navy); }
+    .col-filter-item.checked { background: #f5f3ff; color: var(--navy); font-weight: 600; }
+    .col-filter-item .col-filter-check { width: 14px; color: var(--navy); }
+    .col-filter-item .col-filter-check::before { content: ''; }
+    .col-filter-item.checked .col-filter-check::before { content: '✓'; }
+
     /* Action buttons in table */
     .btn-icon {
       width: 30px; height: 30px; border-radius: 6px; border: none;
@@ -675,7 +714,18 @@
                 </th>
                 <th style="width:60px;">ID</th>
                 <th class="sortable" data-col="name">Ürün Adı <span class="sort-icon"></span></th>
-                <th class="sortable" data-col="category">Kategori <span class="sort-icon"></span></th>
+                <th data-col="category">
+                  <span class="col-filter-wrap">
+                    <span class="sortable" data-col="category" style="cursor:pointer;">
+                      Kategori <span class="sort-icon"></span>
+                    </span>
+                    <button type="button" class="col-filter-btn" id="catFilterBtn"
+                      title="Alt-tipe göre filtrele (sadece Ambalaj sekmesinde)">
+                      <i class="bi bi-funnel"></i>
+                    </button>
+                    <div class="col-filter-menu" id="catFilterMenu" role="menu"></div>
+                  </span>
+                </th>
                 <th class="sortable" data-col="unit">Birim <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="min_stock_level">Min. Stok <span class="sort-icon"></span></th>
                 {% if can('finance', 'view') %}
@@ -730,6 +780,23 @@
                 <option value="Kimyasal">Kimyasal</option>
                 <option value="Yardımcı">Yardımcı</option>
                 <option value="Diğer">Diğer</option>
+              </select>
+            </div>
+
+            <!-- ── Ambalaj alt-tipi (sadece Kategori=Ambalaj iken görünür) ── -->
+            <div class="mb-3" id="pkgTypeSection" style="display:none;">
+              <label class="form-label-sm">Ambalaj Alt-Tipi
+                <small style="color:#9ca3af;font-weight:400;text-transform:none;letter-spacing:0;">
+                  (filtreleme + üretimde ambalaj seçimi için)
+                </small>
+              </label>
+              <select class="form-select" id="itemPkgType">
+                <option value="">— Tip yok —</option>
+                <option value="şişe">Şişe</option>
+                <option value="kavanoz">Kavanoz</option>
+                <option value="pompa">Pompa</option>
+                <option value="kapak">Kapak</option>
+                <option value="etiket">Etiket</option>
               </select>
             </div>
 
@@ -926,8 +993,32 @@
     }
 
     /* ── Category badge ── */
-    function catBadge(cat) {
+    /* Ambalaj kategorisinde pkg_type doluysa rozet onun adını gösterir
+       (Etiket / Şişe / Kavanoz / Pompa / Kapak); değilse genel "Ambalaj"
+       rozeti. Bu sayede tabloya bakan biri "bu satır ambalajın hangi
+       alt-tipi" sorusunu tek bakışta cevaplar. */
+    const PKG_LABEL = {
+      şişe:    'Şişe',
+      kavanoz: 'Kavanoz',
+      pompa:   'Pompa',
+      kapak:   'Kapak',
+      etiket:  'Etiket',
+    };
+    const PKG_CLASS = {
+      şişe:    'pkg-sise',
+      kavanoz: 'pkg-kavanoz',
+      pompa:   'pkg-pompa',
+      kapak:   'pkg-kapak',
+      etiket:  'pkg-etiket',
+    };
+
+    function catBadge(cat, pkgType) {
       if (!cat) return '<span style="color:#9ca3af;font-size:0.8rem;">—</span>';
+      // Ambalaj + pkg_type → alt-tip rozeti
+      if (cat === 'Ambalaj' && pkgType && PKG_LABEL[pkgType]) {
+        const cls = PKG_CLASS[pkgType] || 'cat-diger';
+        return `<span class="cat-badge ${cls}">${PKG_LABEL[pkgType]}</span>`;
+      }
       const map = {
         'Hammadde':    'cat-hammadde',
         'Ambalaj':     'cat-ambalaj',
@@ -977,7 +1068,7 @@
             <span class="parent-badge"><i class="bi bi-diagram-2"></i> Ana Ürün</span>
             <span class="child-count-badge">${item.child_count} varyasyon</span>
           </td>
-          <td>${catBadge(item.category)}</td>
+          <td>${catBadge(item.category, item.pkg_type)}</td>
           <td><span class="parent-muted-cell">—</span></td>
           <td><span class="parent-muted-cell">—</span></td>
           ${parentCostCellTd}
@@ -1001,7 +1092,7 @@
             ${escHtml(item.name)}
             ${item.parent_name ? `<div class="variation-parent-name">↳ ${escHtml(item.parent_name)}</div>` : ''}
           </td>
-          <td>${catBadge(item.category)}</td>
+          <td>${catBadge(item.category, item.pkg_type)}</td>
           <td>${escHtml(item.unit)}</td>
           <td>${item.min_stock_level ?? 0}</td>
           ${costCellTd}
@@ -1019,7 +1110,7 @@
           </td>
           <td class="td-id">#${item.id}</td>
           <td class="td-name">${escHtml(item.name)}</td>
-          <td>${catBadge(item.category)}</td>
+          <td>${catBadge(item.category, item.pkg_type)}</td>
           <td>${escHtml(item.unit)}</td>
           <td>${item.min_stock_level ?? 0}</td>
           ${costCellTd}
@@ -1125,16 +1216,26 @@
       // 1. Tab filter first
       let data = allItems.filter(tabCfg.filter);
 
-      // 2. Search within the active tab — name, category, OR barcode (Phase 9)
+      // 2. pkg_type filter (sadece Ambalaj sekmesinde anlamlı)
+      if (activeTab === 'ambalaj' && pkgFilter !== null) {
+        if (pkgFilter === '__none__') {
+          data = data.filter(i => !i.pkg_type);
+        } else {
+          data = data.filter(i => i.pkg_type === pkgFilter);
+        }
+      }
+
+      // 3. Search within the active tab — name, category, OR barcode (Phase 9)
       if (q) {
         data = data.filter(i =>
           i.name.toLowerCase().includes(q) ||
           (i.category || '').toLowerCase().includes(q) ||
+          (i.pkg_type || '').toLowerCase().includes(q) ||
           (i.barcode  || '').toLowerCase().includes(q)
         );
       }
 
-      // 3. Sort
+      // 4. Sort
       if (sortCol) {
         data = [...data].sort((a, b) => {
           let va = a[sortCol] ?? '', vb = b[sortCol] ?? '';
@@ -1151,13 +1252,17 @@
 
     /* ── Sort headers (Bug 1) ─────────────────────────────────────────────
        Delegated on thead so it survives any DOM rebuild and binds even if
-       this script loads before the thead is fully parsed. */
+       this script loads before the thead is fully parsed. Note: the click
+       must hit the `.sortable` element specifically — bu sayede kategori
+       sütunundaki filtre butonu sort'u tetiklemez. */
     const _itemsThead = document.querySelector('table thead');
     if (_itemsThead) {
       _itemsThead.addEventListener('click', (e) => {
-        const th = e.target.closest('th.sortable');
-        if (!th || !th.dataset.col) return;
-        const col = th.dataset.col;
+        // Filter butonu / dropdown click'leri sort'u tetiklemesin
+        if (e.target.closest('.col-filter-btn') || e.target.closest('.col-filter-menu')) return;
+        const sortable = e.target.closest('.sortable');
+        if (!sortable || !sortable.dataset.col) return;
+        const col = sortable.dataset.col;
         if (sortCol === col) {
           sortDir = sortDir === 'asc' ? 'desc' : 'asc';
         } else {
@@ -1165,10 +1270,76 @@
           sortDir = 'asc';
         }
         _itemsThead.querySelectorAll('th').forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
-        th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+        sortable.closest('th')?.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
         applyFiltersAndSort();
       });
     }
+
+    /* ── Kategori sütunu — pkg_type filtre dropdown'ı ─────────────────────
+       Sadece "Ambalaj" sekmesinde işlevsel; diğer sekmelerde buton görünür
+       ama tıklayınca uyarı verir.  pkg_type değerleri:
+         null  →  "Tipsiz" (filtreden geçer ama rozet boş)
+         şişe / kavanoz / pompa / kapak / etiket  →  alt-tip rozetli
+       Filtre seçilince sadece o pkg_type'a sahip ambalajlar listelenir. */
+    let pkgFilter = null;   // null = filtre yok
+    const _PKG_OPTIONS = [
+      { value: null,      label: 'Tümü',      icon: 'bi-list-ul' },
+      { value: 'şişe',    label: 'Şişe',      icon: 'bi-droplet-half' },
+      { value: 'kavanoz', label: 'Kavanoz',   icon: 'bi-cup-fill' },
+      { value: 'pompa',   label: 'Pompa',     icon: 'bi-arrow-up-circle' },
+      { value: 'kapak',   label: 'Kapak',     icon: 'bi-circle-half' },
+      { value: 'etiket',  label: 'Etiket',    icon: 'bi-tag-fill' },
+      { value: '__none__', label: 'Tipi yok', icon: 'bi-question-circle' },
+    ];
+
+    function renderPkgMenu() {
+      const menu = document.getElementById('catFilterMenu');
+      if (!menu) return;
+      menu.innerHTML = _PKG_OPTIONS.map(o => {
+        const checked = (pkgFilter === o.value) ||
+                        (pkgFilter === null && o.value === null);
+        return `<div class="col-filter-item ${checked ? 'checked' : ''}" data-val="${o.value === null ? '' : o.value}">
+          <span class="col-filter-check"></span>
+          <i class="bi ${o.icon}"></i>
+          <span>${o.label}</span>
+        </div>`;
+      }).join('');
+      // Filtre aktifken butonu vurgula
+      const btn = document.getElementById('catFilterBtn');
+      if (btn) {
+        if (pkgFilter !== null) btn.classList.add('has-active');
+        else btn.classList.remove('has-active');
+      }
+    }
+
+    document.addEventListener('click', (e) => {
+      const btn  = document.getElementById('catFilterBtn');
+      const menu = document.getElementById('catFilterMenu');
+      if (!btn || !menu) return;
+      // Buton tıklaması → menüyü aç/kapat
+      if (e.target.closest('#catFilterBtn')) {
+        if (activeTab !== 'ambalaj') {
+          showToast('Bu filtre yalnızca Ambalaj sekmesinde aktif.');
+          return;
+        }
+        renderPkgMenu();
+        menu.classList.toggle('open');
+        e.stopPropagation();
+        return;
+      }
+      // Menü öğesi tıklaması
+      const item = e.target.closest('.col-filter-item');
+      if (item && menu.contains(item)) {
+        const val = item.dataset.val;
+        pkgFilter = val === '' ? null : val;
+        menu.classList.remove('open');
+        renderPkgMenu();
+        applyFiltersAndSort();
+        return;
+      }
+      // Dışına tıklayınca kapat
+      if (menu.classList.contains('open')) menu.classList.remove('open');
+    });
 
     /* ── Tab navigation ── */
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -1181,10 +1352,13 @@
         this.classList.add('active');
         this.setAttribute('aria-selected', 'true');
 
-        // Switch active tab, reset search + sort
+        // Switch active tab, reset search + sort + pkg filter
         activeTab = this.dataset.tab;
         document.getElementById('searchInput').value = '';
         sortCol = null; sortDir = 'asc';
+        pkgFilter = null;
+        document.getElementById('catFilterMenu')?.classList.remove('open');
+        document.getElementById('catFilterBtn')?.classList.remove('has-active');
         document.querySelectorAll('thead th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
 
         // Clear selection (tabs have different item sets)
@@ -1255,6 +1429,9 @@
         sec.style.display = 'none';
         // Don't reset toggle here when editing — handled by editItem flow
       }
+      // Ambalaj alt-tipi sadece Ambalaj kategorisinde anlamlı
+      const pkgSec = document.getElementById('pkgTypeSection');
+      if (pkgSec) pkgSec.style.display = (cat === 'Ambalaj') ? 'block' : 'none';
     }
 
     function populateParentDropdown() {
@@ -1308,6 +1485,9 @@
       // Phase 9 — pre-fill barcode if previously set
       const _bcEl = document.getElementById('itemBarcode');
       if (_bcEl) _bcEl.value = item.barcode || '';
+      // Phase 10 — Ambalaj alt-tipi (pkg_type)
+      const _pkgEl = document.getElementById('itemPkgType');
+      if (_pkgEl) _pkgEl.value = item.pkg_type || '';
 
       // ── Variation state ─────────────────────────────────────────────────
       resetVariationFields();
@@ -1405,6 +1585,7 @@
         parent_id,
         variation_name,
         barcode:        (document.getElementById('itemBarcode')?.value || '').trim() || null,
+        pkg_type:       (document.getElementById('itemPkgType')?.value || '').trim() || null,
       };
       try {
         const url    = editingItemId ? `/api/items/${editingItemId}` : '/api/items';
