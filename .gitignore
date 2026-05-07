@@ -8,10 +8,13 @@ venv/
 env/
 .venv/
 
-# Local DB (dev SQLite — production uses Postgres)
+# Local DB (dev SQLite — eski; artık dev de PostgreSQL kullanıyor)
 *.db
 *.sqlite3
 minerva108.db
+
+# DB yedekleri (lokalden alınan pg_dump dosyaları)
+backups/
 
 # Env / secrets — NEVER commit
 .env
