@@ -41,6 +41,7 @@ Dry-run özet bir JSON dökümü yazdırır; --commit eklemeden DB'ye dokunmaz.
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections import defaultdict
@@ -57,7 +58,9 @@ from database import SessionLocal, Item, Inventory, Transaction, Supplier   # no
 
 # ─── Konfigürasyon ────────────────────────────────────────────────────────
 
-DOWNLOADS = Path("/Users/dogukan/Downloads")
+# Excel'lerin nerede olduğunu env var ile override edebilirsin — sunucuda
+# /tmp/excel'a SCP'lediğinde MINERVA_BULK_DOWNLOADS=/tmp/excel ile çalıştır.
+DOWNLOADS = Path(os.environ.get("MINERVA_BULK_DOWNLOADS", "/Users/dogukan/Downloads"))
 
 FILES = {
     "hammadde":          DOWNLOADS / "HAMMADDE STOK TAKİP LİSTESİ.xlsx",
