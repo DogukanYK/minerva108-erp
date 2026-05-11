@@ -271,6 +271,7 @@
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
+  <script src="/static/toast.js" defer></script>
 </head>
 <body>
 
@@ -577,15 +578,6 @@
     /* ── Utilities ── */
     function escHtml(str) {
       return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    }
-
-    function showToast(msg, type = 'error') {
-      const c = document.getElementById('toast-container');
-      const el = document.createElement('div');
-      el.className = `toast-msg toast-${type}`;
-      el.innerHTML = `<span>${type === 'error' ? '✕' : '✓'}</span><span>${msg}</span>`;
-      c.appendChild(el);
-      setTimeout(() => { el.style.transition='opacity .4s'; el.style.opacity='0'; setTimeout(()=>el.remove(),400); }, 3500);
     }
 
     /* ── Progress bar ── */

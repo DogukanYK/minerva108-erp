@@ -193,6 +193,7 @@
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
+  <script src="/static/toast.js" defer></script>
 </head>
 <body>
 
@@ -251,26 +252,6 @@
   <div id="toast-container"></div>
 
   <script>
-    function showToast(message, type = 'error') {
-      const container = document.getElementById('toast-container');
-      const icon = type === 'error' ? '✕' : '✓';
-      const toast = document.createElement('div');
-      toast.className = `toast-msg toast-${type}`;
-      // R7: createElement + textContent — XSS-safe (auth flow için kritik)
-      const iconSpan = document.createElement('span');
-      iconSpan.textContent = icon;
-      const msgSpan  = document.createElement('span');
-      msgSpan.textContent = String(message);
-      toast.appendChild(iconSpan);
-      toast.appendChild(msgSpan);
-      container.appendChild(toast);
-      setTimeout(() => {
-        toast.style.transition = 'opacity 0.4s';
-        toast.style.opacity = '0';
-        setTimeout(() => toast.remove(), 400);
-      }, 3500);
-    }
-
     document.getElementById('loginForm').addEventListener('submit', async function (e) {
       e.preventDefault();
 

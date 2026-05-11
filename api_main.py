@@ -196,12 +196,17 @@ def serve_service_worker():
 @app.on_event("startup")
 def startup_event():
     init_db()
-    start_scheduler()        # daily 09:00 expiry scan + future cron jobs
+    # Test ortamında DISABLE_SCHEDULER=true → APScheduler atla.
+    # Lifespan async cleanup'ı TestClient teardown'unda event loop
+    # kapanırken hata atıyordu; testler için bu güvenli kapı.
+    if os.getenv("DISABLE_SCHEDULER", "false").lower() not in ("1", "true", "yes"):
+        start_scheduler()
 
 
 @app.on_event("shutdown")
 def shutdown_event():
-    stop_scheduler()
+    if os.getenv("DISABLE_SCHEDULER", "false").lower() not in ("1", "true", "yes"):
+        stop_scheduler()
 
 
 # ─── Mount domain routers ───────────────────────────────────────────────────

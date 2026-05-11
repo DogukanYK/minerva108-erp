@@ -1,0 +1,69 @@
+Minerva108 — Alembic Migration Rehberi
+========================================
+
+Alembic = SQLAlchemy modeline göre schema değişikliklerini versiyonlayan tool.
+Eskiden `init_db()`'deki elle ALTER TABLE listesi vardı; artık değişiklikler
+buradan yönetilir.  Eski liste geriye dönük uyumluluk için kaldı (idempotent).
+
+GENEL AKIŞ
+==========
+
+1) database.py'de model değişikliği yap (yeni kolon, tablo, index)
+2) Migration üret:
+       alembic revision --autogenerate -m "açıklayıcı_isim"
+3) Üretilen dosyayı alembic/versions/ altında incele (autogenerate %100
+   doğru olmaz — özellikle ENUM, JSON gibi konularda manuel düzeltme şart)
+4) Lokalde uygula:
+       alembic upgrade head
+5) Test et — uygulama çalışıyor mu, veriler bozulmuş mu?
+6) Commit + deploy (sunucuda da `alembic upgrade head` çalıştır)
+
+KOMUT REFERANSI
+===============
+
+Geçerli durum:
+    alembic current        # şu an hangi revision'dayız?
+    alembic history        # tüm revision'lar
+    alembic show <id>      # bir revision'ın detayı
+
+Yeni migration:
+    alembic revision --autogenerate -m "kolon_eklendi"
+    alembic revision -m "bos_template_olarak_ac"   # autogenerate'siz
+
+Uygula / geri al:
+    alembic upgrade head            # en güncel'e çık
+    alembic upgrade +1              # bir adım ileri
+    alembic downgrade -1            # bir adım geri (geri-uyumluysa)
+    alembic downgrade base          # her şeyi geri al
+
+İlk kurulum (yeni sunucu / DB):
+    alembic stamp head              # mevcut DB'yi en son revision'da say
+    # ya da
+    alembic upgrade head            # boş DB'den her migration'ı uygula
+
+ÖNEMLİ NOTLAR
+=============
+
+* Alembic env.py DATABASE_URL'i .env'den okur (alembic.ini placeholder).
+  Dev: lokal PG.  Prod: sunucu PG (systemd env).  Aynı kodla çalışır.
+
+* Autogenerate sihirli değil — özellikle:
+    - Kolon yeniden adlandırma (drop + add olarak algılar)
+    - ENUM tip değişiklikleri
+    - JSON/JSONB değişiklikleri
+  Migration üretildiyse açıp gözle bak, gerekirse manuel düzelt.
+
+* init_db()'deki idempotent ALTER listesi geriye dönük uyumluluk için
+  kaldı.  YENİ değişiklikler oraya değil, Alembic migration'ına yazılır.
+
+PROD'A İLK KURULUM
+==================
+
+Mevcut prod DB Alembic henüz görmedi — bir kez stamp gerek:
+
+    ssh prod
+    cd /var/www/minerva
+    set -a && source .env && set +a
+    venv/bin/alembic stamp head
+
+Bu sonra: yeni migration'lar `alembic upgrade head` ile uygulanır.
