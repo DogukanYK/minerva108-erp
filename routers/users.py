@@ -12,6 +12,7 @@ from typing import Optional
 from database import get_db, User
 from core.limiter import limiter
 from core.audit import log_admin_event
+from core.password_strength import validate_password_strength
 from core.permissions import (
     _VALID_ROLES,
     PERMISSION_CATEGORIES,
@@ -82,10 +83,9 @@ def admin_create_user(
     """Yeni kullanıcı hesabı oluştur."""
     if data.role not in _VALID_ROLES:
         return JSONResponse(status_code=422, content={"detail": f"Geçersiz rol: '{data.role}'."})
-    if len(data.password) < MIN_PASSWORD_LEN:
-        return JSONResponse(status_code=422, content={
-            "detail": f"Şifre en az {MIN_PASSWORD_LEN} karakter olmalıdır."
-        })
+    pw_ok, pw_err = validate_password_strength(data.password)
+    if not pw_ok:
+        return JSONResponse(status_code=422, content={"detail": pw_err})
 
     existing = db.query(User).filter(User.username == data.username).first()
     if existing:
@@ -173,10 +173,9 @@ def admin_reset_password(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return JSONResponse(status_code=404, content={"detail": "Kullanıcı bulunamadı."})
-    if len(data.new_password) < MIN_PASSWORD_LEN:
-        return JSONResponse(status_code=422, content={
-            "detail": f"Şifre en az {MIN_PASSWORD_LEN} karakter olmalıdır."
-        })
+    pw_ok, pw_err = validate_password_strength(data.new_password)
+    if not pw_ok:
+        return JSONResponse(status_code=422, content={"detail": pw_err})
 
     import bcrypt as _bcrypt
     user.password_hash = _bcrypt.hashpw(data.new_password.encode(), _bcrypt.gensalt()).decode()

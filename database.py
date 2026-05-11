@@ -42,6 +42,11 @@ class User(Base):
     permissions = Column(Text, nullable=True)   # JSON: granular RBAC 2.0 — overrides role defaults
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Account lockout (R3) — N başarısız deneme sonrası geçici kilit.
+    # IP-based rate limit zaten 5/15dk; kullanıcı-bazlı bu ikinci katman
+    # saldırgan IP rotate etse bile hesabı koruyor.
+    failed_login_attempts = Column(Integer, default=0)
+    lockout_until         = Column(DateTime, nullable=True)
 
 
 class Supplier(Base):
@@ -337,6 +342,9 @@ def init_db():
             # Phase 11 — Admin audit log (security hardening)
             "CREATE INDEX IF NOT EXISTS ix_admin_audit_action_ts ON admin_audit_log(action, timestamp)",
             "CREATE INDEX IF NOT EXISTS ix_admin_audit_actor ON admin_audit_log(actor_id)",
+            # Phase 12 — Account lockout (R3)
+            "ALTER TABLE users              ADD COLUMN failed_login_attempts INTEGER DEFAULT 0",
+            "ALTER TABLE users              ADD COLUMN lockout_until TIMESTAMP",
         ):
             alter_safe(stmt)
 

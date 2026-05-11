@@ -256,7 +256,13 @@
       const icon = type === 'error' ? '✕' : '✓';
       const toast = document.createElement('div');
       toast.className = `toast-msg toast-${type}`;
-      toast.innerHTML = `<span>${icon}</span><span>${message}</span>`;
+      // R7: createElement + textContent — XSS-safe (auth flow için kritik)
+      const iconSpan = document.createElement('span');
+      iconSpan.textContent = icon;
+      const msgSpan  = document.createElement('span');
+      msgSpan.textContent = String(message);
+      toast.appendChild(iconSpan);
+      toast.appendChild(msgSpan);
       container.appendChild(toast);
       setTimeout(() => {
         toast.style.transition = 'opacity 0.4s';

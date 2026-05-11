@@ -842,7 +842,14 @@
       const icon = type === 'error' ? '✕' : '✓';
       const el = document.createElement('div');
       el.className = `toast-msg toast-${type}`;
-      el.innerHTML = `<span>${icon}</span><span>${message}</span>`;
+      // R7: createElement + textContent — message gelecekte API hata mesajı
+      // taşıyabilir, XSS-safe path kullan.
+      const iconSpan = document.createElement('span');
+      iconSpan.textContent = icon;
+      const msgSpan  = document.createElement('span');
+      msgSpan.textContent = String(message);
+      el.appendChild(iconSpan);
+      el.appendChild(msgSpan);
       container.appendChild(el);
       setTimeout(() => {
         el.style.transition = 'opacity 0.4s';

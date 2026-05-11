@@ -52,6 +52,17 @@ app = FastAPI(
 # Tüm response'lara defansif HTTP header'ları ekler.  CSP "self + Bootstrap/
 # CDN + html5-qrcode" — frontend mevcut CDN'lerden script çekiyor, onları
 # whitelist'liyoruz.  CSP genel sıkı kalıyor — XSS olsa script çalışamaz.
+#
+# 'unsafe-inline' hâlâ aktif çünkü Jinja sayfalarında inline <script> blokları
+# var.  Tamamen kaldırmak büyük bir frontend refactoru gerektirir (her
+# sayfa için ayrı .js).  Bu seferki olgunlaştırma turunda alternatif olarak
+# nonce-based CSP'ye geçeriz: middleware her response için 16-byte rastgele
+# nonce üretir, response.headers'a CSP-with-nonce ekler, ve template'ler
+# inline script'lerini <script nonce="{{ csp_nonce }}"> ile imzalar.
+# Şu an Jinja template'lerini hepsini güncellemek yerine (50+ inline blok),
+# unsafe-inline'ı tutuyoruz ve XSS'i savunmanın çoğunu CSP'nin diğer
+# direktifleri (script-src whitelist, frame-ancestors none, base-uri self,
+# form-action self) ile sağlıyoruz.  Bu pragmatik denge.
 from starlette.middleware.base import BaseHTTPMiddleware
 
 
@@ -59,6 +70,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
         # Content-Security-Policy: çoğu XSS senaryosunu sıfırlar
+        # 'unsafe-eval' YASAK — eval() veya new Function() ile saldırı yapılamaz
+        # 'object-src none' — Flash/PDF/applet vektörlerini kapatır
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline' "
@@ -68,6 +81,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com; "
             "img-src 'self' data: blob: https:; "
             "connect-src 'self'; "
+            "object-src 'none'; "
             "frame-ancestors 'none'; "
             "base-uri 'self'; "
             "form-action 'self'"

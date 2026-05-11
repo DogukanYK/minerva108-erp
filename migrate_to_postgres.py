@@ -129,8 +129,17 @@ def main():
             sys.exit(0)
 
         # TRUNCATE all tables in one shot — RESTART IDENTITY also resets sequences
+        # ⚠️ GÜVENLİK: Aşağıdaki f-string SQL'i kullanıcıdan değil, sabit TABLES
+        # listesinden besleniyor (her ismi SQLAlchemy modelinden alıyor).  Bu
+        # script'i parametreleştirip dışarıdan tablo adı kabul edersen, identifier
+        # quoting (psycopg2.sql.Identifier) kullan — yoksa SQL injection olur.
         print(f"\n→ PG tabloları temizleniyor (TRUNCATE CASCADE)…")
         with pg_engine.connect() as conn:
+            # Assertion: tablo adları sadece [a-z_]+ olmalı — model kontrolü
+            for M in TABLES:
+                assert M.__tablename__.replace("_", "").isalnum(), (
+                    f"Tablo adında güvensiz karakter: {M.__tablename__}"
+                )
             tables_csv = ", ".join(M.__tablename__ for M in TABLES)
             conn.execute(text(f"TRUNCATE {tables_csv} RESTART IDENTITY CASCADE"))
             conn.commit()
@@ -160,11 +169,14 @@ def main():
             print(f"   ✅ {len(rows)} satır kopyalandı")
 
         # 5. Reset PG sequences to MAX(id) so new inserts don't collide with existing IDs
+        # ⚠️ tname, pk_col, seq_name yine sabit Model metadata'sından — user input yok.
         print(f"\n→ PG sequence'ları senkronize ediliyor…")
         with pg_engine.connect() as conn:
             for Model in TABLES:
                 tname = Model.__tablename__
                 pk_col = list(Model.__table__.primary_key.columns)[0].name
+                # Güvenlik: identifier'ları assert et
+                assert tname.replace("_", "").isalnum() and pk_col.replace("_", "").isalnum()
                 seq_name = f"{tname}_{pk_col}_seq"
                 try:
                     conn.execute(text(
