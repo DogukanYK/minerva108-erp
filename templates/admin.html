@@ -1625,6 +1625,15 @@
     }
 
     /* ── Logout ── */
+    document.getElementById('logoutBtn').addEventListener('click', async function () {
+      this.disabled = true;
+      try { await fetch('/api/logout', { method: 'POST' }); window.location.href = '/login'; }
+      catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
+    });
+
+    /* ── Init ── */
+    loadUsers();
+  </script>
 
 </body>
 </html>
