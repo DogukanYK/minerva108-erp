@@ -50,7 +50,7 @@ PERMISSION_CATEGORIES = {
     "finance":    ["view"],            # Cost prices, recipe BOM costs, margins
     "b2b":        ["view", "create", "confirm"],
     "reports":    ["view"],
-    "admin":      ["view", "create", "edit", "delete", "import_excel", "view_audit"],
+    "admin":      ["view", "create", "edit", "delete", "import_excel", "view_audit", "backup"],
 }
 
 # Default permission set per role — used when a user's `permissions` JSON is null.
@@ -65,7 +65,7 @@ _DEFAULT_PERMISSIONS = {
         "finance":    {"view": True},
         "b2b":        {"view": True,  "create": True,  "confirm": True},
         "reports":    {"view": True},
-        "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": True},
+        "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": True, "backup": False},
     },
     "LabLead": {
         "items":      {"view": True,  "create": True,  "edit": True,  "delete": True,  "import": True},
@@ -76,7 +76,7 @@ _DEFAULT_PERMISSIONS = {
         "finance":    {"view": False},
         "b2b":        {"view": False, "create": False, "confirm": False},
         "reports":    {"view": True},
-        "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False},
+        "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
     },
     "LabTech": {
         "items":      {"view": True,  "create": True,  "edit": False, "delete": False, "import": False},
@@ -87,7 +87,7 @@ _DEFAULT_PERMISSIONS = {
         "finance":    {"view": False},
         "b2b":        {"view": False, "create": False, "confirm": False},
         "reports":    {"view": True},
-        "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False},
+        "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
     },
     "Staff": {
         # Read-only baseline
@@ -99,7 +99,7 @@ _DEFAULT_PERMISSIONS = {
         "finance":    {"view": False},
         "b2b":        {"view": False, "create": False, "confirm": False},
         "reports":    {"view": True},
-        "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False},
+        "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
     },
 }
 

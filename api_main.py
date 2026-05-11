@@ -30,7 +30,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup
 
 
 # ─── App init ───────────────────────────────────────────────────────────────
@@ -200,6 +200,7 @@ app.include_router(production.router)
 app.include_router(b2b.router)
 app.include_router(reports.router)
 app.include_router(notifications.router)
+app.include_router(backup.router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────

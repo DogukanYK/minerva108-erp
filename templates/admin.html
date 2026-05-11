@@ -527,6 +527,62 @@
         <div id="importResult"></div>
       </div>
 
+      <!-- ════ BACKUP & RESTORE ════ -->
+      {% if can('admin', 'backup') %}
+      <div class="import-panel" style="margin-top:2rem;border-left:4px solid var(--gold);">
+        <div class="import-panel-header">
+          <span class="import-panel-icon" style="background:rgba(201,172,111,0.16);color:var(--gold);">
+            <i class="bi bi-shield-lock-fill"></i>
+          </span>
+          <div>
+            <h2 class="import-panel-title">Sistem Yedekleri</h2>
+            <p class="import-panel-sub">
+              Veritabanının tam yedeğini al · İndir · Felakette geri yükle ·
+              Hiçbir lot, kullanıcı, izlenebilirlik kaybolmaz
+            </p>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:0.6rem;margin-top:0.8rem;flex-wrap:wrap;">
+          <button class="btn-import" id="backupCreateBtn" style="background:var(--navy);">
+            <i class="bi bi-cloud-arrow-down-fill"></i> Şimdi Yedek Al
+          </button>
+          <label class="btn-import" for="backupUploadInput" style="background:#f9f7f3;color:var(--navy);border:1.5px solid #e5e7eb;cursor:pointer;">
+            <i class="bi bi-cloud-arrow-up-fill"></i> Yedek Dosyası Yükle
+            <input type="file" id="backupUploadInput" accept=".dump" style="display:none;" />
+          </label>
+          <button class="btn-cancel" id="backupRefreshBtn" style="margin-left:auto;">
+            <i class="bi bi-arrow-clockwise"></i> Yenile
+          </button>
+        </div>
+
+        <div id="backupStatus" style="margin-top:0.8rem;"></div>
+
+        <div class="table-responsive" style="margin-top:1rem;">
+          <table style="width:100%;">
+            <thead>
+              <tr style="background:#f9f7f3;border-bottom:2px solid #f0ece4;">
+                <th style="padding:0.65rem 0.85rem;font-size:0.7rem;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;text-align:left;">Yedek Dosyası</th>
+                <th style="padding:0.65rem 0.85rem;font-size:0.7rem;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;text-align:right;">Boyut</th>
+                <th style="padding:0.65rem 0.85rem;font-size:0.7rem;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">Tarih</th>
+                <th style="padding:0.65rem 0.85rem;font-size:0.7rem;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;text-align:right;">İşlemler</th>
+              </tr>
+            </thead>
+            <tbody id="backupListBody">
+              <tr><td colspan="4" style="padding:2rem;text-align:center;color:#9ca3af;">Yükleniyor…</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div style="margin-top:0.85rem;padding:0.6rem 0.85rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:0.78rem;color:#9a3412;">
+          <i class="bi bi-exclamation-triangle-fill"></i>
+          <strong>Restore</strong> tüm mevcut veriyi silip yedek dosyasıyla değiştirir.
+          Otomatik olarak önce safety backup alınır — yanlış geri yüklersen onu kullanabilirsin.
+          Sadece <strong>SuperAdmin</strong> bu işlemi yapabilir.
+        </div>
+      </div>
+      {% endif %}
+
     </div>
   </main>
 
@@ -557,7 +613,7 @@
               </div>
               <div class="col-12 col-md-6">
                 <label class="form-label-sm">Şifre *</label>
-                <input type="password" class="form-control" id="addPassword" placeholder="En az 6 karakter" autocomplete="new-password" oninput="checkPwStrength('addPassword','addPwHint')" />
+                <input type="password" class="form-control" id="addPassword" placeholder="En az 10 karakter" autocomplete="new-password" oninput="checkPwStrength('addPassword','addPwHint')" />
                 <div class="pw-hint" id="addPwHint"></div>
               </div>
               <div class="col-12 col-md-6">
@@ -658,7 +714,7 @@
           <p id="resetModalDesc" style="font-size:0.85rem; color:#374151; margin-bottom:1rem;"></p>
           <div class="mb-3">
             <label class="form-label-sm">Yeni Şifre *</label>
-            <input type="password" class="form-control" id="newPassword" placeholder="En az 6 karakter" autocomplete="new-password" oninput="checkPwStrength('newPassword','newPwHint')" />
+            <input type="password" class="form-control" id="newPassword" placeholder="En az 10 karakter" autocomplete="new-password" oninput="checkPwStrength('newPassword','newPwHint')" />
             <div class="pw-hint" id="newPwHint"></div>
           </div>
           <div class="mb-1">
@@ -1404,9 +1460,179 @@
       catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
     });
 
-    /* ── Init ── */
-    loadUsers();
-  </script>
+    /* ── Backup & Restore (admin.backup izniyle) ────────────────────────
+       Akış: liste yükle → "Şimdi Yedek Al" butonu → yedek alır + listeyi
+       yeniler.  Tablo her satırda: İndir / Sil / Geri Yükle.  Geri yükleme
+       SuperAdmin zorunlu, "RESTORE" yazılı tek-onay konfirmasyon.
+       Tüm event'ler admin_audit_log'a yazılır (backend tarafından). */
+    if (window.can && window.can('admin', 'backup')) {
+      const backupBody     = document.getElementById('backupListBody');
+      const backupStatus   = document.getElementById('backupStatus');
+      const createBtn      = document.getElementById('backupCreateBtn');
+      const uploadInput    = document.getElementById('backupUploadInput');
+      const refreshBtn     = document.getElementById('backupRefreshBtn');
+
+      function setBackupStatus(msg, type) {
+        if (!msg) { backupStatus.innerHTML = ''; return; }
+        const colors = {
+          ok:    'background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0',
+          err:   'background:#fff1f1;color:#b91c1c;border:1px solid #fecaca',
+          info:  'background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe',
+          busy:  'background:#fef3c7;color:#92400e;border:1px solid #fde68a',
+        };
+        const c = colors[type] || colors.info;
+        backupStatus.innerHTML = `<div style="padding:0.6rem 0.85rem;border-radius:8px;font-size:0.85rem;font-weight:500;${c}">${msg}</div>`;
+      }
+
+      async function loadBackupList() {
+        try {
+          const res = await fetch('/api/admin/backup');
+          if (!res.ok) {
+            backupBody.innerHTML = '<tr><td colspan="4" style="padding:1.4rem;text-align:center;color:#b91c1c;">Yetkisiz veya hata.</td></tr>';
+            return;
+          }
+          const data = await res.json();
+          const items = data.backups || [];
+          if (!items.length) {
+            backupBody.innerHTML = '<tr><td colspan="4" style="padding:1.4rem;text-align:center;color:#9ca3af;">Henüz yedek yok. "Şimdi Yedek Al" butonuna basabilirsiniz.</td></tr>';
+            return;
+          }
+          // İlk satır en yeni → "EN YENİ" rozeti
+          backupBody.innerHTML = items.map((b, idx) => `
+            <tr style="border-bottom:1px solid #f3f0ea;">
+              <td style="padding:0.65rem 0.85rem;font-family:monospace;font-size:0.82rem;color:#1f2937;">
+                ${escHtml(b.filename)}
+                ${idx === 0 ? '<span style="display:inline-block;margin-left:0.5rem;padding:1px 8px;background:rgba(184,150,90,0.16);color:#92750e;border-radius:20px;font-size:0.66rem;letter-spacing:0.06em;font-weight:700;text-transform:uppercase;">EN YENİ</span>' : ''}
+              </td>
+              <td style="padding:0.65rem 0.85rem;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:var(--navy);">${escHtml(b.size_human)}</td>
+              <td style="padding:0.65rem 0.85rem;color:#6b7280;font-size:0.85rem;">${escHtml(b.created_at)}</td>
+              <td style="padding:0.65rem 0.85rem;text-align:right;white-space:nowrap;">
+                <button class="btn-icon" title="İndir" onclick="downloadBackup('${escHtml(b.filename)}')" style="background:#eff6ff;color:#1d4ed8;margin-right:0.25rem;">
+                  <i class="bi bi-download"></i>
+                </button>
+                <button class="btn-icon" title="Geri Yükle (SuperAdmin)" onclick="confirmRestoreBackup('${escHtml(b.filename)}')" style="background:#fff7ed;color:#c2410c;margin-right:0.25rem;">
+                  <i class="bi bi-arrow-counterclockwise"></i>
+                </button>
+                <button class="btn-icon btn-icon-delete" title="Sil" onclick="deleteBackup('${escHtml(b.filename)}')">
+                  <i class="bi bi-trash3"></i>
+                </button>
+              </td>
+            </tr>`).join('');
+        } catch (e) {
+          backupBody.innerHTML = '<tr><td colspan="4" style="padding:1.4rem;text-align:center;color:#b91c1c;">Bağlantı hatası.</td></tr>';
+        }
+      }
+
+      // "Şimdi Yedek Al"
+      createBtn.addEventListener('click', async () => {
+        createBtn.disabled = true;
+        const original = createBtn.innerHTML;
+        createBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Yedek alınıyor…';
+        setBackupStatus('Yedek alınıyor… (DB boyutuna göre 1-30 sn sürebilir)', 'busy');
+        try {
+          const res = await fetch('/api/admin/backup', { method: 'POST' });
+          const data = await res.json();
+          if (!res.ok) {
+            setBackupStatus(data.detail || 'Yedek alınamadı.', 'err');
+            return;
+          }
+          setBackupStatus(`Yedek alındı: <strong>${escHtml(data.filename)}</strong> (${escHtml(data.size_human)})`, 'ok');
+          loadBackupList();
+        } catch {
+          setBackupStatus('Bağlantı hatası.', 'err');
+        } finally {
+          createBtn.disabled = false;
+          createBtn.innerHTML = original;
+        }
+      });
+
+      // Yedek dosyası yükle
+      uploadInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append('file', file);
+        setBackupStatus(`'${escHtml(file.name)}' yükleniyor…`, 'busy');
+        try {
+          const res = await fetch('/api/admin/backup/upload', { method: 'POST', body: fd });
+          const data = await res.json();
+          if (!res.ok) {
+            setBackupStatus(data.detail || 'Yükleme başarısız.', 'err');
+            return;
+          }
+          setBackupStatus(`Yüklendi: <strong>${escHtml(data.filename)}</strong> · Restore listede hazır.`, 'ok');
+          loadBackupList();
+        } catch {
+          setBackupStatus('Bağlantı hatası.', 'err');
+        } finally {
+          uploadInput.value = '';
+        }
+      });
+
+      refreshBtn.addEventListener('click', loadBackupList);
+
+      // Global helper'lar — table onclick'lerden çağrılır
+      window.downloadBackup = function (filename) {
+        // Direkt fetch + browser download — link tıklamasıyla browser dosyayı alır
+        window.location = `/api/admin/backup/${encodeURIComponent(filename)}/download`;
+      };
+
+      window.deleteBackup = async function (filename) {
+        if (!confirm(`'${filename}' adlı yedek dosyası silinsin mi?  Bu işlem geri alınamaz.`)) return;
+        try {
+          const res = await fetch(`/api/admin/backup/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+          const data = await res.json();
+          if (!res.ok) { showToast(data.detail || 'Silinemedi.'); return; }
+          showToast(data.message, 'success');
+          loadBackupList();
+        } catch { showToast('Bağlantı hatası.'); }
+      };
+
+      window.confirmRestoreBackup = async function (filename) {
+        // İki katmanlı onay — yıkıcı işlem
+        if (!confirm(
+          `⚠️ DİKKAT — RESTORE\n\n` +
+          `'${filename}' yedeği geri yüklenecek.\n` +
+          `Mevcut TÜM veri silinip yedekteki ile değiştirilecek.\n\n` +
+          `İşlem öncesi otomatik "safety backup" alınacak.\n\n` +
+          `Devam etmek için OK'a, vazgeçmek için Cancel'a basın.`
+        )) return;
+        const typed = prompt(
+          `Onay için aşağıya "RESTORE" yazın (büyük harf):\n\n` +
+          `Dosya: ${filename}`
+        );
+        if (typed !== "RESTORE") {
+          showToast('Onay metni "RESTORE" değil — iptal edildi.');
+          return;
+        }
+
+        setBackupStatus('Restore çalışıyor… (1-2 dakika sürebilir, sayfayı kapatmayın)', 'busy');
+        try {
+          const res = await fetch(`/api/admin/backup/${encodeURIComponent(filename)}/restore`, { method: 'POST' });
+          const data = await res.json();
+          if (!res.ok) {
+            setBackupStatus(
+              `Restore başarısız: ${escHtml(data.detail || '')}` +
+              (data.safety_backup ? `<br>Safety backup: <strong>${escHtml(data.safety_backup)}</strong>` : ''),
+              'err'
+            );
+            return;
+          }
+          setBackupStatus(
+            `${escHtml(data.message)}<br>` +
+            `<a href="/api/logout" style="color:inherit;text-decoration:underline;">Şimdi çıkış yap → tekrar giriş</a>`,
+            'ok'
+          );
+          loadBackupList();
+        } catch {
+          setBackupStatus("Bağlantı hatası — restore tamamlanmış olabilir. Sayfayı yenileyin.", 'err');
+        }
+      };
+
+      loadBackupList();
+    }
+
+    /* ── Logout ── */
 
 </body>
 </html>
