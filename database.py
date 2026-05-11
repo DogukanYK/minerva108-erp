@@ -240,6 +240,38 @@ class ProductionHistory(Base):
     lot_number = Column(String(100), nullable=True, index=True) # Genealogy: lot of finished good
 
 
+class AdminAuditLog(Base):
+    """
+    İmmutable admin/operasyonel olay defteri.
+
+    Transaction tablosu *stok hareketlerini* yazıyor; bu tablo ise
+    onları kapsamayan ama hesap güvenliği açısından kritik olan olayları
+    yazıyor: kullanıcı yarat/sil/pasifleştir, şifre sıfırla, izin değiştir,
+    rol değiştir, vb.  Bir admin kötüye kullanıldığında bu defterden iz
+    çıkar.
+
+    Tasarım:
+      - Append-only (silinmez, güncellenmez).
+      - actor = işlemi yapan; target = etkilenen kullanıcı/varlık.
+      - details JSON — değişen alanların eski/yeni değerleri (opsiyonel).
+      - ip_address & user_agent — saldırı izleri için (opsiyonel; isteğin
+        kaynağından doldurulur).
+    """
+    __tablename__ = "admin_audit_log"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    timestamp    = Column(DateTime, default=datetime.utcnow, index=True)
+    actor_id     = Column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_name   = Column(String(100), nullable=True)             # full_name veya username snapshot
+    action       = Column(String(50), nullable=False, index=True) # 'user.create', 'user.password_reset', ...
+    target_type  = Column(String(50), nullable=True)              # 'user', 'permission', vb.
+    target_id    = Column(Integer, nullable=True)                 # etkilenen kayıt ID
+    target_name  = Column(String(150), nullable=True)             # etkilenen kayıt adı snapshot
+    details      = Column(Text, nullable=True)                    # JSON — değişim ayrıntıları
+    ip_address   = Column(String(64), nullable=True)
+    user_agent   = Column(String(255), nullable=True)
+
+
 class PushSubscription(Base):
     """
     Web Push subscription record. One user can have many subscriptions
@@ -302,6 +334,9 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS ix_items_barcode ON items(barcode)",
             # Phase 10 — Ambalaj alt-tipi (şişe / kavanoz / pompa / kapak)
             "ALTER TABLE items              ADD COLUMN pkg_type VARCHAR(20)",
+            # Phase 11 — Admin audit log (security hardening)
+            "CREATE INDEX IF NOT EXISTS ix_admin_audit_action_ts ON admin_audit_log(action, timestamp)",
+            "CREATE INDEX IF NOT EXISTS ix_admin_audit_actor ON admin_audit_log(actor_id)",
         ):
             alter_safe(stmt)
 

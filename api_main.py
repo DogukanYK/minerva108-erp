@@ -90,6 +90,57 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 
+# ─── CSRF: Origin/Referer kontrolü (SameSite=Lax üzerine ek katman) ─────────
+# Cookie'miz SameSite=Lax — bu zaten 3rd-party POST/PUT/DELETE'leri büyük
+# oranda engelliyor.  Buna ek olarak: state-değiştiren isteklerde Origin
+# (varsa) ya da Referer header'ının kendi origin'imizle uyumlu olduğunu
+# kontrol et.  Uyumsuz → 403.  GET ve HEAD muaf (state değiştirmez).
+#
+# Yardımcı script'lerden (curl, postman, vb.) gelen isteklerde Origin yok ve
+# bu kontrol onları kırmaz.  Ama tarayıcı tabanlı saldırılarda her zaman
+# Origin header'ı set edilir — eksikse browser değil demektir.
+_CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+_CSRF_EXEMPT_PATHS = {"/api/login", "/api/logout"}  # login kendi auth'unu CSRF korur
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if request.method in _CSRF_SAFE_METHODS:
+            return await call_next(request)
+        if request.url.path in _CSRF_EXEMPT_PATHS:
+            return await call_next(request)
+        # Cookie tabanlı auth değilse (örn token-only API çağrısı) muaf —
+        # bizde access_token cookie var, dolayısıyla saldırı yüzeyi cookie.
+        if "access_token" not in request.cookies:
+            return await call_next(request)
+
+        origin  = request.headers.get("origin")
+        referer = request.headers.get("referer", "")
+        host    = request.headers.get("host", "")
+
+        if origin:
+            # Origin "https://example.com" formatında; host'la eşleşmeli
+            ok = origin.endswith(f"://{host}") or origin.endswith(f"@{host}")
+        elif referer:
+            # Referer "https://example.com/page" — host kısmı eşleşmeli
+            ok = f"//{host}/" in referer or f"//{host}" == referer.rstrip("/")
+        else:
+            # Browser her zaman Origin/Referer gönderir; ikisi de yoksa
+            # çağrı browser dışından (curl/CLI/script).  Cookie de göndermesi
+            # zor — yine de güvenli tarafta kalıp reddedelim.
+            ok = False
+
+        if not ok:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "CSRF doğrulaması başarısız (Origin/Referer eşleşmedi)."},
+            )
+        return await call_next(request)
+
+
+app.add_middleware(CSRFMiddleware)
+
+
 # ─── Rate limiter wiring (P0 / brute-force protection) ──────────────────────
 # The Limiter object itself lives in core.limiter so any router can decorate
 # endpoints with @limiter.limit(...) without circular-importing api_main.
