@@ -12,6 +12,7 @@ the routers/ package; the only things that live here are:
 Domain logic, schemas, and helpers live alongside the endpoints in their
 respective router modules — see routers/.
 """
+import os
 from typing import Optional
 
 from fastapi import FastAPI, Request, Depends
@@ -21,6 +22,7 @@ from fastapi.templating import Jinja2Templates
 
 from sqlalchemy.orm import Session
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from database import init_db, get_db, User
 from core.auth import decode_token
@@ -32,14 +34,69 @@ from routers import auth, users, inventory, recipes, production, b2b, reports, n
 
 
 # ─── App init ───────────────────────────────────────────────────────────────
+# /api/docs (FastAPI Swagger) — auth-suz tüm endpoint listesini sergiler.
+# Prod'da kapalı olmalı (saldırı yüzeyini azaltır). Dev'de EXPOSE_API_DOCS=true
+# ile aç.  Default: kapalı (None) — prod'a yeni kullanıcı dahil olduğunda da
+# güvenli kalır.
+_EXPOSE_DOCS = os.getenv("EXPOSE_API_DOCS", "false").lower() in ("1", "true", "yes")
+app = FastAPI(
+    title="Minerva108 ERP",
+    version="2.0.0",
+    docs_url="/api/docs"   if _EXPOSE_DOCS else None,
+    redoc_url="/api/redoc" if _EXPOSE_DOCS else None,
+    openapi_url="/api/openapi.json" if _EXPOSE_DOCS else None,
+)
 
-app = FastAPI(title="Minerva108 ERP", version="2.0.0", docs_url="/api/docs")
+
+# ─── Security headers middleware ────────────────────────────────────────────
+# Tüm response'lara defansif HTTP header'ları ekler.  CSP "self + Bootstrap/
+# CDN + html5-qrcode" — frontend mevcut CDN'lerden script çekiyor, onları
+# whitelist'liyoruz.  CSP genel sıkı kalıyor — XSS olsa script çalışamaz.
+from starlette.middleware.base import BaseHTTPMiddleware
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        # Content-Security-Policy: çoğu XSS senaryosunu sıfırlar
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' "
+            "  https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+            "style-src 'self' 'unsafe-inline' "
+            "  https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+            "font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com; "
+            "img-src 'self' data: blob: https:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
+        # Clickjacking koruması (frame-ancestors zaten kapsar ama legacy uyumluluk)
+        response.headers["X-Frame-Options"] = "DENY"
+        # MIME-sniff koruması
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        # Referrer politikası: cross-origin'a referer sızdırma
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # HSTS — sadece prod HTTPS'te anlamlı; lokalde tarayıcı kabul etmez ama zararsız
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        # Browser API gating — biz sadece kamera (barkod scan) kullanıyoruz
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), payment=(), usb=()"
+        )
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # ─── Rate limiter wiring (P0 / brute-force protection) ──────────────────────
 # The Limiter object itself lives in core.limiter so any router can decorate
 # endpoints with @limiter.limit(...) without circular-importing api_main.
+# SlowAPIMiddleware default_limits'in tüm endpoint'lere otomatik uygulanmasını
+# sağlar — bu olmadan sadece @limiter.limit decoratör'lü endpoint'ler korunur.
 app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
 
 
 @app.exception_handler(RateLimitExceeded)

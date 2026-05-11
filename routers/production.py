@@ -4,7 +4,7 @@ Production router — manufacturing workflows + Quality Control (QA).
 from fastapi import APIRouter, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 from database import (
@@ -20,22 +20,22 @@ router = APIRouter(prefix="/api", tags=["production"])
 
 class ProductionCreateRequest(BaseModel):
     recipe_id: int
-    produced_quantity: float
+    produced_quantity: float = Field(..., gt=0, le=1_000_000)
 
 
 class QCActionRequest(BaseModel):
-    notes: str
-    status: str  # 'APPROVED' veya 'REJECTED'
+    notes:  str = Field(..., max_length=2000)
+    status: str = Field(..., max_length=20)  # 'APPROVED' veya 'REJECTED'
 
 
 class QCFormRequest(BaseModel):
     """Digital QC form — full checklist + lab results + decision."""
-    status:      str                        # 'APPROVED' or 'REJECTED'
-    checklist:   dict                       # { "q01": "Evet", "q02": "Hayır", … }
-    lab_ml:      Optional[float] = None     # Ürün içi ML
-    lab_density: Optional[float] = None     # Yoğunluk
-    lab_color:   Optional[str]   = None     # Renk
-    notes:       Optional[str]   = ""       # Serbest notlar
+    status:      str  = Field(..., max_length=20)
+    checklist:   dict = Field(...)            # { "q01": "Evet", ... } — endpoint validation yapıyor
+    lab_ml:      Optional[float] = Field(None, ge=0, le=10_000)
+    lab_density: Optional[float] = Field(None, ge=0, le=100)
+    lab_color:   Optional[str]   = Field(None, max_length=50)
+    notes:       Optional[str]   = Field("",   max_length=2000)
 
 
 # ─── Production Endpoints ────────────────────────────────────────────────────

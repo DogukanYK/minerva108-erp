@@ -4,7 +4,7 @@ B2B router — quotations workflow + TCMB currency rates.
 from fastapi import APIRouter, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 
 from database import get_db, Item, Transaction, Quotation, QuotationItem
@@ -109,34 +109,35 @@ def get_currency_rates(_: dict = Depends(require_permission("finance", "view")))
 
 class QuotationLineRequest(BaseModel):
     item_id:            int
-    quantity:           float
-    unit_price_foreign: float
-    unit_cost_try:      Optional[float] = None
-    item_name_snapshot: Optional[str]   = None
+    quantity:           float           = Field(..., gt=0,  le=1_000_000)
+    unit_price_foreign: float           = Field(..., ge=0,  le=10_000_000)
+    unit_cost_try:      Optional[float] = Field(None, ge=0, le=10_000_000)
+    item_name_snapshot: Optional[str]   = Field(None, max_length=200)
 
 
 class QuotationCreateRequest(BaseModel):
-    quote_number:     str
-    customer_name:    str
-    customer_contact: Optional[str] = None
-    customer_email:   Optional[str] = None
-    customer_phone:   Optional[str] = None
-    customer_address: Optional[str] = None
-    customer_country: Optional[str] = None
-    customer_vat:     Optional[str] = None
+    quote_number:     str = Field(..., min_length=1, max_length=50)
+    customer_name:    str = Field(..., min_length=1, max_length=150)
+    customer_contact: Optional[str] = Field(None, max_length=150)
+    customer_email:   Optional[str] = Field(None, max_length=150)
+    customer_phone:   Optional[str] = Field(None, max_length=50)
+    customer_address: Optional[str] = Field(None, max_length=500)
+    customer_country: Optional[str] = Field(None, max_length=100)
+    customer_vat:     Optional[str] = Field(None, max_length=50)
 
-    currency:        str   = "TRY"   # USD / EUR / TRY
-    exchange_rate:   Optional[float] = None
-    subtotal_amount: float = 0.0
-    tax_percentage:  float = 0.0
-    tax_amount:      float = 0.0
-    shipping_amount: float = 0.0
-    total_amount:    float
+    currency:        str   = Field("TRY", max_length=3)
+    exchange_rate:   Optional[float] = Field(None, gt=0, le=100_000)
+    subtotal_amount: float = Field(0.0,  ge=0, le=1_000_000_000)
+    tax_percentage:  float = Field(0.0,  ge=0, le=100)
+    tax_amount:      float = Field(0.0,  ge=0, le=1_000_000_000)
+    shipping_amount: float = Field(0.0,  ge=0, le=1_000_000_000)
+    total_amount:    float = Field(...,  ge=0, le=1_000_000_000)
 
-    notes:      Optional[str] = None
-    valid_days: int           = 30
+    notes:      Optional[str] = Field(None, max_length=2000)
+    valid_days: int           = Field(30,   ge=1, le=365)
 
-    items: List[QuotationLineRequest]
+    # En fazla 500 satırlık teklif — operasyonel olarak makul, payload DoS önler
+    items: List[QuotationLineRequest] = Field(..., min_length=1, max_length=500)
 
 
 def _serialize_quotation_summary(q: Quotation) -> dict:

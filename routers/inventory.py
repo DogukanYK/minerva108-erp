@@ -5,7 +5,7 @@ and Excel imports (both classic templated import + smart auto-detect import).
 from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 
 from database import (
@@ -21,40 +21,41 @@ router = APIRouter(prefix="/api", tags=["inventory"])
 # ─── Schemas ────────────────────────────────────────────────────────────────
 
 class ItemCreateRequest(BaseModel):
-    name: str
-    category: Optional[str] = None
-    unit: str = "adet"
+    name: str = Field(..., min_length=1, max_length=150)
+    category: Optional[str] = Field(None, max_length=50)
+    unit: str = Field("adet", max_length=20)
     min_stock:      Optional[float] = 0.0
     cost_price:     Optional[float] = 0.0
-    parent_id:      Optional[int]   = None    # Variation hierarchy — null for parents/standalones
-    variation_name: Optional[str]   = None    # e.g. "200ml" — required if parent_id set
-    barcode:        Optional[str]   = None    # Phase 9 — phone scanner / pre-printed labels
-    pkg_type:       Optional[str]   = None    # Phase 10 — Ambalaj alt-tipi: şişe/kavanoz/pompa/kapak/etiket
+    parent_id:      Optional[int]   = None
+    variation_name: Optional[str]   = Field(None, max_length=100)
+    barcode:        Optional[str]   = Field(None, max_length=64)
+    pkg_type:       Optional[str]   = Field(None, max_length=20)
 
 
 class BulkDeleteRequest(BaseModel):
-    item_ids: List[int]
+    # max_items 1000: tek istekte 1000 ürün silmek operasyonel kapsamımızdan büyük
+    item_ids: List[int] = Field(..., min_length=1, max_length=1000)
 
 
 class SupplierCreateRequest(BaseModel):
-    name: str
-    contact_person: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    notes: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=150)
+    contact_person: Optional[str] = Field(None, max_length=100)
+    email: Optional[str] = Field(None, max_length=150)
+    phone: Optional[str] = Field(None, max_length=30)
+    notes: Optional[str] = Field(None, max_length=2000)
 
 
 class SupplierBulkDeleteRequest(BaseModel):
-    supplier_ids: List[int]
+    supplier_ids: List[int] = Field(..., min_length=1, max_length=500)
 
 
 class StockReceiveRequest(BaseModel):
     item_id: int
     supplier_id: Optional[int] = None
-    lot_number: str
-    expiry_date: Optional[str] = None
+    lot_number: str = Field(..., min_length=1, max_length=100)
+    expiry_date: Optional[str] = Field(None, max_length=20)
     quantity: float
-    location: Optional[str] = None
+    location: Optional[str] = Field(None, max_length=100)
 
 
 class StockAdjustRequest(BaseModel):
@@ -65,9 +66,9 @@ class StockAdjustRequest(BaseModel):
     Reason is mandatory — no silent corrections.
     """
     item_id: int
-    new_quantity: float          # Yeni TOPLAM stok (delta değil)
-    reason: str                  # Zorunlu — gerekçe
-    lot_number: Optional[str] = None   # Opsiyonel: spesifik lot satırını da güncelle
+    new_quantity: float
+    reason: str = Field(..., min_length=3, max_length=200)
+    lot_number: Optional[str] = Field(None, max_length=100)
 
 
 # ─── Items Endpoints ─────────────────────────────────────────────────────────
@@ -851,6 +852,55 @@ def user_activity(
 
 # ─── Excel Import Endpoints (classic templated upload) ──────────────────────
 
+# ─── Excel upload guards ────────────────────────────────────────────────────
+# Lab dosyaları büyük olabiliyor (Sayfa10 + sayfa-sayfa hammadde sayımları),
+# 100 MB tavanı pratik; üstüne çıkarsa OOM riskine girer.
+MAX_EXCEL_BYTES = 100 * 1024 * 1024     # 100 MB
+
+# XLSX = ZIP container; ZIP header magic bytes "PK\x03\x04" (veya bazen
+# "PK\x05\x06" boş arşiv).  Saldırgan .xlsx uzantılı text/JS/HTML gönderirse
+# openpyxl açmaya çalışmadan reddederiz.
+_XLSX_MAGIC = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+
+
+async def _read_xlsx_safely(file) -> bytes:
+    """
+    Upload'ı validate edip bytes döner.  Hata olursa HTTPException raise eder.
+    Sıra: uzantı → boyut (Content-Length spoof'a karşı stream-based) → magic bytes.
+    """
+    from fastapi import HTTPException
+
+    # 1) Uzantı (hızlı reddetme — yine de zorunlu değil ama UX'i iyi)
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Yalnızca .xlsx dosyaları desteklenir.")
+
+    # 2) Stream-based read — saldırgan Content-Length'i yalan söylese bile
+    #     biz okurken anlık byte sayısını sayıyoruz, MAX_EXCEL_BYTES'i geçince keseriz
+    contents = bytearray()
+    while True:
+        chunk = await file.read(1024 * 1024)   # 1 MB
+        if not chunk:
+            break
+        contents.extend(chunk)
+        if len(contents) > MAX_EXCEL_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Dosya çok büyük (max {MAX_EXCEL_BYTES // (1024*1024)} MB)."
+            )
+
+    if len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Yüklenen dosya boş.")
+
+    # 3) Magic bytes — uzantısı .xlsx ama içeriği farklıysa reddet
+    if not any(bytes(contents[:4]).startswith(m) for m in _XLSX_MAGIC):
+        raise HTTPException(
+            status_code=400,
+            detail="Dosya gerçekten bir Excel (.xlsx) değil. Header doğrulaması başarısız."
+        )
+
+    return bytes(contents)
+
+
 _REQUIRED_COLS = {"Item_Name", "SKU", "Category", "Unit", "Stock", "Cost_Price", "Min_Stock_Level"}
 
 
@@ -925,17 +975,10 @@ async def import_items_from_excel(
     import io, datetime as _dt
     actor = current_user.get("full_name") or current_user.get("username") or "Excel Import"
 
-    # ── 1. Dosya uzantısı kontrolü ──────────────────────────────────────────
-    if not file.filename.lower().endswith(".xlsx"):
-        return JSONResponse(status_code=400, content={
-            "detail": "Geçersiz dosya formatı. Yalnızca .xlsx dosyaları desteklenmektedir."
-        })
+    # Uzantı + boyut + magic-bytes doğrulamayla güvenli okuma
+    contents = await _read_xlsx_safely(file)
 
-    contents = await file.read()
-    if len(contents) == 0:
-        return JSONResponse(status_code=400, content={"detail": "Yüklenen dosya boş."})
-
-    # ── 2. Pandas ile oku ───────────────────────────────────────────────────
+    # ── Pandas ile oku ──────────────────────────────────────────────────────
     try:
         import pandas as pd
         df = pd.read_excel(io.BytesIO(contents), dtype=str)   # hepsini str oku, sonra cast
@@ -1182,8 +1225,9 @@ async def smart_excel_import(
 
     actor = current_user.get("full_name") or current_user.get("username") or "Excel Bulk Import"
 
+    # Uzantı + boyut + magic-bytes doğrulama (HTTPException döner — global handler yakalar)
+    contents = await _read_xlsx_safely(file)
     try:
-        contents = await file.read()
         wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True, read_only=False)
     except Exception as e:
         return JSONResponse(status_code=400, content={"detail": f"Excel dosyası okunamadı: {e}"})

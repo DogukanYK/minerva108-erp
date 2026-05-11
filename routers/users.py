@@ -3,13 +3,14 @@ Admin user management + permission matrix endpoints.
 """
 import json as _json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 from database import get_db, User
+from core.limiter import limiter
 from core.permissions import (
     _VALID_ROLES,
     PERMISSION_CATEGORIES,
@@ -21,22 +22,27 @@ router = APIRouter(prefix="/api", tags=["users"])
 
 
 # ─── Schemas ────────────────────────────────────────────────────────────────
+# Min şifre uzunluğu — NIST 2024 önerisi 8+. Biz 10'u baz aldık; kullanıcı
+# türü idari (lab), spesifik karakter zorunluluğu yok (zayıflatmaz, hatırlatma
+# kolay).  Bu sabit hem create hem reset'te kullanılır.
+MIN_PASSWORD_LEN = 10
+
 
 class AdminUserCreateRequest(BaseModel):
-    username:  str
-    full_name: str
-    password:  str
-    role:      str = "LabTech"
+    username:  str = Field(..., min_length=3, max_length=50)
+    full_name: str = Field(..., min_length=2, max_length=100)
+    password:  str = Field(..., min_length=MIN_PASSWORD_LEN, max_length=128)
+    role:      str = Field("LabTech", max_length=20)
 
 
 class AdminUserUpdateRequest(BaseModel):
-    full_name: Optional[str]  = None
-    role:      Optional[str]  = None
+    full_name: Optional[str]  = Field(None, max_length=100)
+    role:      Optional[str]  = Field(None, max_length=20)
     is_active: Optional[bool] = None
 
 
 class PasswordResetRequest(BaseModel):
-    new_password: str
+    new_password: str = Field(..., min_length=MIN_PASSWORD_LEN, max_length=128)
 
 
 class PermissionsUpdateRequest(BaseModel):
@@ -74,8 +80,10 @@ def admin_create_user(
     """Yeni kullanıcı hesabı oluştur."""
     if data.role not in _VALID_ROLES:
         return JSONResponse(status_code=422, content={"detail": f"Geçersiz rol: '{data.role}'."})
-    if len(data.password) < 6:
-        return JSONResponse(status_code=422, content={"detail": "Şifre en az 6 karakter olmalıdır."})
+    if len(data.password) < MIN_PASSWORD_LEN:
+        return JSONResponse(status_code=422, content={
+            "detail": f"Şifre en az {MIN_PASSWORD_LEN} karakter olmalıdır."
+        })
 
     existing = db.query(User).filter(User.username == data.username).first()
     if existing:
@@ -132,7 +140,9 @@ def admin_update_user(
 
 
 @router.put("/admin/users/{user_id}/reset-password")
+@limiter.limit("10/hour")    # Sıkı: kötü niyetli admin/compromised hesap abuse'ı sınırla
 def admin_reset_password(
+    request: Request,
     user_id: int,
     data: PasswordResetRequest,
     db: Session = Depends(get_db),
@@ -142,8 +152,10 @@ def admin_reset_password(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return JSONResponse(status_code=404, content={"detail": "Kullanıcı bulunamadı."})
-    if len(data.new_password) < 6:
-        return JSONResponse(status_code=422, content={"detail": "Şifre en az 6 karakter olmalıdır."})
+    if len(data.new_password) < MIN_PASSWORD_LEN:
+        return JSONResponse(status_code=422, content={
+            "detail": f"Şifre en az {MIN_PASSWORD_LEN} karakter olmalıdır."
+        })
 
     import bcrypt as _bcrypt
     user.password_hash = _bcrypt.hashpw(data.new_password.encode(), _bcrypt.gensalt()).decode()

@@ -305,27 +305,34 @@ def init_db():
         ):
             alter_safe(stmt)
 
-    # ── Varsayılan kullanıcıları oluştur (idempotent — her başlatmada güvenli) ──
-    import bcrypt
-    def _hash(pw: str) -> str:
-        return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+    # ── Varsayılan kullanıcı seed'i — sadece dev'de çalışır ─────────────────
+    # Eskiden prod dahil her başlatmada "minerva123" şifreli 4 hesap oluşurdu;
+    # bu, herkesin bildiği bir şifre ile arka kapı sağlıyordu.  Artık seed
+    # SEED_DEFAULT_USERS=true env'i set olduğunda çalışır (lokal .env'de
+    # default açık, prod .env'inde kapalı).  İdempotent — varsa atlar.
+    if os.getenv("SEED_DEFAULT_USERS", "false").lower() in ("1", "true", "yes"):
+        # Şifre env'den okunabilir, yoksa "minerva123" (eski davranış, sadece dev)
+        seed_pw = os.getenv("SEED_DEFAULT_PASSWORD", "minerva123")
+        import bcrypt
+        def _hash(pw: str) -> str:
+            return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
 
-    db = SessionLocal()
-    try:
-        defaults = [
-            ("dogukan", "Doğukan Yalçınkaya", "SuperAdmin"),
-            ("isik",    "Işık Demir",          "Manager"),
-            ("songul",  "Songül Arslan",        "LabLead"),
-            ("meltem",  "Meltem Kaya",          "LabTech"),
-        ]
-        for uname, fname, urole in defaults:
-            if not db.query(User).filter(User.username == uname).first():
-                db.add(User(
-                    username=uname,
-                    password_hash=_hash("minerva123"),
-                    full_name=fname,
-                    role=urole,
-                ))
-        db.commit()
-    finally:
-        db.close()
+        db = SessionLocal()
+        try:
+            defaults = [
+                ("dogukan", "Doğukan Yalçınkaya", "SuperAdmin"),
+                ("isik",    "Işık Demir",          "Manager"),
+                ("songul",  "Songül Arslan",        "LabLead"),
+                ("meltem",  "Meltem Kaya",          "LabTech"),
+            ]
+            for uname, fname, urole in defaults:
+                if not db.query(User).filter(User.username == uname).first():
+                    db.add(User(
+                        username=uname,
+                        password_hash=_hash(seed_pw),
+                        full_name=fname,
+                        role=urole,
+                    ))
+            db.commit()
+        finally:
+            db.close()

@@ -1,4 +1,5 @@
 import os
+import sys
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -7,8 +8,29 @@ from jose import JWTError, jwt
 from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.responses import Response
 
-SECRET_KEY = os.getenv("SECRET_KEY", "minerva108-secret-key-lutfen-prodda-degistir")
+# ─── SECRET_KEY — fail loud if missing ──────────────────────────────────────
+# Eskiden insecure default ("minerva108-secret-key-...") vardı; .env yoksa
+# saldırgan default key ile JWT forge edebilirdi. Şimdi env yoksa proces
+# patlar — sessizce zayıf default'a düşmez. Lokal dev için .env'de
+# SECRET_KEY set olmalı (worktree'de zaten var).
+SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+if not SECRET_KEY:
+    sys.stderr.write(
+        "\n❌ HATA: SECRET_KEY environment variable set edilmemiş.\n"
+        "   Prod'da systemd'nin .env dosyasında olmalı.\n"
+        "   Lokalde worktree'ye .env dosyası oluşturup SECRET_KEY=... ekleyin.\n\n"
+    )
+    sys.exit(1)
+if len(SECRET_KEY) < 16:
+    sys.stderr.write("\n❌ HATA: SECRET_KEY 16+ karakter olmalı.\n\n")
+    sys.exit(1)
+
 ALGORITHM = "HS256"
+
+# ─── Cookie güvenliği — env-driven, default secure ──────────────────────────
+# Prod HTTPS arkasında: COOKIE_SECURE=true (default) → cookie sadece HTTPS'te
+# gönderilir.  Lokal dev http://localhost için COOKIE_SECURE=false set et.
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() in ("1", "true", "yes")
 
 
 def hash_password(password: str) -> str:
@@ -34,7 +56,7 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False):
         httponly=True,
         max_age=max_age,
         samesite="lax",
-        secure=False,  # Production'da True yap
+        secure=COOKIE_SECURE,   # Prod: True (HTTPS-only); Lokal: env'de False'a çek
     )
 
 

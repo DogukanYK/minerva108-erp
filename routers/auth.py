@@ -4,7 +4,7 @@ Auth router — login, logout.
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 from database import get_db, User
@@ -17,15 +17,17 @@ router = APIRouter(prefix="/api", tags=["auth"])
 # ─── Schemas ────────────────────────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    # Login için max_length güvenliği — saldırgan 1MB username gönderemez,
+    # bcrypt 72 byte'ı geçemez (DoS önler).
+    username:    str           = Field(..., min_length=1, max_length=50)
+    password:    str           = Field(..., min_length=1, max_length=128)
     remember_me: Optional[bool] = False
 
 
 # ─── Endpoints ──────────────────────────────────────────────────────────────
 
 @router.post("/login")
-@limiter.limit("5/minute")     # Max 5 login attempts per IP per minute → blunts credential stuffing
+@limiter.limit("5/15minutes")    # Sıkı: 5 başarısız deneme 15 dk → credential stuffing'i etkisiz kılar
 def login(request: Request, data: LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = (
         db.query(User)

@@ -4,7 +4,7 @@ Recipes router — recipe CRUD plus BOM (bill-of-materials) cost calculation.
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 
 from database import get_db, Item, Recipe, RecipeIngredient
@@ -18,15 +18,16 @@ router = APIRouter(prefix="/api", tags=["recipes"])
 
 class RecipeIngredientSchema(BaseModel):
     item_id: int
-    quantity: float
+    quantity: float = Field(..., gt=0, le=1_000_000)
 
 
 class RecipeCreateRequest(BaseModel):
-    name: Optional[str] = None          # arka planda hedef ürün adına eşitlenir; göndermek isteğe bağlı
+    name: Optional[str] = Field(None, max_length=150)
     target_item_id: int
-    expected_yield: float
-    waste_percentage: Optional[float] = 0.0   # % fire oranı
-    ingredients: List[RecipeIngredientSchema]
+    expected_yield: float = Field(..., gt=0, le=1_000_000)
+    waste_percentage: Optional[float] = Field(0.0, ge=0, le=100)
+    # 200 bileşen — gerçekçi tavan, saldırgan 100K bileşenli payload yollayamaz
+    ingredients: List[RecipeIngredientSchema] = Field(..., min_length=1, max_length=200)
 
 
 # ─── BOM cost helper ────────────────────────────────────────────────────────
