@@ -1102,6 +1102,7 @@
       import: 'İçe Aktar', receive: 'Mal Kabul', adjust: 'Stok Düzelt',
       approve: 'Onayla', confirm: 'Onayla', manage_users: 'Kullanıcı Yönetimi',
       import_excel: 'Excel Aktarımı', view_audit: 'Denetim Görünümü',
+      backup: 'Yedek Yönetimi',
     };
 
     async function ensurePermSchema() {
@@ -1161,9 +1162,20 @@
       // Build matrix table
       const allActions = new Set();
       Object.values(categories).forEach(acts => acts.forEach(a => allActions.add(a)));
-      // Order actions consistently
-      const actionOrder = ['view', 'create', 'edit', 'delete', 'import', 'receive', 'approve', 'confirm', 'manage_users', 'import_excel', 'view_audit'];
-      const orderedActions = actionOrder.filter(a => allActions.has(a));
+      // Order actions consistently — Yeni action eklediğinde mutlaka buraya
+      // ekle, yoksa matrix'te görünmez!  (Geçmiş bug: adjust + backup unutulmuştu.)
+      const actionOrder = [
+        'view', 'create', 'edit', 'delete',
+        'import', 'receive', 'adjust',
+        'approve', 'confirm',
+        'manage_users', 'import_excel', 'view_audit', 'backup',
+      ];
+      // Eksik kalanları da göster (yeni action eklendi ama actionOrder güncel
+      // değilse en azından kaybolmasınlar)
+      const orderedActions = [
+        ...actionOrder.filter(a => allActions.has(a)),
+        ...[...allActions].filter(a => !actionOrder.includes(a)),
+      ];
 
       let html = `
         <table class="perm-matrix-table">

@@ -97,3 +97,32 @@ def test_no_local_showToast_left(authed_client: TestClient):
         if "function showToast" in r.text:
             failures.append(path)
     assert not failures, "Hâlâ local showToast bulunan sayfalar: " + ", ".join(failures)
+
+
+def test_admin_matrix_shows_all_permissions(authed_client: TestClient):
+    """
+    Admin sayfasındaki permission matrix'inde core/permissions.py'deki TÜM
+    action'lar render edilmeli.  Geçmiş bug: actionOrder array'inde 'adjust'
+    ve 'backup' eksikti — bu yüzden matrix'te görünmüyorlardı.  Bu test
+    actionOrder'da tüm action'ların var olduğunu doğrular.
+    """
+    from core.permissions import PERMISSION_CATEGORIES
+    r = authed_client.get("/admin")
+    assert r.status_code == 200
+    html = r.text
+
+    # actionOrder array'i admin.html içinde inline JS — string olarak yakala
+    # ve tüm bilinen action'ların orada listelendiğini doğrula.
+    all_actions = set()
+    for actions in PERMISSION_CATEGORIES.values():
+        all_actions.update(actions)
+
+    missing = []
+    for action in all_actions:
+        # actionOrder içinde 'view' veya 'backup' gibi quote'lu olmalı
+        if f"'{action}'" not in html:
+            missing.append(action)
+    assert not missing, (
+        f"Bu action'lar admin matrix actionOrder/labels'da yok: {missing}. "
+        f"templates/admin.html'de actionOrder ve _ACTION_LABELS'a ekle."
+    )
