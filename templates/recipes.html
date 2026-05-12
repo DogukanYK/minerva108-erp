@@ -163,25 +163,40 @@
     .btn-add-row { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.32rem 0.85rem; background: rgba(184,150,90,0.1); color: var(--gold); border: 1.5px solid rgba(184,150,90,0.35); border-radius: 7px; font-family: 'Jost', sans-serif; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
     .btn-add-row:hover { background: rgba(184,150,90,0.18); }
     #ingredientRows { display: flex; flex-direction: column; gap: 0.5rem; max-height: 320px; overflow-y: auto; padding-right: 2px; }
-    /* 1fr ürün · 95px gram · 70px % · 32px sil */
-    .ingredient-row { display: grid; grid-template-columns: 1fr 95px 78px 32px; gap: 0.5rem; align-items: center; }
+    /* 1fr ürün · 90px % (BÜYÜK) · 90px gram · 32px sil */
+    .ingredient-row { display: grid; grid-template-columns: 1fr 90px 90px 32px; gap: 0.5rem; align-items: center; }
     .ingredient-row .row-grid-header,
     .ingredient-row-header {
-      display: grid; grid-template-columns: 1fr 95px 78px 32px; gap: 0.5rem;
+      display: grid; grid-template-columns: 1fr 90px 90px 32px; gap: 0.5rem;
       font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em;
       text-transform: uppercase; color: #9ca3af;
       padding: 0 0 0.25rem 0.3rem;
     }
-    /* % "rozet" görünümü — pasif input gibi, vurgulu */
+    /* % primary input — vurgulu, altın çerçeve */
     .ing-percent {
       padding: 0.55rem 0.4rem; border-radius: 7px;
       background: linear-gradient(135deg, #faf8f4 0%, #f3ede0 100%);
-      border: 1.5px solid rgba(184,150,90,0.35);
+      border: 1.5px solid rgba(184,150,90,0.55);
       color: var(--navy); font-weight: 700; font-size: 0.92rem;
       text-align: right; font-variant-numeric: tabular-nums;
-      min-width: 60px; cursor: default;
+      width: 100%;
+      font-family: 'Jost', sans-serif;
     }
-    .ing-percent.zero { background: #f9fafb; color: #d1d5db; border-color: #e5e7eb; }
+    .ing-percent:focus {
+      outline: none; border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(201,172,111,0.18);
+      background: #fffdf8;
+    }
+    .ing-percent:disabled { background: #f9fafb; color: #d1d5db; border-color: #e5e7eb; cursor: not-allowed; }
+    /* Gram input — secondary, % girilince auto-fill ama elle de değişebilir */
+    .ing-qty {
+      padding: 0.55rem 0.5rem; border-radius: 7px;
+      border: 1.5px solid #e5e7eb; background: var(--white);
+      font-size: 0.88rem; color: #374151;
+      text-align: right; font-variant-numeric: tabular-nums;
+      width: 100%; font-family: 'Jost', sans-serif;
+    }
+    .ing-qty:focus { outline: none; border-color: var(--navy); box-shadow: 0 0 0 3px rgba(35,46,110,0.10); }
     .btn-remove-row { width: 32px; height: 32px; border-radius: 6px; border: none; background: #fff1f1; color: #dc2626; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 0.85rem; flex-shrink: 0; transition: background 0.15s; }
     .btn-remove-row:hover { background: #fee2e2; }
     .empty-ingredients { padding: 1rem; text-align: center; color: #9ca3af; font-size: 0.85rem; border: 1.5px dashed #e5e7eb; border-radius: 8px; }
@@ -478,13 +493,16 @@
               <div class="col-7 col-md-4">
                 <label class="form-label-sm">Hedeflenen Üretim Miktarı <small style="color:#9ca3af;font-weight:400;">(net çıktı)</small></label>
                 <div class="input-group">
-                  <input type="number" class="form-control" id="recipeYield" min="0.01" step="0.01" placeholder="Örn: 500" />
+                  <input type="number" class="form-control" id="recipeYield" min="0.01" step="0.01" placeholder="Örn: 1" oninput="updateBatchMassBanner();calculateYield()" />
                   <span class="input-group-text" id="yieldUnitAddon" style="background:#f3f0ea;border:1.5px solid #e5e7eb;color:#6b7280;font-size:0.82rem;min-width:44px;justify-content:center;">—</span>
                 </div>
               </div>
               <div class="col-5 col-md-2">
                 <label class="form-label-sm">Fire (%)</label>
                 <input type="number" class="form-control" id="recipeWaste" min="0" max="100" step="0.1" placeholder="0" value="0" oninput="calculateYield()" />
+              </div>
+              <!-- Toplam reçete kütlesi banner'ı (1 × 200 ml = 200 ml gibi) -->
+              <div class="col-12" id="batchMassBanner" style="display:none;margin-top:0;padding:0.6rem 0.85rem;background:#faf8f4;border:1px solid rgba(184,150,90,0.3);border-radius:8px;align-items:center;gap:0.6rem;font-size:0.85rem;color:var(--navy);">
               </div>
               <!-- Gross-input preview banner — shown below the row -->
               <div class="col-12" id="yieldHelperRow" style="margin-top:-4px;padding-top:0;">
@@ -500,11 +518,11 @@
                   <i class="bi bi-plus-circle"></i> Hammadde Ekle
                 </button>
               </div>
-              <!-- Sütun başlıkları -->
+              <!-- Sütun başlıkları — % ve Miktar yer değişti (% primary) -->
               <div class="ingredient-row-header" id="ingredientRowsHeader" style="display:none;">
                 <span>Hammadde</span>
-                <span style="text-align:right;">Miktar</span>
-                <span style="text-align:right;">% Bileşim</span>
+                <span style="text-align:right;color:var(--gold);">% Bileşim</span>
+                <span style="text-align:right;">Hesaplanan</span>
                 <span></span>
               </div>
               <div id="ingredientRows">
@@ -787,9 +805,47 @@
           opt.value       = item.id;
           opt.textContent = item.name;
           opt.dataset.unit = item.unit || '';
+          // % → gram dönüşümü için: ürünün net içeriği (örn 200ml).  Önce
+          // variation_name'den ("200ml"), bulamazsa item.name'den parse et.
+          const mass = parseProductMass(item);
+          opt.dataset.massValue = mass ? mass.value : '';
+          opt.dataset.massUnit  = mass ? mass.unit  : '';
           targetSel.appendChild(opt);
         });
       } catch { showToast('Ürün listesi yüklenemedi.'); }
+    }
+
+    /**
+     * Bitmiş ürünün net içeriğini ("200ml" / "100g" / "1 LITRE") parse eder.
+     * Önce variation_name, sonra item.name aranır.  Sonuç {value, unit} veya
+     * null.  Birim normalize edilir: ml/g (KG→g, LT→ml).
+     */
+    function parseProductMass(item) {
+      const blob = `${item.variation_name || ''} ${item.name || ''}`;
+      const m = blob.match(/(\d+(?:[.,]\d+)?)\s*(ml|mL|ML|g|gr|GR|kg|KG|l|lt|litre|LITRE)\b/);
+      if (!m) return null;
+      let val = parseFloat(m[1].replace(',', '.'));
+      const u = m[2].toLowerCase();
+      let unit = 'ml';
+      if (u === 'g' || u === 'gr')     unit = 'g';
+      else if (u === 'kg')             { unit = 'g';  val *= 1000; }
+      else if (u === 'l' || u === 'lt' || u === 'litre') { unit = 'ml'; val *= 1000; }
+      return { value: val, unit };
+    }
+
+    /**
+     * Reçete batch'inin toplam kütlesini hesaplar:
+     *   yield (adet) × ürünün net içeriği (ml/g) = toplam batch kütlesi
+     * Bu sayı, ingredient %'den gram'a dönüşümün paydası olur.
+     * Eğer parse edilemezse 0 döner → UI "manuel gram girişine düş" diye gösterir.
+     */
+    function getBatchTotalMass() {
+      const targetSel = document.getElementById('recipeTargetItem');
+      const opt = targetSel.options[targetSel.selectedIndex];
+      const massValue = parseFloat(opt?.dataset?.massValue || '0');
+      const yieldVal  = parseFloat(document.getElementById('recipeYield').value) || 0;
+      if (massValue <= 0 || yieldVal <= 0) return { total: 0, unit: opt?.dataset?.massUnit || '' };
+      return { total: massValue * yieldVal, unit: opt?.dataset?.massUnit || '' };
     }
 
     /* ── Hedef ürün seçilince birimi güncelle ── */
@@ -798,7 +854,47 @@
       const opt  = sel.options[sel.selectedIndex];
       const unit = opt ? (opt.dataset.unit || '—') : '—';
       document.getElementById('yieldUnitAddon').textContent = unit;
+      // Hedef ürünün net içeriği → "Toplam Reçete Kütlesi" banner'ını güncelle
+      updateBatchMassBanner();
       calculateYield();
+    }
+
+    /**
+     * Modal üstündeki yeşil banner — "Bu reçete 1 × 200 ml = 200 ml ürün üretir,
+     * yüzdeler bu kütleye göre hesaplanır" anlamında kullanıcıya görsel kanıt.
+     */
+    function updateBatchMassBanner() {
+      const banner = document.getElementById('batchMassBanner');
+      if (!banner) return;
+      const sel = document.getElementById('recipeTargetItem');
+      const opt = sel.options[sel.selectedIndex];
+      const massValue = parseFloat(opt?.dataset?.massValue || '0');
+      const massUnit  = opt?.dataset?.massUnit || '';
+      const yieldVal  = parseFloat(document.getElementById('recipeYield').value) || 0;
+
+      if (massValue > 0 && yieldVal > 0) {
+        const total = massValue * yieldVal;
+        banner.style.display = 'flex';
+        banner.innerHTML = `
+          <i class="bi bi-droplet-half" style="font-size:1.1rem;color:var(--gold);"></i>
+          <span>
+            <strong>${yieldVal} × ${massValue} ${escHtml(massUnit)} =
+            ${parseFloat(total.toFixed(4))} ${escHtml(massUnit)} toplam ürün kütlesi.</strong>
+            <small style="color:#6b7280;display:block;margin-top:2px;">
+              Yüzdeleri bu kütleye göre giriyorsun — örn. %5 = ${parseFloat((total * 0.05).toFixed(2))} ${escHtml(massUnit)}
+            </small>
+          </span>`;
+      } else if (massValue === 0 && sel.value) {
+        banner.style.display = 'flex';
+        banner.innerHTML = `
+          <i class="bi bi-info-circle" style="font-size:1.1rem;color:#b45309;"></i>
+          <span style="color:#92400e;">
+            Ürünün net içeriği tespit edilemedi (ad'da "200ml" gibi ifade yok). %
+            girişi devre dışı — bileşenleri gram olarak gir.
+          </span>`;
+      } else {
+        banner.style.display = 'none';
+      }
     }
 
     /* ── Hammadde dropdown seçenekleri (Hammadde + Ambalaj) ──
@@ -867,9 +963,12 @@
     function calculateYield() {
       let hammaddeNet = 0;
       let ambalajNet  = 0;
-      // Her satırın HAMMADDE toplamına katkısını topla — % bileşim için
-      // sadece hammaddeleri sayıyoruz (ambalaj fire/% dışı).
-      const hammaddeRows = [];
+      // Toplam batch kütlesi (ürünün ml × adet)
+      const batch = getBatchTotalMass();
+      const totalMass = batch.total;
+      const massUnit  = batch.unit || '';
+
+      let totalPct = 0;
       document.querySelectorAll('.ingredient-row').forEach(row => {
         const sel = row.querySelector('.ing-item');
         const qty = parseFloat(row.querySelector('.ing-qty').value);
@@ -879,49 +978,29 @@
           ambalajNet += qty;
         } else {
           hammaddeNet += qty;
-          hammaddeRows.push({ row, qty });
+          if (totalMass > 0) totalPct += (qty / totalMass) * 100;
         }
       });
 
-      // ── % Bileşim hesabı — her satırın hammadde toplamına oranı ──────
-      // Bu, formülasyondaki "w/w" yüzdesidir (toplam = %100).
-      document.querySelectorAll('.ingredient-row').forEach(row => {
-        const pct = row.querySelector('.ing-percent');
-        if (!pct) return;
-        const sel = row.querySelector('.ing-item');
-        const qty = parseFloat(row.querySelector('.ing-qty').value);
-        const cat = sel?.options[sel.selectedIndex]?.dataset?.category || '';
-        if (cat === 'Ambalaj') {
-          pct.textContent = '—';
-          pct.title = 'Ambalaj bileşeni — % bileşime dahil değil';
-          pct.classList.add('zero');
-        } else if (!isNaN(qty) && qty > 0 && hammaddeNet > 0) {
-          const p = (qty / hammaddeNet) * 100;
-          pct.textContent = '%' + p.toFixed(2);
-          pct.title = `${qty} / ${parseFloat(hammaddeNet.toFixed(4))} × 100`;
-          pct.classList.remove('zero');
-        } else {
-          pct.textContent = '—';
-          pct.classList.add('zero');
-        }
-      });
-
-      // Composition summary
+      // Composition summary — % toplam ürün kütlesi üzerinden
       const compSum = document.getElementById('compositionSummary');
       const compQ   = document.getElementById('compTotalQty');
       const compP   = document.getElementById('compTotalPercent');
       const compH   = document.getElementById('compHint');
-      const unit          = document.getElementById('yieldUnitAddon').textContent.trim();
-      const u             = (unit && unit !== '—') ? ' ' + unit : '';
 
       if (hammaddeNet > 0) {
         compSum.style.display = 'flex';
-        compQ.textContent = parseFloat(hammaddeNet.toFixed(4)) + u;
-        // Toplam yüzde — hesaplanan satırların toplamı (round error yüzünden
-        // tam 100 değil bazen, kullanıcı görmeli)
-        const totalPct = hammaddeRows.reduce((s, r) => s + (r.qty / hammaddeNet) * 100, 0);
-        compP.textContent = '%' + totalPct.toFixed(2);
-        compH.textContent = Math.abs(totalPct - 100) < 0.01 ? '(toplamlar tutarlı)' : '';
+        compQ.textContent = parseFloat(hammaddeNet.toFixed(4)) + (massUnit ? ' ' + massUnit : '');
+        if (totalMass > 0) {
+          compP.textContent = '%' + totalPct.toFixed(2);
+          const diff = Math.abs(totalPct - 100);
+          if (diff < 0.5)   compH.textContent = '(toplam %100 — formülasyon tam)';
+          else if (totalPct < 100) compH.textContent = `(%${(100 - totalPct).toFixed(2)} eksik — ek ingredient veya su yüzdesi gerekebilir)`;
+          else              compH.textContent = `(%${(totalPct - 100).toFixed(2)} fazla — toplam batch kütlesinden büyük)`;
+        } else {
+          compP.textContent = '—';
+          compH.textContent = '(toplam batch kütlesi yok — % hesaplanamıyor)';
+        }
       } else {
         compSum.style.display = 'none';
       }
@@ -959,11 +1038,16 @@
       const row = document.createElement('div');
       row.className    = 'ingredient-row';
       row.dataset.rowId = rowCounter;
-      // 4 sütun: ürün · miktar · % bileşim (read-only, hesaplanır) · sil
+      // 4 sütun: ürün · % BÜYÜK (lab buraya yazıyor) · gram (auto-fill) · sil
+      // İki yönlü binding: % değişince gram, gram değişince % güncellenir.
       row.innerHTML = `
-        <select class="form-select ing-item" onchange="calculateYield()">${buildIngredientOptions()}</select>
-        <input type="number" class="form-control ing-qty" min="0.001" step="0.001" placeholder="Miktar" oninput="calculateYield()" />
-        <div class="ing-percent zero" title="Hammadde toplamına oranı">—</div>
+        <select class="form-select ing-item" onchange="onIngredientChange(${rowCounter}, 'item')">${buildIngredientOptions()}</select>
+        <input type="number" class="ing-percent" min="0" max="100" step="0.01"
+               placeholder="%"
+               oninput="onIngredientChange(${rowCounter}, 'percent')" />
+        <input type="number" class="ing-qty" min="0" step="0.001"
+               placeholder="Hesaplanır"
+               oninput="onIngredientChange(${rowCounter}, 'qty')" />
         <button type="button" class="btn-remove-row" onclick="removeRow(${rowCounter})">
           <i class="bi bi-x-lg"></i>
         </button>`;
@@ -971,6 +1055,53 @@
       // Tablo başlığını görünür yap (en az 1 satır var)
       const header = document.getElementById('ingredientRowsHeader');
       if (header) header.style.display = 'grid';
+    }
+
+    /**
+     * Bileşen satırında değişiklik — kaynak ('item' / 'percent' / 'qty')
+     * iki yönlü binding'i tetikler:
+     *   percent değişti → qty = percent × batchTotalMass / 100
+     *   qty değişti     → percent = qty × 100 / batchTotalMass
+     *   item değişti    → sadece kategori kontrol (ambalaj %'siz)
+     */
+    function onIngredientChange(rowId, source) {
+      const row = document.querySelector(`.ingredient-row[data-row-id="${rowId}"]`);
+      if (!row) return;
+      const pctInput = row.querySelector('.ing-percent');
+      const qtyInput = row.querySelector('.ing-qty');
+      const sel      = row.querySelector('.ing-item');
+      const cat      = sel?.options[sel.selectedIndex]?.dataset?.category || '';
+      const { total } = getBatchTotalMass();
+
+      // Ambalaj — % yok, sadece adet (cam şişe vb.); pct'i disable et
+      if (cat === 'Ambalaj') {
+        pctInput.value = '';
+        pctInput.disabled = true;
+        pctInput.placeholder = 'Ambalaj';
+        // qty serbest, lab adet girer
+      } else {
+        pctInput.disabled = false;
+        pctInput.placeholder = '%';
+        if (total > 0) {
+          if (source === 'percent') {
+            const p = parseFloat(pctInput.value);
+            qtyInput.value = isNaN(p) ? '' : parseFloat(((p * total) / 100).toFixed(4));
+          } else if (source === 'qty') {
+            const q = parseFloat(qtyInput.value);
+            pctInput.value = isNaN(q) ? '' : parseFloat(((q * 100) / total).toFixed(2));
+          }
+          // item değişti → mevcut % varsa qty'i güncelle (yeni hammadde için
+          // qty da farklı olabilir; toplam mass değişmediği için aslında aynı)
+          else if (source === 'item') {
+            const p = parseFloat(pctInput.value);
+            if (!isNaN(p)) qtyInput.value = parseFloat(((p * total) / 100).toFixed(4));
+          }
+        } else {
+          // total 0 → % devre dışı; lab sadece qty girer
+          if (source !== 'item') pctInput.disabled = true;
+        }
+      }
+      calculateYield();
     }
 
     function removeRow(rowId) {
@@ -1000,6 +1131,8 @@
       if (hdr) hdr.style.display = 'none';
       const sum = document.getElementById('compositionSummary');
       if (sum) sum.style.display = 'none';
+      const ban = document.getElementById('batchMassBanner');
+      if (ban) ban.style.display = 'none';
       document.getElementById('addRecipeModalLabel').textContent = 'Yeni Reçete Oluştur';
       document.getElementById('saveRecipeBtn').textContent = 'Reçeteyi Kaydet';
       editingRecipeId = null;
@@ -1036,7 +1169,12 @@
         document.getElementById('recipeYield').value = r.expected_yield;
         document.getElementById('recipeWaste').value = r.waste_percentage ?? 0;
 
-        // Hammadde satırlarını temizle ve yeniden doldur
+        // Toplam batch kütlesi banner (target_item + yield set edildikten sonra)
+        updateBatchMassBanner();
+        const batch = getBatchTotalMass();
+        const totalMass = batch.total;
+
+        // Hammadde satırlarını temizle ve yeniden doldur — qty'den % geri hesap
         document.getElementById('ingredientRows').innerHTML = '';
         rowCounter = 0;
         for (const ing of r.ingredients) {
@@ -1044,6 +1182,18 @@
           const lastRow = document.querySelector('.ingredient-row:last-child');
           lastRow.querySelector('.ing-item').value = ing.item_id;
           lastRow.querySelector('.ing-qty').value  = ing.quantity;
+          // Geri hesap: % = qty / totalMass × 100 (kategori Hammadde ise)
+          const cat = lastRow.querySelector('.ing-item').options[
+            lastRow.querySelector('.ing-item').selectedIndex
+          ]?.dataset?.category;
+          const pctInput = lastRow.querySelector('.ing-percent');
+          if (cat === 'Ambalaj') {
+            pctInput.value = '';
+            pctInput.disabled = true;
+            pctInput.placeholder = 'Ambalaj';
+          } else if (totalMass > 0) {
+            pctInput.value = parseFloat(((ing.quantity * 100) / totalMass).toFixed(2));
+          }
         }
         calculateYield();
 
