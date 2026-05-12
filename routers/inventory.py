@@ -30,6 +30,8 @@ class ItemCreateRequest(BaseModel):
     variation_name: Optional[str]   = Field(None, max_length=100)
     barcode:        Optional[str]   = Field(None, max_length=64)
     pkg_type:       Optional[str]   = Field(None, max_length=20)
+    # Varsayılan tedarikçi — mal kabulde bu ürün seçilince oto-doldurulur
+    supplier_id:    Optional[int]   = None
 
 
 class BulkDeleteRequest(BaseModel):
@@ -87,6 +89,11 @@ def list_items(
         if i.parent_id:
             child_count[i.parent_id] = child_count.get(i.parent_id, 0) + 1
 
+    # Supplier lookup — listing'de supplier_name göstermek için
+    supplier_name_by_id = {
+        s.id: s.name for s in db.query(Supplier).filter(Supplier.is_active == True).all()
+    }
+
     finance_ok = _can_see_finance(current_user)
     return [
         {
@@ -106,6 +113,8 @@ def list_items(
             "child_count":     child_count.get(i.id, 0),
             "is_parent":       child_count.get(i.id, 0) > 0,
             "is_variation":    i.parent_id is not None,
+            "supplier_id":     i.supplier_id,
+            "supplier_name":   supplier_name_by_id.get(i.supplier_id) if i.supplier_id else None,
             "created_at":      i.created_at.strftime("%d.%m.%Y") if i.created_at else "",
         }
         for i in items
@@ -158,6 +167,7 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db), _: dict 
         variation_name=(data.variation_name.strip() if data.parent_id and data.variation_name else None),
         barcode=(data.barcode.strip() if data.barcode and data.barcode.strip() else None),
         pkg_type=(data.pkg_type.strip() if data.pkg_type and data.pkg_type.strip() else None),
+        supplier_id=data.supplier_id,
     )
     db.add(item)
     db.commit()
@@ -207,6 +217,7 @@ def update_item(
     item.variation_name  = (data.variation_name.strip() if data.parent_id and data.variation_name else None)
     item.barcode         = (data.barcode.strip() if data.barcode and data.barcode.strip() else None)
     item.pkg_type        = (data.pkg_type.strip().lower() if data.pkg_type and data.pkg_type.strip() else None)
+    item.supplier_id     = data.supplier_id
     db.commit()
 
     # ── Low-stock alert: if the edit (typically a min_stock_level bump) leaves

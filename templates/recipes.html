@@ -162,11 +162,38 @@
     .ingredients-label { font-size: 0.78rem; font-weight: 600; color: #6b7280; letter-spacing: 0.06em; text-transform: uppercase; }
     .btn-add-row { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.32rem 0.85rem; background: rgba(184,150,90,0.1); color: var(--gold); border: 1.5px solid rgba(184,150,90,0.35); border-radius: 7px; font-family: 'Jost', sans-serif; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
     .btn-add-row:hover { background: rgba(184,150,90,0.18); }
-    #ingredientRows { display: flex; flex-direction: column; gap: 0.5rem; max-height: 260px; overflow-y: auto; padding-right: 2px; }
-    .ingredient-row { display: grid; grid-template-columns: 1fr 110px 32px; gap: 0.5rem; align-items: center; }
+    #ingredientRows { display: flex; flex-direction: column; gap: 0.5rem; max-height: 320px; overflow-y: auto; padding-right: 2px; }
+    /* 1fr ürün · 95px gram · 70px % · 32px sil */
+    .ingredient-row { display: grid; grid-template-columns: 1fr 95px 78px 32px; gap: 0.5rem; align-items: center; }
+    .ingredient-row .row-grid-header,
+    .ingredient-row-header {
+      display: grid; grid-template-columns: 1fr 95px 78px 32px; gap: 0.5rem;
+      font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em;
+      text-transform: uppercase; color: #9ca3af;
+      padding: 0 0 0.25rem 0.3rem;
+    }
+    /* % "rozet" görünümü — pasif input gibi, vurgulu */
+    .ing-percent {
+      padding: 0.55rem 0.4rem; border-radius: 7px;
+      background: linear-gradient(135deg, #faf8f4 0%, #f3ede0 100%);
+      border: 1.5px solid rgba(184,150,90,0.35);
+      color: var(--navy); font-weight: 700; font-size: 0.92rem;
+      text-align: right; font-variant-numeric: tabular-nums;
+      min-width: 60px; cursor: default;
+    }
+    .ing-percent.zero { background: #f9fafb; color: #d1d5db; border-color: #e5e7eb; }
     .btn-remove-row { width: 32px; height: 32px; border-radius: 6px; border: none; background: #fff1f1; color: #dc2626; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 0.85rem; flex-shrink: 0; transition: background 0.15s; }
     .btn-remove-row:hover { background: #fee2e2; }
     .empty-ingredients { padding: 1rem; text-align: center; color: #9ca3af; font-size: 0.85rem; border: 1.5px dashed #e5e7eb; border-radius: 8px; }
+    /* Kompozisyon özeti — alt satır */
+    .composition-summary {
+      margin-top: 0.75rem; padding: 0.6rem 0.85rem;
+      border-radius: 8px; background: #f9f7f3; border: 1px solid #f0ece4;
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 0.83rem;
+    }
+    .composition-summary strong { color: var(--navy); font-weight: 700; }
+    .composition-summary .comp-warn { color: #b45309; }
 
     /* ══ COST BADGES ══ */
     .badge-cost {
@@ -468,15 +495,29 @@
             <!-- Dinamik Hammadde Alanı -->
             <div class="ingredients-section">
               <div class="ingredients-header">
-                <span class="ingredients-label">Hammadde Bileşenleri <small style="color:#9ca3af;font-weight:400;">(Hammadde / Ambalaj)</small></span>
+                <span class="ingredients-label">Hammadde Bileşenleri <small style="color:#9ca3af;font-weight:400;">(% bileşim · gramaj)</small></span>
                 <button type="button" class="btn-add-row" id="addRowBtn">
                   <i class="bi bi-plus-circle"></i> Hammadde Ekle
                 </button>
+              </div>
+              <!-- Sütun başlıkları -->
+              <div class="ingredient-row-header" id="ingredientRowsHeader" style="display:none;">
+                <span>Hammadde</span>
+                <span style="text-align:right;">Miktar</span>
+                <span style="text-align:right;">% Bileşim</span>
+                <span></span>
               </div>
               <div id="ingredientRows">
                 <div class="empty-ingredients" id="emptyIngredients">
                   Henüz hammadde eklenmedi. Yukarıdaki butonu kullanın.
                 </div>
+              </div>
+              <!-- Toplam bileşim özeti (% 100 olmalı) -->
+              <div class="composition-summary" id="compositionSummary" style="display:none;">
+                <span>Toplam hammadde:&nbsp;<strong id="compTotalQty">—</strong></span>
+                <span>Bileşim toplamı:&nbsp;<strong id="compTotalPercent">—</strong>
+                  <span id="compHint" style="color:#9ca3af;font-size:0.78rem;margin-left:0.4rem;"></span>
+                </span>
               </div>
             </div>
 
@@ -826,30 +867,77 @@
     function calculateYield() {
       let hammaddeNet = 0;
       let ambalajNet  = 0;
+      // Her satırın HAMMADDE toplamına katkısını topla — % bileşim için
+      // sadece hammaddeleri sayıyoruz (ambalaj fire/% dışı).
+      const hammaddeRows = [];
       document.querySelectorAll('.ingredient-row').forEach(row => {
         const sel = row.querySelector('.ing-item');
         const qty = parseFloat(row.querySelector('.ing-qty').value);
         if (!sel || isNaN(qty) || qty <= 0) return;
         const cat = sel.options[sel.selectedIndex]?.dataset?.category || '';
-        if (cat === 'Ambalaj') ambalajNet += qty;
-        else hammaddeNet += qty;
+        if (cat === 'Ambalaj') {
+          ambalajNet += qty;
+        } else {
+          hammaddeNet += qty;
+          hammaddeRows.push({ row, qty });
+        }
       });
+
+      // ── % Bileşim hesabı — her satırın hammadde toplamına oranı ──────
+      // Bu, formülasyondaki "w/w" yüzdesidir (toplam = %100).
+      document.querySelectorAll('.ingredient-row').forEach(row => {
+        const pct = row.querySelector('.ing-percent');
+        if (!pct) return;
+        const sel = row.querySelector('.ing-item');
+        const qty = parseFloat(row.querySelector('.ing-qty').value);
+        const cat = sel?.options[sel.selectedIndex]?.dataset?.category || '';
+        if (cat === 'Ambalaj') {
+          pct.textContent = '—';
+          pct.title = 'Ambalaj bileşeni — % bileşime dahil değil';
+          pct.classList.add('zero');
+        } else if (!isNaN(qty) && qty > 0 && hammaddeNet > 0) {
+          const p = (qty / hammaddeNet) * 100;
+          pct.textContent = '%' + p.toFixed(2);
+          pct.title = `${qty} / ${parseFloat(hammaddeNet.toFixed(4))} × 100`;
+          pct.classList.remove('zero');
+        } else {
+          pct.textContent = '—';
+          pct.classList.add('zero');
+        }
+      });
+
+      // Composition summary
+      const compSum = document.getElementById('compositionSummary');
+      const compQ   = document.getElementById('compTotalQty');
+      const compP   = document.getElementById('compTotalPercent');
+      const compH   = document.getElementById('compHint');
+      const unit          = document.getElementById('yieldUnitAddon').textContent.trim();
+      const u             = (unit && unit !== '—') ? ' ' + unit : '';
+
+      if (hammaddeNet > 0) {
+        compSum.style.display = 'flex';
+        compQ.textContent = parseFloat(hammaddeNet.toFixed(4)) + u;
+        // Toplam yüzde — hesaplanan satırların toplamı (round error yüzünden
+        // tam 100 değil bazen, kullanıcı görmeli)
+        const totalPct = hammaddeRows.reduce((s, r) => s + (r.qty / hammaddeNet) * 100, 0);
+        compP.textContent = '%' + totalPct.toFixed(2);
+        compH.textContent = Math.abs(totalPct - 100) < 0.01 ? '(toplamlar tutarlı)' : '';
+      } else {
+        compSum.style.display = 'none';
+      }
 
       const helper = document.getElementById('yieldHelper');
       if (hammaddeNet <= 0 && ambalajNet <= 0) { helper.innerHTML = ''; return; }
 
       const waste        = parseFloat(document.getElementById('recipeWaste').value) || 0;
-      // ADDITIVE: net + (net × waste%) = net × (1 + waste/100) → brüt stok tüketimi
       const hammaddeGross = parseFloat((hammaddeNet * (1 + waste / 100)).toFixed(4));
-      const unit          = document.getElementById('yieldUnitAddon').textContent.trim();
-      const u             = (unit && unit !== '—') ? ' ' + unit : '';
 
       let html = `<i class="bi bi-box-arrow-in-down" style="margin-right:3px;"></i>`;
       html += `Hammadde toplamı: <strong>${parseFloat(hammaddeNet.toFixed(4))}${u}</strong>`;
 
       if (ambalajNet > 0) {
         html += ` &nbsp;+&nbsp; Ambalaj: <strong>${parseFloat(ambalajNet.toFixed(4))}</strong>`
-              + ` <span style="color:#9ca3af;">(fire dışı)</span>`;
+              + ` <span style="color:#9ca3af;">(fire dışı, % dışı)</span>`;
       }
 
       if (waste > 0) {
@@ -871,13 +959,18 @@
       const row = document.createElement('div');
       row.className    = 'ingredient-row';
       row.dataset.rowId = rowCounter;
+      // 4 sütun: ürün · miktar · % bileşim (read-only, hesaplanır) · sil
       row.innerHTML = `
-        <select class="form-select ing-item">${buildIngredientOptions()}</select>
+        <select class="form-select ing-item" onchange="calculateYield()">${buildIngredientOptions()}</select>
         <input type="number" class="form-control ing-qty" min="0.001" step="0.001" placeholder="Miktar" oninput="calculateYield()" />
+        <div class="ing-percent zero" title="Hammadde toplamına oranı">—</div>
         <button type="button" class="btn-remove-row" onclick="removeRow(${rowCounter})">
           <i class="bi bi-x-lg"></i>
         </button>`;
       container.appendChild(row);
+      // Tablo başlığını görünür yap (en az 1 satır var)
+      const header = document.getElementById('ingredientRowsHeader');
+      if (header) header.style.display = 'grid';
     }
 
     function removeRow(rowId) {
@@ -886,6 +979,10 @@
       if (!document.querySelector('.ingredient-row')) {
         document.getElementById('ingredientRows').innerHTML =
           `<div class="empty-ingredients" id="emptyIngredients">Henüz hammadde eklenmedi. Yukarıdaki butonu kullanın.</div>`;
+        const header = document.getElementById('ingredientRowsHeader');
+        if (header) header.style.display = 'none';
+        const sum = document.getElementById('compositionSummary');
+        if (sum) sum.style.display = 'none';
       }
       calculateYield();
     }
@@ -899,6 +996,10 @@
       document.getElementById('ingredientRows').innerHTML =
         `<div class="empty-ingredients" id="emptyIngredients">Henüz hammadde eklenmedi. Yukarıdaki butonu kullanın.</div>`;
       document.getElementById('yieldUnitAddon').textContent = '—';
+      const hdr = document.getElementById('ingredientRowsHeader');
+      if (hdr) hdr.style.display = 'none';
+      const sum = document.getElementById('compositionSummary');
+      if (sum) sum.style.display = 'none';
       document.getElementById('addRecipeModalLabel').textContent = 'Yeni Reçete Oluştur';
       document.getElementById('saveRecipeBtn').textContent = 'Reçeteyi Kaydet';
       editingRecipeId = null;

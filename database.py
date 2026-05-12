@@ -138,6 +138,11 @@ class Inventory(Base):
     qc_form_data = Column(Text, nullable=True)   # JSON — full digital QC form answers
     received_by = Column(String(50), nullable=True)      # Audit: who received this lot
     qc_approved_by = Column(String(50), nullable=True)   # Audit: who approved/rejected the lot
+    # Üretim çıktısı QC ekibinin gözüne düşmeli — bu flag QC sayfasının
+    # QUARANTINE dışında da bu lot'u listelemesini sağlar.  True ise
+    # status APPROVED bile olsa QC ekrana çıkar; QC karar verince
+    # qc_required=False'a iner.
+    qc_required = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -345,6 +350,8 @@ def init_db():
             # Phase 12 — Account lockout (R3)
             "ALTER TABLE users              ADD COLUMN failed_login_attempts INTEGER DEFAULT 0",
             "ALTER TABLE users              ADD COLUMN lockout_until TIMESTAMP",
+            # Phase 13 — Üretim çıktısı QC inceleme zinciri
+            "ALTER TABLE inventory          ADD COLUMN qc_required BOOLEAN DEFAULT FALSE",
         ):
             alter_safe(stmt)
 

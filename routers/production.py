@@ -121,17 +121,19 @@ def start_production(
                 performed_by=actor,
             ))
 
-        # Üretilen lot doğrudan APPROVED — patron QC quarantine flow'u istemiyor:
-        # üretim biter bitmez stok artmalı (Phase 8 / Bug 4 Logic Fix). QC ekibi
-        # geriye dönük inceleme yapmak isterse history üstünden lot detayına bakabilir.
+        # Üretilen lot APPROVED + qc_required=True olarak yaratılır:
+        # → Stok hemen artar (patron şartı: üretim biter bitmez stoğa düşmeli)
+        # → QC sayfası bu lotu görür ve inceler (qc_required=True flag'i ile)
+        # → QC onaylarsa qc_required=False, status APPROVED kalır
+        # → QC reddederse status=REJECTED + stok düşülür + Adjustment audit
         if recipe.target_item_id:
             db.add(Inventory(
                 item_id=recipe.target_item_id,
                 lot_number=produced_lot,
                 quantity=data.produced_quantity,
                 status="APPROVED",
-                received_by=actor,                  # Üretim çıktısını "alan" da üretici
-                qc_approved_by=actor,                # Self-approve at production time
+                received_by=actor,            # Üretim çıktısını "alan" da üretici
+                qc_required=True,             # QC sayfası bu lotu listelesin
             ))
             db.add(Transaction(
                 item_id=recipe.target_item_id,
@@ -186,7 +188,23 @@ def start_production(
 
 @router.get("/qc/quarantine")
 def list_quarantine(db: Session = Depends(get_db)):
-    rows = db.query(Inventory).filter(Inventory.status == "QUARANTINE").order_by(Inventory.id.desc()).all()
+    """
+    QC sayfasının beslediği endpoint.  İki kaynaktan gelir:
+      • status='QUARANTINE' — geleneksel mal kabul karantinası
+      • qc_required=True   — üretim çıktıları (stok eklendi ama QC görmeli)
+    """
+    from sqlalchemy import or_
+    rows = (
+        db.query(Inventory)
+        .filter(
+            or_(
+                Inventory.status == "QUARANTINE",
+                Inventory.qc_required == True,
+            )
+        )
+        .order_by(Inventory.id.desc())
+        .all()
+    )
     return [
         {
             "id":           r.id,
@@ -198,6 +216,9 @@ def list_quarantine(db: Session = Depends(get_db)):
             "expiry_date":  r.expiry_date or "—",
             "location":     r.location or "—",
             "status":       r.status,
+            "qc_required":  r.qc_required,
+            # 'source' = "Üretim" veya "Mal Kabul" — UI bunu rozetle gösterebilir
+            "source":       "Üretim" if r.qc_required else "Mal Kabul",
             "created_at":   r.created_at.strftime("%d.%m.%Y") if r.created_at else "",
         }
         for r in rows
@@ -217,22 +238,44 @@ def process_qc(
     inv = db.query(Inventory).filter(Inventory.id == inventory_id).first()
     if not inv:
         return JSONResponse(status_code=404, content={"detail": "Envanter kaydı bulunamadı."})
-    if inv.status != "QUARANTINE":
-        return JSONResponse(status_code=400, content={"detail": "Bu kayıt zaten karantinade değil."})
+    # Hem mal kabul karantinası hem de üretim qc_required lot'ları işlenebilir
+    if inv.status != "QUARANTINE" and not inv.qc_required:
+        return JSONResponse(status_code=400, content={"detail": "Bu kayıt QC inceleme listesinde değil."})
 
     actor = current_user.get("full_name") or current_user.get("username") or "—"
+    # production lot'u mu (qc_required+APPROVED) yoksa mal kabul karantinası mı?
+    was_quarantine = (inv.status == "QUARANTINE")
 
     try:
+        old_status         = inv.status
         inv.status         = data.status
         inv.qc_notes       = data.notes
         inv.qc_approved_by = actor
+        inv.qc_required    = False     # QC karar verdi, artık listede çıkmasın
         inv.updated_at     = __import__("datetime").datetime.utcnow()
 
-        # APPROVED ise items.current_stock'u artır; REJECTED ise stok değişmez
-        if data.status == "APPROVED":
-            approved_item = db.query(Item).filter(Item.id == inv.item_id).first()
-            if approved_item:
-                approved_item.current_stock = round(approved_item.current_stock + inv.quantity, 6)
+        item = db.query(Item).filter(Item.id == inv.item_id).first()
+        # Stok değişikliği — karmaşık ama anlamlı:
+        #   QUARANTINE + APPROVED → stok henüz eklenmemiş, ekle
+        #   QUARANTINE + REJECTED → stok henüz eklenmemiş, hiçbir şey yapma
+        #   qc_required (PROD)  + APPROVED → stok zaten üretimde eklendi, hiçbir şey yapma
+        #   qc_required (PROD)  + REJECTED → stok üretimde eklendi, geri al + Adjustment audit
+        if was_quarantine and data.status == "APPROVED" and item:
+            item.current_stock = round((item.current_stock or 0) + inv.quantity, 6)
+        elif not was_quarantine and data.status == "REJECTED" and item:
+            item.current_stock = round((item.current_stock or 0) - inv.quantity, 6)
+            db.add(Transaction(
+                item_id=inv.item_id,
+                lot_number=inv.lot_number,
+                transaction_type="Adjustment",
+                quantity=-inv.quantity,
+                notes=(
+                    f"Üretim QC reddi — Lot: {inv.lot_number}. "
+                    f"Eklenen {inv.quantity} {item.unit or ''} stok geri alındı. "
+                    f"Sebep: {data.notes}"
+                ),
+                performed_by=actor,
+            ))
 
         tx_type = "QC Approval" if data.status == "APPROVED" else "QC Rejection"
         db.add(Transaction(
@@ -273,8 +316,11 @@ def qc_approve_form(
     inv = db.query(Inventory).filter(Inventory.id == inventory_id).first()
     if not inv:
         return JSONResponse(status_code=404, content={"detail": "Envanter kaydı bulunamadı."})
-    if inv.status != "QUARANTINE":
+    # Hem mal kabul karantinası hem üretim qc_required lot'ları işlenebilir
+    if inv.status != "QUARANTINE" and not inv.qc_required:
         return JSONResponse(status_code=400, content={"detail": "Bu lot zaten işlenmiş — tekrar değiştirilemez."})
+
+    was_quarantine = (inv.status == "QUARANTINE")
 
     if not data.checklist:
         return JSONResponse(status_code=422, content={"detail": "Kontrol listesi boş gönderilemez."})
@@ -297,15 +343,32 @@ def qc_approve_form(
         inv.qc_notes       = data.notes or ""
         inv.qc_form_data   = json.dumps(form_payload, ensure_ascii=False)
         inv.qc_approved_by = actor                  # Audit: who QC'd
+        inv.qc_required    = False                  # QC karar verdi
         inv.updated_at     = _dt.utcnow()
 
         label = "Onaylandı ✓" if data.status == "APPROVED" else "Reddedildi ✗"
 
-        # APPROVED → add lot quantity to live stock
-        if data.status == "APPROVED":
-            approved_item = db.query(Item).filter(Item.id == inv.item_id).first()
-            if approved_item:
-                approved_item.current_stock = round(approved_item.current_stock + inv.quantity, 6)
+        # Stok ayarlaması — process_qc ile aynı mantık:
+        #   QUARANTINE + APPROVED → stok henüz yok, ekle
+        #   QUARANTINE + REJECTED → stok henüz yok, hiçbir şey
+        #   qc_required (PROD) + APPROVED → stok zaten var, hiçbir şey
+        #   qc_required (PROD) + REJECTED → stok geri al + Adjustment audit
+        approved_item = db.query(Item).filter(Item.id == inv.item_id).first()
+        if was_quarantine and data.status == "APPROVED" and approved_item:
+            approved_item.current_stock = round((approved_item.current_stock or 0) + inv.quantity, 6)
+        elif not was_quarantine and data.status == "REJECTED" and approved_item:
+            approved_item.current_stock = round((approved_item.current_stock or 0) - inv.quantity, 6)
+            db.add(Transaction(
+                item_id=inv.item_id,
+                lot_number=inv.lot_number,
+                transaction_type="Adjustment",
+                quantity=-inv.quantity,
+                notes=(
+                    f"Üretim QC reddi — Lot: {inv.lot_number}. "
+                    f"Eklenen {inv.quantity} {approved_item.unit or ''} stok geri alındı."
+                ),
+                performed_by=actor,
+            ))
 
         note_text = f"QC Form — {label} — Lot: {inv.lot_number}"
         if data.notes:

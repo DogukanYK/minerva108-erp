@@ -437,6 +437,7 @@
             o.textContent = i.name;
             o.dataset.unit = i.unit || '';
             o.dataset.barcode = i.barcode || '';      // Phase 9 — drives scan match
+            o.dataset.supplierId = i.supplier_id || '';  // Auto-fill için
             itemSel.appendChild(o);
           });
 
@@ -450,10 +451,20 @@
       } catch { showToast('Ürün/tedarikçi listesi yüklenemedi.'); }
     }
 
-    /* ── Ürün seçilince birim güncelle ── */
+    /* ── Ürün seçilince birim güncelle + varsayılan tedarikçiyi yansıt ── */
     document.getElementById('recvItem').addEventListener('change', function () {
       const opt  = this.options[this.selectedIndex];
       document.getElementById('recvUnitAddon').textContent = opt?.dataset?.unit || '—';
+      // Item'a varsayılan supplier atanmışsa Tedarikçi dropdown'unu oto-doldur.
+      // Lab istemezse manuel olarak değiştirebilir — sadece pre-fill.
+      const defSupplier = opt?.dataset?.supplierId;
+      const suppSel = document.getElementById('recvSupplier');
+      if (defSupplier && suppSel) {
+        // Sadece supplier seçili değilse (kullanıcı zaten elle seçmemişse) atama yap
+        if (!suppSel.value) {
+          suppSel.value = defSupplier;
+        }
+      }
     });
 
     /* ── Phase 9 — barkod tarayıp dropdown'da eşleşen ürünü seç ── */

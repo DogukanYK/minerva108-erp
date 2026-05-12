@@ -262,6 +262,12 @@
     }
     tr.row-parent[data-expanded="true"] .parent-chevron { transform: rotate(90deg); }
 
+    tbody tr.row-clickable { cursor: pointer; }
+    .item-supplier-hint {
+      display: block; margin-top: 2px;
+      font-size: 0.72rem; color: #9ca3af; font-weight: 500;
+    }
+    .item-supplier-hint i { color: var(--gold); margin-right: 3px; }
     tbody tr {
       border-bottom: 1px solid #f3f0ea;
       transition: background 0.12s;
@@ -801,6 +807,19 @@
               </select>
             </div>
 
+            <!-- ── Varsayılan tedarikçi — mal kabulde otomatik gelecek ── -->
+            <div class="mb-3">
+              <label class="form-label-sm">Varsayılan Tedarikçi
+                <small style="color:#9ca3af;font-weight:400;text-transform:none;letter-spacing:0;">
+                  (mal kabulde bu ürün seçilince otomatik gelir)
+                </small>
+              </label>
+              <select class="form-select" id="itemSupplierId">
+                <option value="">— Tedarikçi yok —</option>
+                <!-- Dinamik olarak populate edilir -->
+              </select>
+            </div>
+
             <!-- ── Variation section (visible only when category = Bitmiş Ürün) ── -->
             <div class="mb-3" id="variationSection" style="display:none;">
               <div class="variation-toggle-bar">
@@ -1070,9 +1089,14 @@
 
       // ── VARIATION row (indented under parent, hidden by default) ────────
       if (mode === 'variation') {
+        const vSupplier = item.supplier_name
+          ? `<span class="item-supplier-hint" title="Varsayılan tedarikçi"><i class="bi bi-truck"></i>${escHtml(item.supplier_name)}</span>`
+          : '';
+        const vClasses = `row-variation row-clickable ${selectedIds.has(item.id) ? 'selected' : ''}`;
+        const vClick   = canEdit ? `onclick="onItemRowClick(event, ${item.id})"` : '';
         return `
-        <tr data-id="${item.id}" data-parent-id="${item.parent_id ?? ''}" class="row-variation ${selectedIds.has(item.id) ? 'selected' : ''}">
-          <td style="padding-left:1.1rem;">
+        <tr data-id="${item.id}" data-parent-id="${item.parent_id ?? ''}" class="${vClasses}" ${vClick}>
+          <td style="padding-left:1.1rem;" onclick="event.stopPropagation()">
             <input type="checkbox" class="row-check" data-id="${item.id}"
               style="accent-color:var(--navy);"
               ${selectedIds.has(item.id) ? 'checked' : ''} />
@@ -1083,31 +1107,51 @@
             <span class="variation-name-pill">${escHtml(item.variation_name || '—')}</span>
             ${escHtml(item.name)}
             ${item.parent_name ? `<div class="variation-parent-name">↳ ${escHtml(item.parent_name)}</div>` : ''}
+            ${vSupplier}
           </td>
           <td>${catBadge(item.category, item.pkg_type)}</td>
           <td>${escHtml(item.unit)}</td>
           <td>${item.min_stock_level ?? 0}</td>
           ${costCellTd}
-          <td style="text-align:center;">${actions}</td>
+          <td style="text-align:center;" onclick="event.stopPropagation()">${actions}</td>
         </tr>`;
       }
 
-      // ── STANDALONE / DEFAULT row ─────────────────────────────────────────
+      // ── STANDALONE / DEFAULT row — tıklanabilir (satır click → Düzenle modal) ──
+      const supplierHint = item.supplier_name
+        ? `<span class="item-supplier-hint" title="Varsayılan tedarikçi"><i class="bi bi-truck"></i>${escHtml(item.supplier_name)}</span>`
+        : '';
+      const clickableAttr = canEdit
+        ? `class="row-clickable ${selectedIds.has(item.id) ? 'selected' : ''}" onclick="onItemRowClick(event, ${item.id})"`
+        : `class="${selectedIds.has(item.id) ? 'selected' : ''}"`;
       return `
-        <tr data-id="${item.id}" class="${selectedIds.has(item.id) ? 'selected' : ''}">
-          <td style="padding-left:1.1rem;">
+        <tr data-id="${item.id}" ${clickableAttr}>
+          <td style="padding-left:1.1rem;" onclick="event.stopPropagation()">
             <input type="checkbox" class="row-check" data-id="${item.id}"
               style="accent-color:var(--navy);"
               ${selectedIds.has(item.id) ? 'checked' : ''} />
           </td>
           <td class="td-id">#${item.id}</td>
-          <td class="td-name">${escHtml(item.name)}</td>
+          <td class="td-name">
+            ${escHtml(item.name)}
+            ${supplierHint}
+          </td>
           <td>${catBadge(item.category, item.pkg_type)}</td>
           <td>${escHtml(item.unit)}</td>
           <td>${item.min_stock_level ?? 0}</td>
           ${costCellTd}
-          <td style="text-align:center;">${actions}</td>
+          <td style="text-align:center;" onclick="event.stopPropagation()">${actions}</td>
         </tr>`;
+    }
+
+    /**
+     * Tablo satır click handler — Düzenle butonu/checkbox/aksiyon hücresi
+     * dışında bir yere tıklanırsa Düzenle modal'ını açar.
+     */
+    function onItemRowClick(event, itemId) {
+      // event.stopPropagation çağırılmışsa zaten gelmez; ekstra koruma
+      if (event.target.closest('button, input, a, select')) return;
+      editItem(itemId);
     }
 
     function renderTable(data) {
@@ -1181,15 +1225,33 @@
     }
 
     /* ── Load items from API ── */
+    let allSuppliers = [];
+
     async function loadItems() {
       try {
-        const res = await fetch('/api/items');
-        allItems  = await res.json();
+        const [itemsRes, suppRes] = await Promise.all([
+          fetch('/api/items'),
+          fetch('/api/suppliers'),
+        ]);
+        allItems     = await itemsRes.json();
+        allSuppliers = suppRes.ok ? await suppRes.json() : [];
+        populateSupplierDropdown();
         updateTabCounts();
         applyFiltersAndSort();
       } catch {
         showToast('Ürünler yüklenirken hata oluştu.');
       }
+    }
+
+    function populateSupplierDropdown() {
+      const sel = document.getElementById('itemSupplierId');
+      if (!sel) return;
+      const currentVal = sel.value;
+      sel.innerHTML = '<option value="">— Tedarikçi yok —</option>' +
+        allSuppliers.map(s =>
+          `<option value="${s.id}">${escHtml(s.name)}</option>`
+        ).join('');
+      if (currentVal) sel.value = currentVal;
     }
 
     /* ── Update tab count badges ── */
@@ -1480,6 +1542,9 @@
       // Phase 10 — Ambalaj alt-tipi (pkg_type)
       const _pkgEl = document.getElementById('itemPkgType');
       if (_pkgEl) _pkgEl.value = item.pkg_type || '';
+      // Default supplier — mal kabulde oto-doldurma için
+      const _supEl = document.getElementById('itemSupplierId');
+      if (_supEl) _supEl.value = item.supplier_id || '';
 
       // ── Variation state ─────────────────────────────────────────────────
       resetVariationFields();
@@ -1578,6 +1643,7 @@
         variation_name,
         barcode:        (document.getElementById('itemBarcode')?.value || '').trim() || null,
         pkg_type:       (document.getElementById('itemPkgType')?.value || '').trim() || null,
+        supplier_id:    parseInt(document.getElementById('itemSupplierId')?.value || '') || null,
       };
       try {
         const url    = editingItemId ? `/api/items/${editingItemId}` : '/api/items';
