@@ -99,6 +99,38 @@ def test_no_local_showToast_left(authed_client: TestClient):
     assert not failures, "Hâlâ local showToast bulunan sayfalar: " + ", ".join(failures)
 
 
+def test_recipes_page_template_vars_declared(authed_client: TestClient):
+    """
+    /recipes sayfasının inline JS'inde template literal kullanılan ${var}
+    pattern'larında, kısa adlı (1-2 harfli) değişkenler için tanım kontrolü.
+    Geçmiş bug: refactor sırasında 'const u = ...' tanımı silindi ama
+    template'de '${u}' kaldı → 'u is not defined' runtime hatası.
+    """
+    import re
+    r = authed_client.get("/recipes")
+    assert r.status_code == 200
+    html = r.text
+
+    # Tek harfli template-literal kullanımları bul
+    short_vars = set(re.findall(r"\$\{([a-zA-Z_])\}", html))
+    # Her birinin 'const X' / 'let X' / 'var X' / parametre olarak tanımı var mı?
+    missing = []
+    for v in short_vars:
+        # Tanımları regex'le ara: var, let, const, function param
+        declared = (
+            re.search(rf"\b(?:const|let|var)\s+{v}\b", html) is not None
+            or re.search(rf"\.forEach\(\s*\(?\s*{v}\b", html) is not None
+            or re.search(rf"function[^(]*\([^)]*\b{v}\b", html) is not None
+            or re.search(rf"=>\s*{v}\b|\(\s*{v}\b\s*\)\s*=>", html) is not None
+        )
+        if not declared:
+            missing.append(v)
+    assert not missing, (
+        f"/recipes inline JS'inde tanımsız ${{{','.join(missing)}}} değişken(ler)i. "
+        f"Bu 'undefined' runtime hatası verir (geçmişte ${{u}} sorunu)."
+    )
+
+
 def test_admin_matrix_shows_all_permissions(authed_client: TestClient):
     """
     Admin sayfasındaki permission matrix'inde core/permissions.py'deki TÜM

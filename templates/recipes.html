@@ -1010,6 +1010,7 @@
 
       const waste        = parseFloat(document.getElementById('recipeWaste').value) || 0;
       const hammaddeGross = parseFloat((hammaddeNet * (1 + waste / 100)).toFixed(4));
+      const u = massUnit ? ' ' + massUnit : '';
 
       let html = `<i class="bi bi-box-arrow-in-down" style="margin-right:3px;"></i>`;
       html += `Hammadde toplamı: <strong>${parseFloat(hammaddeNet.toFixed(4))}${u}</strong>`;
@@ -1198,8 +1199,10 @@
         calculateYield();
 
         new bootstrap.Modal(document.getElementById('addRecipeModal')).show();
-      } catch {
-        showToast('Reçete düzenlenirken hata oluştu.');
+      } catch (e) {
+        // Gerçek hatayı console'a düşür ki tarayıcıda DevTools açıp görelim
+        console.error('editRecipe error:', e, e?.stack);
+        showToast('Reçete düzenlenirken hata oluştu: ' + (e?.message || e));
       }
     }
 
