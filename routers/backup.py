@@ -91,6 +91,29 @@ def _safe_filename(name: str) -> Optional[str]:
     return name
 
 
+# ─── PostgreSQL binary path detection ────────────────────────────────────
+# Prod systemd unit'inin PATH'i sadece /var/www/minerva/venv/bin — pg_dump
+# orada YOK.  shutil.which() de bu yüzden bulamaz.  Bu helper yaygın
+# kurulum yerlerini tarar; ilk bulduğunu döner.  Bulamazsa None.
+def _find_pg_binary(name: str) -> Optional[str]:
+    """name = 'pg_dump' / 'pg_restore' / 'psql'.  Önce PATH, sonra yaygın yerler."""
+    found = shutil.which(name)
+    if found:
+        return found
+    candidates = [
+        f"/usr/bin/{name}",                                  # Debian/Ubuntu
+        f"/usr/local/bin/{name}",                            # CentOS / custom
+        f"/opt/homebrew/opt/postgresql@16/bin/{name}",       # Mac Apple Silicon
+        f"/opt/homebrew/opt/postgresql@14/bin/{name}",
+        f"/usr/local/opt/postgresql@16/bin/{name}",          # Mac Intel
+        f"/usr/local/opt/postgresql@14/bin/{name}",
+    ]
+    for c in candidates:
+        if Path(c).is_file():
+            return c
+    return None
+
+
 def _list_backups() -> list:
     """Yedek dizinindeki tüm .dump dosyalarını listele (en yeni önce)."""
     rows = []
@@ -120,12 +143,16 @@ def _run_pg_dump(out_path: Path) -> tuple[bool, str]:
     if not db:
         return False, "DATABASE_URL set edilmemiş veya PostgreSQL değil."
 
+    pg_dump_bin = _find_pg_binary("pg_dump")
+    if not pg_dump_bin:
+        return False, "pg_dump bulunamadı. PostgreSQL client paketi yüklü mü?"
+
     env = os.environ.copy()
     if db["password"]:
         env["PGPASSWORD"] = db["password"]
 
     cmd = [
-        "pg_dump",
+        pg_dump_bin,
         "-h", db["host"], "-p", db["port"],
         "-U", db["user"], "-d", db["dbname"],
         "--format=custom",
@@ -144,8 +171,6 @@ def _run_pg_dump(out_path: Path) -> tuple[bool, str]:
         except OSError:
             pass
         return True, str(out_path)
-    except FileNotFoundError:
-        return False, "pg_dump bulunamadı. PostgreSQL client paketi yüklü mü?"
     except subprocess.TimeoutExpired:
         return False, "pg_dump 5 dakika içinde tamamlanamadı (timeout)."
     except Exception as e:
@@ -161,28 +186,34 @@ def _run_pg_restore(in_path: Path) -> tuple[bool, str]:
     if not db:
         return False, "DATABASE_URL set edilmemiş veya PostgreSQL değil."
 
+    pg_restore_bin = _find_pg_binary("pg_restore")
+    psql_bin       = _find_pg_binary("psql")
+    if not pg_restore_bin:
+        return False, "pg_restore bulunamadı. PostgreSQL client paketi yüklü mü?"
+
     env = os.environ.copy()
     if db["password"]:
         env["PGPASSWORD"] = db["password"]
 
     # 1) Aktif bağlantıları sonlandır (kendimiz hariç) — restore'un takılmaması için
-    try:
-        subprocess.run(
-            ["psql",
-             "-h", db["host"], "-p", db["port"],
-             "-U", db["user"], "-d", db["dbname"],
-             "-c", (
-                 "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                 "WHERE datname = current_database() AND pid <> pg_backend_pid()"
-             )],
-            env=env, capture_output=True, text=True, timeout=30,
-        )
-    except Exception:
-        pass  # En kötü ihtimalle pg_restore takılır, kullanıcı görür
+    if psql_bin:
+        try:
+            subprocess.run(
+                [psql_bin,
+                 "-h", db["host"], "-p", db["port"],
+                 "-U", db["user"], "-d", db["dbname"],
+                 "-c", (
+                     "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                     "WHERE datname = current_database() AND pid <> pg_backend_pid()"
+                 )],
+                env=env, capture_output=True, text=True, timeout=30,
+            )
+        except Exception:
+            pass  # En kötü ihtimalle pg_restore takılır, kullanıcı görür
 
     # 2) pg_restore --clean --if-exists  → mevcut objeleri drop et, yeniden yarat
     cmd = [
-        "pg_restore",
+        pg_restore_bin,
         "-h", db["host"], "-p", db["port"],
         "-U", db["user"], "-d", db["dbname"],
         "--clean", "--if-exists",
@@ -194,8 +225,6 @@ def _run_pg_restore(in_path: Path) -> tuple[bool, str]:
         result = subprocess.run(
             cmd, env=env, capture_output=True, text=True, timeout=600,
         )
-        # pg_restore çoğu zaman "warning" diye exit code 1 dönebilir; gerçek hata kontrolü
-        # stderr'de 'error:' geçiyor mu diye bakmak
         stderr = result.stderr or ""
         had_real_error = any(
             line.lower().startswith("pg_restore: error:")
@@ -204,8 +233,6 @@ def _run_pg_restore(in_path: Path) -> tuple[bool, str]:
         if had_real_error:
             return False, stderr[:3000]
         return True, "OK"
-    except FileNotFoundError:
-        return False, "pg_restore bulunamadı."
     except subprocess.TimeoutExpired:
         return False, "pg_restore 10 dakika içinde tamamlanamadı."
     except Exception as e:
