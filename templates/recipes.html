@@ -334,6 +334,8 @@
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
   <script src="/static/toast.js" defer></script>
+  <script src="/static/fetch-guard.js" defer></script>
+  <script src="/static/idle-watch.js" defer></script>
 </head>
 <body>
 
@@ -916,10 +918,17 @@
       const hammadde = allItems.filter(i => i.category === 'Hammadde');
       const ambalaj  = allItems.filter(i => i.category === 'Ambalaj');
 
+      // Helper — ürünün option label'ı (isim + birim + tedarikçi rozeti)
+      function ingLabel(item) {
+        const unitPart = item.unit ? ' (' + item.unit + ')' : '';
+        const supp     = item.supplier_name ? ' · 🚚 ' + item.supplier_name : '';
+        return escHtml(item.name) + unitPart + supp;
+      }
+
       if (hammadde.length) {
         opts += '<optgroup label="Hammadde">';
         hammadde.forEach(item => {
-          opts += `<option value="${item.id}" data-category="Hammadde">${escHtml(item.name)}${item.unit ? ' (' + item.unit + ')' : ''}</option>`;
+          opts += `<option value="${item.id}" data-category="Hammadde" data-supplier="${escHtml(item.supplier_name || '')}">${ingLabel(item)}</option>`;
         });
         opts += '</optgroup>';
       }
@@ -940,14 +949,14 @@
           if (!byType[t] || !byType[t].length) return;
           opts += `<optgroup label="${_PKG_GROUP_LABEL[t]}">`;
           byType[t].forEach(item => {
-            opts += `<option value="${item.id}" data-category="Ambalaj" data-pkg="${t}">${escHtml(item.name)}${item.unit ? ' (' + item.unit + ')' : ''}</option>`;
+            opts += `<option value="${item.id}" data-category="Ambalaj" data-pkg="${t}" data-supplier="${escHtml(item.supplier_name || '')}">${ingLabel(item)}</option>`;
           });
           opts += '</optgroup>';
         });
         if (tipless.length) {
           opts += '<optgroup label="Ambalaj — (Tipsiz)">';
           tipless.forEach(item => {
-            opts += `<option value="${item.id}" data-category="Ambalaj">${escHtml(item.name)}${item.unit ? ' (' + item.unit + ')' : ''}</option>`;
+            opts += `<option value="${item.id}" data-category="Ambalaj" data-supplier="${escHtml(item.supplier_name || '')}">${ingLabel(item)}</option>`;
           });
           opts += '</optgroup>';
         }

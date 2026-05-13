@@ -41,6 +41,9 @@ class AdminUserUpdateRequest(BaseModel):
     full_name: Optional[str]  = Field(None, max_length=100)
     role:      Optional[str]  = Field(None, max_length=20)
     is_active: Optional[bool] = None
+    # Idle timeout dakika cinsinden — None → global default kullan
+    # 0 değil çünkü "0 dakika sonra logout" mantıksız.  Min 1, max 1440 (24 saat).
+    idle_timeout_minutes: Optional[int] = Field(None, ge=1, le=1440)
 
 
 class PasswordResetRequest(BaseModel):
@@ -62,12 +65,13 @@ def admin_list_users(
     users = db.query(User).order_by(User.id.asc()).all()
     return [
         {
-            "id":         u.id,
-            "username":   u.username,
-            "full_name":  u.full_name,
-            "role":       u.role,
-            "is_active":  u.is_active,
-            "created_at": u.created_at.strftime("%d.%m.%Y") if u.created_at else "",
+            "id":                   u.id,
+            "username":             u.username,
+            "full_name":            u.full_name,
+            "role":                 u.role,
+            "is_active":            u.is_active,
+            "idle_timeout_minutes": u.idle_timeout_minutes,
+            "created_at":           u.created_at.strftime("%d.%m.%Y") if u.created_at else "",
         }
         for u in users
     ]
@@ -145,6 +149,9 @@ def admin_update_user(
 
     if data.is_active is not None:
         user.is_active = data.is_active
+
+    if data.idle_timeout_minutes is not None:
+        user.idle_timeout_minutes = data.idle_timeout_minutes
 
     db.commit()
 

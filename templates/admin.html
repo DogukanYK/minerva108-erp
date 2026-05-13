@@ -364,6 +364,8 @@
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
   <script src="/static/toast.js" defer></script>
+  <script src="/static/fetch-guard.js" defer></script>
+  <script src="/static/idle-watch.js" defer></script>
 </head>
 <body>
 
@@ -686,6 +688,16 @@
                   <label class="form-check-label" for="editIsActive" style="margin-left:0.5rem; font-size:0.88rem; color:#374151; cursor:pointer;" id="editIsActiveLabel">Aktif</label>
                 </div>
               </div>
+              <div class="col-12">
+                <label class="form-label-sm">Inaktiflik Çıkışı (dakika)
+                  <small style="color:#9ca3af;font-weight:400;text-transform:none;letter-spacing:0;">
+                    — boş bırakılırsa sistem varsayılanı (5 dk) kullanılır
+                  </small>
+                </label>
+                <input type="number" class="form-control" id="editIdleTimeout"
+                  min="1" max="1440" step="1"
+                  placeholder="Boş = 5 dk varsayılan; örn. 30 = 30 dk inaktif sonra çıkış" />
+              </div>
             </div>
           </form>
         </div>
@@ -985,6 +997,8 @@
       document.getElementById('editRole').value            = user.role;
       document.getElementById('editIsActive').checked      = user.is_active;
       document.getElementById('editIsActiveLabel').textContent = user.is_active ? 'Aktif' : 'Pasif';
+      // Idle timeout — null ise boş bırak (default kullanılır)
+      document.getElementById('editIdleTimeout').value     = user.idle_timeout_minutes ?? '';
 
       // Self-protection: disable role + status toggle
       document.getElementById('selfEditWarning').style.display = isSelf ? 'flex' : 'none';
@@ -1010,6 +1024,9 @@
         payload.role      = document.getElementById('editRole').value;
         payload.is_active = document.getElementById('editIsActive').checked;
       }
+      // Idle timeout — boşsa null gönder (sistem default'a düşsün)
+      const idleVal = document.getElementById('editIdleTimeout').value.trim();
+      payload.idle_timeout_minutes = idleVal === '' ? null : parseInt(idleVal, 10);
 
       const btn = document.getElementById('editUserBtn');
       btn.disabled = true; btn.textContent = 'Kaydediliyor…';

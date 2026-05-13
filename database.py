@@ -47,6 +47,11 @@ class User(Base):
     # saldırgan IP rotate etse bile hesabı koruyor.
     failed_login_attempts = Column(Integer, default=0)
     lockout_until         = Column(DateTime, nullable=True)
+    # Inaktiflik süresi (dakika).  Kullanıcı bu kadar süre boyunca herhangi
+    # bir mouse/keyboard hareketi yapmazsa frontend otomatik çıkış yapar.
+    # NULL → global default (5 dk).  Lab'a göre özelleştirilebilir
+    # (örn. üretim takımına 30 dk, ofise 5 dk).
+    idle_timeout_minutes  = Column(Integer, nullable=True)
 
 
 class Supplier(Base):
@@ -352,6 +357,8 @@ def init_db():
             "ALTER TABLE users              ADD COLUMN lockout_until TIMESTAMP",
             # Phase 13 — Üretim çıktısı QC inceleme zinciri
             "ALTER TABLE inventory          ADD COLUMN qc_required BOOLEAN DEFAULT FALSE",
+            # Phase 14 — Idle timeout (kullanıcı başına özelleştirilebilir)
+            "ALTER TABLE users              ADD COLUMN idle_timeout_minutes INTEGER",
         ):
             alter_safe(stmt)
 

@@ -20,6 +20,10 @@ from core.limiter import limiter
 LOCKOUT_THRESHOLD       = 5      # bu kadar başarısız sonra kilit
 LOCKOUT_DURATION_MIN    = 15
 
+# Global default idle timeout — kullanıcı user.idle_timeout_minutes set
+# etmediğinde frontend bu değeri kullanır.  Lab istediği gibi değiştirebilir.
+DEFAULT_IDLE_TIMEOUT_MIN = 5
+
 router = APIRouter(prefix="/api", tags=["auth"])
 
 
@@ -91,3 +95,23 @@ def login(request: Request, data: LoginRequest, response: Response, db: Session 
 def logout(response: Response):
     response.delete_cookie("access_token")
     return {"message": "Çıkış yapıldı"}
+
+
+@router.get("/me/session-policy")
+def get_session_policy(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(__import__("core.auth", fromlist=["get_current_user"]).get_current_user),
+):
+    """
+    Frontend idle-timeout counter'ının kullandığı endpoint.
+    Kullanıcıya özel ayar (user.idle_timeout_minutes) varsa onu döner;
+    yoksa global DEFAULT_IDLE_TIMEOUT_MIN (5 dk).
+    """
+    u = db.query(User).filter(User.id == int(current_user.get("sub", 0))).first()
+    if not u or not u.is_active:
+        return JSONResponse(status_code=401, content={"detail": "Oturum geçersiz."})
+    return {
+        "idle_timeout_minutes": (u.idle_timeout_minutes or DEFAULT_IDLE_TIMEOUT_MIN),
+        "default_idle_timeout_minutes": DEFAULT_IDLE_TIMEOUT_MIN,
+        "is_custom": u.idle_timeout_minutes is not None,
+    }

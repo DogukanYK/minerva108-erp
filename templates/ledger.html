@@ -207,6 +207,8 @@
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
   <script src="/static/toast.js" defer></script>
+  <script src="/static/fetch-guard.js" defer></script>
+  <script src="/static/idle-watch.js" defer></script>
 </head>
 <body>
 
@@ -330,6 +332,7 @@
                 <tr>
                   <th>Ürün Adı</th>
                   <th>Kategori</th>
+                  <th>Tedarikçi</th>
                   <th>Birim</th>
                   <th style="text-align:right;">Toplam Stok (Onaylı)</th>
                   {% if can('inventory', 'adjust') %}
@@ -338,7 +341,7 @@
                 </tr>
               </thead>
               <tbody id="stockBody">
-                <tr><td colspan="5"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+                <tr><td colspan="6"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
               </tbody>
             </table>
           </div>
@@ -511,13 +514,17 @@
 
       if (stockFilter === 'raw')      data = data.filter(i => i.category === 'Hammadde' || i.category === 'Ambalaj');
       if (stockFilter === 'finished') data = data.filter(i => i.category === 'Bitmiş Ürün');
-      if (q) data = data.filter(i => i.name.toLowerCase().includes(q) || (i.category || '').toLowerCase().includes(q));
+      if (q) data = data.filter(i =>
+        i.name.toLowerCase().includes(q) ||
+        (i.category || '').toLowerCase().includes(q) ||
+        (i.supplier_name || '').toLowerCase().includes(q)
+      );
 
       const tbody = document.getElementById('stockBody');
       const info  = document.getElementById('stockInfo');
 
       const canAdjust = !!(window.can && window.can('inventory', 'adjust'));
-      const colCount  = canAdjust ? 5 : 4;
+      const colCount  = canAdjust ? 6 : 5;
 
       if (!data.length) {
         tbody.innerHTML = `<tr><td colspan="${colCount}"><div class="empty-state"><i class="bi bi-boxes"></i><p>Bu filtre için kayıt bulunamadı.</p></div></td></tr>`;
@@ -538,9 +545,16 @@
               <i class="bi bi-pencil-square"></i> Düzelt
             </button>
           </td>` : '';
+        // Tedarikçi rozeti — varsa truck ikonu + ad, yoksa em-dash
+        const suppCell = i.supplier_name
+          ? `<span style="display:inline-flex;align-items:center;gap:0.3rem;font-size:0.82rem;color:#6b7280;">
+               <i class="bi bi-truck" style="color:var(--gold);"></i>${escHtml(i.supplier_name)}
+             </span>`
+          : `<span style="color:#d1d5db;font-size:0.78rem;">—</span>`;
         return `<tr>
           <td class="td-name">${escHtml(i.name)}</td>
           <td>${catBadge(i.category)}</td>
+          <td>${suppCell}</td>
           <td style="color:#6b7280;">${escHtml(i.unit)}</td>
           <td style="text-align:right;">
             <span class="td-num">${i.total_stock.toLocaleString('tr-TR', {maximumFractionDigits:4})}</span>

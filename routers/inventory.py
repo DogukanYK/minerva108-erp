@@ -514,13 +514,19 @@ def inventory_summary(db: Session = Depends(get_db)):
         .order_by(Item.category, Item.name)
         .all()
     )
+    # Supplier lookup — listing'de supplier_name göstermek için tek query
+    supplier_name_by_id = {
+        s.id: s.name for s in db.query(Supplier).filter(Supplier.is_active == True).all()
+    }
     return [
         {
-            "item_id":     i.id,
-            "name":        i.name,
-            "category":    i.category or "Diğer",
-            "unit":        i.unit,
-            "total_stock": round(float(i.current_stock or 0), 4),
+            "item_id":       i.id,
+            "name":          i.name,
+            "category":      i.category or "Diğer",
+            "unit":          i.unit,
+            "total_stock":   round(float(i.current_stock or 0), 4),
+            "supplier_id":   i.supplier_id,
+            "supplier_name": supplier_name_by_id.get(i.supplier_id) if i.supplier_id else None,
         }
         for i in items
     ]
