@@ -15,6 +15,7 @@ from database import (
 from core.auth import get_current_user
 from core.permissions import _can_see_finance, require_permission
 from core.notifications import notify_low_stock
+from core.undo import record as record_undoable
 
 router = APIRouter(prefix="/api", tags=["inventory"])
 
@@ -258,7 +259,7 @@ def update_item(
     data: ItemCreateRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_permission("items", "edit")),
+    current_user: dict = Depends(require_permission("items", "edit")),
 ):
     item = db.query(Item).filter(Item.id == item_id).first()
     if not item:
@@ -275,6 +276,20 @@ def update_item(
     err = _validate_variation(db, data.parent_id, data.variation_name, self_id=item_id)
     if err: return err
 
+    # ── Undo için BEFORE snapshot (mutation öncesi mevcut değerleri yakala) ──
+    before_snapshot = {
+        "name":            item.name,
+        "category":        item.category,
+        "unit":            item.unit,
+        "min_stock_level": float(item.min_stock_level or 0.0),
+        "cost_price":      float(item.cost_price or 0.0),
+        "parent_id":       item.parent_id,
+        "variation_name":  item.variation_name,
+        "barcode":         item.barcode,
+        "pkg_type":        item.pkg_type,
+        "supplier_id":     item.supplier_id,
+    }
+
     item.name            = data.name
     item.category        = data.category
     item.unit            = data.unit
@@ -285,6 +300,23 @@ def update_item(
     item.barcode         = (data.barcode.strip() if data.barcode and data.barcode.strip() else None)
     item.pkg_type        = (data.pkg_type.strip().lower() if data.pkg_type and data.pkg_type.strip() else None)
     item.supplier_id     = data.supplier_id
+
+    # ── Undo entry ───────────────────────────────────────────────────────
+    try:
+        uid = int(current_user.get("sub", 0))
+        if uid:
+            record_undoable(
+                db,
+                user_id=uid,
+                action_type="item_edit",
+                target_table="items",
+                target_id=item.id,
+                payload={"item_id": item.id, "before": before_snapshot},
+                description=f"Ürün düzenlendi: {item.name}",
+            )
+    except Exception:
+        pass
+
     db.commit()
 
     # ── Low-stock alert: if the edit (typically a min_stock_level bump) leaves
@@ -460,6 +492,9 @@ def receive_stock(
             Inventory.lot_number == data.lot_number,
         ).first()
 
+        new_inventory: Optional[Inventory] = None
+        stock_before = float(item.current_stock or 0.0)
+
         if existing:
             # Miktarı topla; location/supplier_id sadece yeni değer varsa güncelle (COALESCE)
             existing.quantity   += data.quantity
@@ -473,7 +508,7 @@ def receive_stock(
             # received_by sadece ilk kabul edende kalır (audit immutability)
         else:
             # Yeni satır — statü kesinlikle APPROVED
-            db.add(Inventory(
+            new_inventory = Inventory(
                 item_id=data.item_id,
                 supplier_id=data.supplier_id,
                 lot_number=data.lot_number,
@@ -482,20 +517,53 @@ def receive_stock(
                 location=data.location,
                 status="APPROVED",
                 received_by=actor,                      # Audit trail
-            ))
+            )
+            db.add(new_inventory)
 
         # ── Transaction kaydı (2.4) ─────────────────────────────────────────
-        db.add(Transaction(
+        tx = Transaction(
             item_id=data.item_id,
             lot_number=data.lot_number,
             transaction_type="Input",
             quantity=data.quantity,
             notes=f"Mal kabul — Lot: {data.lot_number}" + (f", Konum: {data.location}" if data.location else ""),
             performed_by=actor,                          # Audit trail
-        ))
+        )
+        db.add(tx)
 
         # ── items.current_stock güncelle (üretim modülü ile uyum) ───────────
         item.current_stock = round(item.current_stock + data.quantity, 6)
+        stock_after = float(item.current_stock)
+
+        # ── Undo log — sadece yeni lot (upsert değil) için ─────────────────
+        # Upsert durumunda undo karmaşık (mevcut lot'tan subtract); şimdilik skip.
+        if new_inventory is not None:
+            try:
+                db.flush()
+                uid = int(current_user.get("sub", 0))
+                if uid:
+                    record_undoable(
+                        db,
+                        user_id=uid,
+                        action_type="inventory_receive",
+                        target_table="inventory",
+                        target_id=new_inventory.id,
+                        payload={
+                            "inventory_id":      new_inventory.id,
+                            "transaction_id":    tx.id,
+                            "item_id":           item.id,
+                            "received_quantity": float(data.quantity),
+                            "item_stock_before": stock_before,
+                            "item_stock_after":  stock_after,
+                            "lot_number":        data.lot_number,
+                        },
+                        description=(
+                            f"Lot kabul: {data.quantity} {item.unit or ''} "
+                            f"{item.name} (Lot {data.lot_number})"
+                        ),
+                    )
+            except Exception:
+                pass
 
         db.commit()
         return {"message": f"Mal kabul başarılı. {data.quantity} {item.unit} stoka eklendi."}
@@ -562,7 +630,7 @@ def adjust_stock(
 
         # ── Immutable audit kaydı (delta hem +/- olabilir) ─────────────────
         sign = "+" if delta > 0 else ""
-        db.add(Transaction(
+        tx = Transaction(
             item_id=item.id,
             lot_number=data.lot_number,
             transaction_type="Adjustment",
@@ -573,7 +641,30 @@ def adjust_stock(
                 f"(Δ {sign}{delta}){lot_note} | Sebep: {reason[:200]}"
             ),
             performed_by=actor,
-        ))
+        )
+        db.add(tx)
+        db.flush()    # tx.id'i undo payload'a koyabilmek için
+
+        # ── Undo log — Ctrl+Z için ─────────────────────────────────────────
+        try:
+            uid = int(current_user.get("sub", 0))
+            if uid:
+                record_undoable(
+                    db,
+                    user_id=uid,
+                    action_type="stock_adjust",
+                    target_table="items",
+                    target_id=item.id,
+                    payload={
+                        "item_id":        item.id,
+                        "before_stock":   old_qty,
+                        "after_stock":    new_qty,
+                        "transaction_id": tx.id,
+                    },
+                    description=f"Stok düzeltildi: {old_qty} → {new_qty} {item.unit or ''} ({item.name})",
+                )
+        except Exception:
+            pass  # Undo başarısız olsa ana mutation hâlâ commit edilir.
 
         db.commit()
         return {

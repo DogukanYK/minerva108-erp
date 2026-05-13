@@ -312,6 +312,45 @@ class PushSubscription(Base):
     user = relationship("User", backref="push_subscriptions")
 
 
+class UndoLog(Base):
+    """
+    Per-user 50-deep undoable action ring buffer.
+
+    Bir lab kullanıcısı yanlış stok düzeltmesi yapar, Ctrl+Z'ye basar → bu
+    tablodan en son undoable entry'si bulunur, payload'daki BEFORE state'e
+    göre geri alınır.  Trim: per-user en yeni 50 entry tutulur.
+
+    payload (JSONB) ↓ action_type'a göre değişir:
+      stock_adjust:       { item_id, before_stock, after_stock,
+                            transaction_id }   (Transaction da silinir)
+      item_edit:          { item_id, before: {name, category, unit, ...} }
+      inventory_receive:  { inventory_id, transaction_id, item_id,
+                            received_quantity, item_stock_before, item_stock_after }
+
+    undone_at:
+      NULL        — undoable (kullanıcı henüz Ctrl+Z'lemedi)
+      NOT NULL    — geri alındı (storage'da audit + ileride redo için kalır)
+
+    SuperAdmin "delete user" yaparsa CASCADE ile bu satırlar da silinir.
+    """
+    __tablename__ = "undo_log"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    user_id      = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    action_type  = Column(String(40),  nullable=False)
+    target_table = Column(String(40),  nullable=False)
+    target_id    = Column(Integer,     nullable=True)
+    # JSONB kullanılır prod'da (PG); dev SQLite'da text'e fallback olur (SQLAlchemy
+    # JSON tipi her ikisini de destekler).  Import burada minimal.
+    from sqlalchemy import JSON
+    payload      = Column(JSON,        nullable=False)
+    description  = Column(String(255), nullable=False)
+    created_at   = Column(DateTime,    default=datetime.utcnow, nullable=False)
+    undone_at    = Column(DateTime,    nullable=True)
+
+    user = relationship("User", backref="undo_logs")
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     with engine.connect() as conn:
