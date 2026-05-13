@@ -799,8 +799,11 @@
     async function loadItemsForModal() {
       try {
         // window.fetchItems static/items-cache.js'ten gelir — 30sn TTL cache.
-        // /api/items 50KB; sayfa içinde tekrar gelirsek network'e gitmez.
-        allItems = await window.fetchItems();
+        // Bu fonksiyon parse-time çağrılabiliyor (loadInitial → ...); defer
+        // helper henüz hazır değilse direkt fetch'e düşeriz.
+        allItems = window.fetchItems
+          ? await window.fetchItems()
+          : await fetch('/api/items').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
 
         // Hedef Ürün → sadece "Bitmiş Ürün" kategorisi (Türkçe alfabetik)
         const targetSel = document.getElementById('recipeTargetItem');

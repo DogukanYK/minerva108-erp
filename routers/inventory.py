@@ -10,6 +10,7 @@ from typing import Optional, List
 
 from database import (
     get_db, Item, Supplier, Inventory, Transaction,
+    Recipe, RecipeIngredient,
 )
 from core.auth import get_current_user
 from core.permissions import _can_see_finance, require_permission
@@ -175,11 +176,77 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db), _: dict 
     return {"id": item.id, "message": "Ürün başarıyla eklendi."}
 
 
+def _item_delete_blockers(db: Session, item_id: int) -> list[str]:
+    """
+    Ürün silinemez gerekçelerini insan-okunur listede döner.  Boş liste =
+    silinebilir.
+
+    Hard-delete naïf: SQLAlchemy `Item.recipe_ingredients` ilişkisi cascade'siz
+    olduğu için ORM `UPDATE recipe_ingredients SET item_id=NULL` çalıştırır,
+    `item_id NOT NULL` constraint patlar (500).  Bu pre-check bağımlı satırları
+    sayar ve kullanıcıya net mesaj döner; backend'e hiç DELETE gitmez.
+
+    Kapsam:
+      1) RecipeIngredient (malzeme olarak kullanılan reçeteler)
+      2) Recipe.target_item_id (bu ürünü çıktı olarak veren reçeteler)
+      3) Item.parent_id == item_id (varyasyonlar — orphan olur)
+      4) Transaction.item_id ya da Inventory.item_id var → audit kaydı, hard
+         delete tarihçeyi bozar; gelecekte soft-delete (is_active=False) ile
+         ele alınacak ama şu an blok.
+    """
+    blockers: list[str] = []
+
+    # 1) Reçete malzemesi
+    using = (
+        db.query(Recipe.name)
+        .join(RecipeIngredient, RecipeIngredient.recipe_id == Recipe.id)
+        .filter(RecipeIngredient.item_id == item_id)
+        .distinct()
+        .limit(6)
+        .all()
+    )
+    if using:
+        names = ", ".join(r[0] for r in using[:5])
+        more  = " …" if len(using) > 5 else ""
+        blockers.append(f"şu reçetelerde malzeme: {names}{more}")
+
+    # 2) Reçete hedefi
+    targets = db.query(Recipe.name).filter(Recipe.target_item_id == item_id).limit(6).all()
+    if targets:
+        names = ", ".join(r[0] for r in targets[:5])
+        more  = " …" if len(targets) > 5 else ""
+        blockers.append(f"şu reçetenin hedef ürünü: {names}{more}")
+
+    # 3) Varyasyonlar
+    kids = db.query(Item.name).filter(Item.parent_id == item_id).limit(6).all()
+    if kids:
+        names = ", ".join(r[0] for r in kids[:5])
+        more  = " …" if len(kids) > 5 else ""
+        blockers.append(f"varyasyonu mevcut: {names}{more}")
+
+    # 4) Audit kayıtları
+    has_tx  = db.query(Transaction.id).filter(Transaction.item_id == item_id).first() is not None
+    has_inv = db.query(Inventory.id).filter(Inventory.item_id == item_id).first() is not None
+    if has_tx or has_inv:
+        parts = []
+        if has_tx:  parts.append("işlem geçmişi")
+        if has_inv: parts.append("stok lot kaydı")
+        blockers.append("ürünün " + " ve ".join(parts) + " var (audit; silinemez)")
+
+    return blockers
+
+
 @router.delete("/items/{item_id}")
 def delete_item(item_id: int, db: Session = Depends(get_db), _: dict = Depends(require_permission("items", "delete"))):
     item = db.query(Item).filter(Item.id == item_id).first()
     if not item:
         return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+
+    blockers = _item_delete_blockers(db, item_id)
+    if blockers:
+        msg = "Bu ürün silinemez — " + "; ".join(blockers) + "."
+        return JSONResponse(status_code=400, content={"detail": msg})
+
     db.delete(item)
     db.commit()
     return {"message": "Ürün silindi."}
@@ -267,6 +334,26 @@ def get_item_by_barcode(
 
 @router.post("/items/bulk-delete")
 def bulk_delete_items(data: BulkDeleteRequest, db: Session = Depends(get_db), _: dict = Depends(require_permission("items", "delete"))):
+    # Bulk delete'te de tek tek pre-check yapıyoruz; kullanıcıya hangi ürün
+    # neden silinmedi açıkça söyleyelim, sessizce atlamayalım.  En azından bir
+    # ürün bloklanırsa tüm batch'i durdur — yarım iş kalmasın.
+    blocked: list[str] = []   # "ürün adı (gerekçe)"
+    for iid in data.item_ids:
+        it = db.query(Item).filter(Item.id == iid).first()
+        if not it:
+            continue
+        reasons = _item_delete_blockers(db, iid)
+        if reasons:
+            blocked.append(f"{it.name} — {'; '.join(reasons)}")
+
+    if blocked:
+        msg = (
+            f"{len(blocked)} ürün silinemediği için toplu silme iptal edildi:\n• "
+            + "\n• ".join(blocked[:10])
+            + ("\n…" if len(blocked) > 10 else "")
+        )
+        return JSONResponse(status_code=400, content={"detail": msg})
+
     deleted = db.query(Item).filter(Item.id.in_(data.item_ids)).delete(synchronize_session=False)
     db.commit()
     return {"message": f"{deleted} ürün silindi."}

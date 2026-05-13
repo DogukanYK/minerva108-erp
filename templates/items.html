@@ -1234,9 +1234,14 @@
     async function loadItems() {
       try {
         // items.html bizim source-of-truth; her loadItems()'ta taze veri istiyoruz.
-        // Cache helper'ı sadece diğer sayfalara bant genişliği kazandırmak için tutuyoruz.
+        // Cache helper'ı (static/items-cache.js) sadece diğer sayfalara bant
+        // genişliği kazandırmak için.  Bu inline script body-end'de parse-time
+        // çalışır; defer-loaded helper henüz hazır değilse direkt fetch'e düşer.
+        const itemsP = window.fetchItems
+          ? window.fetchItems(true)              // forceRefresh
+          : fetch('/api/items').then(r => r.ok ? r.json() : Promise.reject(new Error('items HTTP ' + r.status)));
         const [items, suppRes] = await Promise.all([
-          window.fetchItems(true),               // forceRefresh
+          itemsP,
           fetch('/api/suppliers'),
         ]);
         allItems     = items;

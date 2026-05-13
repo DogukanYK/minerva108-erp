@@ -1121,9 +1121,10 @@
     /* ── Load Bitmiş Ürün items (variations + standalones, NOT abstract parents) ── */
     async function loadProducts() {
       try {
-        // 30sn cache (static/items-cache.js) — kur paneliyle sık sık /api/items
-        // çağırmamak için.
-        allItems = await window.fetchItems();
+        // 30sn cache (static/items-cache.js); defer helper hazır değilse fetch'e düş.
+        allItems = window.fetchItems
+          ? await window.fetchItems()
+          : await fetch('/api/items').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
       } catch {
         showToast('Ürün listesi yüklenemedi.');
       }

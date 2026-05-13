@@ -424,9 +424,13 @@
     /* ── Dropdown'ları doldur ── */
     async function loadDropdowns() {
       try {
-        // /api/items 30sn cache'li (static/items-cache.js); /api/suppliers daha küçük, doğrudan
+        // /api/items 30sn cache'li (static/items-cache.js); defer-loaded helper
+        // hazır değilse direkt fetch'e düşeriz.  /api/suppliers daha küçük, doğrudan.
+        const itemsP = window.fetchItems
+          ? window.fetchItems()
+          : fetch('/api/items').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
         const [items, suppRes] = await Promise.all([
-          window.fetchItems(),
+          itemsP,
           fetch('/api/suppliers'),
         ]);
         allItems = items;
