@@ -23,14 +23,18 @@ set -euo pipefail
 
 BACKUP_DIR="${MINERVA_BACKUP_DIR:-/var/www/minerva/backups}"
 RETENTION_DAYS="${SNAPSHOT_RETENTION_DAYS:-30}"
-ENV_FILE="${MINERVA_ENV_FILE:-/etc/minerva.env}"
+ENV_FILE="${MINERVA_ENV_FILE:-/var/www/minerva/.env}"
 
-# DATABASE_URL'i app'in env dosyasından oku
+# DATABASE_URL'i app'in env dosyasindan oku — systemd EnvironmentFile zaten
+# yukleyebilir, bu manuel source idempotent (zaten varsa overwrite, sorun yok).
 if [[ -f "$ENV_FILE" ]]; then
   # shellcheck disable=SC1090
   set -a; source "$ENV_FILE"; set +a
 fi
-: "${DATABASE_URL:?DATABASE_URL set edilmemiş — $ENV_FILE veya environment'ta gerekli}"
+if [[ -z "${DATABASE_URL:-}" ]]; then
+  echo "DATABASE_URL set edilmemis ($ENV_FILE veya systemd EnvironmentFile gerekli)" >&2
+  exit 2
+fi
 
 # postgresql://user:pass@host:port/db formatını parçala
 proto_removed="${DATABASE_URL#*://}"

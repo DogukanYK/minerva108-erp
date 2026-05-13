@@ -8,6 +8,10 @@ Type=oneshot
 User=root
 # /etc/minerva.env aynı dosya, app systemd unit'inin de okuduğu —
 # DATABASE_URL ve diğer secret'lar burada.
+# App ile aynı env dosyası (DATABASE_URL ve diğer secret'lar burada).
+# `-` prefix'i: dosya yoksa servis hata vermez (fallback /etc/minerva.env veya
+# direkt environment).
+EnvironmentFile=-/var/www/minerva/.env
 EnvironmentFile=-/etc/minerva.env
 ExecStart=/usr/local/bin/minerva-snapshot.sh
 # pg_dump 60sn'den uzun sürerse iptal et (DB > 1GB için 300 yapılabilir)
