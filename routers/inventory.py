@@ -179,21 +179,18 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db), _: dict 
 
 def _item_delete_blockers(db: Session, item_id: int) -> list[str]:
     """
-    Ürün silinemez gerekçelerini insan-okunur listede döner.  Boş liste =
-    silinebilir.
+    HARD-delete'in mantıksal/şemasal olarak imkansız olduğu gerekçeleri döner.
 
-    Hard-delete naïf: SQLAlchemy `Item.recipe_ingredients` ilişkisi cascade'siz
-    olduğu için ORM `UPDATE recipe_ingredients SET item_id=NULL` çalıştırır,
-    `item_id NOT NULL` constraint patlar (500).  Bu pre-check bağımlı satırları
-    sayar ve kullanıcıya net mesaj döner; backend'e hiç DELETE gitmez.
+    Audit kayıtları (transaction/inventory) ARTIK BURADA YOK — onlar için
+    soft-delete devreye girer (bkz. delete_item).  Sadece şu durumlar HARD
+    blok: silinirse veri orphan/corrupt olur.
 
     Kapsam:
-      1) RecipeIngredient (malzeme olarak kullanılan reçeteler)
-      2) Recipe.target_item_id (bu ürünü çıktı olarak veren reçeteler)
-      3) Item.parent_id == item_id (varyasyonlar — orphan olur)
-      4) Transaction.item_id ya da Inventory.item_id var → audit kaydı, hard
-         delete tarihçeyi bozar; gelecekte soft-delete (is_active=False) ile
-         ele alınacak ama şu an blok.
+      1) RecipeIngredient — bu ürünü malzeme olarak kullanan reçete varsa,
+         silinirse reçete bozulur (NOT NULL constraint).
+      2) Recipe.target_item_id — bu ürünün çıktı olduğu reçete var (silinirse
+         reçete bir hedefe işaret edemez; nullable ama mantıksal kayıp).
+      3) Item.parent_id — varyasyonlar parent'a bağlı, silinirse orphan.
     """
     blockers: list[str] = []
 
@@ -225,20 +222,38 @@ def _item_delete_blockers(db: Session, item_id: int) -> list[str]:
         more  = " …" if len(kids) > 5 else ""
         blockers.append(f"varyasyonu mevcut: {names}{more}")
 
-    # 4) Audit kayıtları
-    has_tx  = db.query(Transaction.id).filter(Transaction.item_id == item_id).first() is not None
-    has_inv = db.query(Inventory.id).filter(Inventory.item_id == item_id).first() is not None
-    if has_tx or has_inv:
-        parts = []
-        if has_tx:  parts.append("işlem geçmişi")
-        if has_inv: parts.append("stok lot kaydı")
-        blockers.append("ürünün " + " ve ".join(parts) + " var (audit; silinemez)")
-
     return blockers
+
+
+def _item_has_audit(db: Session, item_id: int) -> bool:
+    """Transaction veya inventory satırı varsa True — hard-delete yerine
+    soft-delete kullanılır."""
+    if db.query(Transaction.id).filter(Transaction.item_id == item_id).first():
+        return True
+    if db.query(Inventory.id).filter(Inventory.item_id == item_id).first():
+        return True
+    return False
 
 
 @router.delete("/items/{item_id}")
 def delete_item(item_id: int, db: Session = Depends(get_db), _: dict = Depends(require_permission("items", "delete"))):
+    """
+    Ürün silme — iki davranış birden:
+
+    1) **Hard delete** — hiç bağ yoksa (audit / recipe / variation) satır
+       DB'den kalkar.  Yeni oluşturulmuş hatalı ürünler için ideal.
+
+    2) **Soft delete** — transaction veya inventory kaydı varsa
+       `is_active=False` yapılır.  Ürün /api/items listesinden kaybolur
+       (zaten is_active=True filtresi var), ama audit kayıtları + lot
+       geçmişi DB'de okunur kalır (rapor / raporlama / restore için).
+
+    3) **Block** — sadece reçete bağı veya varyasyon orphan riski olursa.
+       Bu gerçekten silinmemeli; aksi halde reçeteler bozulur.
+
+    Soft-delete kullanıcıya "Ürün arşivlendi" mesajı ile bildirilir; toast
+    aynı yeşil tonda, lab fark etmez ama biz audit'i koruruz.
+    """
     item = db.query(Item).filter(Item.id == item_id).first()
     if not item:
         return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
@@ -248,9 +263,19 @@ def delete_item(item_id: int, db: Session = Depends(get_db), _: dict = Depends(r
         msg = "Bu ürün silinemez — " + "; ".join(blockers) + "."
         return JSONResponse(status_code=400, content={"detail": msg})
 
+    if _item_has_audit(db, item_id):
+        # Soft-delete: kayıtlar korunsun
+        item.is_active = False
+        db.commit()
+        return {
+            "message": f"'{item.name}' arşivlendi (geçmiş kayıtlar korundu).",
+            "soft_deleted": True,
+        }
+
+    # Hard-delete: hiç bağ yok
     db.delete(item)
     db.commit()
-    return {"message": "Ürün silindi."}
+    return {"message": "Ürün silindi.", "soft_deleted": False}
 
 
 @router.put("/items/{item_id}")
@@ -366,10 +391,20 @@ def get_item_by_barcode(
 
 @router.post("/items/bulk-delete")
 def bulk_delete_items(data: BulkDeleteRequest, db: Session = Depends(get_db), _: dict = Depends(require_permission("items", "delete"))):
-    # Bulk delete'te de tek tek pre-check yapıyoruz; kullanıcıya hangi ürün
-    # neden silinmedi açıkça söyleyelim, sessizce atlamayalım.  En azından bir
-    # ürün bloklanırsa tüm batch'i durdur — yarım iş kalmasın.
-    blocked: list[str] = []   # "ürün adı (gerekçe)"
+    """
+    Toplu silme — single-delete'le aynı 3 davranış:
+      • Reçete/varyasyon bağı → block, batch iptal
+      • Audit kaydı → soft-delete (is_active=False)
+      • Bağsız → hard-delete
+
+    Hard-blok'lar mevcutsa hiçbir şey silinmez (yarım iş kalmasın).
+    Aksi halde her ürün uygun yola gönderilir; kullanıcıya kaç hard +
+    kaç soft yapıldığı raporlanır.
+    """
+    blocked:  list[str] = []   # "ürün adı (gerekçe)"
+    soft_ids: list[int] = []
+    hard_ids: list[int] = []
+
     for iid in data.item_ids:
         it = db.query(Item).filter(Item.id == iid).first()
         if not it:
@@ -377,6 +412,11 @@ def bulk_delete_items(data: BulkDeleteRequest, db: Session = Depends(get_db), _:
         reasons = _item_delete_blockers(db, iid)
         if reasons:
             blocked.append(f"{it.name} — {'; '.join(reasons)}")
+            continue
+        if _item_has_audit(db, iid):
+            soft_ids.append(iid)
+        else:
+            hard_ids.append(iid)
 
     if blocked:
         msg = (
@@ -386,9 +426,21 @@ def bulk_delete_items(data: BulkDeleteRequest, db: Session = Depends(get_db), _:
         )
         return JSONResponse(status_code=400, content={"detail": msg})
 
-    deleted = db.query(Item).filter(Item.id.in_(data.item_ids)).delete(synchronize_session=False)
+    hard_count = 0
+    soft_count = 0
+    if hard_ids:
+        hard_count = db.query(Item).filter(Item.id.in_(hard_ids)).delete(synchronize_session=False)
+    if soft_ids:
+        soft_count = (
+            db.query(Item).filter(Item.id.in_(soft_ids))
+            .update({Item.is_active: False}, synchronize_session=False)
+        )
     db.commit()
-    return {"message": f"{deleted} ürün silindi."}
+
+    parts = []
+    if hard_count: parts.append(f"{hard_count} ürün silindi")
+    if soft_count: parts.append(f"{soft_count} ürün arşivlendi (geçmiş korundu)")
+    return {"message": ", ".join(parts) + ".", "hard": hard_count, "soft": soft_count}
 
 
 # ─── Suppliers Endpoints ─────────────────────────────────────────────────────
