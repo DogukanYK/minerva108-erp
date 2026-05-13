@@ -1075,7 +1075,14 @@
       meta.innerHTML = '<i class="bi bi-hourglass-split"></i> Yükleniyor…';
       try {
         const res = await fetch('/api/currency-rates' + (forceRefresh ? '?_=' + Date.now() : ''));
-        if (!res.ok) throw new Error();
+        // Oturum süresi dolduğunda 401 dön — silent fail yerine login'e yönlendir
+        if (res.status === 401) {
+          meta.innerHTML = `<span class="rate-stale-warn"><i class="bi bi-shield-exclamation"></i> Oturum süresi doldu — yeniden giriş yapılıyor…</span>`;
+          showToast('Oturum süresi doldu, giriş sayfasına yönlendiriliyorsunuz…');
+          setTimeout(() => { window.location.href = '/login'; }, 1500);
+          return;
+        }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         LIVE_RATES.USD = data.USD;
         LIVE_RATES.EUR = data.EUR;
