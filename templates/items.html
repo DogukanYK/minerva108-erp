@@ -567,6 +567,8 @@
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
   <script src="/static/toast.js" defer></script>
+  <script src="/static/tr-sort.js" defer></script>
+  <script src="/static/items-cache.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
 </head>
@@ -1231,11 +1233,13 @@
 
     async function loadItems() {
       try {
-        const [itemsRes, suppRes] = await Promise.all([
-          fetch('/api/items'),
+        // items.html bizim source-of-truth; her loadItems()'ta taze veri istiyoruz.
+        // Cache helper'ı sadece diğer sayfalara bant genişliği kazandırmak için tutuyoruz.
+        const [items, suppRes] = await Promise.all([
+          window.fetchItems(true),               // forceRefresh
           fetch('/api/suppliers'),
         ]);
-        allItems     = await itemsRes.json();
+        allItems     = items;
         allSuppliers = suppRes.ok ? await suppRes.json() : [];
         populateSupplierDropdown();
         updateTabCounts();
@@ -1250,7 +1254,7 @@
       if (!sel) return;
       const currentVal = sel.value;
       sel.innerHTML = '<option value="">— Tedarikçi yok —</option>' +
-        allSuppliers.map(s =>
+        window.trSortBy(allSuppliers, 'name').map(s =>
           `<option value="${s.id}">${escHtml(s.name)}</option>`
         ).join('');
       if (currentVal) sel.value = currentVal;
@@ -1500,7 +1504,7 @@
       );
       const currentVal = sel.value;
       sel.innerHTML = '<option value="">— Ana ürün seçiniz —</option>' +
-        candidates.map(i =>
+        window.trSortBy(candidates, 'name').map(i =>
           `<option value="${i.id}">${escHtml(i.name)}${i.is_parent ? ` (${i.child_count} varyasyon)` : ''}</option>`
         ).join('');
       if (currentVal) sel.value = currentVal;

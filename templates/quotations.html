@@ -650,6 +650,8 @@
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
   <script src="/static/toast.js" defer></script>
+  <script src="/static/tr-sort.js" defer></script>
+  <script src="/static/items-cache.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
 </head>
@@ -1119,9 +1121,9 @@
     /* ── Load Bitmiş Ürün items (variations + standalones, NOT abstract parents) ── */
     async function loadProducts() {
       try {
-        const res = await fetch('/api/items');
-        if (!res.ok) throw new Error();
-        allItems = await res.json();
+        // 30sn cache (static/items-cache.js) — kur paneliyle sık sık /api/items
+        // çağırmamak için.
+        allItems = await window.fetchItems();
       } catch {
         showToast('Ürün listesi yüklenemedi.');
       }
@@ -1370,7 +1372,8 @@
             <td class="num">${l.qty}</td>
             <td class="num">${fmtMoney(l.price, CURRENCY)}</td>
             <td>${fmtMoney(l.total, CURRENCY)}</td>
-          </tr>`).join('');
+          </tr>`;
+        }).join('');
       }
 
       // Totals — PDF only shows a single TOTAL row in the table footer.

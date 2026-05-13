@@ -187,6 +187,8 @@
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
   <script src="/static/toast.js" defer></script>
+  <script src="/static/tr-sort.js" defer></script>
+  <script src="/static/items-cache.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
 </head>
@@ -422,18 +424,20 @@
     /* ── Dropdown'ları doldur ── */
     async function loadDropdowns() {
       try {
-        const [itemsRes, suppRes] = await Promise.all([
-          fetch('/api/items'),
+        // /api/items 30sn cache'li (static/items-cache.js); /api/suppliers daha küçük, doğrudan
+        const [items, suppRes] = await Promise.all([
+          window.fetchItems(),
           fetch('/api/suppliers'),
         ]);
-        allItems = await itemsRes.json();
+        allItems = items;
         const suppliers = await suppRes.json();
 
-        // Hammadde + Ambalaj filtrele
+        // Hammadde + Ambalaj filtrele (Türkçe alfabetik)
         const itemSel = document.getElementById('recvItem');
-        allItems
-          .filter(i => i.category === 'Hammadde' || i.category === 'Ambalaj')
-          .forEach(i => {
+        window.trSortBy(
+          allItems.filter(i => i.category === 'Hammadde' || i.category === 'Ambalaj'),
+          'name'
+        ).forEach(i => {
             const o = document.createElement('option');
             o.value = i.id;
             o.textContent = i.name;
@@ -445,7 +449,7 @@
 
         // Tedarikçiler
         const suppSel = document.getElementById('recvSupplier');
-        suppliers.forEach(s => {
+        window.trSortBy(suppliers, 'name').forEach(s => {
           const o = document.createElement('option');
           o.value = s.id; o.textContent = s.name;
           suppSel.appendChild(o);

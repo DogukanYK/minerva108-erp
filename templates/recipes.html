@@ -334,6 +334,8 @@
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
   <script src="/static/toast.js" defer></script>
+  <script src="/static/tr-sort.js" defer></script>
+  <script src="/static/items-cache.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
 </head>
@@ -796,12 +798,16 @@
     /* ── Load items for modal selects ── */
     async function loadItemsForModal() {
       try {
-        const res = await fetch('/api/items');
-        allItems = await res.json();
+        // window.fetchItems static/items-cache.js'ten gelir — 30sn TTL cache.
+        // /api/items 50KB; sayfa içinde tekrar gelirsek network'e gitmez.
+        allItems = await window.fetchItems();
 
-        // Hedef Ürün → sadece "Bitmiş Ürün" kategorisi
+        // Hedef Ürün → sadece "Bitmiş Ürün" kategorisi (Türkçe alfabetik)
         const targetSel = document.getElementById('recipeTargetItem');
-        const finished  = allItems.filter(i => i.category === 'Bitmiş Ürün');
+        const finished  = window.trSortBy(
+          allItems.filter(i => i.category === 'Bitmiş Ürün'),
+          'name'
+        );
         finished.forEach(item => {
           const opt = document.createElement('option');
           opt.value       = item.id;
@@ -915,8 +921,9 @@
 
     function buildIngredientOptions() {
       let opts = '<option value="">— Hammadde seçiniz —</option>';
-      const hammadde = allItems.filter(i => i.category === 'Hammadde');
-      const ambalaj  = allItems.filter(i => i.category === 'Ambalaj');
+      // Türkçe alfabetik — her kategori kendi içinde
+      const hammadde = window.trSortBy(allItems.filter(i => i.category === 'Hammadde'), 'name');
+      const ambalaj  = window.trSortBy(allItems.filter(i => i.category === 'Ambalaj'),  'name');
 
       // Helper — ürünün option label'ı (isim + birim + tedarikçi rozeti)
       function ingLabel(item) {

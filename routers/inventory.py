@@ -4,7 +4,7 @@ and Excel imports (both classic templated import + smart auto-detect import).
 """
 from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
@@ -327,7 +327,13 @@ def bulk_delete_suppliers(data: SupplierBulkDeleteRequest, db: Session = Depends
 
 @router.get("/inventory")
 def list_inventory(db: Session = Depends(get_db)):
-    rows = db.query(Inventory).order_by(Inventory.id.desc()).all()
+    # joinedload — item + supplier ilişkileri tek query'de gelir (N+1 önler)
+    rows = (
+        db.query(Inventory)
+        .options(joinedload(Inventory.item), joinedload(Inventory.supplier))
+        .order_by(Inventory.id.desc())
+        .all()
+    )
     return [
         {
             "id": r.id,
@@ -534,8 +540,10 @@ def inventory_summary(db: Session = Depends(get_db)):
 
 @router.get("/transactions")
 def list_transactions(db: Session = Depends(get_db)):
+    # 500 satır × N+1 ürün lookup'ı yerine joinedload ile tek query
     rows = (
         db.query(Transaction)
+        .options(joinedload(Transaction.item))
         .order_by(Transaction.id.desc())
         .limit(500)
         .all()
