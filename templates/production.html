@@ -231,6 +231,48 @@
     .col-stock-after.low   { color: #b45309; font-weight: 700; }    /* < 10% kalır */
     .col-stock-after.warn  { color: #b91c1c; font-weight: 700; }    /* negatif */
 
+    /* Grand total — birim ayırmaksızın hammadde toplamı (ambalaj hariç).
+       Lab'ın "1 adet için ne harcayacağım?" sorusu için en üstte. */
+    .total-grand {
+      display: grid;
+      grid-template-columns: 1fr 1.4fr 1fr;
+      gap: 0.6rem;
+      padding: 0.85rem 1rem 0.4rem;
+      border-bottom: 1px dashed #e5e7eb;
+    }
+    .total-grand-cell {
+      background: linear-gradient(180deg, #fffaf0 0%, #fdf6e3 100%);
+      border: 1px solid #f1d99a;
+      border-radius: 10px;
+      padding: 0.7rem 0.9rem;
+      display: flex; flex-direction: column; gap: 0.25rem;
+    }
+    .total-grand-cell.total-grand-gross {
+      background: linear-gradient(180deg, #eef0fa 0%, #e0e4f5 100%);
+      border: 1px solid #c0c7e9;
+    }
+    .total-grand-cell.total-grand-loss {
+      background: linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%);
+      border: 1px solid #fed7aa;
+    }
+    .total-grand-label {
+      font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em;
+      text-transform: uppercase; color: #6b7280;
+    }
+    .total-grand-value {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.45rem; font-weight: 700; color: var(--navy);
+    }
+    .total-grand-value small {
+      font-family: 'Jost', sans-serif;
+      font-size: 0.7rem; color: #6b7280; font-weight: 500; margin-left: 0.25rem;
+    }
+    .total-grand-cell.total-grand-gross .total-grand-value { color: var(--navy); }
+    .total-grand-cell.total-grand-loss  .total-grand-value { color: #b45309; }
+    @media (max-width: 600px) {
+      .total-grand { grid-template-columns: 1fr; }
+    }
+
     .preview-totals {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -596,6 +638,10 @@
       let hasShortage = false;
       // Birim bazlı toplamlar — farklı birimler ayrı toplanır (g, ml, adet karışmaz)
       const totalsByUnit = {};   // { unit: {net, gross, loss} }
+      // Tüm hammaddelerin birim-bağımsız toplamı (ambalaj hariç) — lab
+      // "1 adet için toplam ne harcayacağım?" sorusunu tek bakışta görsün.
+      // g ve ml karıştırılır (kozmetikte yoğunluklar ~1, pratik tahmin).
+      let rawNetAll = 0, rawGrossAll = 0;
 
       const rowsHtml = ingredients.map(ing => {
         const isAmbalaj = !!ing.is_ambalaj;
@@ -612,6 +658,11 @@
         totalsByUnit[unit].net   += net;
         totalsByUnit[unit].gross += gross;
         totalsByUnit[unit].loss  += loss;
+        // Ambalaj hariç, birim bağımsız: hammadde toplamı
+        if (!isAmbalaj) {
+          rawNetAll   += net;
+          rawGrossAll += gross;
+        }
 
         const catPill = isAmbalaj
           ? `<span class="preview-cat-pill pill-amb" title="Ambalaja fire uygulanmaz">Ambalaj</span>`
@@ -647,7 +698,25 @@
 
       body.innerHTML = rowsHtml;
 
-      // Birim başına toplam kart(lar)ı
+      // 1) En üstte tek satır: birim ayırmaksızın TOPLAM HAMMADDE (ambalaj hariç).
+      //    Lab "1 üretim için kaç g+ml harcayacağım" sorusunu tek bakışta görür.
+      const grandTotalHtml = `
+        <div class="total-grand">
+          <div class="total-grand-cell total-grand-net">
+            <span class="total-grand-label">Toplam Hammadde (firesiz)</span>
+            <span class="total-grand-value">${fmt(rawNetAll)} <small>g+ml</small></span>
+          </div>
+          <div class="total-grand-cell total-grand-gross">
+            <span class="total-grand-label">Toplam Hammadde (fireli — stoktan düşecek)</span>
+            <span class="total-grand-value">${fmt(rawGrossAll)} <small>g+ml</small></span>
+          </div>
+          <div class="total-grand-cell total-grand-loss">
+            <span class="total-grand-label">Fire Payı</span>
+            <span class="total-grand-value">+${fmt(rawGrossAll - rawNetAll)} <small>g+ml</small></span>
+          </div>
+        </div>`;
+
+      // 2) Aşağıda birim başına detay (ml ayrı, g ayrı, adet ayrı).
       const unitKeys = Object.keys(totalsByUnit);
       const totalsHtml = unitKeys.map(u => {
         const t = totalsByUnit[u];
@@ -665,7 +734,7 @@
             <div class="total-card-value">+${fmt(t.loss)}</div>
           </div>`;
       }).join('');
-      totalsEl.innerHTML = totalsHtml;
+      totalsEl.innerHTML = grandTotalHtml + totalsHtml;
 
       summaryEl.innerHTML = hasShortage
         ? `<div class="preview-summary summary-warn">
