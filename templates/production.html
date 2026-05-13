@@ -225,6 +225,12 @@
     .col-stock-ok   { color: #15803d; font-weight: 600; }
     .col-stock-warn { color: #b91c1c; font-weight: 700; }
 
+    /* Sonrası stok (üretim sonrası tahmini kalan) — normal grimsi, az kalırsa
+       amber, eksiye düşerse kırmızı (Mevcut-Stok zaten warn gösteriyor olur). */
+    .col-stock-after       { color: #374151; font-weight: 600; }
+    .col-stock-after.low   { color: #b45309; font-weight: 700; }    /* < 10% kalır */
+    .col-stock-after.warn  { color: #b91c1c; font-weight: 700; }    /* negatif */
+
     .preview-totals {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -270,7 +276,9 @@
     @media (max-width: 600px) {
       .preview-totals { grid-template-columns: 1fr; }
       .preview-table thead th:nth-child(4),
-      .preview-table tbody td:nth-child(4) { display: none; } /* Fire kaybı sütununu mobilde gizle */
+      .preview-table tbody td:nth-child(4),
+      .preview-table thead th:nth-child(2),
+      .preview-table tbody td:nth-child(2) { display: none; } /* Fire kaybı + Net sütununu mobilde gizle; Mevcut/Sonrası kalır */
     }
 
     /* ══ TOAST ══ */
@@ -444,6 +452,7 @@
                       <th>Brüt (fireli)</th>
                       <th>Fire Kaybı</th>
                       <th>Mevcut Stok</th>
+                      <th title="Üretim sonrası tahmini kalan stok = Mevcut − Brüt (fireli)">Sonrası Stok</th>
                     </tr>
                   </thead>
                   <tbody id="previewBody"></tbody>
@@ -608,6 +617,14 @@
           ? `<span class="preview-cat-pill pill-amb" title="Ambalaja fire uygulanmaz">Ambalaj</span>`
           : `<span class="preview-cat-pill pill-raw">Hammadde</span>`;
 
+        // Sonrası stok = mevcut − brüt.  Negatife düşerse zaten "yetersiz"
+        // pop-up'ı tetiklenir (yukarıdaki enough = false), bu kolon kırmızı.
+        const after      = stock - gross;
+        const afterClass = (after < 0)             ? 'col-stock-after warn'
+                         : (stock > 0 && after / stock < 0.10) ? 'col-stock-after low'
+                         : 'col-stock-after';
+        const afterText  = (after < 0 ? '' : '') + fmt(after) + ' ' + escHtml(unit);
+
         return `
           <tr>
             <td>
@@ -621,6 +638,9 @@
             </td>
             <td class="col-num ${enough ? 'col-stock-ok' : 'col-stock-warn'}">
               ${fmt(stock)} ${escHtml(unit)}
+            </td>
+            <td class="col-num ${afterClass}" title="Mevcut − Brüt (fireli)">
+              ${afterText}
             </td>
           </tr>`;
       }).join('');
