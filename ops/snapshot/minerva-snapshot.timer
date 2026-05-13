@@ -1,0 +1,18 @@
+[Unit]
+Description=Minerva108 hourly DB snapshot timer (07:00-19:00 Istanbul)
+Documentation=https://www.freedesktop.org/software/systemd/man/systemd.time.html
+
+[Timer]
+# Pazartesi–Pazar, 07:00..19:00 her saat başı, dakika 0, saniye 0
+# (lab çalışma saatleri — gece snapshot'ı gerekmez)
+OnCalendar=Mon..Sun *-*-* 07..19:00:00
+# Sunucu reboot olursa kaçırılan zaman bir kere telafi edilsin
+Persistent=true
+# Aynı dakikada başka job ile çakışmasın — küçük random delay
+RandomizedDelaySec=15
+# Zaman dilimi: Europe/Istanbul (sunucu UTC olabilir, biz Istanbul takvimi istiyoruz)
+# systemd 232+ destekler
+Unit=minerva-snapshot.service
+
+[Install]
+WantedBy=timers.target

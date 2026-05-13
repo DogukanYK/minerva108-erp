@@ -1,0 +1,20 @@
+[Unit]
+Description=Minerva108 hourly DB snapshot (auto, 07:00-19:00)
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+# /etc/minerva.env aynı dosya, app systemd unit'inin de okuduğu —
+# DATABASE_URL ve diğer secret'lar burada.
+EnvironmentFile=-/etc/minerva.env
+ExecStart=/usr/local/bin/minerva-snapshot.sh
+# pg_dump 60sn'den uzun sürerse iptal et (DB > 1GB için 300 yapılabilir)
+TimeoutStartSec=120
+# stderr/stdout → journal (journalctl -u minerva-snapshot)
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

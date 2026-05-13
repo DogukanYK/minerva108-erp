@@ -1520,12 +1520,20 @@
             backupBody.innerHTML = '<tr><td colspan="4" style="padding:1.4rem;text-align:center;color:#9ca3af;">Henüz yedek yok. "Şimdi Yedek Al" butonuna basabilirsiniz.</td></tr>';
             return;
           }
-          // İlk satır en yeni → "EN YENİ" rozeti
-          backupBody.innerHTML = items.map((b, idx) => `
+          // İlk satır en yeni → "EN YENİ" rozeti, minerva_auto_* → "AUTO" rozeti
+          backupBody.innerHTML = items.map((b, idx) => {
+            const isAuto = (b.filename || '').startsWith('minerva_auto_');
+            const autoBadge = isAuto
+              ? '<span style="display:inline-block;margin-left:0.5rem;padding:1px 8px;background:rgba(59,130,246,0.14);color:#1d4ed8;border-radius:20px;font-size:0.66rem;letter-spacing:0.06em;font-weight:700;text-transform:uppercase;">AUTO</span>'
+              : '';
+            const newestBadge = idx === 0
+              ? '<span style="display:inline-block;margin-left:0.5rem;padding:1px 8px;background:rgba(184,150,90,0.16);color:#92750e;border-radius:20px;font-size:0.66rem;letter-spacing:0.06em;font-weight:700;text-transform:uppercase;">EN YENİ</span>'
+              : '';
+            return `
             <tr style="border-bottom:1px solid #f3f0ea;">
               <td style="padding:0.65rem 0.85rem;font-family:monospace;font-size:0.82rem;color:#1f2937;">
                 ${escHtml(b.filename)}
-                ${idx === 0 ? '<span style="display:inline-block;margin-left:0.5rem;padding:1px 8px;background:rgba(184,150,90,0.16);color:#92750e;border-radius:20px;font-size:0.66rem;letter-spacing:0.06em;font-weight:700;text-transform:uppercase;">EN YENİ</span>' : ''}
+                ${newestBadge}${autoBadge}
               </td>
               <td style="padding:0.65rem 0.85rem;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:var(--navy);">${escHtml(b.size_human)}</td>
               <td style="padding:0.65rem 0.85rem;color:#6b7280;font-size:0.85rem;">${escHtml(b.created_at)}</td>
@@ -1540,7 +1548,8 @@
                   <i class="bi bi-trash3"></i>
                 </button>
               </td>
-            </tr>`).join('');
+            </tr>`;
+          }).join('');
         } catch (e) {
           backupBody.innerHTML = '<tr><td colspan="4" style="padding:1.4rem;text-align:center;color:#b91c1c;">Bağlantı hatası.</td></tr>';
         }
