@@ -812,6 +812,20 @@
               </select>
             </div>
 
+            <!-- ── Etiket dili (sadece Ambalaj + alt-tip=Etiket iken görünür) ── -->
+            <div class="mb-3" id="labelLangSection" style="display:none;">
+              <label class="form-label-sm">Etiket Dili
+                <small style="color:#9ca3af;font-weight:400;text-transform:none;letter-spacing:0;">
+                  (üretimde dil seçilince doğru dildeki etiket stoktan düşülür)
+                </small>
+              </label>
+              <select class="form-select" id="itemLanguage">
+                <option value="">— Dilsiz —</option>
+                <option value="TR">Türkçe</option>
+                <option value="EN">İngilizce</option>
+              </select>
+            </div>
+
             <!-- ── Varsayılan tedarikçi — mal kabulde otomatik gelecek ── -->
             <div class="mb-3">
               <label class="form-label-sm">Varsayılan Tedarikçi
@@ -1046,6 +1060,18 @@
       return `<span class="cat-badge ${cls}">${cat}</span>`;
     }
 
+    /* Etiket dil çipi — etiketlerde TR/EN gösterir, sınıflanmamışsa kırmızı uyarı.
+       Lab bu çiple sınıflanmamış etiketleri (37 adet) tek bakışta görür. */
+    function langChip(item) {
+      if (!(item.category === 'Ambalaj' && item.pkg_type === 'etiket')) return '';
+      const lang = item.language || '';
+      if (lang === 'TR')
+        return ' <span class="cat-badge" style="background:#f0fdf4;color:#15803d;">TR</span>';
+      if (lang === 'EN')
+        return ' <span class="cat-badge" style="background:#eff6ff;color:#1d4ed8;">EN</span>';
+      return ' <span class="cat-badge" style="background:#fef2f2;color:#b91c1c;" title="Dil atanmamış — düzenleyip seçin">Dil?</span>';
+    }
+
     /* ── Render table ── */
     /* ── Single-row renderer — `mode` ∈ {'parent','variation','standalone'} ── */
     function renderItemRow(item, mode) {
@@ -1114,7 +1140,7 @@
             ${item.parent_name ? `<div class="variation-parent-name">↳ ${escHtml(item.parent_name)}</div>` : ''}
             ${vSupplier}
           </td>
-          <td>${catBadge(item.category, item.pkg_type)}</td>
+          <td>${catBadge(item.category, item.pkg_type)}${langChip(item)}</td>
           <td>${escHtml(item.unit)}</td>
           <td>${item.min_stock_level ?? 0}</td>
           ${costCellTd}
@@ -1141,7 +1167,7 @@
             ${escHtml(item.name)}
             ${supplierHint}
           </td>
-          <td>${catBadge(item.category, item.pkg_type)}</td>
+          <td>${catBadge(item.category, item.pkg_type)}${langChip(item)}</td>
           <td>${escHtml(item.unit)}</td>
           <td>${item.min_stock_level ?? 0}</td>
           ${costCellTd}
@@ -1498,6 +1524,16 @@
       // Ambalaj alt-tipi sadece Ambalaj kategorisinde anlamlı
       const pkgSec = document.getElementById('pkgTypeSection');
       if (pkgSec) pkgSec.style.display = (cat === 'Ambalaj') ? 'block' : 'none';
+      updateLabelLangVisibility();
+    }
+
+    /* Etiket dili — sadece Kategori=Ambalaj + Alt-Tip=Etiket kombinasyonunda */
+    function updateLabelLangVisibility() {
+      const cat = document.getElementById('itemCategory').value;
+      const pkg = (document.getElementById('itemPkgType') || {}).value || '';
+      const sec = document.getElementById('labelLangSection');
+      if (!sec) return;
+      sec.style.display = (cat === 'Ambalaj' && pkg === 'etiket') ? 'block' : 'none';
     }
 
     function populateParentDropdown() {
@@ -1518,6 +1554,7 @@
 
     // Wire up listeners (idempotent — fired once at script init)
     document.getElementById('itemCategory').addEventListener('change', updateVariationVisibility);
+    document.getElementById('itemPkgType')?.addEventListener('change', updateLabelLangVisibility);
     document.getElementById('isVariationToggle').addEventListener('change', function () {
       document.getElementById('variationFields').style.display = this.checked ? 'block' : 'none';
     });
@@ -1554,6 +1591,9 @@
       // Phase 10 — Ambalaj alt-tipi (pkg_type)
       const _pkgEl = document.getElementById('itemPkgType');
       if (_pkgEl) _pkgEl.value = item.pkg_type || '';
+      // Phase 15 — Etiket dili
+      const _langEl = document.getElementById('itemLanguage');
+      if (_langEl) _langEl.value = item.language || '';
       // Default supplier — mal kabulde oto-doldurma için
       const _supEl = document.getElementById('itemSupplierId');
       if (_supEl) _supEl.value = item.supplier_id || '';
@@ -1655,6 +1695,7 @@
         variation_name,
         barcode:        (document.getElementById('itemBarcode')?.value || '').trim() || null,
         pkg_type:       (document.getElementById('itemPkgType')?.value || '').trim() || null,
+        language:       (document.getElementById('itemLanguage')?.value || '').trim() || null,
         supplier_id:    parseInt(document.getElementById('itemSupplierId')?.value || '') || null,
       };
       try {

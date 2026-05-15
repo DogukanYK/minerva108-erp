@@ -87,6 +87,10 @@ class Item(Base):
     variation_name = Column(String(100), nullable=True)                              # e.g. "200ml", "500ml"
     barcode = Column(String(64), nullable=True, index=True)                          # EAN-13 / QR / Code-128 — phone scanner pre-fill
     pkg_type = Column(String(20), nullable=True)                                     # Ambalaj alt-tipi: şişe / kavanoz / pompa / kapak — sadece kategori=Ambalaj için
+    # Etiket dil ayrımı: 'TR' / 'EN' / NULL (dilsiz).  label_group aynı mantıksal
+    # etiketin TR+EN üyelerini bağlar — üretimde dil seçilince kardeşe inilir.
+    language = Column(String(8), nullable=True)
+    label_group = Column(String(255), nullable=True, index=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -398,6 +402,10 @@ def init_db():
             "ALTER TABLE inventory          ADD COLUMN qc_required BOOLEAN DEFAULT FALSE",
             # Phase 14 — Idle timeout (kullanıcı başına özelleştirilebilir)
             "ALTER TABLE users              ADD COLUMN idle_timeout_minutes INTEGER",
+            # Phase 15 — Etiket dil ayrımı (TR/EN) + grup
+            "ALTER TABLE items              ADD COLUMN language VARCHAR(8)",
+            "ALTER TABLE items              ADD COLUMN label_group VARCHAR(255)",
+            "CREATE INDEX IF NOT EXISTS ix_items_label_group ON items(label_group)",
         ):
             alter_safe(stmt)
 

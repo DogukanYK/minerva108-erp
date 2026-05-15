@@ -63,6 +63,8 @@ def _calc_recipe_costs(recipe: Recipe, db: Session) -> dict:
             "quantity":      ing.quantity,          # net (recipe spec)
             "gross_qty":     gross_qty,              # actual stock consumption
             "is_ambalaj":    is_ambalaj,
+            "language":      item.language or "",    # Phase 15 — etiket dili
+            "label_group":   item.label_group or "", # üretimde dil çözümü için
             "cost_price":    cost_price,
             "line_cost":     line_cost,
         })

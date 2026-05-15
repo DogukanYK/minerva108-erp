@@ -2,11 +2,34 @@
 Inventory router — items, suppliers, receiving, transactions, traceability,
 and Excel imports (both classic templated import + smart auto-detect import).
 """
+import re
+
 from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, Field
 from typing import Optional, List
+
+
+# ── Etiket dil/grup yardımcıları ────────────────────────────────────────────
+# Migration (d579c1629598) ile aynı mantık — isimden dil belirteçlerini at,
+# normalize et → label_group anahtarı.  TR ve EN kardeşleri aynı anahtarda
+# buluşur, üretimde dil seçilince doğru kardeşe inilir.
+_LANG_TOKEN_RE = re.compile(r'\(\s*(?:eng?|ing|tur|tr|t[üu]rk(?:[çc]e)?|english)\s*\)', re.IGNORECASE)
+
+
+def _label_group_key(name: str) -> str:
+    s = _LANG_TOKEN_RE.sub(' ', name or '')
+    s = re.sub(r'\s+', ' ', s.lower()).strip()
+    return s
+
+
+def _norm_language(val: Optional[str]) -> Optional[str]:
+    """Kullanıcı girdisini 'TR' / 'EN' / None'a normalize et."""
+    v = (val or '').strip().upper()
+    if v in ('TR', 'TUR', 'TÜRKÇE', 'TURKCE'):    return 'TR'
+    if v in ('EN', 'ENG', 'İNG', 'ING', 'ENGLISH'): return 'EN'
+    return None
 
 from database import (
     get_db, Item, Supplier, Inventory, Transaction,
@@ -32,6 +55,8 @@ class ItemCreateRequest(BaseModel):
     variation_name: Optional[str]   = Field(None, max_length=100)
     barcode:        Optional[str]   = Field(None, max_length=64)
     pkg_type:       Optional[str]   = Field(None, max_length=20)
+    # Etiket dili — 'TR' / 'EN' / None (dilsiz).  Sadece etiketlerde anlamlı.
+    language:       Optional[str]   = Field(None, max_length=8)
     # Varsayılan tedarikçi — mal kabulde bu ürün seçilince oto-doldurulur
     supplier_id:    Optional[int]   = None
 
@@ -112,6 +137,8 @@ def list_items(
             "parent_name":     name_by_id.get(i.parent_id) if i.parent_id else None,
             "variation_name":  i.variation_name,
             "barcode":         i.barcode or "",                 # Phase 9
+            "language":        i.language or "",                 # Phase 15 — etiket dili
+            "label_group":     i.label_group or "",
             "child_count":     child_count.get(i.id, 0),
             "is_parent":       child_count.get(i.id, 0) > 0,
             "is_variation":    i.parent_id is not None,
@@ -159,6 +186,12 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db), _: dict 
     err = _validate_variation(db, data.parent_id, data.variation_name)
     if err: return err
 
+    pkg = (data.pkg_type.strip() if data.pkg_type and data.pkg_type.strip() else None)
+    is_label = (data.category == "Ambalaj" and pkg == "etiket")
+    lang     = _norm_language(data.language) if is_label else None
+    # label_group sadece etiketlerde — isimden türetilir (TR/EN kardeşleri buluşsun)
+    grp      = _label_group_key(data.name) if is_label else None
+
     item = Item(
         name=data.name,
         category=data.category,
@@ -168,7 +201,9 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db), _: dict 
         parent_id=data.parent_id,
         variation_name=(data.variation_name.strip() if data.parent_id and data.variation_name else None),
         barcode=(data.barcode.strip() if data.barcode and data.barcode.strip() else None),
-        pkg_type=(data.pkg_type.strip() if data.pkg_type and data.pkg_type.strip() else None),
+        pkg_type=pkg,
+        language=lang,
+        label_group=grp,
         supplier_id=data.supplier_id,
     )
     db.add(item)
@@ -312,6 +347,8 @@ def update_item(
         "variation_name":  item.variation_name,
         "barcode":         item.barcode,
         "pkg_type":        item.pkg_type,
+        "language":        item.language,
+        "label_group":     item.label_group,
         "supplier_id":     item.supplier_id,
     }
 
@@ -325,6 +362,10 @@ def update_item(
     item.barcode         = (data.barcode.strip() if data.barcode and data.barcode.strip() else None)
     item.pkg_type        = (data.pkg_type.strip().lower() if data.pkg_type and data.pkg_type.strip() else None)
     item.supplier_id     = data.supplier_id
+    # Etiket dil/grup — sadece category=Ambalaj + pkg_type=etiket kombinasyonunda
+    _is_label = (item.category == "Ambalaj" and item.pkg_type == "etiket")
+    item.language    = _norm_language(data.language) if _is_label else None
+    item.label_group = _label_group_key(data.name)   if _is_label else None
 
     # ── Undo entry ───────────────────────────────────────────────────────
     try:

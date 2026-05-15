@@ -231,6 +231,19 @@
     .col-stock-after.low   { color: #b45309; font-weight: 700; }    /* < 10% kalır */
     .col-stock-after.warn  { color: #b91c1c; font-weight: 700; }    /* negatif */
 
+    /* Üretim dili radio seçenekleri */
+    .lang-opt {
+      display: inline-flex; align-items: center; gap: 0.45rem;
+      padding: 0.5rem 1rem; border: 1.5px solid #e5e7eb; border-radius: 8px;
+      cursor: pointer; font-size: 0.88rem; font-weight: 500; color: #374151;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .lang-opt:hover { border-color: var(--navy); }
+    .lang-opt:has(input:checked) {
+      border-color: var(--navy); background: rgba(35,46,110,0.06); color: var(--navy); font-weight: 600;
+    }
+    .lang-opt input { accent-color: var(--navy); }
+
     /* Grand total — birim ayırmaksızın hammadde toplamı (ambalaj hariç).
        Lab'ın "1 adet için ne harcayacağım?" sorusu için en üstte. */
     .total-grand {
@@ -478,6 +491,27 @@
               </div>
             </div>
 
+            <!-- Etiket Dili — reçetedeki dile özel etiketlerden hangisi düşülecek -->
+            <div class="row g-3" style="margin-top:0.1rem;">
+              <div class="col-12">
+                <label class="form-label-sm">Üretim Dili (Etiket) *
+                  <small style="color:#9ca3af;font-weight:400;text-transform:none;letter-spacing:0;">
+                    — seçilen dildeki etiket stoktan düşülür
+                  </small>
+                </label>
+                <div style="display:flex;gap:0.6rem;flex-wrap:wrap;">
+                  <label class="lang-opt">
+                    <input type="radio" name="prodLang" value="TR" checked onchange="updatePreview()" />
+                    <span>🇹🇷 Türkçe</span>
+                  </label>
+                  <label class="lang-opt">
+                    <input type="radio" name="prodLang" value="EN" onchange="updatePreview()" />
+                    <span>🇬🇧 İngilizce</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
             <!-- Canlı Önizleme -->
             <div id="previewPanel">
               <div class="preview-header">
@@ -521,6 +555,25 @@
   <script>
     let allRecipes   = [];
     let selectedRecipeDetail = null;
+
+    /* ── Etiket dil indeksi ────────────────────────────────────────────────
+       label_group → { TR: item, EN: item }.  Üretim önizlemesi, reçetedeki
+       dile özel bir etiketi seçilen dilin kardeşine çevirmek için kullanır.
+       window.fetchItems() static/items-cache.js'ten 30sn cache'li gelir. */
+    let labelIndex = {};
+    async function loadLabelIndex() {
+      try {
+        const items = await window.fetchItems();
+        const idx = {};
+        (items || []).forEach(it => {
+          if (it.category === 'Ambalaj' && it.pkg_type === 'etiket'
+              && it.label_group && it.language) {
+            (idx[it.label_group] = idx[it.label_group] || {})[it.language] = it;
+          }
+        });
+        labelIndex = idx;
+      } catch (e) { /* cache yoksa önizleme yine çalışır, sadece sibling çözmez */ }
+    }
 
     /* ── Toast ── */
     function escHtml(str) {
@@ -635,6 +688,33 @@
         wastePill.style.display = 'none';
       }
 
+      // ── Etiket dil çözümü ────────────────────────────────────────────────
+      // Reçetedeki dile özel bir etiket, seçilen dilin kardeşine çevrilir.
+      const selLang = (document.querySelector('input[name="prodLang"]:checked') || {}).value || 'TR';
+      const selLangLabel = selLang === 'EN' ? 'İngilizce' : 'Türkçe';
+      const seenGroups = new Set();
+      const labelWarnings = [];
+      const resolvedIngredients = [];
+      for (const ing of ingredients) {
+        if (ing.language && ing.label_group) {
+          if (seenGroups.has(ing.label_group)) continue;   // kardeş zaten işlendi
+          seenGroups.add(ing.label_group);
+          if (ing.language !== selLang) {
+            const sib = (labelIndex[ing.label_group] || {})[selLang];
+            if (!sib) { labelWarnings.push(ing.item_name); continue; }
+            resolvedIngredients.push({
+              ...ing,
+              item_id:       sib.id,
+              item_name:     sib.name,
+              current_stock: sib.current_stock,
+              language:      selLang,
+            });
+            continue;
+          }
+        }
+        resolvedIngredients.push(ing);
+      }
+
       let hasShortage = false;
       // Birim bazlı toplamlar — farklı birimler ayrı toplanır (g, ml, adet karışmaz)
       const totalsByUnit = {};   // { unit: {net, gross, loss} }
@@ -643,8 +723,9 @@
       // g ve ml karıştırılır (kozmetikte yoğunluklar ~1, pratik tahmin).
       let rawNetAll = 0, rawGrossAll = 0;
 
-      const rowsHtml = ingredients.map(ing => {
+      const rowsHtml = resolvedIngredients.map(ing => {
         const isAmbalaj = !!ing.is_ambalaj;
+        const isLabel   = !!(ing.language && ing.label_group);
         const factor    = isAmbalaj ? 1 : wasteFactor;
         const net       = ing.quantity * multiplier;
         const gross     = net * factor;
@@ -664,9 +745,11 @@
           rawGrossAll += gross;
         }
 
-        const catPill = isAmbalaj
-          ? `<span class="preview-cat-pill pill-amb" title="Ambalaja fire uygulanmaz">Ambalaj</span>`
-          : `<span class="preview-cat-pill pill-raw">Hammadde</span>`;
+        const catPill = isLabel
+          ? `<span class="preview-cat-pill pill-amb" title="Etiket — üretim dili: ${selLangLabel}">Etiket · ${selLang}</span>`
+          : isAmbalaj
+            ? `<span class="preview-cat-pill pill-amb" title="Ambalaja fire uygulanmaz">Ambalaj</span>`
+            : `<span class="preview-cat-pill pill-raw">Hammadde</span>`;
 
         // Sonrası stok = mevcut − brüt.  Negatife düşerse zaten "yetersiz"
         // pop-up'ı tetiklenir (yukarıdaki enough = false), bu kolon kırmızı.
@@ -743,8 +826,18 @@
            </div>`
         : `<div class="preview-summary summary-ok">
              <i class="bi bi-check-circle-fill"></i>
-             Tüm hammaddeler yeterli. Stoktan brüt (fireli) miktarlar düşülecek.
+             Tüm hammaddeler yeterli. Üretim dili: <strong>${selLangLabel}</strong> — stoktan brüt (fireli) miktarlar düşülecek.
            </div>`;
+
+      // Seçilen dilde etiketi olmayan kalemler için uyarı
+      if (labelWarnings.length) {
+        summaryEl.innerHTML += `
+          <div class="preview-summary summary-warn" style="margin-top:0.4rem;">
+            <i class="bi bi-tag"></i>
+            ${selLangLabel} etiketi tanımlı olmayan kalem(ler): ${escHtml(labelWarnings.join(', '))}.
+            Bu üretimde stoktan düşülmeyecek — eksikse Ürünler sayfasından ekleyin.
+          </div>`;
+      }
 
       panel.style.display = 'block';
     }
@@ -761,10 +854,11 @@
       this.innerHTML = '<i class="bi bi-hourglass-split"></i> İşleniyor…';
 
       try {
+        const selLang = (document.querySelector('input[name="prodLang"]:checked') || {}).value || 'TR';
         const res = await fetch('/api/production', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ recipe_id: recipeId, produced_quantity: qty }),
+          body: JSON.stringify({ recipe_id: recipeId, produced_quantity: qty, label_language: selLang }),
         });
         const data = await res.json();
         if (!res.ok) { showToast(data.detail || 'Üretim başlatılamadı.'); return; }
@@ -821,6 +915,7 @@
     /* ── Init ── */
     loadRecipes();
     loadHistory();
+    loadLabelIndex();
   </script>
 
 </body>

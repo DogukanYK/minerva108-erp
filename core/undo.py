@@ -189,7 +189,8 @@ def _undo_item_edit(db: Session, entry: UndoLog) -> str:
     if not item:
         raise UndoTargetGone("Ürün artık yok.")
 
-    for col in ("name", "category", "unit", "barcode", "pkg_type", "variation_name"):
+    for col in ("name", "category", "unit", "barcode", "pkg_type",
+                "variation_name", "language", "label_group"):
         if col in before:
             setattr(item, col, before[col])
     for col in ("min_stock_level", "cost_price"):

@@ -21,6 +21,9 @@ router = APIRouter(prefix="/api", tags=["production"])
 class ProductionCreateRequest(BaseModel):
     recipe_id: int
     produced_quantity: float = Field(..., gt=0, le=1_000_000)
+    # Etiket dili — 'TR' / 'EN'.  Reçetedeki dile özel etiketlerden bu dile
+    # ait olan stoktan düşülür, diğeri atlanır.  Varsayılan TR.
+    label_language: Optional[str] = Field("TR", max_length=8)
 
 
 class QCActionRequest(BaseModel):
@@ -77,14 +80,45 @@ def start_production(
     # Ambalaj bileşenlerine fire uygulanmaz (reçete mantığıyla tutarlı).
     waste_factor = 1.0 + (recipe.waste_percentage or 0.0) / 100.0
 
+    # ── Seçilen etiket dili ─────────────────────────────────────────────────
+    sel_lang = "EN" if (data.label_language or "").strip().upper().startswith("EN") else "TR"
+    sel_lang_label = "İngilizce" if sel_lang == "EN" else "Türkçe"
+
     try:
         # ── Önce tüm brüt miktarları hesapla ve stok kontrolü yap ──────────
-        ing_plan = []   # (ing, item, gross_qty) üçlüsü
+        ing_plan = []          # (ing, effective_item, gross_qty, is_ambalaj)
+        label_warnings = []    # seçilen dilde etiketi olmayan kalemler
+        processed_groups = set()  # aynı label_group iki kez tüketilmesin
         for ing in recipe.ingredients:
             item = db.query(Item).filter(Item.id == ing.item_id).with_for_update().first()
             if not item:
                 db.rollback()
                 return JSONResponse(status_code=404, content={"detail": f"Hammadde bulunamadı (ID: {ing.item_id})."})
+
+            # ── Etiket dil çözümü ──────────────────────────────────────────
+            # Malzeme dile özel etiketse: seçilen dile uygun kardeşe in.
+            #   • dili seçilen dile eşit → aynen kullan
+            #   • farklı → aynı label_group'ta seçilen dildeki kardeşi bul
+            #   • kardeş yok → uyar + atla (üretim durmaz)
+            #   • reçetede iki kardeş varsa ikincisini atla (çift düşmesin)
+            if item.language and item.label_group:
+                if item.label_group in processed_groups:
+                    continue
+                processed_groups.add(item.label_group)
+                if item.language != sel_lang:
+                    sibling = (
+                        db.query(Item)
+                        .filter(Item.label_group == item.label_group,
+                                Item.language == sel_lang,
+                                Item.is_active == True)
+                        .with_for_update()
+                        .first()
+                    )
+                    if not sibling:
+                        label_warnings.append(item.name)
+                        continue   # bu dilde etiket tanımlı değil — atla
+                    item = sibling
+
             is_ambalaj = (item.category == "Ambalaj")
             factor     = 1.0 if is_ambalaj else waste_factor   # ambalaja fire uygulanmaz
             gross_qty  = round(ing.quantity * multiplier * factor, 6)
@@ -106,6 +140,9 @@ def start_production(
         produced_lot = f"PRD-{now.strftime('%Y%m%d-%H%M%S')}"
 
         # ── Stok düş + Output transaction kaydet ───────────────────────────
+        # NOT: item burada *çözülmüş* malzeme — etiket dil çözümü sonrası
+        # kardeş etikete inilmiş olabilir, o yüzden Transaction.item_id = item.id
+        # (ing.item_id değil — reçetedeki orijinal değil, gerçekten tüketilen).
         for ing, item, gross_qty, is_ambalaj in ing_plan:
             item.current_stock = round(item.current_stock - gross_qty, 6)
             fire_note = (
@@ -114,10 +151,11 @@ def start_production(
                 else ""
             )
             db.add(Transaction(
-                item_id=ing.item_id,
+                item_id=item.id,
                 transaction_type="Output",
                 quantity=gross_qty,
-                notes=f"Üretim tüketimi — Reçete: {recipe.name}{fire_note} | Üretim Lot: {produced_lot}",
+                notes=(f"Üretim tüketimi — Reçete: {recipe.name}{fire_note} | "
+                       f"Dil: {sel_lang_label} | Üretim Lot: {produced_lot}"),
                 performed_by=actor,
             ))
 
@@ -140,7 +178,8 @@ def start_production(
                 lot_number=produced_lot,
                 transaction_type="Input",
                 quantity=data.produced_quantity,
-                notes=f"Üretim çıktısı — Reçete: {recipe.name}, Lot: {produced_lot}",
+                notes=(f"Üretim çıktısı — Reçete: {recipe.name} | "
+                       f"Dil: {sel_lang_label} | Lot: {produced_lot}"),
                 performed_by=actor,
             ))
             # ── Stoğu anında artır — ledger ile current_stock arasındaki sync gap'i kapanır.
@@ -174,9 +213,15 @@ def start_production(
                     item.name, item.current_stock, item.min_stock_level, item.unit or "",
                 )
 
+        msg = f"Üretim tamamlandı ({sel_lang_label}). {data.produced_quantity} birim stoğa eklendi."
+        if label_warnings:
+            msg += (f"  ⚠ Şu kalemlerin {sel_lang_label} etiketi tanımlı değil, "
+                    f"stoktan düşülmedi: {', '.join(label_warnings)}.")
         return {
-            "message": f"Üretim tamamlandı. {data.produced_quantity} birim stoğa eklendi.",
+            "message": msg,
             "lot_number": produced_lot if recipe.target_item_id else None,
+            "label_language": sel_lang,
+            "label_warnings": label_warnings,
         }
 
     except Exception:
