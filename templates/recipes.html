@@ -163,11 +163,11 @@
     .btn-add-row { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.32rem 0.85rem; background: rgba(184,150,90,0.1); color: var(--gold); border: 1.5px solid rgba(184,150,90,0.35); border-radius: 7px; font-family: 'Jost', sans-serif; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
     .btn-add-row:hover { background: rgba(184,150,90,0.18); }
     #ingredientRows { display: flex; flex-direction: column; gap: 0.5rem; max-height: 320px; overflow-y: auto; padding-right: 2px; }
-    /* 1fr ürün · 90px % (BÜYÜK) · 90px gram · 32px sil */
-    .ingredient-row { display: grid; grid-template-columns: 1fr 90px 90px 32px; gap: 0.5rem; align-items: center; }
+    /* 46px FAZ · 1fr ürün · 90px % (BÜYÜK) · 90px gram · 32px sil */
+    .ingredient-row { display: grid; grid-template-columns: 46px 1fr 90px 90px 32px; gap: 0.5rem; align-items: center; }
     .ingredient-row .row-grid-header,
     .ingredient-row-header {
-      display: grid; grid-template-columns: 1fr 90px 90px 32px; gap: 0.5rem;
+      display: grid; grid-template-columns: 46px 1fr 90px 90px 32px; gap: 0.5rem;
       font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em;
       text-transform: uppercase; color: #9ca3af;
       padding: 0 0 0.25rem 0.3rem;
@@ -525,6 +525,7 @@
               </div>
               <!-- Sütun başlıkları — % ve Miktar yer değişti (% primary) -->
               <div class="ingredient-row-header" id="ingredientRowsHeader" style="display:none;">
+                <span>Faz</span>
                 <span>Hammadde</span>
                 <span style="text-align:right;color:var(--gold);">% Bileşim</span>
                 <span style="text-align:right;">Hesaplanan</span>
@@ -542,6 +543,16 @@
                   <span id="compHint" style="color:#9ca3af;font-size:0.78rem;margin-left:0.4rem;"></span>
                 </span>
               </div>
+            </div>
+
+            <!-- Üretim föyü "YAPILIŞI" metni -->
+            <div class="ingredients-section" style="margin-top:1rem;">
+              <span class="ingredients-label">Yapılış / Hazırlanış
+                <small style="color:#9ca3af;font-weight:400;">(üretim föyünde görünür)</small>
+              </span>
+              <textarea class="form-control" id="recipeProductionNotes" rows="4"
+                placeholder="Örn: A fazı ayrı bir kapta hazırlanır, 50-60 dereceye ısıtılır…"
+                style="margin-top:0.4rem;font-size:0.88rem;"></textarea>
             </div>
 
           </form>
@@ -1110,6 +1121,9 @@
       // 4 sütun: ürün · % BÜYÜK (lab buraya yazıyor) · gram (auto-fill) · sil
       // İki yönlü binding: % değişince gram, gram değişince % güncellenir.
       row.innerHTML = `
+        <input type="text" class="form-control ing-phase" maxlength="4"
+               placeholder="Faz" title="Üretim föyü FAZ (A/B/D/E)"
+               style="text-align:center;text-transform:uppercase;padding:0.55rem 0.2rem;" />
         <select class="form-select ing-item" onchange="onIngredientChange(${rowCounter}, 'item')">${buildIngredientOptions()}</select>
         <input type="number" class="ing-percent" min="0" max="100" step="0.01"
                placeholder="%"
@@ -1237,6 +1251,8 @@
         // Üretim miktarı ve fire
         document.getElementById('recipeYield').value = r.expected_yield;
         document.getElementById('recipeWaste').value = r.waste_percentage ?? 0;
+        // Üretim föyü "YAPILIŞI" metni
+        document.getElementById('recipeProductionNotes').value = r.production_notes || '';
 
         // Toplam batch kütlesi banner (target_item + yield set edildikten sonra)
         updateBatchMassBanner();
@@ -1253,6 +1269,7 @@
           // temsilciye çevir ki select doğru option'ı seçsin.
           lastRow.querySelector('.ing-item').value = resolveLabelRep(ing.item_id);
           lastRow.querySelector('.ing-qty').value  = ing.quantity;
+          lastRow.querySelector('.ing-phase').value = ing.phase || '';
           // Geri hesap: % = qty / totalMass × 100 (kategori Hammadde ise)
           const cat = lastRow.querySelector('.ing-item').options[
             lastRow.querySelector('.ing-item').selectedIndex
@@ -1296,8 +1313,9 @@
       rows.forEach(row => {
         const itemId = parseInt(row.querySelector('.ing-item').value);
         const qty    = parseFloat(row.querySelector('.ing-qty').value);
+        const phase  = (row.querySelector('.ing-phase')?.value || '').trim().toUpperCase();
         if (!itemId || !qty || qty <= 0) { valid = false; }
-        else ingredients.push({ item_id: itemId, quantity: qty });
+        else ingredients.push({ item_id: itemId, quantity: qty, phase: phase || null });
       });
       if (!valid) { showToast('Tüm hammadde satırlarını eksiksiz doldurunuz.'); return; }
 
@@ -1314,6 +1332,7 @@
             target_item_id:   targetItemId,
             expected_yield:   yieldVal,
             waste_percentage: wasteVal,
+            production_notes: (document.getElementById('recipeProductionNotes')?.value || '').trim() || null,
             ingredients,
           }),
         });

@@ -108,6 +108,7 @@ class Recipe(Base):
     output_unit = Column(String(20), default="adet")
     target_item_id = Column(Integer, ForeignKey("items.id"), nullable=True)
     waste_percentage = Column(Float, default=0.0)   # % fire oranı (üretimde brüt girdiye eklenir)
+    production_notes = Column(Text, nullable=True)  # Üretim föyü "YAPILIŞI" metni
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -127,6 +128,7 @@ class RecipeIngredient(Base):
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
     quantity = Column(Float, nullable=False)
     unit = Column(String(20))
+    phase = Column(String(8), nullable=True)   # Üretim föyü FAZ sütunu (A/B/D/E)
 
     recipe = relationship("Recipe", back_populates="ingredients")
     item = relationship("Item", back_populates="recipe_ingredients")
@@ -406,6 +408,9 @@ def init_db():
             "ALTER TABLE items              ADD COLUMN language VARCHAR(8)",
             "ALTER TABLE items              ADD COLUMN label_group VARCHAR(255)",
             "CREATE INDEX IF NOT EXISTS ix_items_label_group ON items(label_group)",
+            # Phase 16 — Üretim föyü: FAZ + YAPILIŞI
+            "ALTER TABLE recipe_ingredients ADD COLUMN phase VARCHAR(8)",
+            "ALTER TABLE recipes            ADD COLUMN production_notes TEXT",
         ):
             alter_safe(stmt)
 

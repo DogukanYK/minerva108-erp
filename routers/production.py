@@ -1,8 +1,11 @@
 """
 Production router — manufacturing workflows + Quality Control (QA).
 """
+import io
+import re
+
 from fastapi import APIRouter, Depends, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -10,6 +13,7 @@ from typing import Optional
 from database import (
     get_db, Item, Recipe, ProductionHistory, Inventory, Transaction,
 )
+from core.auth import get_current_user
 from core.permissions import require_permission
 from core.notifications import notify_low_stock
 
@@ -56,6 +60,211 @@ def list_production_history(db: Session = Depends(get_db)):
         }
         for r in rows
     ]
+
+
+# ─── Üretim föyü (production sheet) ─────────────────────────────────────────
+
+def _parse_ml(*texts) -> Optional[float]:
+    """İsim/varyasyondan ml değeri çek — '50ml', '100 ML' → 50 / 100."""
+    for t in texts:
+        m = re.search(r'(\d+(?:[.,]\d+)?)\s*ml', str(t or ''), re.IGNORECASE)
+        if m:
+            try:
+                return float(m.group(1).replace(',', '.'))
+            except ValueError:
+                pass
+    return None
+
+
+def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[dict]:
+    """
+    Üretim föyünü reçeteden yeniden hesaplar — üretim öncesi canlı önizlemenin
+    aynısı: net / brüt(fireli) / fire.  Reçete silinmişse None döner.
+    """
+    recipe = db.query(Recipe).filter(Recipe.id == prod.recipe_id).first()
+    if not recipe:
+        return None
+
+    multiplier   = prod.produced_quantity / (recipe.output_quantity or 1.0)
+    waste        = recipe.waste_percentage or 0.0
+    waste_factor = 1.0 + waste / 100.0
+
+    # % bileşim hammadde net'i üzerinden — Excel föyündeki "% MİKTAR" mantığı
+    hammadde_qty_total = 0.0
+    ings = []
+    for ing in recipe.ingredients:
+        item = db.query(Item).filter(Item.id == ing.item_id).first()
+        if not item:
+            continue
+        is_amb = (item.category == "Ambalaj")
+        if not is_amb:
+            hammadde_qty_total += ing.quantity
+        ings.append((ing, item, is_amb))
+
+    rows = []
+    net_total = gross_total = 0.0
+    for ing, item, is_amb in ings:
+        factor = 1.0 if is_amb else waste_factor
+        net    = round(ing.quantity * multiplier, 6)
+        gross  = round(net * factor, 6)
+        pct    = (round(ing.quantity / hammadde_qty_total * 100, 4)
+                  if (not is_amb and hammadde_qty_total) else None)
+        net_total   += net
+        gross_total += gross
+        rows.append({
+            "phase":      ing.phase or "",
+            "item_name":  item.name,
+            "unit":       ing.unit or item.unit or "",
+            "percent":    pct,
+            "net":        net,
+            "gross":      gross,
+            "is_ambalaj": is_amb,
+        })
+
+    target = db.query(Item).filter(Item.id == recipe.target_item_id).first() if recipe.target_item_id else None
+    bottle_ml = _parse_ml(
+        getattr(target, "variation_name", None) if target else None,
+        target.name if target else None,
+        prod.target_item_name,
+    )
+
+    return {
+        "id":               prod.id,
+        "recipe_id":         recipe.id,
+        "recipe_name":       prod.recipe_name or recipe.name,
+        "target_item_name":  prod.target_item_name or (target.name if target else ""),
+        "produced_quantity": prod.produced_quantity,
+        "produced_at":       prod.produced_at.strftime("%d.%m.%Y %H:%M") if prod.produced_at else "",
+        "produced_at_date":  prod.produced_at.strftime("%d.%m.%Y") if prod.produced_at else "",
+        "produced_by":       prod.produced_by or "",
+        "lot_number":        prod.lot_number or "",
+        "bottle_ml":         bottle_ml,
+        "waste_percentage":  round(waste, 2),
+        "production_notes":  recipe.production_notes or "",
+        "ingredients":       rows,
+        "totals": {
+            "net":   round(net_total, 4),
+            "gross": round(gross_total, 4),
+            "fire":  round(gross_total - net_total, 4),
+        },
+    }
+
+
+@router.get("/production/{prod_id}")
+def production_detail(
+    prod_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(get_current_user),
+):
+    """Tek üretim kaydının föyü — canlı önizleme tarzı brüt/fireli döküm."""
+    prod = db.query(ProductionHistory).filter(ProductionHistory.id == prod_id).first()
+    if not prod:
+        return JSONResponse(status_code=404, content={"detail": "Üretim kaydı bulunamadı."})
+    sheet = _build_production_sheet(prod, db)
+    if sheet is None:
+        return JSONResponse(status_code=409, content={
+            "detail": "Bu üretimin reçetesi silinmiş — föy yeniden hesaplanamıyor."
+        })
+    return sheet
+
+
+@router.get("/production/{prod_id}/export")
+def production_export(
+    prod_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(get_current_user),
+):
+    """Üretim föyünü .xlsx olarak indir — lab Excel formatının birebir aynısı."""
+    prod = db.query(ProductionHistory).filter(ProductionHistory.id == prod_id).first()
+    if not prod:
+        return JSONResponse(status_code=404, content={"detail": "Üretim kaydı bulunamadı."})
+    sheet = _build_production_sheet(prod, db)
+    if sheet is None:
+        return JSONResponse(status_code=409, content={"detail": "Reçete silinmiş — föy üretilemiyor."})
+
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Üretim Föyü"
+
+    bold      = Font(bold=True)
+    big       = Font(bold=True, size=12)
+    thin      = Side(style="thin", color="999999")
+    box       = Border(left=thin, right=thin, top=thin, bottom=thin)
+    hdr_fill  = PatternFill("solid", fgColor="232E6E")
+    hdr_font  = Font(bold=True, color="FFFFFF")
+    wrap      = Alignment(wrap_text=True, vertical="top")
+
+    t = sheet["totals"]
+    waste = sheet["waste_percentage"]
+
+    # ── Başlık bloğu ────────────────────────────────────────────────────────
+    ws["A1"] = "YAPILMASI GEREKEN ADET:";          ws["B1"] = sheet["produced_quantity"]
+    ws["C1"] = "ŞİŞE ML :";                         ws["D1"] = sheet["bottle_ml"] or ""
+    ws["A2"] = "YAPILMASI GEREKEN MİKTAR (GR) :";   ws["B2"] = t["net"]
+    ws["A3"] = f"% {waste:g} FİRE (GR) :";          ws["B3"] = t["fire"]
+    ws["A4"] = "YAPILMASI GEREKEN TOPLAM MİKTAR:";  ws["B4"] = t["gross"]
+    ws["D4"] = f"TARİH: {sheet['produced_at_date']}"
+    for r in range(1, 5):
+        ws[f"A{r}"].font = bold
+        ws[f"C{r}"].font = bold
+    ws["A5"] = sheet["target_item_name"]
+    ws["A5"].font = big
+
+    # ── Bileşen tablosu başlığı ─────────────────────────────────────────────
+    hdr_row = 6
+    headers = ["FAZ", "HAMMADDE İSİM", "% MİKTAR", f"MİKTAR (GR) — {t['gross']:g}"]
+    for ci, h in enumerate(headers, start=1):
+        c = ws.cell(row=hdr_row, column=ci, value=h)
+        c.font = hdr_font; c.fill = hdr_fill; c.border = box
+        c.alignment = Alignment(horizontal="center")
+
+    # ── Satırlar ────────────────────────────────────────────────────────────
+    row = hdr_row + 1
+    for ing in sheet["ingredients"]:
+        ws.cell(row=row, column=1, value=ing["phase"]).border = box
+        ws.cell(row=row, column=2, value=ing["item_name"]).border = box
+        pct_cell = ws.cell(row=row, column=3,
+                           value=(round(ing["percent"], 3) if ing["percent"] is not None else ""))
+        pct_cell.border = box
+        amt_cell = ws.cell(row=row, column=4, value=round(ing["gross"], 4))
+        amt_cell.border = box
+        row += 1
+
+    # ── TOPLAM satırı ───────────────────────────────────────────────────────
+    ws.cell(row=row, column=2, value="TOPLAM").font = bold
+    ws.cell(row=row, column=3, value=100).font = bold
+    ws.cell(row=row, column=4, value=round(t["gross"], 4)).font = bold
+    for ci in range(1, 5):
+        ws.cell(row=row, column=ci).border = box
+    row += 2
+
+    # ── YAPILIŞI ────────────────────────────────────────────────────────────
+    ws.cell(row=row, column=1, value="YAPILIŞI").font = bold
+    row += 1
+    notes_cell = ws.cell(row=row, column=1, value=sheet["production_notes"] or "—")
+    notes_cell.alignment = wrap
+    ws.merge_cells(start_row=row, start_column=1, end_row=row + 6, end_column=4)
+
+    # ── Kolon genişlikleri ──────────────────────────────────────────────────
+    ws.column_dimensions["A"].width = 10
+    ws.column_dimensions["B"].width = 38
+    ws.column_dimensions["C"].width = 14
+    ws.column_dimensions["D"].width = 22
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    safe_name = re.sub(r'[^A-Za-z0-9_-]+', '_', sheet["target_item_name"] or "uretim").strip("_")
+    filename  = f"uretim_foyu_{prod.id}_{safe_name}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/production", status_code=201)

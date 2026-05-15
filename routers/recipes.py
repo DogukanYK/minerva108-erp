@@ -19,6 +19,7 @@ router = APIRouter(prefix="/api", tags=["recipes"])
 class RecipeIngredientSchema(BaseModel):
     item_id: int
     quantity: float = Field(..., gt=0, le=1_000_000)
+    phase: Optional[str] = Field(None, max_length=8)   # Üretim föyü FAZ (A/B/D/E)
 
 
 class RecipeCreateRequest(BaseModel):
@@ -26,6 +27,7 @@ class RecipeCreateRequest(BaseModel):
     target_item_id: int
     expected_yield: float = Field(..., gt=0, le=1_000_000)
     waste_percentage: Optional[float] = Field(0.0, ge=0, le=100)
+    production_notes: Optional[str] = Field(None, max_length=5000)   # YAPILIŞI metni
     # 200 bileşen — gerçekçi tavan, saldırgan 100K bileşenli payload yollayamaz
     ingredients: List[RecipeIngredientSchema] = Field(..., min_length=1, max_length=200)
 
@@ -63,6 +65,7 @@ def _calc_recipe_costs(recipe: Recipe, db: Session) -> dict:
             "quantity":      ing.quantity,          # net (recipe spec)
             "gross_qty":     gross_qty,              # actual stock consumption
             "is_ambalaj":    is_ambalaj,
+            "phase":         ing.phase or "",        # Phase 16 — üretim föyü FAZ
             "language":      item.language or "",    # Phase 15 — etiket dili
             "label_group":   item.label_group or "", # üretimde dil çözümü için
             "cost_price":    cost_price,
@@ -137,6 +140,7 @@ def create_recipe(data: RecipeCreateRequest, db: Session = Depends(get_db), _: d
             target_item_id=data.target_item_id,
             waste_percentage=round(data.waste_percentage or 0.0, 4),
             description=f"Hedef: {target_item.name}",
+            production_notes=(data.production_notes or "").strip() or None,
         )
         db.add(recipe)
         db.flush()  # recipe.id'yi al, commit etme
@@ -150,6 +154,7 @@ def create_recipe(data: RecipeCreateRequest, db: Session = Depends(get_db), _: d
                 item_id=ing.item_id,
                 quantity=ing.quantity,
                 unit=item.unit,
+                phase=(ing.phase or "").strip().upper() or None,
             ))
         db.commit()
         db.refresh(recipe)
@@ -200,6 +205,7 @@ def update_recipe(
         recipe.target_item_id   = data.target_item_id
         recipe.waste_percentage = round(data.waste_percentage or 0.0, 4)
         recipe.description      = f"Hedef: {target_item.name}"
+        recipe.production_notes = (data.production_notes or "").strip() or None
 
         # Replace ingredients: delete old, add new
         db.query(RecipeIngredient).filter(
@@ -219,6 +225,7 @@ def update_recipe(
                 item_id=ing.item_id,
                 quantity=ing.quantity,
                 unit=item.unit,
+                phase=(ing.phase or "").strip().upper() or None,
             ))
 
         db.commit()
@@ -264,6 +271,7 @@ def get_recipe_detail(
         "target_item_id":   recipe.target_item_id,
         "target_item_name": target.name if target else recipe.description,
         "target_item_unit": target.unit if target else recipe.output_unit,
+        "production_notes": recipe.production_notes or "",
         "total_cost":       total_cost,
         "unit_cost":        unit_cost,
         "ingredients":      ingredients,

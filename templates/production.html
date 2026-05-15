@@ -244,6 +244,31 @@
     }
     .lang-opt input { accent-color: var(--navy); }
 
+    /* Üretim geçmişi satırları tıklanabilir → föy detayı */
+    .prod-row { cursor: pointer; transition: background 0.12s; }
+    .prod-row:hover { background: #faf8f3; }
+
+    /* ── Üretim föyü detay/print ── */
+    .foy-meta { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem 1.5rem; margin-bottom: 1rem; }
+    .foy-meta div { font-size: 0.86rem; }
+    .foy-meta b { color: var(--navy); }
+    .foy-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+    .foy-table th, .foy-table td { border: 1px solid #e5e7eb; padding: 0.4rem 0.6rem; }
+    .foy-table th { background: var(--navy); color: #fff; font-weight: 600; }
+    .foy-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .foy-table tr.foy-total td { font-weight: 700; background: #f3f0ea; }
+    .foy-notes { margin-top: 1rem; padding: 0.75rem 1rem; background: #faf8f3;
+      border: 1px solid #e8e2d4; border-radius: 8px; font-size: 0.85rem; white-space: pre-wrap; }
+    .foy-notes-label { font-weight: 700; color: var(--navy); display: block; margin-bottom: 0.3rem; }
+
+    /* Print: sadece föy alanını göster */
+    #foyPrintArea { display: none; }
+    @media print {
+      body * { visibility: hidden; }
+      #foyPrintArea, #foyPrintArea * { visibility: visible; }
+      #foyPrintArea { display: block; position: absolute; left: 0; top: 0; width: 100%; padding: 1rem; }
+    }
+
     /* Grand total — birim ayırmaksızın hammadde toplamı (ambalaj hariç).
        Lab'ın "1 adet için ne harcayacağım?" sorusu için en üstte. */
     .total-grand {
@@ -551,6 +576,34 @@
   </div>
   <!-- /MODAL -->
 
+  <!-- ════ MODAL: ÜRETİM FÖYÜ DETAY ════ -->
+  <div class="modal fade" id="foyModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+      <div class="modal-content" style="border:none;border-radius:14px;">
+        <div class="modal-header" style="border-bottom:1px solid #f0ece4;padding:1.1rem 1.5rem;">
+          <h5 class="modal-title" style="font-family:'Playfair Display',serif;color:var(--navy);">
+            <i class="bi bi-file-earmark-text"></i> Üretim Föyü
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body" id="foyModalBody" style="padding:1.5rem;">
+          <div style="text-align:center;padding:3rem;color:#9ca3af;">Yükleniyor…</div>
+        </div>
+        <div class="modal-footer" style="border-top:1px solid #f0ece4;padding:0.85rem 1.5rem;gap:0.5rem;">
+          <button type="button" class="btn-cancel" data-bs-dismiss="modal">Kapat</button>
+          <button type="button" class="btn-cancel" id="foyPrintBtn" style="background:#f9f7f3;color:var(--navy);border:1.5px solid #e5e7eb;">
+            <i class="bi bi-printer"></i> Yazdır
+          </button>
+          <button type="button" class="btn-save" id="foyExcelBtn">
+            <i class="bi bi-file-earmark-excel"></i> Excel İndir
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Print-only alan: yazdırınca sadece bu görünür -->
+  <div id="foyPrintArea"></div>
+
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     let allRecipes   = [];
@@ -597,7 +650,7 @@
         (r.target_item_name || '').toLowerCase().includes(q)
       );
       tbody.innerHTML = filtered.map(r => `
-        <tr>
+        <tr class="prod-row" onclick="showProductionDetail(${r.id})" title="Üretim föyünü gör">
           <td class="td-id" style="padding-left:1.1rem;">#${r.id}</td>
           <td class="td-name">${escHtml(r.recipe_name)}</td>
           <td class="td-muted">${escHtml(r.target_item_name) || '—'}</td>
@@ -886,6 +939,77 @@
       this.disabled = true;
       try { await fetch('/api/logout', { method: 'POST' }); window.location.href = '/login'; }
       catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
+    });
+
+    /* ── Üretim föyü detay (geçmiş satırına tıklayınca) ────────────────────── */
+    let _foyCurrentId = null;
+
+    function buildFoyHtml(d) {
+      const t = d.totals;
+      const rows = d.ingredients.map(ing => `
+        <tr>
+          <td style="text-align:center;">${escHtml(ing.phase || '')}</td>
+          <td>${escHtml(ing.item_name)}</td>
+          <td class="num">${ing.percent != null ? fmt(ing.percent) : '—'}</td>
+          <td class="num">${fmt(ing.net)} ${escHtml(ing.unit)}</td>
+          <td class="num">${fmt(ing.gross)} ${escHtml(ing.unit)}</td>
+        </tr>`).join('');
+      return `
+        <div class="foy-meta">
+          <div><b>Ürün:</b> ${escHtml(d.target_item_name)}</div>
+          <div><b>Tarih:</b> ${escHtml(d.produced_at)}</div>
+          <div><b>Üretilen adet:</b> ${d.produced_quantity}</div>
+          <div><b>Şişe ml:</b> ${d.bottle_ml != null ? d.bottle_ml : '—'}</div>
+          <div><b>Net toplam:</b> ${fmt(t.net)} g/ml</div>
+          <div><b>Fire (%${fmt(d.waste_percentage)}):</b> +${fmt(t.fire)} g/ml</div>
+          <div><b>Brüt (fireli) toplam:</b> ${fmt(t.gross)} g/ml</div>
+          <div><b>Lot:</b> ${escHtml(d.lot_number || '—')}</div>
+        </div>
+        <table class="foy-table">
+          <thead><tr>
+            <th>FAZ</th><th>HAMMADDE İSİM</th><th>% MİKTAR</th><th>NET</th><th>BRÜT (FİRELİ)</th>
+          </tr></thead>
+          <tbody>
+            ${rows}
+            <tr class="foy-total">
+              <td></td><td>TOPLAM</td><td class="num">100</td>
+              <td class="num">${fmt(t.net)}</td><td class="num">${fmt(t.gross)}</td>
+            </tr>
+          </tbody>
+        </table>
+        ${d.production_notes
+          ? `<div class="foy-notes"><span class="foy-notes-label">YAPILIŞI</span>${escHtml(d.production_notes)}</div>`
+          : '<div class="foy-notes" style="color:#9ca3af;">Bu reçetede yapılış metni tanımlı değil — Reçeteler sayfasından eklenebilir.</div>'}
+      `;
+    }
+
+    async function showProductionDetail(id) {
+      _foyCurrentId = id;
+      const body = document.getElementById('foyModalBody');
+      body.innerHTML = '<div style="text-align:center;padding:3rem;color:#9ca3af;">Yükleniyor…</div>';
+      new bootstrap.Modal(document.getElementById('foyModal')).show();
+      try {
+        const res = await fetch(`/api/production/${id}`);
+        const d = await res.json();
+        if (!res.ok) {
+          body.innerHTML = `<div style="padding:2rem;color:#b91c1c;">${escHtml(d.detail || 'Föy alınamadı.')}</div>`;
+          return;
+        }
+        const html = buildFoyHtml(d);
+        body.innerHTML = html;
+        document.getElementById('foyPrintArea').innerHTML =
+          `<h2 style="font-family:'Playfair Display',serif;color:#232E6E;">`
+          + `${escHtml(d.target_item_name)} — Üretim Föyü</h2>` + html;
+      } catch {
+        body.innerHTML = '<div style="padding:2rem;color:#b91c1c;">Bağlantı hatası.</div>';
+      }
+    }
+
+    document.getElementById('foyExcelBtn').addEventListener('click', function () {
+      if (_foyCurrentId) window.location.href = `/api/production/${_foyCurrentId}/export`;
+    });
+    document.getElementById('foyPrintBtn').addEventListener('click', function () {
+      window.print();
     });
 
     /* ── Phase 9 — barkod ile reçete seçimi ─────────────────────────────────
