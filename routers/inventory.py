@@ -760,6 +760,7 @@ def inventory_summary(db: Session = Depends(get_db)):
             "name":          i.name,
             "category":      i.category or "Diğer",
             "unit":          i.unit,
+            "pkg_type":      i.pkg_type or "",        # /stocks Etiket vs Ambalaj ayırımı için
             "total_stock":   round(float(i.current_stock or 0), 4),
             "supplier_id":   i.supplier_id,
             "supplier_name": supplier_name_by_id.get(i.supplier_id) if i.supplier_id else None,

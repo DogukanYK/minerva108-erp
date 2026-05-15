@@ -150,6 +150,7 @@
     .cat-badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em; }
     .cat-hammadde  { background: #eff6ff; color: #1d4ed8; }
     .cat-ambalaj   { background: #f0fdf4; color: #15803d; }
+    .cat-etiket    { background: #ecfeff; color: #0e7490; }
     .cat-kimyasal  { background: #fefce8; color: #a16207; }
     .cat-yardimci  { background: #fdf4ff; color: #7e22ce; }
     .cat-bitmisurun{ background: #fff7ed; color: #c2410c; }
@@ -289,19 +290,19 @@
           <div class="kpi-sub">aktif ürün</div>
         </div>
         <div class="kpi-card kpi-gold">
-          <div class="kpi-label">Hammadde / Ambalaj</div>
+          <div class="kpi-label">Hammadde</div>
           <div class="kpi-value" id="kpiRawCount">—</div>
-          <div class="kpi-sub">onaylı lot'ta</div>
+          <div class="kpi-sub" id="kpiRawSub">kalem</div>
         </div>
-        <div class="kpi-card kpi-green">
-          <div class="kpi-label">Bitmiş Ürün</div>
-          <div class="kpi-value" id="kpiFinishedCount">—</div>
-          <div class="kpi-sub">stokta</div>
+        <div class="kpi-card kpi-green" style="border-top-color:#0ea5e9;">
+          <div class="kpi-label">Ambalaj + Etiket</div>
+          <div class="kpi-value" id="kpiPkgCount">—</div>
+          <div class="kpi-sub" id="kpiPkgSub">—</div>
         </div>
         <div class="kpi-card kpi-amber">
-          <div class="kpi-label">İşlem Sayısı</div>
-          <div class="kpi-value" id="kpiTxCount">—</div>
-          <div class="kpi-sub">toplam hareket</div>
+          <div class="kpi-label">Bitmiş Ürün</div>
+          <div class="kpi-value" id="kpiFinishedCount">—</div>
+          <div class="kpi-sub">kalem</div>
         </div>
       </div>
 
@@ -322,7 +323,9 @@
         <div class="tab-pane {{ 'active' if default_tab == 'stocks' else '' }}" id="tab-stocks">
           <div class="filter-bar">
             <button class="btn-filter active" data-filter="all">Hepsi</button>
-            <button class="btn-filter" data-filter="raw">Hammadde / Ambalaj</button>
+            <button class="btn-filter" data-filter="hammadde">Hammadde</button>
+            <button class="btn-filter" data-filter="ambalaj" title="Şişe / kavanoz / kapak / pompa (etiket hariç)">Ambalaj</button>
+            <button class="btn-filter" data-filter="etiket"  title="Sadece etiket pkg_type">Etiket</button>
             <button class="btn-filter" data-filter="finished">Bitmiş Ürün</button>
             <div class="search-box">
               <i class="bi bi-search"></i>
@@ -465,8 +468,11 @@
       return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
-    /* ── Category badge ── */
-    function catBadge(cat) {
+    /* ── Category badge ── pkg_type='etiket' kombinasyonunda ayrı renk + label */
+    function catBadge(cat, pkgType) {
+      if (cat === 'Ambalaj' && (pkgType || '').toLowerCase() === 'etiket') {
+        return `<span class="cat-badge cat-etiket">Etiket</span>`;
+      }
       const map = {
         'Hammadde': 'cat-hammadde', 'Ambalaj': 'cat-ambalaj',
         'Kimyasal': 'cat-kimyasal', 'Yardımcı': 'cat-yardimci',
@@ -502,12 +508,28 @@
       }
     }
 
+    /* ── Kategori sınıflandırıcı: tek doğru kaynak ─────────────────────────
+       Etiket, Ambalaj (category) altında pkg_type='etiket' olan satırlardır.
+       Bu helper hem KPI hem filter tarafında kullanılır — divergence yok. */
+    function classify(i) {
+      const cat = i.category || '';
+      const pkg = (i.pkg_type || '').toLowerCase();
+      if (cat === 'Hammadde')   return 'hammadde';
+      if (cat === 'Bitmiş Ürün') return 'finished';
+      if (cat === 'Ambalaj')    return pkg === 'etiket' ? 'etiket' : 'ambalaj';
+      return 'other';
+    }
+
     /* ── KPIs ── */
     function updateKPIs() {
+      const counts = { hammadde: 0, ambalaj: 0, etiket: 0, finished: 0, other: 0 };
+      allStock.forEach(i => counts[classify(i)]++);
       document.getElementById('kpiTotalItems').textContent  = allStock.length;
-      document.getElementById('kpiRawCount').textContent    = allStock.filter(i => i.category === 'Hammadde' || i.category === 'Ambalaj').length;
-      document.getElementById('kpiFinishedCount').textContent = allStock.filter(i => i.category === 'Bitmiş Ürün').length;
-      document.getElementById('kpiTxCount').textContent     = allTx.length;
+      document.getElementById('kpiRawCount').textContent    = counts.hammadde;
+      document.getElementById('kpiPkgCount').textContent    = counts.ambalaj + counts.etiket;
+      document.getElementById('kpiFinishedCount').textContent = counts.finished;
+      const sub = document.getElementById('kpiPkgSub');
+      if (sub) sub.textContent = `${counts.ambalaj} ambalaj · ${counts.etiket} etiket`;
     }
 
     /* ── Render stock table ── */
@@ -515,8 +537,10 @@
       const q = document.getElementById('stockSearch').value.toLowerCase();
       let data = allStock;
 
-      if (stockFilter === 'raw')      data = data.filter(i => i.category === 'Hammadde' || i.category === 'Ambalaj');
-      if (stockFilter === 'finished') data = data.filter(i => i.category === 'Bitmiş Ürün');
+      if (stockFilter !== 'all') {
+        // 'hammadde' | 'ambalaj' | 'etiket' | 'finished'  — classify() ile tek kaynak
+        data = data.filter(i => classify(i) === stockFilter);
+      }
       if (q) data = data.filter(i =>
         i.name.toLowerCase().includes(q) ||
         (i.category || '').toLowerCase().includes(q) ||
@@ -556,7 +580,7 @@
           : `<span style="color:#d1d5db;font-size:0.78rem;">—</span>`;
         return `<tr>
           <td class="td-name">${escHtml(i.name)}</td>
-          <td>${catBadge(i.category)}</td>
+          <td>${catBadge(i.category, i.pkg_type)}</td>
           <td>${suppCell}</td>
           <td style="color:#6b7280;">${escHtml(i.unit)}</td>
           <td style="text-align:right;">
