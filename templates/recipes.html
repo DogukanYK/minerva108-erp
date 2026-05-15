@@ -806,6 +806,8 @@
           ? await window.fetchItems()
           : await fetch('/api/items').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
 
+        buildLabelMaps();   // etiket dil-grubu indeksleri (dropdown dedup için)
+
         // Hedef Ürün → sadece "Bitmiş Ürün" kategorisi (Türkçe alfabetik)
         const targetSel = document.getElementById('recipeTargetItem');
         const finished  = window.trSortBy(
@@ -923,6 +925,43 @@
     };
     const _PKG_ORDER = ['şişe', 'kavanoz', 'pompa', 'kapak', 'etiket'];
 
+    /* ── Etiket dil-grubu indeksleri ───────────────────────────────────────
+       Bir etiketin TR + EN üyesi aynı label_group'ta.  Reçete ekranında dil
+       fark etmediği için listede tek (temsilci) göstereceğiz.  Temsilci =
+       gruptaki en küçük id (deterministik — edit'te tutarlı eşleşir). */
+    let _labelRepByGroup    = {};   // label_group → temsilci item_id
+    let _labelGroupByItemId = {};   // item_id → label_group (sadece etiketler)
+
+    function buildLabelMaps() {
+      _labelRepByGroup = {};
+      _labelGroupByItemId = {};
+      const byGroup = {};
+      (allItems || []).forEach(i => {
+        if (i.category === 'Ambalaj'
+            && (i.pkg_type || '').toLowerCase() === 'etiket'
+            && i.label_group) {
+          _labelGroupByItemId[i.id] = i.label_group;
+          (byGroup[i.label_group] = byGroup[i.label_group] || []).push(i);
+        }
+      });
+      Object.keys(byGroup).forEach(g => {
+        _labelRepByGroup[g] = byGroup[g].reduce((a, b) => (a.id <= b.id ? a : b)).id;
+      });
+    }
+
+    /* İsimden dil belirteçlerini at — "(TR)" / "(ENG)" vb. — temiz görünsün */
+    function stripLangTokens(name) {
+      return String(name || '')
+        .replace(/\s*\(\s*(?:eng?|ing|tur|tr|t[üu]rk[çc]?e?|english)\s*\)\s*/gi, ' ')
+        .replace(/\s+/g, ' ').trim();
+    }
+
+    /* Bir etiket item_id'sini grup temsilcisine çevir (yoksa kendini döner) */
+    function resolveLabelRep(itemId) {
+      const grp = _labelGroupByItemId[itemId];
+      return (grp && _labelRepByGroup[grp]) ? _labelRepByGroup[grp] : itemId;
+    }
+
     function buildIngredientOptions() {
       let opts = '<option value="">— Hammadde seçiniz —</option>';
       // Türkçe alfabetik — her kategori kendi içinde
@@ -960,6 +999,15 @@
           if (!byType[t] || !byType[t].length) return;
           opts += `<optgroup label="${_PKG_GROUP_LABEL[t]}">`;
           byType[t].forEach(item => {
+            // Etiket: TR+EN aynı label_group → listede sadece temsilciyi göster,
+            // ismi dil belirteçsiz ("...(TR)" → "...").  Üretimde dil seçilince
+            // doğru dildeki kardeşe inilir, o yüzden hangi üye saklandığı önemsiz.
+            if (t === 'etiket' && item.label_group) {
+              if (_labelRepByGroup[item.label_group] !== item.id) return;  // kardeş — atla
+              const clean = { ...item, name: stripLangTokens(item.name) };
+              opts += `<option value="${item.id}" data-category="Ambalaj" data-pkg="${t}" data-supplier="${escHtml(item.supplier_name || '')}">${ingLabel(clean)}</option>`;
+              return;
+            }
             opts += `<option value="${item.id}" data-category="Ambalaj" data-pkg="${t}" data-supplier="${escHtml(item.supplier_name || '')}">${ingLabel(item)}</option>`;
           });
           opts += '</optgroup>';
@@ -1201,7 +1249,9 @@
         for (const ing of r.ingredients) {
           addIngredientRow();
           const lastRow = document.querySelector('.ingredient-row:last-child');
-          lastRow.querySelector('.ing-item').value = ing.item_id;
+          // Etiket ise: dropdown'da tek temsilci var — saklanan kardeş id'sini
+          // temsilciye çevir ki select doğru option'ı seçsin.
+          lastRow.querySelector('.ing-item').value = resolveLabelRep(ing.item_id);
           lastRow.querySelector('.ing-qty').value  = ing.quantity;
           // Geri hesap: % = qty / totalMass × 100 (kategori Hammadde ise)
           const cat = lastRow.querySelector('.ing-item').options[
