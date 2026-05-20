@@ -1,3 +1,9 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Copyright (c) 2026 Doğukan Yalçınkaya.  All rights reserved.
+# Bu dosya FSEK kapsamında bir bilgisayar programı eserinin parçasıdır.
+# Mali haklar yazılı devir olmadıkça eser sahibinde kalır (FSEK m.48).
+# Bkz. LICENSE ve AUTHORS.md.
+# ─────────────────────────────────────────────────────────────────────────────
 """
 Minerva108 — APScheduler wiring for daily/weekly/hourly automated jobs.
 

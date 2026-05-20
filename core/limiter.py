@@ -1,3 +1,9 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Copyright (c) 2026 Doğukan Yalçınkaya.  All rights reserved.
+# Bu dosya FSEK kapsamında bir bilgisayar programı eserinin parçasıdır.
+# Mali haklar yazılı devir olmadıkça eser sahibinde kalır (FSEK m.48).
+# Bkz. LICENSE ve AUTHORS.md.
+# ─────────────────────────────────────────────────────────────────────────────
 """
 Shared slowapi rate limiter instance.
 Lives in its own module so any router (notably auth) can decorate endpoints

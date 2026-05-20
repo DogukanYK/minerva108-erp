@@ -1,0 +1,68 @@
+MINERVA108 ERP/IMS — TELİF VE LİSANS BİLDİRİMİ
+================================================
+
+Telif Hakkı © 2026 Doğukan Yalçınkaya.  Tüm hakları saklıdır.
+All rights reserved.
+
+Eser sahibi (Author / Rights Holder):
+    Doğukan Yalçınkaya
+
+
+1. ESER VE KAPSAM
+-----------------
+Bu yazılım eseri — kaynak kod, veritabanı şeması, mimari tasarım, kullanıcı
+arayüzü, dokümantasyon ve bu depoda (repository) yer alan tüm türev içerikler
+dahil — 5846 sayılı Fikir ve Sanat Eserleri Kanunu (FSEK) anlamında bir
+bilgisayar programı eseridir (FSEK m.2/1).
+
+
+2. MANEVİ HAKLAR (FSEK m.14-17)
+-------------------------------
+Eseri kamuya sunma, adın belirtilmesi, eserde değişiklik yapılmasını
+men etme hakları gibi manevi haklar eser sahibinde kalır ve devredilemez.
+
+
+3. MALİ HAKLAR (FSEK m.21-25)
+-----------------------------
+Çoğaltma, yayma, işleme, temsil ve umuma iletim hakları (mali haklar)
+yalnızca eser sahibinin **yazılı izni** ile, FSEK m.48-52 hükümlerine
+uygun olarak, kapsamı ve süresi açıkça belirtilerek devredilebilir veya
+lisanslanabilir.
+
+Bu nitelikte yazılı bir devir veya lisans sözleşmesi olmaksızın hiçbir
+gerçek ya da tüzel kişi:
+
+  • bu yazılımı çoğaltamaz, dağıtamaz,
+  • değiştirilmiş veya türetilmiş sürümlerini yayamaz,
+  • ticari amaçla kullanamaz,
+  • üçüncü kişilere lisanslayamaz.
+
+
+4. İŞ İLİŞKİSİ — FSEK m.18/2
+-----------------------------
+Bir iş sözleşmesi çerçevesinde yapılmış olsa dahi, mali hakların işverene
+geçişi için **ayrı, yazılı, kapsamı belirlenmiş** bir devir sözleşmesi
+gerekir (FSEK m.18/2 ile m.48 birlikte uygulandığında istikrarlı Yargıtay
+içtihadı bu yöndedir).  Maaş ödenmesi tek başına mali hak devri sayılmaz.
+
+Gizlilik sözleşmesi (NDA) yalnızca bilginin açığa çıkarılmamasına
+ilişkindir; bu, eser sahipliğini ya da mali hakları etkilemez.
+
+
+5. ATIF VE GÖRÜNÜRLÜK
+---------------------
+Bu yazılımın kullanıldığı her yerde eser sahibinin adı korunmalıdır
+(FSEK m.15).  Kaynak dosya başlıklarındaki telif satırları, kullanıcı
+arayüzündeki geliştirici imzası ve bu LICENSE dosyası eser sahibi
+tarafından kaldırılamaz/değiştirilemez biçimde yerleştirilmiştir.
+
+
+6. UYGULANACAK HUKUK
+--------------------
+Bu bildirim Türkiye Cumhuriyeti hukukuna ve özellikle 5846 sayılı Fikir ve
+Sanat Eserleri Kanunu'na tâbidir.  Doğacak uyuşmazlıklarda yetkili mahkeme,
+eser sahibinin ikametgâhı mahkemeleridir.
+
+
+Yürürlük tarihi: 2026-05-15
+İletişim: dogukanuguryalcinkaya@gmail.com

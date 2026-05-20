@@ -1,3 +1,9 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Copyright (c) 2026 Doğukan Yalçınkaya.  All rights reserved.
+# Bu dosya FSEK kapsamında bir bilgisayar programı eserinin parçasıdır.
+# Mali haklar yazılı devir olmadıkça eser sahibinde kalır (FSEK m.48).
+# Bkz. LICENSE ve AUTHORS.md.
+# ─────────────────────────────────────────────────────────────────────────────
 """
 Role labels, permission catalog, and permission-resolution helpers.
 Shared across api_main and every router so we have a single source of truth.
