@@ -256,6 +256,35 @@
         </div>
       </div>
 
+      <!-- ════ AYLIK STOK RAPORU ════ -->
+      <div class="panel" style="margin-bottom:1.5rem;">
+        <div class="panel-header" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;padding:1rem 1.25rem;">
+          <div class="panel-icon panel-icon-navy"><i class="bi bi-calendar-month"></i></div>
+          <div style="flex:1;min-width:200px;">
+            <p class="panel-title" style="margin:0;">Aylık Stok Raporu</p>
+            <p class="panel-subtitle" style="margin:0;">Seçilen ay sonunda elinde olması gereken miktarlar — kategori bazlı.</p>
+          </div>
+          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+            <select id="msrYear"     class="form-select form-select-sm" style="width:auto;"></select>
+            <select id="msrMonth"    class="form-select form-select-sm" style="width:auto;"></select>
+            <select id="msrCategory" class="form-select form-select-sm" style="width:auto;">
+              <option value="all">Tümü</option>
+              <option value="hammadde">Hammadde</option>
+              <option value="ambalaj">Ambalaj (etiket hariç)</option>
+              <option value="etiket">Etiket</option>
+              <option value="finished">Bitmiş Ürün</option>
+            </select>
+            <button id="msrLoadBtn"   class="pill active" type="button" style="border:none;">Görüntüle</button>
+            <button id="msrExportBtn" class="pill" type="button" style="border:none;background:#15803d;color:#fff;">
+              <i class="bi bi-file-earmark-excel"></i> Excel
+            </button>
+          </div>
+        </div>
+        <div class="panel-body" id="msrBody" style="padding:0 1.25rem 1.25rem;">
+          <p style="color:#9ca3af;text-align:center;padding:2rem;">Ay seçip "Görüntüle"ye basın.</p>
+        </div>
+      </div>
+
       <!-- ── Row 1: Top Usage  +  Weekly Trend ── -->
       <div class="row g-4 mb-4">
 
@@ -471,6 +500,108 @@
       try { await fetch('/api/logout', { method: 'POST' }); window.location.href = '/login'; }
       catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
     });
+
+    /* ════ AYLIK STOK RAPORU ════════════════════════════════════════════ */
+    (function initMonthlyStock() {
+      const MONTHS = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran',
+                      'Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+      const now = new Date();
+      const ySel = document.getElementById('msrYear');
+      const mSel = document.getElementById('msrMonth');
+      const cSel = document.getElementById('msrCategory');
+      const body = document.getElementById('msrBody');
+
+      // Year/month dropdownları
+      for (let y = now.getFullYear() + 1; y >= now.getFullYear() - 3; y--) {
+        const o = document.createElement('option'); o.value = y; o.textContent = y;
+        if (y === now.getFullYear()) o.selected = true;
+        ySel.appendChild(o);
+      }
+      MONTHS.forEach((m, i) => {
+        const o = document.createElement('option'); o.value = i + 1; o.textContent = m;
+        if (i === now.getMonth()) o.selected = true;
+        mSel.appendChild(o);
+      });
+
+      function fmt(n) {
+        const v = Number(n) || 0;
+        return v.toLocaleString('tr-TR', { maximumFractionDigits: 4 });
+      }
+
+      function renderSections(data) {
+        if (!data.sections || !data.sections.length) {
+          body.innerHTML = '<p style="color:#9ca3af;padding:2rem;text-align:center;">Veri yok.</p>';
+          return;
+        }
+        const parts = data.sections.map(sec => {
+          if (!sec.rows.length) {
+            return `<details style="margin:0.6rem 0;">
+              <summary style="cursor:pointer;padding:0.5rem 0;font-weight:600;color:#9ca3af;">
+                ${escHtml(sec.label)} — 0 kalem
+              </summary></details>`;
+          }
+          const rows = sec.rows.map((r, i) => `
+            <tr>
+              <td style="padding:0.45rem 0.6rem;color:#9ca3af;">${i+1}</td>
+              <td style="padding:0.45rem 0.6rem;">${escHtml(r.name)}</td>
+              <td style="padding:0.45rem 0.6rem;color:#6b7280;font-size:0.85rem;">${escHtml(r.pkg_type || '—')}</td>
+              <td style="padding:0.45rem 0.6rem;color:#6b7280;font-size:0.85rem;">${escHtml(r.language || '—')}</td>
+              <td style="padding:0.45rem 0.6rem;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">
+                ${fmt(r.stock)} ${escHtml(r.unit)}
+              </td>
+            </tr>`).join('');
+          return `
+            <details open style="margin:0.85rem 0;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">
+              <summary style="cursor:pointer;padding:0.75rem 1rem;background:#faf8f3;font-weight:700;color:var(--navy);">
+                ${escHtml(sec.label)}
+                <span style="color:#6b7280;font-weight:500;font-size:0.85rem;margin-left:0.5rem;">
+                  ${sec.row_count} kalem · toplam ${fmt(sec.total)}
+                </span>
+              </summary>
+              <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
+                <thead>
+                  <tr style="background:#f3f0ea;color:#6b7280;font-size:0.7rem;letter-spacing:0.08em;text-transform:uppercase;">
+                    <th style="padding:0.5rem 0.6rem;text-align:left;width:40px;">#</th>
+                    <th style="padding:0.5rem 0.6rem;text-align:left;">Ürün Adı</th>
+                    <th style="padding:0.5rem 0.6rem;text-align:left;width:90px;">Alt-Tip</th>
+                    <th style="padding:0.5rem 0.6rem;text-align:left;width:60px;">Dil</th>
+                    <th style="padding:0.5rem 0.6rem;text-align:right;width:140px;">Stok</th>
+                  </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </details>`;
+        });
+        body.innerHTML =
+          `<p style="color:#6b7280;font-size:0.82rem;margin:0.5rem 0;">Rapor tarihi: <b>${escHtml(data.as_of)}</b></p>`
+          + parts.join('');
+      }
+
+      async function load() {
+        const y = ySel.value, m = mSel.value, c = cSel.value;
+        body.innerHTML = '<p style="color:#9ca3af;padding:2rem;text-align:center;">Yükleniyor…</p>';
+        try {
+          const res = await fetch(`/api/reports/monthly-stock?year=${y}&month=${m}&category=${c}`);
+          if (!res.ok) {
+            const e = await res.json().catch(() => ({}));
+            body.innerHTML = `<p style="color:#b91c1c;padding:2rem;text-align:center;">${escHtml(e.detail || 'Rapor alınamadı.')}</p>`;
+            return;
+          }
+          renderSections(await res.json());
+        } catch {
+          body.innerHTML = '<p style="color:#b91c1c;padding:2rem;text-align:center;">Bağlantı hatası.</p>';
+        }
+      }
+
+      document.getElementById('msrLoadBtn').addEventListener('click', load);
+      document.getElementById('msrExportBtn').addEventListener('click', function () {
+        const y = ySel.value, m = mSel.value, c = cSel.value;
+        window.location.href = `/api/reports/monthly-stock/export?year=${y}&month=${m}&category=${c}`;
+      });
+
+      // İlk açılışta otomatik yükle (mevcut ay)
+      load();
+    })();
 
     loadAll();
   </script>

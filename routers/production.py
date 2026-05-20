@@ -34,6 +34,9 @@ class ProductionCreateRequest(BaseModel):
     # Etiket dili — 'TR' / 'EN'.  Reçetedeki dile özel etiketlerden bu dile
     # ait olan stoktan düşülür, diğeri atlanır.  Varsayılan TR.
     label_language: Optional[str] = Field("TR", max_length=8)
+    # Şahit numune adedi — üretilen X adetten kaçı şahit numune dolabına
+    # ayrılacak.  Varsayılan 2.  Kalan X-witness adet showroom'a gider.
+    witness_quantity: Optional[float] = Field(0, ge=0)
 
 
 class QCActionRequest(BaseModel):
@@ -374,30 +377,74 @@ def start_production(
                 performed_by=actor,
             ))
 
+        # ── Şahit numune ayrımı ─────────────────────────────────────────────
+        # Üretilen X adetin Y'si "Şahit Numune Dolabı"na (marka bazlı), kalanı
+        # "Showroom"a ayrılır.  Item.current_stock yine X kadar artar (hepsi
+        # stoktadır, sadece konum farklı).  Witness=0 ise tek lot, eski davranış.
+        target_item_obj = (
+            db.query(Item).filter(Item.id == recipe.target_item_id).first()
+            if recipe.target_item_id else None
+        )
+        witness_qty = max(0.0, float(data.witness_quantity or 0))
+        if witness_qty > data.produced_quantity:
+            witness_qty = data.produced_quantity        # taşmayı kırp
+        showroom_qty = round(data.produced_quantity - witness_qty, 6)
+
+        # Marka algıla — ad'ın ilk anlamlı kelimelerinden
+        def _brand(name: str) -> str:
+            n = (name or "").strip()
+            if not n: return ""
+            up = n.upper()
+            if up.startswith("MINERVA"):  return "Minerva 108"
+            if up.startswith("SERENIDA") or up.startswith("SERENİDA"): return "Serenida"
+            if up.startswith("EVANIRA")  or up.startswith("EVANİRA"):  return "Evanira"
+            # fallback: ilk kelime
+            return n.split()[0]
+
+        brand = _brand(target_item_obj.name if target_item_obj else "")
+        witness_location = f"Şahit Numune Dolabı — {brand}" if brand else "Şahit Numune Dolabı"
+
         # Üretilen lot APPROVED + qc_required=True olarak yaratılır:
         # → Stok hemen artar (patron şartı: üretim biter bitmez stoğa düşmeli)
         # → QC sayfası bu lotu görür ve inceler (qc_required=True flag'i ile)
         # → QC onaylarsa qc_required=False, status APPROVED kalır
         # → QC reddederse status=REJECTED + stok düşülür + Adjustment audit
         if recipe.target_item_id:
-            db.add(Inventory(
-                item_id=recipe.target_item_id,
-                lot_number=produced_lot,
-                quantity=data.produced_quantity,
-                status="APPROVED",
-                received_by=actor,            # Üretim çıktısını "alan" da üretici
-                qc_required=True,             # QC sayfası bu lotu listelesin
-            ))
+            # 1) Showroom lot'u — kalan kısım
+            if showroom_qty > 0:
+                db.add(Inventory(
+                    item_id=recipe.target_item_id,
+                    lot_number=produced_lot,
+                    quantity=showroom_qty,
+                    location="Showroom",
+                    status="APPROVED",
+                    received_by=actor,
+                    qc_required=True,
+                ))
+            # 2) Şahit numune lot'u — varsa
+            if witness_qty > 0:
+                db.add(Inventory(
+                    item_id=recipe.target_item_id,
+                    lot_number=f"{produced_lot}-S",       # "-S" suffix = Şahit
+                    quantity=witness_qty,
+                    location=witness_location,
+                    status="APPROVED",
+                    received_by=actor,
+                    qc_required=True,
+                ))
+            # Tek toplam Input transaction'ı — audit'te bölünme not olarak yazılır
+            split_note = (f" | Showroom: {showroom_qty}, Şahit: {witness_qty} ({brand})"
+                          if witness_qty > 0 else "")
             db.add(Transaction(
                 item_id=recipe.target_item_id,
                 lot_number=produced_lot,
                 transaction_type="Input",
                 quantity=data.produced_quantity,
                 notes=(f"Üretim çıktısı — Reçete: {recipe.name} | "
-                       f"Dil: {sel_lang_label} | Lot: {produced_lot}"),
+                       f"Dil: {sel_lang_label} | Lot: {produced_lot}{split_note}"),
                 performed_by=actor,
             ))
-            # ── Stoğu anında artır — ledger ile current_stock arasındaki sync gap'i kapanır.
+            # Item.current_stock = TOPLAM artar (witness de stokta sayılır)
             target_item_row = db.query(Item).filter(Item.id == recipe.target_item_id).with_for_update().first()
             if target_item_row:
                 target_item_row.current_stock = round(

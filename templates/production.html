@@ -510,7 +510,7 @@
                 <div class="input-group">
                   <input type="number" class="form-control" id="prodQuantity"
                     min="0.001" step="0.001" placeholder="Örn: 500"
-                    oninput="updatePreview()" />
+                    oninput="updatePreview(); updateWitnessHint();" />
                   <span class="input-group-text" id="prodUnitAddon"
                     style="background:#f3f0ea;border:1.5px solid #e5e7eb;color:#6b7280;font-size:0.82rem;min-width:44px;justify-content:center;">—</span>
                 </div>
@@ -534,6 +534,26 @@
                     <input type="radio" name="prodLang" value="EN" onchange="updatePreview()" />
                     <span>🇬🇧 İngilizce</span>
                   </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Şahit Numune — markaya ait numune dolabına ayrılacak adet -->
+            <div class="row g-3" style="margin-top:0.1rem;">
+              <div class="col-md-6">
+                <label class="form-label-sm">Şahit Numune Adedi
+                  <small style="color:#9ca3af;font-weight:400;text-transform:none;letter-spacing:0;">
+                    — markanın şahit numune dolabına ayrılır (varsayılan 2)
+                  </small>
+                </label>
+                <input type="number" class="form-control" id="prodWitnessQty"
+                       min="0" step="1" value="2"
+                       oninput="updateWitnessHint()" />
+              </div>
+              <div class="col-md-6" style="display:flex;align-items:flex-end;">
+                <div style="font-size:0.82rem;color:#6b7280;line-height:1.4;padding-bottom:0.45rem;">
+                  <i class="bi bi-info-circle"></i>
+                  <span id="witnessSplitHint">Üretimden 2 adet şahit numuneye, kalan showroom'a gider.</span>
                 </div>
               </div>
             </div>
@@ -718,6 +738,27 @@
          - Ambalaj:   net × multiplier              (fire muaf)
        Önizleme hem net'i hem brüt'ü ayrı sütunlarda gösterir; stok kontrolü
        backend'in gerçekten düşeceği BRÜT miktara karşı yapılır. */
+    /* Şahit numune ipucu — adet × birim hesabı canlı */
+    function updateWitnessHint() {
+      const hint = document.getElementById('witnessSplitHint');
+      if (!hint) return;
+      const total   = parseFloat(document.getElementById('prodQuantity').value) || 0;
+      const witness = Math.max(0, parseFloat(document.getElementById('prodWitnessQty').value) || 0);
+      const w = Math.min(witness, total);
+      const show = Math.max(0, total - w);
+      if (total <= 0) {
+        hint.textContent = 'Önce üretilecek miktarı girin.';
+        return;
+      }
+      if (w === 0) {
+        hint.innerHTML = `Tüm ${total} adet showroom'a gider.`;
+      } else if (w >= total) {
+        hint.innerHTML = `<span style="color:#b45309;">Uyarı: tüm üretim şahit numuneye gidiyor (showroom 0).</span>`;
+      } else {
+        hint.innerHTML = `<b>${show}</b> adet showroom · <b>${w}</b> adet şahit numune dolabı.`;
+      }
+    }
+
     function updatePreview() {
       if (!selectedRecipeDetail) return;
       const qty = parseFloat(document.getElementById('prodQuantity').value);
@@ -909,10 +950,16 @@
 
       try {
         const selLang = (document.querySelector('input[name="prodLang"]:checked') || {}).value || 'TR';
+        const witness = Math.max(0, parseFloat(document.getElementById('prodWitnessQty').value) || 0);
         const res = await fetch('/api/production', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ recipe_id: recipeId, produced_quantity: qty, label_language: selLang }),
+          body: JSON.stringify({
+            recipe_id: recipeId,
+            produced_quantity: qty,
+            label_language: selLang,
+            witness_quantity: witness,
+          }),
         });
         const data = await res.json();
         if (!res.ok) { showToast(data.detail || 'Üretim başlatılamadı.'); return; }
