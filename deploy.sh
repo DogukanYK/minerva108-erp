@@ -15,6 +15,11 @@ SERVER_PATH="/var/www/minerva"
 SERVICE_NAME="minerva"
 SSH_KEY="$HOME/.ssh/id_ed25519_minerva"      # Dedicated key created during setup
 SSH_TIMEOUT=15
+PROD_URL="https://srv.minervaims.com"        # Public URL — post-deploy HTTP doğrulaması
+
+# Always operate from the repo root, regardless of where the script is invoked
+cd "$(dirname "$0")"
+PYTEST="./.venv/bin/pytest"
 
 # ── Pretty output helpers ─────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -29,10 +34,43 @@ info() { echo -e "${DIM}  $*${NC}"; }
 # Catch unexpected errors with line number
 trap 'fail "Script line $LINENO sırasında hata oluştu — yukarıdaki çıktıyı kontrol edin."' ERR
 
+# ── CLI args ──────────────────────────────────────────────────────────
+# --skip-tests : SADECE acil hotfix için — pre-deploy test gate'ini atlar.
+SKIP_TESTS=0
+for arg in "$@"; do
+  case "$arg" in
+    --skip-tests) SKIP_TESTS=1 ;;
+    -h|--help)
+      echo "Kullanım: ./deploy.sh [--skip-tests]"
+      echo "  (varsayılan)  Önce tüm pytest suite çalışır; geçmezse deploy İPTAL."
+      echo "  --skip-tests  Test gate'ini atlar — yalnızca acil hotfix durumunda."
+      exit 0 ;;
+    *) fail "Bilinmeyen argüman: $arg  (bkz. ./deploy.sh --help)" ;;
+  esac
+done
+
 # ──────────────────────────────────────────────────────────────────────
-# STEP 1 — Local commit & push
+# STEP 1 — Pre-deploy test gate  (KURAL: testler geçmeden deploy yok)
 # ──────────────────────────────────────────────────────────────────────
-step "Step 1/4 — Yerel commit & GitHub push"
+step "Step 1/5 — Pre-deploy test gate (pytest)"
+
+if [ "$SKIP_TESTS" -eq 1 ]; then
+  warn "TEST GATE ATLANIYOR (--skip-tests) — bu yalnızca acil hotfix içindir."
+  warn "Deploy bittikten sonra prod'u MUTLAKA elle kontrol edin."
+elif [ ! -x "$PYTEST" ]; then
+  fail "$PYTEST bulunamadı. Önce 'make install' çalıştırın (acil durumda: ./deploy.sh --skip-tests)."
+else
+  info "Tüm pytest suite çalışıyor (auth + RBAC + backup + pages) — push'tan önce kapı kontrolü..."
+  if ! "$PYTEST" tests/ -q; then
+    fail "TESTLER BAŞARISIZ — deploy iptal edildi. Önce testleri düzeltin. (Acil hotfix: ./deploy.sh --skip-tests)"
+  fi
+  ok "Tüm testler geçti — deploy'a devam"
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+# STEP 2 — Local commit & push
+# ──────────────────────────────────────────────────────────────────────
+step "Step 2/5 — Yerel commit & GitHub push"
 
 git add .
 
@@ -54,9 +92,9 @@ fi
 ok "GitHub'a push tamamlandı"
 
 # ──────────────────────────────────────────────────────────────────────
-# STEP 2 — Pre-flight: SSH connectivity check
+# STEP 3 — Pre-flight: SSH connectivity check
 # ──────────────────────────────────────────────────────────────────────
-step "Step 2/4 — Sunucu erişim testi"
+step "Step 3/5 — Sunucu erişim testi"
 
 # Quick connection sanity-check — fails loud if SSH is broken
 if ! ssh -p "$SERVER_PORT" \
@@ -74,9 +112,9 @@ rm -f /tmp/_minerva_ssh_test
 ok "SSH bağlantısı çalışıyor — $SERVER_USER@$SERVER_IP:$SERVER_PORT"
 
 # ──────────────────────────────────────────────────────────────────────
-# STEP 3 — Remote force-sync + service restart (verbose, fail-fast)
+# STEP 4 — Remote force-sync + service restart (verbose, fail-fast)
 # ──────────────────────────────────────────────────────────────────────
-step "Step 3/4 — Sunucuda force-sync + servis restart"
+step "Step 4/5 — Sunucuda force-sync + servis restart"
 echo -e "${DIM}-- Sunucudan canlı çıktı --${NC}"
 
 # Heredoc with quoted EOF prevents local variable expansion;
@@ -175,25 +213,44 @@ echo -e "${DIM}-- Remote çıktısı sonu --${NC}"
 ok "Remote force-sync ve servis restart başarılı"
 
 # ──────────────────────────────────────────────────────────────────────
-# STEP 4 — Final independent health check
+# STEP 5 — Final verification: service active + real HTTP response
 # ──────────────────────────────────────────────────────────────────────
-step "Step 4/4 — Bağımsız sağlık kontrolü"
+step "Step 5/5 — Bağımsız sağlık kontrolü + HTTP doğrulama"
 
+# 5a — Servis gerçekten aktif mi? (remote step'ten bağımsız ikinci kontrol)
 if ssh -p "$SERVER_PORT" -i "$SSH_KEY" -o ConnectTimeout=10 \
        "$SERVER_USER@$SERVER_IP" "systemctl is-active --quiet $SERVICE_NAME"; then
   ok "minerva servisi aktif çalışıyor"
 else
-  warn "Servis durumu doğrulanamadı. Manuel kontrol:"
-  echo "    ssh -p $SERVER_PORT $SERVER_USER@$SERVER_IP 'systemctl status $SERVICE_NAME'"
+  fail "Servis aktif DEĞİL! Loglar: ssh turhost 'journalctl -u $SERVICE_NAME -n 40 --no-pager'"
+fi
+
+# 5b — HTTP doğrulama: prod gerçekten istek karşılıyor mu?
+# Servis yeni restart oldu (~3-4 sn) — 200 alana kadar birkaç deneme yapılır.
+info "HTTP kontrolü: $PROD_URL/login"
+http_code="000"
+for attempt in 1 2 3 4 5; do
+  http_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$PROD_URL/login" 2>/dev/null || echo 000)"
+  if [ "$http_code" = "200" ]; then
+    ok "Prod /login sayfası HTTP 200 döndü (deneme $attempt) — uygulama gerçekten ayakta"
+    break
+  fi
+  info "Deneme $attempt/5: HTTP $http_code — 3 sn sonra tekrar..."
+  sleep 3
+done
+if [ "$http_code" != "200" ]; then
+  fail "Prod DOĞRULANAMADI: $PROD_URL/login → HTTP $http_code. Servis 'active' ama uygulama cevap vermiyor — ssh turhost 'journalctl -u $SERVICE_NAME -n 40 --no-pager'"
 fi
 
 # ──────────────────────────────────────────────────────────────────────
 # Summary
 # ──────────────────────────────────────────────────────────────────────
 echo
-echo -e "${GREEN}${BOLD}🎉 Deployment tamamlandı.${NC}"
-echo -e "   ${DIM}Server: ${NC} $SERVER_USER@$SERVER_IP:$SERVER_PORT"
-echo -e "   ${DIM}Path:   ${NC} $SERVER_PATH"
-echo -e "   ${DIM}Service:${NC} $SERVICE_NAME"
-echo -e "   ${DIM}Local:  ${NC} $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
+TEST_NOTE=$([ "$SKIP_TESTS" -eq 1 ] && echo "ATLANDI (--skip-tests)" || echo "geçti")
+echo -e "${GREEN}${BOLD}🎉 Deployment tamamlandı ve doğrulandı.${NC}"
+echo -e "   ${DIM}Server:    ${NC} $SERVER_USER@$SERVER_IP:$SERVER_PORT"
+echo -e "   ${DIM}Path:      ${NC} $SERVER_PATH"
+echo -e "   ${DIM}Service:   ${NC} $SERVICE_NAME"
+echo -e "   ${DIM}Local:     ${NC} $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
+echo -e "   ${DIM}Doğrulama: ${NC} testler $TEST_NOTE · servis active · $PROD_URL/login → HTTP 200"
 echo

@@ -1,7 +1,7 @@
 # Minerva108 — geliştirme komutları
 # Kullanım: `make <hedef>` (örn `make test`).
 
-.PHONY: help install test test-fast lint dev migrate stamp shell clean
+.PHONY: help install test test-fast lint dev migrate stamp shell deploy clean
 
 help:
 	@echo "Minerva108 — geliştirme komutları"
@@ -12,6 +12,7 @@ help:
 	@echo "  make test-fast  Sadece backup-olmayan testler (subprocess'siz)"
 	@echo "  make migrate    Alembic ile bekleyen migration'ları uygula"
 	@echo "  make stamp      Mevcut DB'yi en son revision'da işle (ilk kurulum)"
+	@echo "  make deploy     Test gate → push → prod restart → HTTP doğrulama"
 	@echo "  make shell      Python REPL — DB session'lu (debug için)"
 	@echo "  make clean      __pycache__ ve .pyc dosyalarını sil"
 
@@ -34,6 +35,9 @@ migrate:
 stamp:
 	@set -a && . ./.env && set +a && \
 		.venv/bin/alembic stamp head
+
+deploy:
+	./deploy.sh
 
 shell:
 	@set -a && . ./.env && set +a && \
