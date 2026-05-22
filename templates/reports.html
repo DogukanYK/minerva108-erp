@@ -573,7 +573,8 @@
             </details>`;
         });
         body.innerHTML =
-          `<p style="color:#6b7280;font-size:0.82rem;margin:0.5rem 0;">Rapor tarihi: <b>${escHtml(data.as_of)}</b></p>`
+          `<p style="color:#6b7280;font-size:0.82rem;margin:0.5rem 0;">Rapor tarihi: <b>${escHtml(data.generated_at || data.as_of)}</b>`
+          + `<span style="color:#9ca3af;"> &nbsp;·&nbsp; Stok kesim: ${escHtml(data.as_of)} itibarıyla</span></p>`
           + parts.join('');
       }
 

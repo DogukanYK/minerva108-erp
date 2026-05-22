@@ -56,30 +56,43 @@ def _month_window(year: int, month: int) -> tuple[_dt.datetime, _dt.datetime]:
 
 def _stock_as_of(db: Session, eom: _dt.datetime, *item_filters):
     """
-    Transaction tarihçesinden seçili anda her item için net stoku reconstruct
-    et: +Input −Output +Adjustment(signed).  item_filters Item satırı için
-    ek WHERE — kategoriyi sınırlamak amaçlı.
+    Seçili an itibarıyla stok = Item.current_stock − (o andan SONRAKİ hareketler).
+
+    NEDEN BÖYLE:  `Item.current_stock` source-of-truth'tur (Stoklar sayfası da
+    onu gösterir).  Geçmişte bazı açılış bakiyeleri (bulk import / seed) ayrı
+    bir Input transaction'ı oluşturmadan doğrudan current_stock'a yazılmıştır.
+    Bu yüzden "0'dan ileriye +Input −Output topla" yaklaşımı Input'ları eksik
+    görüp stoğu eksiye düşürür.  Doğru yöntem: kesin değer olan current_stock'tan
+    başla, yalnızca `eom` tarihinden SONRAKİ hareketleri geri sar.
+
+    Sonuç: mevcut ay seçilince (eom ≥ now) hiç "sonraki hareket" olmaz →
+    rapor Stoklar sayfasıyla birebir örtüşür.  Geçmiş ay seçilince yalnızca
+    o aydan bugüne olan hareketler geri alınır.
     """
-    # Önce kapsama giren item id'leri:
     item_rows = db.query(Item).filter(Item.is_active == True, *item_filters).all()
-    item_ids  = [i.id for i in item_rows]
-    if not item_ids:
-        return [], item_rows
-    # Tek query ile aggregate
+    if not item_rows:
+        return {}, item_rows
+    item_ids = [i.id for i in item_rows]
+
     signed = case(
         (Transaction.transaction_type == "Input",      Transaction.quantity),
         (Transaction.transaction_type == "Output",    -Transaction.quantity),
         (Transaction.transaction_type == "Adjustment", Transaction.quantity),
         else_=0,
     )
-    sums = dict(
+    # eom'dan SONRAKİ net hareket (geri sarılacak miktar)
+    after = dict(
         db.query(Transaction.item_id, func.coalesce(func.sum(signed), 0.0))
         .filter(Transaction.item_id.in_(item_ids),
-                Transaction.timestamp <= eom)
+                Transaction.timestamp > eom)
         .group_by(Transaction.item_id)
         .all()
     )
-    return sums, item_rows
+    result = {}
+    for it in item_rows:
+        cur = float(it.current_stock or 0.0)
+        result[it.id] = round(cur - float(after.get(it.id, 0.0)), 6)
+    return result, item_rows
 
 
 @router.get("/reports/monthly-stock")
@@ -97,9 +110,15 @@ def report_monthly_stock(
     category: all | hammadde | ambalaj | etiket | finished
     """
     try:
-        _, eom = _month_window(year, month)
+        _, eom_raw = _month_window(year, month)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"detail": str(e)})
+
+    # Veri kesim tarihi = ayın sonu VEYA şimdi (hangisi önce).  Mevcut ay
+    # seçilince ayın sonu henüz GELMEMİŞTİR; gelecekteki bir tarihe kadar
+    # rekonstrüksiyon anlamsız — bugüne kadar olan stok gösterilir.
+    now = _dt.datetime.utcnow()
+    eom = min(eom_raw, now)
 
     sections = (
         [("hammadde", "Hammadde"),
@@ -137,11 +156,14 @@ def report_monthly_stock(
         })
 
     return {
-        "year":        year,
-        "month":       month,
-        "as_of":       eom.strftime("%d.%m.%Y %H:%M"),
-        "sections":    result,
-        "category":    category,
+        "year":         year,
+        "month":        month,
+        # Raporun fiilen oluşturulduğu an — "Rapor tarihi" olarak gösterilir.
+        "generated_at": now.strftime("%d.%m.%Y %H:%M"),
+        # Stok verisinin hangi ana kadar olduğu (ay sonu ya da bugün).
+        "as_of":        eom.strftime("%d.%m.%Y %H:%M"),
+        "sections":     result,
+        "category":     category,
     }
 
 
@@ -174,9 +196,11 @@ def report_monthly_stock_export(
 
     for sec in data["sections"]:
         ws = wb.create_sheet(title=sec["label"][:31])
-        ws["A1"] = f"{sec['label']} — {month_label} {year} ay sonu stok"
+        ws["A1"] = f"{sec['label']} — {month_label} {year} stok durumu"
         ws["A1"].font = title_font
-        ws["A2"] = f"Rapor tarihi: {data['as_of']} · {sec['row_count']} kalem · toplam {sec['total']}"
+        ws["A2"] = (f"Rapor tarihi: {data['generated_at']}  ·  "
+                    f"Stok kesim: {data['as_of']} itibarıyla  ·  "
+                    f"{sec['row_count']} kalem  ·  toplam {sec['total']}")
         ws["A2"].font = Font(italic=True, color="6b7280")
 
         headers = ["#", "Ürün Adı", "Birim", "Alt-Tip", "Dil", "Stok"]
