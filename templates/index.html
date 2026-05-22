@@ -656,6 +656,7 @@
         <i class="bi bi-shield-lock nav-icon"></i>
         Yönetim Paneli
       </a>
+      {% if role == 'SuperAdmin' %}<a href="/system" class="nav-link-item"><i class="bi bi-activity nav-icon"></i>Sistem Durumu</a>{% endif %}
       {% endif %}
     </nav>
 

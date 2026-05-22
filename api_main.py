@@ -36,7 +36,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system
 
 
 # ─── App init ───────────────────────────────────────────────────────────────
@@ -228,6 +228,7 @@ app.include_router(notifications.router)
 app.include_router(backup.router)
 app.include_router(debug.router)
 app.include_router(undo.router)
+app.include_router(system.router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────
@@ -435,3 +436,16 @@ def admin_page(request: Request, db: Session = Depends(get_db)):
     if not _user_can(user, "admin", "view"):
         return RedirectResponse(url="/", status_code=302)
     return templates.TemplateResponse("admin.html", _page_ctx(request, payload, user))
+
+
+@app.get("/system", response_class=HTMLResponse)
+def system_page(request: Request, db: Session = Depends(get_db)):
+    """Sistem sağlık/canlılık durumu — yalnızca SuperAdmin."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    if user.role != "SuperAdmin":
+        return RedirectResponse(url="/", status_code=302)
+    return templates.TemplateResponse("system.html", _page_ctx(request, payload, user))

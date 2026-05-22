@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="/static/theme.js"></script>
+
+  {# ─── RBAC 2.0 — server-resolved permissions exposed to JS ────────────── #}
+  <script>
+    window.PERMS = {{ permissions | tojson }};
+    window.can = function (category, action) {
+      const cat = window.PERMS && window.PERMS[category];
+      return !!(cat && cat[action]);
+    };
+  </script>
+  <title>Minerva108 ERP — Sistem Durumu</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+
+  {# ─── PWA ─────────────────────────────────────────────────────────────── #}
+  <link rel="manifest" href="/static/manifest.json" />
+  <meta name="theme-color" content="#232E6E" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Minerva108" />
+  <link rel="apple-touch-icon" href="/static/images/icon-192.png" />
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' })
+          .catch(function (err) { console.warn('SW registration failed:', err); });
+      });
+    }
+  </script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/dark.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+
+  <style>
+    :root {
+      --navy:  #232E6E;
+      --gold:  #C9AC6F;
+      --gold2: #D9BE85;
+      --cream: #f5f0e8;
+      --white: #ffffff;
+      --sidebar-width: 240px;
+      --navbar-height: 64px;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Jost', sans-serif; background-color: var(--cream); color: #1f2937; }
+
+    /* ══ SIDEBAR ══ */
+    .sidebar { position: fixed; top: 0; left: 0; width: var(--sidebar-width); height: 100vh; background: var(--navy); display: flex; flex-direction: column; z-index: 100; }
+    .sidebar-brand { padding: 1.4rem 1.25rem 1.2rem; border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: center; }
+    .sidebar-brand-logo { width: 100%; max-width: 168px; height: auto; opacity: 0.96; }
+    .sidebar-nav { flex: 1; padding: 1.25rem 0.75rem; overflow-y: auto; }
+    .nav-section-label { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.3); padding: 0.5rem 0.75rem 0.4rem; margin-top: 0.5rem; }
+    .nav-link-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.85rem; border-radius: 8px; color: rgba(255,255,255,0.65); font-size: 0.88rem; font-weight: 500; text-decoration: none; transition: background 0.15s, color 0.15s; margin-bottom: 2px; }
+    .nav-link-item:hover { background: rgba(255,255,255,0.07); color: var(--white); }
+    .nav-link-item.active { background: rgba(184,150,90,0.18); color: var(--gold2); }
+    .nav-link-item.active .nav-icon { color: var(--gold); }
+    .nav-icon { font-size: 1rem; width: 18px; text-align: center; flex-shrink: 0; }
+    .sidebar-footer { padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-footer-text { font-size: 0.7rem; color: rgba(255,255,255,0.25); text-align: center; }
+
+    /* ══ TOPNAV ══ */
+    .topnav { position: fixed; top: 0; left: var(--sidebar-width); right: 0; height: var(--navbar-height); background: var(--white); border-bottom: 1px solid #f0ece4; display: flex; align-items: center; justify-content: space-between; padding: 0 1.75rem; z-index: 90; box-shadow: 0 1px 8px rgba(0,0,0,0.05); }
+    .topnav-title { font-family: 'Playfair Display', serif; font-size: 1.15rem; font-weight: 600; color: var(--navy); }
+    .topnav-right { display: flex; align-items: center; gap: 1rem; }
+    .user-chip { display: flex; align-items: center; gap: 0.5rem; background: var(--cream); border-radius: 20px; padding: 0.35rem 0.9rem 0.35rem 0.5rem; }
+    .user-avatar { width: 28px; height: 28px; background: var(--navy); color: var(--gold2); border-radius: 50%; font-size: 0.7rem; font-weight: 700; display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', serif; }
+    .user-name { font-size: 0.85rem; font-weight: 500; color: #374151; }
+    .btn-logout { display: flex; align-items: center; gap: 0.4rem; padding: 0.42rem 1rem; border: 1.5px solid #e5e7eb; border-radius: 8px; background: var(--white); color: #6b7280; font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 500; cursor: pointer; transition: border-color 0.2s, color 0.2s, background 0.2s; }
+    .btn-logout:hover { border-color: #ef4444; color: #ef4444; background: #fff5f5; }
+
+    /* ══ MAIN ══ */
+    .main-content { margin-left: var(--sidebar-width); padding-top: var(--navbar-height); min-height: 100vh; background: var(--cream); }
+    .content-inner { padding: 2rem 2rem 3rem; }
+    .page-header { margin-bottom: 1.5rem; }
+    .page-title { font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 700; color: var(--navy); margin: 0 0 0.25rem; }
+    .page-subtitle { font-size: 0.88rem; color: #6b7280; margin: 0; }
+
+    /* ══ OVERALL STATUS BANNER ══ */
+    .status-banner { display: flex; align-items: center; gap: 1rem; padding: 1.2rem 1.5rem; border-radius: 12px; margin-bottom: 1.25rem; }
+    .status-banner.s-ok   { background: #f0fdf4; border: 1px solid #bbf7d0; }
+    .status-banner.s-warn { background: #fff7ed; border: 1px solid #fed7aa; }
+    .status-banner.s-down { background: #fef2f2; border: 1px solid #fecaca; }
+    .status-banner-icon { font-size: 2rem; }
+    .s-ok   > .status-banner-icon { color: #15803d; }
+    .s-warn > .status-banner-icon { color: #c2410c; }
+    .s-down > .status-banner-icon { color: #b91c1c; }
+    .status-banner-title { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 700; margin: 0; }
+    .s-ok   .status-banner-title { color: #15803d; }
+    .s-warn .status-banner-title { color: #c2410c; }
+    .s-down .status-banner-title { color: #b91c1c; }
+    .status-banner-sub { font-size: 0.83rem; color: #6b7280; margin: 0.15rem 0 0; }
+
+    /* ══ REFRESH BAR ══ */
+    .refresh-bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.1rem; }
+    .gen-at { font-size: 0.8rem; color: #9ca3af; }
+    .btn-refresh { display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.5rem 1.15rem; background: var(--navy); color: var(--white); border: none; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+    .btn-refresh:hover { background: #23236b; }
+    .btn-refresh:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* ══ HEALTH CARDS ══ */
+    .health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 1.15rem; }
+    .health-card { background: var(--white); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06); overflow: hidden; border-left: 4px solid #d1d5db; }
+    .health-card.s-ok   { border-left-color: #22c55e; }
+    .health-card.s-warn { border-left-color: #f59e0b; }
+    .health-card.s-down { border-left-color: #ef4444; }
+    .health-card-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.9rem 1.15rem; border-bottom: 1px solid #f0ece4; }
+    .health-card-icon { font-size: 1.05rem; color: var(--navy); }
+    .health-card-title { font-family: 'Playfair Display', serif; font-size: 0.95rem; font-weight: 600; color: var(--navy); margin: 0; flex: 1; }
+    .health-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+    .health-dot.s-ok   { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.18); }
+    .health-dot.s-warn { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,0.18); }
+    .health-dot.s-down { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,0.18); }
+    .health-card-body { padding: 0.9rem 1.15rem; }
+    .health-detail { font-size: 0.86rem; color: #374151; font-weight: 500; margin: 0 0 0.6rem; }
+    .health-rows { display: flex; flex-direction: column; gap: 0.32rem; }
+    .health-row { display: flex; justify-content: space-between; gap: 1rem; font-size: 0.8rem; }
+    .health-row-k { color: #9ca3af; }
+    .health-row-v { color: #1f2937; font-weight: 600; text-align: right; }
+    .health-loading { padding: 3rem 2rem; text-align: center; color: #9ca3af; }
+    .health-loading i { font-size: 2rem; display: block; margin-bottom: 0.7rem; color: #d1d5db; }
+
+    /* ══ TOAST ══ */
+    #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
+    .toast-msg { min-width: 270px; max-width: 380px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
+    .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
+    .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+    @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+  <script src="/static/toast.js" defer></script>
+  <script src="/static/tr-sort.js" defer></script>
+  <script src="/static/items-cache.js" defer></script>
+  <script src="/static/undo-watch.js" defer></script>
+  <script src="/static/fetch-guard.js" defer></script>
+  <script src="/static/idle-watch.js" defer></script>
+</head>
+<body>
+
+  <!-- ════ SIDEBAR ════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <img src="/static/images/logo_sidebar.png" alt="Minerva 108 Vegan Cosmetics" class="sidebar-brand-logo" />
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      <a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>
+      <a href="/suppliers" class="nav-link-item"><i class="bi bi-truck nav-icon"></i>Tedarikçiler</a>
+      <a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>
+      <a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
+      <a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
+      <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
+      <a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>
+      <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
+      <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+      <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
+      {% if can('b2b', 'view') %}
+      <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
+      {% endif %}
+      {% if can('admin', 'view') %}
+      <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>
+      <a href="/admin" class="nav-link-item"><i class="bi bi-shield-lock nav-icon"></i>Yönetim Paneli</a>
+      {% if role == 'SuperAdmin' %}<a href="/system" class="nav-link-item active"><i class="bi bi-activity nav-icon"></i>Sistem Durumu</a>{% endif %}
+      {% endif %}
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sidebar-footer-row">
+        <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir" title="Tema değiştir">
+          <i class="bi bi-moon-stars-fill"></i>
+          <i class="bi bi-sun-fill"></i>
+        </button>
+        <p class="sidebar-footer-text" style="margin:0;">v2.0.0 &nbsp;·&nbsp; 2026</p>
+        <p class="sidebar-footer-text" style="margin:0.35rem 0 0;font-style:italic;">Geliştirici: Doğukan Yalçınkaya</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ════ TOPNAV ════ -->
+  <header class="topnav">
+    <span class="topnav-title">Sistem Durumu</span>
+    <div class="topnav-right">
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+      <button class="btn-logout" id="logoutBtn"><i class="bi bi-box-arrow-right"></i>Çıkış Yap</button>
+    </div>
+  </header>
+
+  <!-- ════ MAIN CONTENT ════ -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <div class="page-header">
+        <h1 class="page-title">Sistem Durumu</h1>
+        <p class="page-subtitle">Sunucu canlılığı ve genel sağlık kontrolü — veritabanı, disk, otomatik işler, yedekler ve sistem saati.</p>
+      </div>
+
+      <!-- ── Genel durum bandı ── -->
+      <div id="overallBanner" class="status-banner s-warn">
+        <i class="bi bi-hourglass-split status-banner-icon"></i>
+        <div>
+          <p class="status-banner-title">Sağlık verisi yükleniyor…</p>
+          <p class="status-banner-sub">Lütfen bekleyin.</p>
+        </div>
+      </div>
+
+      <!-- ── Yenile çubuğu ── -->
+      <div class="refresh-bar">
+        <span class="gen-at" id="genAt">—</span>
+        <button class="btn-refresh" id="refreshBtn" type="button">
+          <i class="bi bi-arrow-clockwise"></i> Yenile
+        </button>
+      </div>
+
+      <!-- ── Sağlık kartları ── -->
+      <div class="health-grid" id="healthGrid">
+        <div class="health-loading" style="grid-column:1/-1;">
+          <i class="bi bi-hourglass-split"></i>
+          <p>Kontroller çalıştırılıyor…</p>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    /* ── Sabitler ── */
+    const STATUS_TR = { ok: 'Sağlıklı', warn: 'Dikkat', down: 'Sorun' };
+    const BANNER = {
+      ok:   { icon: 'bi-check-circle-fill',        title: 'Tüm sistemler sağlıklı çalışıyor' },
+      warn: { icon: 'bi-exclamation-triangle-fill', title: 'Bazı kontroller dikkat istiyor'   },
+      down: { icon: 'bi-x-octagon-fill',           title: 'Sistemde bir sorun var'           },
+    };
+    /* Kartların gösterim sırası */
+    const CARD_ORDER = ['app', 'database', 'disk', 'scheduler', 'backups', 'snapshots', 'time'];
+
+    function escHtml(s) {
+      return String(s ?? '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function renderHealth(data) {
+      const st = data.status || 'warn';
+      const b  = BANNER[st] || BANNER.warn;
+
+      const banner = document.getElementById('overallBanner');
+      banner.className = 'status-banner s-' + st;
+      banner.innerHTML =
+        '<i class="bi ' + b.icon + ' status-banner-icon"></i>' +
+        '<div><p class="status-banner-title">' + escHtml(b.title) + '</p>' +
+        '<p class="status-banner-sub">Son kontrol: ' + escHtml(data.generated_at || '—') + '</p></div>';
+
+      document.getElementById('genAt').textContent =
+        'Güncellendi: ' + (data.generated_at || '—');
+
+      const checks = data.checks || {};
+      const keys = CARD_ORDER.filter(k => checks[k])
+        .concat(Object.keys(checks).filter(k => !CARD_ORDER.includes(k)));
+
+      const grid = document.getElementById('healthGrid');
+      if (!keys.length) {
+        grid.innerHTML = '<div class="health-loading" style="grid-column:1/-1;">' +
+          '<i class="bi bi-question-circle"></i><p>Kontrol verisi yok.</p></div>';
+        return;
+      }
+
+      grid.innerHTML = keys.map(k => {
+        const c  = checks[k];
+        const cs = c.status || 'warn';
+        const rows = (c.rows || []).map(r =>
+          '<div class="health-row">' +
+          '<span class="health-row-k">' + escHtml(r[0]) + '</span>' +
+          '<span class="health-row-v">' + escHtml(r[1]) + '</span></div>'
+        ).join('');
+        return '<div class="health-card s-' + cs + '">' +
+          '<div class="health-card-head">' +
+          '<i class="bi ' + escHtml(c.icon || 'bi-dot') + ' health-card-icon"></i>' +
+          '<h3 class="health-card-title">' + escHtml(c.label || k) + '</h3>' +
+          '<span class="health-dot s-' + cs + '" title="' + escHtml(STATUS_TR[cs] || cs) + '"></span>' +
+          '</div><div class="health-card-body">' +
+          '<p class="health-detail">' + escHtml(c.detail || '') + '</p>' +
+          (rows ? '<div class="health-rows">' + rows + '</div>' : '') +
+          '</div></div>';
+      }).join('');
+    }
+
+    async function loadHealth() {
+      const btn = document.getElementById('refreshBtn');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/system/health');
+        if (!res.ok) {
+          showToast('Sağlık verisi alınamadı (HTTP ' + res.status + ').');
+          return;
+        }
+        renderHealth(await res.json());
+      } catch (e) {
+        showToast('Sunucuya bağlanılamadı.');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', loadHealth);
+
+    document.getElementById('logoutBtn').addEventListener('click', async function () {
+      this.disabled = true;
+      try { await fetch('/api/logout', { method: 'POST' }); window.location.href = '/login'; }
+      catch (e) { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
+    });
+
+    /* ── Init: ilk yükleme + 30 sn'de bir otomatik yenileme ── */
+    loadHealth();
+    setInterval(loadHealth, 30000);
+  </script>
+
+</body>
+</html>

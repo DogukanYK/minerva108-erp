@@ -27,6 +27,7 @@ PAGES = [
     "/traceability",
     "/quotations",
     "/admin",
+    "/system",
 ]
 
 
@@ -158,3 +159,44 @@ def test_admin_matrix_shows_all_permissions(authed_client: TestClient):
         f"Bu action'lar admin matrix actionOrder/labels'da yok: {missing}. "
         f"templates/admin.html'de actionOrder ve _ACTION_LABELS'a ekle."
     )
+
+
+# ─── Sistem sağlık / canlılık ───────────────────────────────────────────────
+
+def test_health_endpoint_public(client: TestClient):
+    """Hafif /health endpoint kimliksiz erişilebilir ve 'ok' döner."""
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json().get("status") == "ok"
+
+
+# NOT: authed_client ve labtech_client aynı 'client' fixture'ını paylaşır —
+# tek testte ikisini birden kullanmak cookie çakışmasına yol açar.  Bu yüzden
+# her rol ayrı test fonksiyonunda doğrulanır.
+
+def test_system_page_renders_for_superadmin(authed_client: TestClient):
+    """/system sayfası SuperAdmin'e render olmalı."""
+    r = authed_client.get("/system")
+    assert r.status_code == 200
+    assert "Sistem Durumu" in r.text
+
+
+def test_system_page_blocked_for_labtech(labtech_client: TestClient):
+    """/system sayfası SuperAdmin olmayan kullanıcıya kapalı — dashboard'a redirect."""
+    r = labtech_client.get("/system", follow_redirects=False)
+    assert r.status_code == 302
+
+
+def test_system_health_api_for_superadmin(authed_client: TestClient):
+    """/api/system/health SuperAdmin'e zengin sağlık raporu döner."""
+    r = authed_client.get("/api/system/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("status") in ("ok", "warn", "down")
+    assert "checks" in body and isinstance(body["checks"], dict)
+
+
+def test_system_health_api_blocked_for_labtech(labtech_client: TestClient):
+    """/api/system/health SuperAdmin olmayan kullanıcıya 403."""
+    r = labtech_client.get("/api/system/health")
+    assert r.status_code == 403

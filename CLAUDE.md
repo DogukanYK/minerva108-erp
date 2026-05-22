@@ -45,8 +45,15 @@ drop/creates all tables per test function. It never touches dev/prod DBs.
 Jinja **page routes** (`/`, `/items`, `/recipes`, `/production`, `/stocks`, …), and
 `include_router(...)` calls. All **API endpoints** live in `routers/` by domain
 (`inventory`, `recipes`, `production`, `b2b`, `reports`, `notifications`, `backup`,
-`undo`, `debug`, `auth`, `users`). Page routes resolve the user, check permission via
-`_user_can(...)`, and render templates; the template's JS then calls `/api/*`.
+`undo`, `debug`, `system`, `auth`, `users`). Page routes resolve the user, check
+permission via `_user_can(...)`, and render templates; the template's JS then calls
+`/api/*`.
+
+**System health** — the `system` router exposes `GET /health` (unauthenticated,
+lightweight DB-ping liveness probe → 200/503, for external uptime monitors) and
+`GET /api/system/health` (SuperAdmin — rich report: app uptime, DB latency/size,
+disk, scheduler jobs, last backup, last snapshot, system clock). The SuperAdmin-only
+`/system` page renders this with colored status cards and auto-refreshes every 30 s.
 
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +
