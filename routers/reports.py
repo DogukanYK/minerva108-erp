@@ -20,8 +20,10 @@ from sqlalchemy.orm import Session
 
 from database import (
     get_db, Item, Supplier, Recipe, Transaction, ProductionHistory, Inventory,
+    StockSnapshot,
 )
 from core.permissions import require_permission
+from core.snapshots import compute_stock_at, snapshot_exists
 
 router = APIRouter(prefix="/api", tags=["reports"])
 
@@ -54,45 +56,64 @@ def _month_window(year: int, month: int) -> tuple[_dt.datetime, _dt.datetime]:
     return first, last
 
 
-def _stock_as_of(db: Session, eom: _dt.datetime, *item_filters):
-    """
-    Seçili an itibarıyla stok = Item.current_stock − (o andan SONRAKİ hareketler).
+def _snapshot_category_filter(category_key: str):
+    """`_category_filter`'ın StockSnapshot satırı için karşılığı."""
+    k = (category_key or "all").lower()
+    if k == "hammadde":
+        return (StockSnapshot.category == "Hammadde",)
+    if k == "ambalaj":   # etiket hariç
+        return (StockSnapshot.category == "Ambalaj",
+                (StockSnapshot.pkg_type.is_(None)) | (StockSnapshot.pkg_type != "etiket"))
+    if k == "etiket":
+        return (StockSnapshot.category == "Ambalaj", StockSnapshot.pkg_type == "etiket")
+    if k == "finished":
+        return (StockSnapshot.category == "Bitmiş Ürün",)
+    return ()
 
-    NEDEN BÖYLE:  `Item.current_stock` source-of-truth'tur (Stoklar sayfası da
-    onu gösterir).  Geçmişte bazı açılış bakiyeleri (bulk import / seed) ayrı
-    bir Input transaction'ı oluşturmadan doğrudan current_stock'a yazılmıştır.
-    Bu yüzden "0'dan ileriye +Input −Output topla" yaklaşımı Input'ları eksik
-    görüp stoğu eksiye düşürür.  Doğru yöntem: kesin değer olan current_stock'tan
-    başla, yalnızca `eom` tarihinden SONRAKİ hareketleri geri sar.
 
-    Sonuç: mevcut ay seçilince (eom ≥ now) hiç "sonraki hareket" olmaz →
-    rapor Stoklar sayfasıyla birebir örtüşür.  Geçmiş ay seçilince yalnızca
-    o aydan bugüne olan hareketler geri alınır.
-    """
-    item_rows = db.query(Item).filter(Item.is_active == True, *item_filters).all()
-    if not item_rows:
-        return {}, item_rows
-    item_ids = [i.id for i in item_rows]
-
-    signed = case(
-        (Transaction.transaction_type == "Input",      Transaction.quantity),
-        (Transaction.transaction_type == "Output",    -Transaction.quantity),
-        (Transaction.transaction_type == "Adjustment", Transaction.quantity),
-        else_=0,
-    )
-    # eom'dan SONRAKİ net hareket (geri sarılacak miktar)
-    after = dict(
-        db.query(Transaction.item_id, func.coalesce(func.sum(signed), 0.0))
-        .filter(Transaction.item_id.in_(item_ids),
-                Transaction.timestamp > eom)
-        .group_by(Transaction.item_id)
+def _rows_from_snapshot(db: Session, year: int, month: int, category_key: str) -> list[dict]:
+    """Dondurulmuş `stock_snapshot` satırlarından kategori bazlı rapor satırları."""
+    rows = (
+        db.query(StockSnapshot)
+        .filter(StockSnapshot.year == year, StockSnapshot.month == month,
+                *_snapshot_category_filter(category_key))
         .all()
     )
-    result = {}
-    for it in item_rows:
-        cur = float(it.current_stock or 0.0)
-        result[it.id] = round(cur - float(after.get(it.id, 0.0)), 6)
-    return result, item_rows
+    out = []
+    for s in rows:
+        stock = float(s.stock or 0.0)
+        if abs(stock) < 1e-9:
+            continue
+        out.append({
+            "item_id":  s.item_id,
+            "name":     s.item_name or "—",
+            "unit":     s.unit or "",
+            "pkg_type": s.pkg_type or "",
+            "language": "",
+            "stock":    round(stock, 4),
+        })
+    out.sort(key=lambda r: (r["name"] or "").lower())
+    return out
+
+
+def _rows_live(db: Session, eom: _dt.datetime, category_key: str) -> list[dict]:
+    """Snapshot yoksa: `core.snapshots.compute_stock_at` ile canlı rekonstrüksiyon."""
+    stocks, items = compute_stock_at(db, eom, *_category_filter(category_key))
+    out = []
+    for it in items:
+        stock = float(stocks.get(it.id, 0.0))
+        if abs(stock) < 1e-9:
+            continue
+        out.append({
+            "item_id":  it.id,
+            "name":     it.name,
+            "unit":     it.unit or "",
+            "pkg_type": it.pkg_type or "",
+            "language": it.language or "",
+            "stock":    round(stock, 4),
+        })
+    out.sort(key=lambda r: r["name"].lower())
+    return out
 
 
 @router.get("/reports/monthly-stock")
@@ -130,23 +151,15 @@ def report_monthly_stock(
                      "etiket": "Etiket", "finished": "Bitmiş Ürün"}[category])]
     )
 
+    # Geçmiş bir ay için dondurulmuş snapshot varsa onu kullan — kesin ve
+    # transaction değişikliklerinden etkilenmez.  Yoksa canlı rekonstrüksiyon.
+    use_snapshot = snapshot_exists(db, year, month)
+
     result = []
     for key, label in sections:
-        sums, items = _stock_as_of(db, eom, *_category_filter(key))
-        rows = []
-        for it in items:
-            stock = float(sums.get(it.id, 0.0))
-            if abs(stock) < 1e-9:
-                continue  # sıfırları gizle — raporu okunur tut
-            rows.append({
-                "item_id":     it.id,
-                "name":        it.name,
-                "unit":        it.unit or "",
-                "pkg_type":    it.pkg_type or "",
-                "language":    it.language or "",
-                "stock":       round(stock, 4),
-            })
-        rows.sort(key=lambda r: r["name"].lower())
+        rows = (_rows_from_snapshot(db, year, month, key)
+                if use_snapshot else
+                _rows_live(db, eom, key))
         result.append({
             "category": key,
             "label":    label,
@@ -158,6 +171,8 @@ def report_monthly_stock(
     return {
         "year":         year,
         "month":        month,
+        # Verinin kaynağı: dondurulmuş snapshot mu, canlı hesap mı?
+        "source":       "snapshot" if use_snapshot else "canlı",
         # Raporun fiilen oluşturulduğu an — "Rapor tarihi" olarak gösterilir.
         "generated_at": now.strftime("%d.%m.%Y %H:%M"),
         # Stok verisinin hangi ana kadar olduğu (ay sonu ya da bugün).

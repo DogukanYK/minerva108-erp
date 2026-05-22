@@ -363,6 +363,32 @@ class UndoLog(Base):
     user = relationship("User", backref="undo_logs")
 
 
+class StockSnapshot(Base):
+    """
+    Aylık stok fotoğrafı — her ayın 1'inde bir önceki ay için dondurulur.
+
+    Aylık stok raporu geçmiş bir ay için önce bu tabloya bakar; varsa
+    dondurulmuş kesin değeri kullanır, yoksa transaction rekonstrüksiyonuna
+    düşer.  Böylece bir undo / veri temizliği transaction silse bile geçmiş
+    ay raporları kaymaz.
+
+    item_id silinen ürünlerde NULL'a düşer (ON DELETE SET NULL); item_name
+    ve category denormalize tutulur ki snapshot satırı tek başına okunabilsin.
+    """
+    __tablename__ = "stock_snapshot"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    year        = Column(Integer, nullable=False, index=True)
+    month       = Column(Integer, nullable=False, index=True)
+    item_id     = Column(Integer, ForeignKey("items.id", ondelete="SET NULL"), nullable=True)
+    item_name   = Column(String(150), nullable=True)
+    category    = Column(String(50),  nullable=True)
+    pkg_type    = Column(String(20),  nullable=True)
+    unit        = Column(String(20),  nullable=True)
+    stock       = Column(Float, nullable=False, default=0.0)
+    captured_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     with engine.connect() as conn:

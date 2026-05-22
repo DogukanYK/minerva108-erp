@@ -37,6 +37,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from database import SessionLocal, Inventory, Item
 from core.notifications import notify_expiry_summary
+from core.snapshots import capture_previous_month, backfill_missing_snapshots
 
 logger = logging.getLogger("minerva108.scheduler")
 
@@ -98,6 +99,22 @@ def scan_expiring_lots() -> None:
         db.close()
 
 
+def monthly_stock_snapshot() -> None:
+    """
+    Aylık job: her ayın 1'i 00:30'da bir önceki ayın stok durumunu
+    `stock_snapshot` tablosuna dondurur.  Ayrıca eksik kalmış geçmiş
+    ayları da telafi eder (restart / kaçırılan ay senaryosu).
+    """
+    db = SessionLocal()
+    try:
+        capture_previous_month(db)
+        backfill_missing_snapshots(db)   # kaçırılan eski aylar varsa telafi
+    except Exception:
+        logger.exception("monthly_stock_snapshot failed")
+    finally:
+        db.close()
+
+
 def start_scheduler() -> None:
     """Register all cron jobs and start the scheduler. Idempotent."""
     if scheduler.running:
@@ -112,11 +129,33 @@ def start_scheduler() -> None:
         coalesce=True,                       # if missed (sleep/restart), run ONE catch-up not all
     )
 
+    scheduler.add_job(
+        monthly_stock_snapshot,
+        CronTrigger(day=1, hour=0, minute=30),   # her ayın 1'i 00:30
+        id="monthly_stock_snapshot",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
     scheduler.start()
     logger.info(
         "APScheduler started · jobs=%s",
         [j.id for j in scheduler.get_jobs()],
     )
+
+    # Açılışta eksik geçmiş ay snapshot'larını telafi et (idempotent —
+    # var olanı atlar, yalnızca eksikleri doldurur).
+    try:
+        _db = SessionLocal()
+        try:
+            filled = backfill_missing_snapshots(_db)
+            if filled:
+                logger.info("Startup snapshot backfill tamam: %s", filled)
+        finally:
+            _db.close()
+    except Exception:
+        logger.exception("startup snapshot backfill failed")
 
 
 def stop_scheduler() -> None:

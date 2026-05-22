@@ -572,9 +572,14 @@
               </table>
             </details>`;
         });
+        // Veri kaynağı rozeti: dondurulmuş aylık snapshot mu, canlı hesap mı?
+        const srcBadge = data.source === 'snapshot'
+          ? '<span style="display:inline-block;margin-left:0.5rem;padding:1px 8px;background:rgba(21,128,61,0.12);color:#15803d;border-radius:20px;font-size:0.68rem;font-weight:700;">DONDURULMUŞ KAYIT</span>'
+          : '<span style="display:inline-block;margin-left:0.5rem;padding:1px 8px;background:rgba(184,150,90,0.16);color:#92750e;border-radius:20px;font-size:0.68rem;font-weight:700;">CANLI HESAP</span>';
         body.innerHTML =
           `<p style="color:#6b7280;font-size:0.82rem;margin:0.5rem 0;">Rapor tarihi: <b>${escHtml(data.generated_at || data.as_of)}</b>`
-          + `<span style="color:#9ca3af;"> &nbsp;·&nbsp; Stok kesim: ${escHtml(data.as_of)} itibarıyla</span></p>`
+          + `<span style="color:#9ca3af;"> &nbsp;·&nbsp; Stok kesim: ${escHtml(data.as_of)} itibarıyla</span>`
+          + srcBadge + `</p>`
           + parts.join('');
       }
 
