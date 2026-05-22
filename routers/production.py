@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from database import (
+    to_tr,
     get_db, Item, Recipe, ProductionHistory, Inventory, Transaction,
 )
 from core.auth import get_current_user
@@ -65,7 +66,7 @@ def list_production_history(db: Session = Depends(get_db)):
             "recipe_name": r.recipe_name,
             "target_item_name": r.target_item_name,
             "produced_quantity": r.produced_quantity,
-            "produced_at": r.produced_at.strftime("%d.%m.%Y %H:%M") if r.produced_at else "",
+            "produced_at": to_tr(r.produced_at).strftime("%d.%m.%Y %H:%M") if r.produced_at else "",
         }
         for r in rows
     ]
@@ -143,8 +144,8 @@ def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[di
         "recipe_name":       prod.recipe_name or recipe.name,
         "target_item_name":  prod.target_item_name or (target.name if target else ""),
         "produced_quantity": prod.produced_quantity,
-        "produced_at":       prod.produced_at.strftime("%d.%m.%Y %H:%M") if prod.produced_at else "",
-        "produced_at_date":  prod.produced_at.strftime("%d.%m.%Y") if prod.produced_at else "",
+        "produced_at":       to_tr(prod.produced_at).strftime("%d.%m.%Y %H:%M") if prod.produced_at else "",
+        "produced_at_date":  to_tr(prod.produced_at).strftime("%d.%m.%Y") if prod.produced_at else "",
         "produced_by":       prod.produced_by or "",
         "lot_number":        prod.lot_number or "",
         "bottle_ml":         bottle_ml,
@@ -539,7 +540,7 @@ def list_quarantine(db: Session = Depends(get_db)):
             "qc_required":  r.qc_required,
             # 'source' = "Üretim" veya "Mal Kabul" — UI bunu rozetle gösterebilir
             "source":       "Üretim" if r.qc_required else "Mal Kabul",
-            "created_at":   r.created_at.strftime("%d.%m.%Y") if r.created_at else "",
+            "created_at":   to_tr(r.created_at).strftime("%d.%m.%Y") if r.created_at else "",
         }
         for r in rows
     ]

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from database import get_db, User
+from database import get_db, User, to_tr
 from core.limiter import limiter
 from core.audit import log_admin_event
 from core.password_strength import validate_password_strength
@@ -77,7 +77,7 @@ def admin_list_users(
             "role":                 u.role,
             "is_active":            u.is_active,
             "idle_timeout_minutes": u.idle_timeout_minutes,
-            "created_at":           u.created_at.strftime("%d.%m.%Y") if u.created_at else "",
+            "created_at":           to_tr(u.created_at).strftime("%d.%m.%Y") if u.created_at else "",
         }
         for u in users
     ]
@@ -317,7 +317,7 @@ def admin_audit_log_feed(
     return [
         {
             "id":          r.id,
-            "timestamp":   r.timestamp.strftime("%d.%m.%Y %H:%M:%S") if r.timestamp else "—",
+            "timestamp":   to_tr(r.timestamp).strftime("%d.%m.%Y %H:%M:%S") if r.timestamp else "—",
             "actor_id":    r.actor_id,
             "actor_name":  r.actor_name,
             "action":      r.action,

@@ -42,7 +42,7 @@ from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import get_db, to_tr
 from core.audit import log_admin_event
 from core.auth import get_current_user
 from core.permissions import _has_permission, require_permission
@@ -129,7 +129,7 @@ def _list_backups() -> list:
             "filename":   f.name,
             "size_bytes": st.st_size,
             "size_human": _humanize(st.st_size),
-            "created_at": datetime.fromtimestamp(st.st_mtime).strftime("%d.%m.%Y %H:%M:%S"),
+            "created_at": to_tr(datetime.fromtimestamp(st.st_mtime)).strftime("%d.%m.%Y %H:%M:%S"),
             "timestamp":  st.st_mtime,
         })
     return rows

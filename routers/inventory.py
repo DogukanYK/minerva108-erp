@@ -38,6 +38,7 @@ def _norm_language(val: Optional[str]) -> Optional[str]:
     return None
 
 from database import (
+    to_tr,
     get_db, Item, Supplier, Inventory, Transaction,
     Recipe, RecipeIngredient,
 )
@@ -150,7 +151,7 @@ def list_items(
             "is_variation":    i.parent_id is not None,
             "supplier_id":     i.supplier_id,
             "supplier_name":   supplier_name_by_id.get(i.supplier_id) if i.supplier_id else None,
-            "created_at":      i.created_at.strftime("%d.%m.%Y") if i.created_at else "",
+            "created_at":      to_tr(i.created_at).strftime("%d.%m.%Y") if i.created_at else "",
         }
         for i in items
     ]
@@ -503,7 +504,7 @@ def list_suppliers(db: Session = Depends(get_db)):
             "email": s.email,
             "phone": s.phone,
             "notes": s.notes,
-            "created_at": s.created_at.strftime("%d.%m.%Y") if s.created_at else "",
+            "created_at": to_tr(s.created_at).strftime("%d.%m.%Y") if s.created_at else "",
         }
         for s in rows
     ]
@@ -563,7 +564,7 @@ def list_inventory(db: Session = Depends(get_db)):
             "quantity": r.quantity,
             "location": r.location or "—",
             "status": r.status,
-            "created_at": r.created_at.strftime("%d.%m.%Y") if r.created_at else "",
+            "created_at": to_tr(r.created_at).strftime("%d.%m.%Y") if r.created_at else "",
         }
         for r in rows
     ]
@@ -856,7 +857,7 @@ def inventory_by_item(
             "qc_required": bool(r.qc_required),
             "expiry_date": r.expiry_date or "",
             "received_by": r.received_by or "",
-            "created_at":  r.created_at.strftime("%d.%m.%Y %H:%M") if r.created_at else "",
+            "created_at":  to_tr(r.created_at).strftime("%d.%m.%Y %H:%M") if r.created_at else "",
         })
 
     return {
@@ -894,7 +895,7 @@ def list_transactions(db: Session = Depends(get_db)):
             "transaction_type": r.transaction_type,
             "quantity": r.quantity,
             "notes": r.notes or "",
-            "timestamp": r.timestamp.strftime("%d.%m.%Y %H:%M") if r.timestamp else "",
+            "timestamp": to_tr(r.timestamp).strftime("%d.%m.%Y %H:%M") if r.timestamp else "",
         }
         for r in rows
     ]
@@ -947,8 +948,8 @@ def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(
             "received_by":    inv.received_by or "—",
             "qc_approved_by": inv.qc_approved_by or "—",
             "qc_notes":       inv.qc_notes or "",
-            "created_at":     inv.created_at.strftime("%d.%m.%Y %H:%M") if inv.created_at else "",
-            "updated_at":     inv.updated_at.strftime("%d.%m.%Y %H:%M") if inv.updated_at else "",
+            "created_at":     to_tr(inv.created_at).strftime("%d.%m.%Y %H:%M") if inv.created_at else "",
+            "updated_at":     to_tr(inv.updated_at).strftime("%d.%m.%Y %H:%M") if inv.updated_at else "",
         }
     else:
         out["lot_info"] = None
@@ -1002,7 +1003,7 @@ def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(
             "target_item_id":    prod.target_item_id,
             "target_item_name":  prod.target_item_name or "—",
             "produced_quantity": prod.produced_quantity,
-            "produced_at":       prod.produced_at.strftime("%d.%m.%Y %H:%M") if prod.produced_at else "—",
+            "produced_at":       to_tr(prod.produced_at).strftime("%d.%m.%Y %H:%M") if prod.produced_at else "—",
             "produced_by":       prod.produced_by or "—",
             "ingredients_consumed": ingredients_consumed,
         }
@@ -1021,7 +1022,7 @@ def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(
             "id":               t.id,
             "transaction_type": t.transaction_type,
             "quantity":         t.quantity,
-            "timestamp":        t.timestamp.strftime("%d.%m.%Y %H:%M") if t.timestamp else "—",
+            "timestamp":        to_tr(t.timestamp).strftime("%d.%m.%Y %H:%M") if t.timestamp else "—",
             "performed_by":     t.performed_by or "—",
             "notes":            (t.notes or "")[:200],
         }
@@ -1206,7 +1207,7 @@ def user_activity(
                 "transaction_type": t.transaction_type,
                 "quantity":         t.quantity,
                 "notes":            (t.notes or "")[:200],
-                "timestamp":        t.timestamp.strftime("%d.%m.%Y %H:%M") if t.timestamp else "—",
+                "timestamp":        to_tr(t.timestamp).strftime("%d.%m.%Y %H:%M") if t.timestamp else "—",
             }
             for t in rows
         ],

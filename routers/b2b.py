@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
-from database import get_db, Item, Transaction, Quotation, QuotationItem
+from database import get_db, Item, Transaction, Quotation, QuotationItem, to_tr
 from core.permissions import require_permission
 from core.notifications import notify_low_stock
 
@@ -155,9 +155,9 @@ def _serialize_quotation_summary(q: Quotation) -> dict:
         "currency":         q.currency,
         "total_amount":     q.total_amount,
         "status":           q.status,
-        "created_at":       q.created_at.strftime("%d.%m.%Y %H:%M") if q.created_at else "",
+        "created_at":       to_tr(q.created_at).strftime("%d.%m.%Y %H:%M") if q.created_at else "",
         "created_by":       q.created_by or "—",
-        "confirmed_at":     q.confirmed_at.strftime("%d.%m.%Y %H:%M") if q.confirmed_at else None,
+        "confirmed_at":     to_tr(q.confirmed_at).strftime("%d.%m.%Y %H:%M") if q.confirmed_at else None,
         "confirmed_by":     q.confirmed_by,
         "item_count":       len(q.items),
     }

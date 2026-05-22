@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
-from database import get_db, Item, Recipe, RecipeIngredient
+from database import get_db, Item, Recipe, RecipeIngredient, to_tr
 from core.auth import get_current_user
 from core.permissions import _can_see_finance, require_permission
 
@@ -114,7 +114,7 @@ def list_recipes(
             "ingredient_count": len(r.ingredients),
             "total_cost":       costs["total_cost"],
             "unit_cost":        costs["unit_cost"],
-            "created_at":       r.created_at.strftime("%d.%m.%Y") if r.created_at else "",
+            "created_at":       to_tr(r.created_at).strftime("%d.%m.%Y") if r.created_at else "",
         }
         if include_ingredients:
             row["ingredient_names"] = [

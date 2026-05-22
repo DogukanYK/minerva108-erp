@@ -19,6 +19,7 @@ from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from database import (
+    to_tr,
     get_db, Item, Supplier, Recipe, Transaction, ProductionHistory, Inventory,
     StockSnapshot,
 )
@@ -174,9 +175,9 @@ def report_monthly_stock(
         # Verinin kaynağı: dondurulmuş snapshot mu, canlı hesap mı?
         "source":       "snapshot" if use_snapshot else "canlı",
         # Raporun fiilen oluşturulduğu an — "Rapor tarihi" olarak gösterilir.
-        "generated_at": now.strftime("%d.%m.%Y %H:%M"),
+        "generated_at": to_tr(now).strftime("%d.%m.%Y %H:%M"),
         # Stok verisinin hangi ana kadar olduğu (ay sonu ya da bugün).
-        "as_of":        eom.strftime("%d.%m.%Y %H:%M"),
+        "as_of":        to_tr(eom).strftime("%d.%m.%Y %H:%M"),
         "sections":     result,
         "category":     category,
     }
@@ -401,7 +402,7 @@ def dashboard_stats(
             "transaction_type": t.transaction_type,
             "quantity":         t.quantity,
             "notes":            (t.notes or "")[:90],   # truncate for display
-            "timestamp":        t.timestamp.strftime("%d.%m.%Y %H:%M") if t.timestamp else "",
+            "timestamp":        to_tr(t.timestamp).strftime("%d.%m.%Y %H:%M") if t.timestamp else "",
         }
         for t in recent_txs
     ]
@@ -426,7 +427,7 @@ def dashboard_stats(
                 "recipe_name":       r.recipe_name,
                 "target_item_name":  r.target_item_name,
                 "produced_quantity": r.produced_quantity,
-                "produced_at":       r.produced_at.strftime("%d.%m.%Y %H:%M") if r.produced_at else "",
+                "produced_at":       to_tr(r.produced_at).strftime("%d.%m.%Y %H:%M") if r.produced_at else "",
             }
             for r in recent_prod
         ],

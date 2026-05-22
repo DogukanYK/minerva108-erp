@@ -10,7 +10,26 @@ from sqlalchemy import (
     Boolean, Text, DateTime, ForeignKey, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
-from datetime import datetime
+from datetime import datetime, timedelta
+
+
+# ─── Saat dilimi — Türkiye (UTC+3) ───────────────────────────────────────────
+# DB'de TÜM datetime'lar UTC saklanır (model default'ları datetime.utcnow).
+# Sunucu da UTC.  Bu helper'lar SADECE kullanıcıya gösterim için UTC → Türkiye
+# çevirir.  Türkiye 2016'dan beri yaz saati uygulamıyor — sabit +3 ofset,
+# DST hesabı gerekmez.
+TR_OFFSET = timedelta(hours=3)
+
+
+def to_tr(dt):
+    """UTC datetime'ı Türkiye saatine çevir — yalnızca kullanıcı gösterimi için.
+    None güvenli; veritabanı değerleri her zaman UTC kalır."""
+    return (dt + TR_OFFSET) if dt is not None else None
+
+
+def tr_now() -> datetime:
+    """Şu anki Türkiye saati (gösterim amaçlı)."""
+    return datetime.utcnow() + TR_OFFSET
 
 # ── Environment-driven DB URL ────────────────────────────────────────────────
 # Local dev: SQLite (default).
