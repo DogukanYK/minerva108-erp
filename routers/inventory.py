@@ -816,6 +816,66 @@ def inventory_summary(db: Session = Depends(get_db)):
     ]
 
 
+@router.get("/inventory/by-item/{item_id}")
+def inventory_by_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(get_current_user),
+):
+    """
+    Tek bir ürünün lot bazlı envanter dökümü — Stoklar sayfasında satıra
+    tıklayınca açılan detay.  Hangi lot nerede (Showroom / Şahit Numune
+    Dolabı / diğer konum), ne kadarı, hangi durumda.
+
+    Lokasyon kırılımı `by_location` alanında özetlenir — üretimde şahit
+    numune ayrımı yapılan ürünlerde "kaçı showroom, kaçı şahit" tek bakışta
+    görülür.
+    """
+    item = db.query(Item).filter(Item.id == item_id).first()
+    if not item:
+        return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+
+    rows = (
+        db.query(Inventory)
+        .filter(Inventory.item_id == item_id)
+        .order_by(Inventory.id.desc())
+        .all()
+    )
+
+    lots = []
+    by_location: dict[str, float] = {}
+    for r in rows:
+        loc = (r.location or "").strip() or "(Konum belirtilmemiş)"
+        qty = float(r.quantity or 0)
+        by_location[loc] = round(by_location.get(loc, 0.0) + qty, 4)
+        lots.append({
+            "lot_number":  r.lot_number,
+            "location":    loc,
+            "quantity":    round(qty, 4),
+            "status":      r.status or "",
+            "qc_required": bool(r.qc_required),
+            "expiry_date": r.expiry_date or "",
+            "received_by": r.received_by or "",
+            "created_at":  r.created_at.strftime("%d.%m.%Y %H:%M") if r.created_at else "",
+        })
+
+    return {
+        "item_id":       item.id,
+        "item_name":     item.name,
+        "category":      item.category or "",
+        "unit":          item.unit or "",
+        # Item.current_stock source-of-truth; lot toplamı bundan sapabilir
+        # (ör. üretim çıktısı doğrudan current_stock'a yazılır).
+        "current_stock": round(float(item.current_stock or 0), 4),
+        "lot_total":     round(sum(l["quantity"] for l in lots), 4),
+        "by_location":   [
+            {"location": loc, "total": tot}
+            for loc, tot in sorted(by_location.items(), key=lambda x: -x[1])
+        ],
+        "lots":          lots,
+    }
+
+
 @router.get("/transactions")
 def list_transactions(db: Session = Depends(get_db)):
     # 500 satır × N+1 ürün lookup'ı yerine joinedload ile tek query

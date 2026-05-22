@@ -475,7 +475,18 @@ def start_production(
                     item.name, item.current_stock, item.min_stock_level, item.unit or "",
                 )
 
+        # ── Stoktan düşülen kalem özeti — lab "ne düştü" diye sormasın ─────
+        # ing_plan = gerçekten tüketilen kalemler.  Hammadde / ambalaj ayrımı.
+        hammadde_n = sum(1 for _i, _it, _g, amb in ing_plan if not amb)
+        ambalaj_n  = sum(1 for _i, _it, _g, amb in ing_plan if amb)
+
         msg = f"Üretim tamamlandı ({sel_lang_label}). {data.produced_quantity} birim stoğa eklendi."
+        msg += f"  Stoktan düşülen: {hammadde_n} hammadde + {ambalaj_n} ambalaj/etiket kalemi."
+        if ambalaj_n == 0:
+            # En sık kafa karışıklığı: reçeteye ambalaj/etiket hiç eklenmemiş.
+            msg += ("  ⚠ DİKKAT: Bu reçetede hiç ambalaj/etiket kalemi yok — "
+                    "kavanoz, kapak, etiket stoktan DÜŞÜLMEDİ. Gerekiyorsa "
+                    "Reçeteler sayfasından ambalaj bileşenlerini ekleyin.")
         if label_warnings:
             msg += (f"  ⚠ Şu kalemlerin {sel_lang_label} etiketi tanımlı değil, "
                     f"stoktan düşülmedi: {', '.join(label_warnings)}.")
@@ -484,6 +495,8 @@ def start_production(
             "lot_number": produced_lot if recipe.target_item_id else None,
             "label_language": sel_lang,
             "label_warnings": label_warnings,
+            "consumed_hammadde": hammadde_n,
+            "consumed_ambalaj":  ambalaj_n,
         }
 
     except Exception:
