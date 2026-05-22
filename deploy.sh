@@ -15,7 +15,7 @@ SERVER_PATH="/var/www/minerva"
 SERVICE_NAME="minerva"
 SSH_KEY="$HOME/.ssh/id_ed25519_minerva"      # Dedicated key created during setup
 SSH_TIMEOUT=15
-PROD_URL="https://srv.minervaims.com"        # Public URL — post-deploy HTTP doğrulaması
+PROD_URL="https://ims.minerva108.com"        # Public URL — post-deploy HTTP doğrulaması
 
 # Always operate from the repo root, regardless of where the script is invoked
 cd "$(dirname "$0")"

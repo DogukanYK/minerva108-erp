@@ -64,7 +64,7 @@ def perf_snapshot(
     Hot endpoint'lerin ne kadar sürdüğünü ölç + DB istatistikleri.
 
     Manuel kullanım:
-        curl -b cookies.txt https://srv.minervaims.com/api/debug/perf | jq
+        curl -b cookies.txt https://ims.minerva108.com/api/debug/perf | jq
     """
     metrics: list[dict] = []
 

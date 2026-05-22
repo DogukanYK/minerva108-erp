@@ -129,7 +129,7 @@ Turkish alphabetical sorting uses `window.trSort` / `trSortBy` (Intl.Collator 't
 
 Prod is `turhost` (SSH config alias → `root@136.144.251.26:23422`,
 `/var/www/minerva`, systemd unit `minerva`, PostgreSQL `minerva_db`, public URL
-`https://srv.minervaims.com`).
+`https://ims.minerva108.com`).
 
 **Always deploy with `./deploy.sh` (or `make deploy`) — it is the only sanctioned
 path, and it makes test + verification mandatory.** It is a 5-step fail-fast
@@ -140,7 +140,7 @@ pipeline:
 3. SSH connectivity pre-flight.
 4. Remote force-sync to `origin/main` + dependency sync + `systemctl restart`.
 5. **Verification** — re-checks `systemctl is-active` *and* curls
-   `https://srv.minervaims.com/login`, retrying until HTTP 200. The deploy is only
+   `https://ims.minerva108.com/login`, retrying until HTTP 200. The deploy is only
    reported successful if prod actually serves traffic.
 
 Never deploy ad-hoc (raw `git push` + `ssh`) — that skips the test gate and the HTTP
