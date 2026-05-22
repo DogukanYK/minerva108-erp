@@ -54,13 +54,21 @@ lightweight DB-ping liveness probe → 200/503, for external uptime monitors) an
 `GET /api/system/health` (SuperAdmin — rich report: app uptime, DB latency/size,
 disk, scheduler jobs, last backup, last snapshot, system clock). The SuperAdmin-only
 `/system` page renders this with colored status cards and auto-refreshes every 30 s.
+The same router also produces the **monthly detailed system report** (SuperAdmin):
+`GET /api/system/report?year=&month=&format=pdf|excel` builds a top-to-bottom report
+on demand (production line, materials consumed, per-user activity, audit events,
+restarts/estimated downtime, technical status); the scheduler auto-saves both formats
+to `system_reports/` on the 1st of each month. PDF rendering uses `reportlab`
+(`core/monthly_report.py`); app-restart tracking uses the `system_event` table, which
+`init_db()` startup writes an `app_start` row to on every boot.
 
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +
-low-stock alerts), `scheduler.py` (APScheduler — daily 09:00 expiry scan + monthly
-stock snapshot on day 1 at 00:30, plus a startup backfill), `snapshots.py` (month-end
-stock freeze / reconstruction), `undo.py` (undo log), `password_strength.py`,
-`limiter.py` (SlowAPI).
+low-stock alerts), `scheduler.py` (APScheduler — daily 09:00 expiry scan, monthly
+stock snapshot on day 1 at 00:30, monthly system report on day 1 at 01:00, plus a
+startup backfill), `snapshots.py` (month-end stock freeze / reconstruction),
+`monthly_report.py` (aylık detaylı PDF/Excel sistem raporu üretici), `undo.py`
+(undo log), `password_strength.py`, `limiter.py` (SlowAPI).
 
 **Middleware stack** (api_main.py): `SecurityHeadersMiddleware` (CSP + headers),
 `CSRFMiddleware` (Origin/Referer check on mutating verbs; exempts `/api/login`,

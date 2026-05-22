@@ -16,6 +16,9 @@ minerva108.db
 # DB yedekleri (lokalden alınan pg_dump dosyaları)
 backups/
 
+# Otomatik üretilen aylık sistem raporları (PDF/Excel)
+system_reports/
+
 # Env / secrets — NEVER commit
 .env
 .env.local

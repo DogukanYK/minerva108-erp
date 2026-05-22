@@ -200,3 +200,33 @@ def test_system_health_api_blocked_for_labtech(labtech_client: TestClient):
     """/api/system/health SuperAdmin olmayan kullanıcıya 403."""
     r = labtech_client.get("/api/system/health")
     assert r.status_code == 403
+
+
+# ─── Aylık detaylı sistem raporu ────────────────────────────────────────────
+
+def test_monthly_report_pdf_for_superadmin(authed_client: TestClient):
+    """Aylık rapor PDF olarak üretilip indirilebilmeli."""
+    r = authed_client.get("/api/system/report?year=2026&month=5&format=pdf")
+    assert r.status_code == 200
+    assert r.headers.get("content-type") == "application/pdf"
+    assert r.content[:4] == b"%PDF"
+
+
+def test_monthly_report_excel_for_superadmin(authed_client: TestClient):
+    """Aylık rapor Excel (xlsx) olarak üretilip indirilebilmeli."""
+    r = authed_client.get("/api/system/report?year=2026&month=5&format=excel")
+    assert r.status_code == 200
+    assert r.content[:2] == b"PK"          # xlsx = zip arşivi
+
+
+def test_monthly_report_blocked_for_labtech(labtech_client: TestClient):
+    """Aylık rapor SuperAdmin olmayan kullanıcıya 403."""
+    r = labtech_client.get("/api/system/report?year=2026&month=5&format=pdf")
+    assert r.status_code == 403
+
+
+def test_monthly_report_list_for_superadmin(authed_client: TestClient):
+    """Kayıtlı raporlar listesi SuperAdmin'e açık ve 'reports' anahtarı döner."""
+    r = authed_client.get("/api/system/reports")
+    assert r.status_code == 200
+    assert "reports" in r.json()

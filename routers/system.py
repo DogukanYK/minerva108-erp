@@ -21,6 +21,7 @@ Her kontrol bir "status" taşır: ok / warn / down.  Genel durum, en kötü
 alt-kontrolün durumudur.
 """
 import platform
+import re
 import shutil
 import subprocess
 import time
@@ -28,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, FileResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -299,3 +300,83 @@ def system_health(
         "generated_at": tr_now().strftime("%d.%m.%Y %H:%M:%S"),
         "checks":       checks,
     }
+
+
+# ─── Aylık detaylı sistem raporu — SuperAdmin'e özel ────────────────────────
+
+# Path-traversal'a karşı sıkı dosya adı kalıbı: minerva_rapor_2026-04.pdf
+_REPORT_NAME_RE = re.compile(r"^minerva_rapor_\d{4}-\d{2}\.(pdf|xlsx)$")
+
+
+@router.get("/api/system/report")
+def generate_system_report(
+    year: int,
+    month: int,
+    format: str = "pdf",
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_role(["SuperAdmin"])),
+):
+    """Seçilen ay için baştan aşağı detaylı sistem raporunu anında üretip indirir."""
+    fmt = (format or "pdf").lower()
+    if fmt not in ("pdf", "excel", "xlsx"):
+        return JSONResponse(status_code=400,
+                            content={"detail": "Geçersiz format (pdf veya excel)."})
+    if not (2020 <= year <= 2100) or not (1 <= month <= 12):
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz yıl/ay."})
+
+    from core.monthly_report import (
+        gather_report_data, render_pdf, render_excel, report_filename)
+    try:
+        data = gather_report_data(db, year, month)
+        if fmt == "pdf":
+            content, media, ext = render_pdf(data), "application/pdf", "pdf"
+        else:
+            content = render_excel(data)
+            media = ("application/vnd.openxmlformats-officedocument"
+                     ".spreadsheetml.sheet")
+            ext = "xlsx"
+    except Exception:
+        return JSONResponse(status_code=500,
+                            content={"detail": "Rapor üretilemedi."})
+
+    fname = report_filename(year, month, ext)
+    return Response(
+        content=content, media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/api/system/reports")
+def list_system_reports(_: dict = Depends(require_role(["SuperAdmin"]))):
+    """Otomatik üretilip saklanmış aylık raporları listeler (en yeni önce)."""
+    from core.monthly_report import SYSTEM_REPORT_DIR
+    rows = []
+    for f in sorted(SYSTEM_REPORT_DIR.glob("minerva_rapor_*"),
+                    key=lambda p: p.name, reverse=True):
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        rows.append({
+            "filename":   f.name,
+            "size":       _humanize_bytes(st.st_size),
+            "created_at": to_tr(datetime.utcfromtimestamp(st.st_mtime))
+                          .strftime("%d.%m.%Y %H:%M"),
+        })
+    return {"reports": rows}
+
+
+@router.get("/api/system/reports/{filename}")
+def download_system_report(
+    filename: str,
+    _: dict = Depends(require_role(["SuperAdmin"])),
+):
+    """Saklanmış bir aylık raporu indirir.  Dosya adı path-traversal'a karşı sıkı."""
+    from core.monthly_report import SYSTEM_REPORT_DIR
+    if not _REPORT_NAME_RE.match(filename or ""):
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz dosya adı."})
+    path = SYSTEM_REPORT_DIR / filename
+    if not path.is_file():
+        return JSONResponse(status_code=404, content={"detail": "Rapor bulunamadı."})
+    return FileResponse(str(path), filename=filename,
+                        media_type="application/octet-stream")

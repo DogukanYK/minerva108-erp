@@ -124,6 +124,28 @@
     .health-loading { padding: 3rem 2rem; text-align: center; color: #9ca3af; }
     .health-loading i { font-size: 2rem; display: block; margin-bottom: 0.7rem; color: #d1d5db; }
 
+    /* ══ AYLIK RAPOR ══ */
+    .report-card { background: var(--white); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(44,44,115,0.06); overflow: hidden; margin-top: 1.5rem; }
+    .report-card-head { display: flex; align-items: center; gap: 0.6rem; padding: 1rem 1.25rem; border-bottom: 1px solid #f0ece4; }
+    .report-card-head i { font-size: 1.15rem; color: var(--gold); }
+    .report-card-head h2 { font-family: 'Playfair Display', serif; font-size: 1.05rem; font-weight: 600; color: var(--navy); margin: 0; }
+    .report-card-body { padding: 1.25rem; }
+    .report-hint { font-size: 0.85rem; color: #6b7280; margin: 0 0 1rem; line-height: 1.5; }
+    .report-controls { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; margin-bottom: 1.6rem; }
+    .report-select { border: 1.5px solid #e5e7eb; border-radius: 8px; padding: 0.55rem 0.9rem; font-family: 'Jost', sans-serif; font-size: 0.88rem; color: #1f2937; background: var(--white); }
+    .report-select:focus { outline: none; border-color: var(--navy); }
+    .btn-report { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.55rem 1.1rem; background: var(--navy); color: var(--white); border: none; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+    .btn-report:hover { background: #23236b; }
+    .btn-report:disabled { opacity: 0.6; cursor: not-allowed; }
+    .saved-reports h3 { font-family: 'Playfair Display', serif; font-size: 0.92rem; font-weight: 600; color: var(--navy); margin: 0 0 0.75rem; }
+    .saved-row { display: flex; align-items: center; gap: 1rem; padding: 0.6rem 0.85rem; border: 1px solid #f0ece4; border-radius: 8px; margin-bottom: 0.5rem; flex-wrap: wrap; }
+    .saved-name { font-size: 0.85rem; font-weight: 600; color: #1f2937; flex: 1; min-width: 180px; }
+    .saved-name i { color: var(--gold); margin-right: 0.35rem; }
+    .saved-meta { font-size: 0.78rem; color: #9ca3af; }
+    .saved-dl { font-size: 0.82rem; font-weight: 600; color: var(--navy); text-decoration: none; border: 1.5px solid #e5e7eb; border-radius: 6px; padding: 0.32rem 0.85rem; }
+    .saved-dl:hover { border-color: var(--navy); background: var(--cream); }
+    .saved-empty { font-size: 0.83rem; color: #9ca3af; margin: 0; }
+
     /* ══ TOAST ══ */
     #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
     .toast-msg { min-width: 270px; max-width: 380px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
@@ -227,6 +249,34 @@
         </div>
       </div>
 
+      <!-- ── Aylık Detaylı Rapor ── -->
+      <div class="report-card">
+        <div class="report-card-head">
+          <i class="bi bi-file-earmark-bar-graph"></i>
+          <h2>Aylık Detaylı Sistem Raporu</h2>
+        </div>
+        <div class="report-card-body">
+          <p class="report-hint">
+            Baştan aşağı tüm sistem: üretim hattı, harcanan malzemeler, kullanıcı
+            aktivitesi (kim ne yapmış), yönetim olayları, restart/kesinti kayıtları
+            ve teknik durum. Bir ay seçip PDF veya Excel olarak indir.
+          </p>
+          <div class="report-controls">
+            <select id="reportMonth" class="report-select" aria-label="Rapor ayı"></select>
+            <button class="btn-report" id="dlPdfBtn" type="button">
+              <i class="bi bi-filetype-pdf"></i> PDF İndir
+            </button>
+            <button class="btn-report" id="dlExcelBtn" type="button">
+              <i class="bi bi-filetype-xlsx"></i> Excel İndir
+            </button>
+          </div>
+          <div class="saved-reports">
+            <h3>Otomatik Üretilen Raporlar</h3>
+            <div id="savedReportsList"><p class="saved-empty">Yükleniyor…</p></div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </main>
 
@@ -320,7 +370,66 @@
       catch (e) { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
     });
 
+    /* ── Aylık detaylı rapor ── */
+    const TR_MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+                       'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+
+    function populateMonths() {
+      const sel = document.getElementById('reportMonth');
+      const now = new Date();
+      for (let i = 0; i < 12; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const opt = document.createElement('option');
+        opt.value = d.getFullYear() + '-' + (d.getMonth() + 1);
+        opt.textContent = TR_MONTHS[d.getMonth()] + ' ' + d.getFullYear();
+        sel.appendChild(opt);
+      }
+    }
+
+    function downloadReport(fmt) {
+      const v = document.getElementById('reportMonth').value;
+      if (!v) { showToast('Önce bir ay seçin.'); return; }
+      const parts = v.split('-');
+      window.location = '/api/system/report?year=' + parts[0] +
+                        '&month=' + parts[1] + '&format=' + fmt;
+    }
+
+    async function loadSavedReports() {
+      const box = document.getElementById('savedReportsList');
+      try {
+        const res = await fetch('/api/system/reports');
+        if (!res.ok) { box.innerHTML = '<p class="saved-empty">Liste alınamadı.</p>'; return; }
+        const data = await res.json();
+        const reports = data.reports || [];
+        if (!reports.length) {
+          box.innerHTML = '<p class="saved-empty">Henüz otomatik üretilmiş rapor yok — ' +
+            'her ayın 1\'inde geçen ay için otomatik oluşturulur.</p>';
+          return;
+        }
+        box.innerHTML = reports.map(function (r) {
+          return '<div class="saved-row">' +
+            '<span class="saved-name"><i class="bi bi-file-earmark-text"></i>' +
+            escHtml(r.filename) + '</span>' +
+            '<span class="saved-meta">' + escHtml(r.size) + ' · ' +
+            escHtml(r.created_at) + '</span>' +
+            '<a class="saved-dl" href="/api/system/reports/' +
+            encodeURIComponent(r.filename) + '">İndir</a></div>';
+        }).join('');
+      } catch (e) {
+        box.innerHTML = '<p class="saved-empty">Liste yüklenemedi.</p>';
+      }
+    }
+
+    document.getElementById('dlPdfBtn').addEventListener('click', function () {
+      downloadReport('pdf');
+    });
+    document.getElementById('dlExcelBtn').addEventListener('click', function () {
+      downloadReport('excel');
+    });
+
     /* ── Init: ilk yükleme + 30 sn'de bir otomatik yenileme ── */
+    populateMonths();
+    loadSavedReports();
     loadHealth();
     setInterval(loadHealth, 30000);
   </script>

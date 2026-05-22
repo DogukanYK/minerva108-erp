@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from database import init_db, get_db, User
+from database import init_db, get_db, User, log_system_event
 from core.auth import decode_token
 from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions
@@ -202,6 +202,9 @@ def serve_service_worker():
 @app.on_event("startup")
 def startup_event():
     init_db()
+    # Her açılışı sistem olay defterine yaz — aylık raporun restart/downtime
+    # bölümü bu kayıtlardan üretilir.  log_system_event asla exception atmaz.
+    log_system_event("app_start", "uygulama başlatıldı")
     # Test ortamında DISABLE_SCHEDULER=true → APScheduler atla.
     # Lifespan async cleanup'ı TestClient teardown'unda event loop
     # kapanırken hata atıyordu; testler için bu güvenli kapı.

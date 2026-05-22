@@ -408,6 +408,43 @@ class StockSnapshot(Base):
     captured_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class SystemEvent(Base):
+    """
+    Sistem olay defteri — şimdilik yalnızca uygulama açılışlarını yazar.
+
+    Uygulama her başladığında ('app_start') buraya bir satır düşer.  Aylık
+    detaylı sistem raporu bu tablodan ay içindeki restart/deploy sayısını ve
+    zamanlarını çıkarır; her restart ~3-4 sn'lik bir kesinti demek olduğu
+    için tahmini downtime de buradan hesaplanır.
+
+    Uygulama kendi *kapanışını* güvenilir biçimde yazamaz (süreç öldürülür),
+    bu yüzden burada yalnızca 'açılış' olayı tutulur — gerçek erişilemezlik
+    süresi için dışarıdan bir uptime servisi /health endpoint'ini izlemeli.
+    """
+    __tablename__ = "system_event"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    event_type = Column(String(40), nullable=False, index=True)   # 'app_start'
+    detail     = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+def log_system_event(event_type: str, detail: str = None) -> None:
+    """Bir sistem olayını (örn. 'app_start') kaydet.
+
+    Kendi kısa-ömürlü session'ını açar/kapatır.  ASLA exception fırlatmaz —
+    bir log kaydı uğruna uygulama açılışı bozulmamalı."""
+    try:
+        db = SessionLocal()
+        try:
+            db.add(SystemEvent(event_type=event_type, detail=detail))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     with engine.connect() as conn:

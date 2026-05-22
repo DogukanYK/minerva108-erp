@@ -115,6 +115,28 @@ def monthly_stock_snapshot() -> None:
         db.close()
 
 
+def monthly_system_report() -> None:
+    """
+    Aylık job: her ayın 1'i 01:00'de bir önceki ayın detaylı sistem raporunu
+    (PDF + Excel) üretip system_reports/ klasörüne kaydeder.  Stok snapshot
+    job'undan (00:30) sonra çalışır ki ay sonu verileri hazır olsun.
+    """
+    db = SessionLocal()
+    try:
+        from core.monthly_report import save_monthly_report
+        now = datetime.utcnow()
+        if now.month == 1:
+            year, month = now.year - 1, 12
+        else:
+            year, month = now.year, now.month - 1
+        written = save_monthly_report(db, year, month)
+        logger.info("monthly_system_report tamam: %s", written)
+    except Exception:
+        logger.exception("monthly_system_report failed")
+    finally:
+        db.close()
+
+
 def start_scheduler() -> None:
     """Register all cron jobs and start the scheduler. Idempotent."""
     if scheduler.running:
@@ -133,6 +155,15 @@ def start_scheduler() -> None:
         monthly_stock_snapshot,
         CronTrigger(day=1, hour=0, minute=30),   # her ayın 1'i 00:30
         id="monthly_stock_snapshot",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+    scheduler.add_job(
+        monthly_system_report,
+        CronTrigger(day=1, hour=1, minute=0),    # her ayın 1'i 01:00 (snapshot'tan sonra)
+        id="monthly_system_report",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
