@@ -710,3 +710,46 @@ def qc_approve_form(
     except Exception:
         db.rollback()
         return JSONResponse(status_code=500, content={"detail": "QC işlemi sırasında hata oluştu."})
+
+
+@router.get("/qc/{inventory_id}/form/export")
+def export_qc_form(
+    inventory_id: int,
+    format: str = "pdf",
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("qc", "view")),
+):
+    """
+    Bir lot'un kayıtlı QC formunu PDF veya Excel olarak indir.
+    İzlenebilirlik sayfasından (lot detayı → Kalite Kontrol Formu) çağrılır.
+    """
+    fmt = (format or "pdf").lower()
+    if fmt not in ("pdf", "excel", "xlsx"):
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz format (pdf veya excel)."})
+
+    inv = db.query(Inventory).filter(Inventory.id == inventory_id).first()
+    if not inv:
+        return JSONResponse(status_code=404, content={"detail": "Envanter kaydı bulunamadı."})
+
+    from core.qc_report import (
+        parse_qc_form, render_qc_pdf, render_qc_excel, qc_export_filename)
+    item = db.query(Item).filter(Item.id == inv.item_id).first()
+    view = parse_qc_form(inv, item)
+    if not view:
+        return JSONResponse(status_code=404, content={"detail": "Bu lot için QC formu bulunamadı."})
+
+    try:
+        if fmt == "pdf":
+            content, media, ext = render_qc_pdf(view), "application/pdf", "pdf"
+        else:
+            content = render_qc_excel(view)
+            media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ext = "xlsx"
+    except Exception:
+        return JSONResponse(status_code=500, content={"detail": "QC formu üretilemedi."})
+
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{qc_export_filename(view, ext)}"'},
+    )

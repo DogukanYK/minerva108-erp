@@ -108,6 +108,13 @@ per-user JSON **permission override** that fully replaces the role default
   update it directly and append immutable `Transaction` rows.
 - Item delete is **soft** (`is_active=False`) when audit/transaction rows exist;
   hard delete only when there are no references.
+- **QC forms** are stored as JSON on `Inventory.qc_form_data` (written by
+  `/api/inventory/{id}/qc-approve`). The checklist questions live once in
+  `core/qc_questions.py` (injected into `qc.html` as `window.QC_QUESTIONS`). A lot's
+  QC form is surfaced on the traceability page (`trace_lot` returns a labeled
+  `qc_form` block) and exportable as PDF/Excel via
+  `GET /api/qc/{inventory_id}/form/export?format=pdf|excel` — `core/qc_report.py`
+  (`parse_qc_form` + reportlab/openpyxl, reusing `monthly_report._register_fonts`).
 - **Monthly stock report** (`/api/reports/monthly-stock`) reads a frozen
   `StockSnapshot` row when one exists for that month (badge: *DONDURULMUŞ KAYIT*),
   otherwise reconstructs live (badge: *CANLI HESAP*). Reconstruction =

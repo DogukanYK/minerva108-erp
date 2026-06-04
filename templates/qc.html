@@ -560,22 +560,13 @@
   <script>
     /* ════════════════════════════════════════════════════════════════════
        MINERVA108 — Dijital Kalite Kontrol Formu
-       10 seed sorusu; kalan 20'yi QC_QUESTIONS dizisine ekleyin.
+       Sorular sunucudan gelir (core/qc_questions.py — tek kaynak).  Yeni soru
+       eklemek için O dosyayı düzenleyin; QC ekranı + PDF/Excel rapor otomatik
+       yansıtır.  Defer-script sıralaması: bu inline blok parse anında çalışır,
+       fallback'a gerek yok çünkü değer sunucudan gömülü gelir.
     ════════════════════════════════════════════════════════════════════ */
 
-    const QC_QUESTIONS = [
-      { id: 'q01', text: 'Ürün kokusu doğru mu?' },
-      { id: 'q02', text: 'Likit ürün rengi uygun mu?' },
-      { id: 'q03', text: 'Likit ürün şarj no doğru mu?' },
-      { id: 'q04', text: 'Şişe rengi ve şekli doğru mu?' },
-      { id: 'q05', text: 'Valf rengi ve şekli, kapak doğru mu?' },
-      { id: 'q06', text: 'Ön etiket baskısı doğru mu?' },
-      { id: 'q07', text: 'Arka etiket baskısı doğru mu?' },
-      { id: 'q08', text: 'SKT ve şarj numarası baskısı doğru mu?' },
-      { id: 'q09', text: 'Ambalaj fiziksel hasar kontrolü uygun mu?' },
-      { id: 'q10', text: 'Ürün sızdırmazlık kontrolü uygun mu?' },
-      // ── Buraya kalan 20 soruyu ekleyin ──────────────────────────────
-    ];
+    const QC_QUESTIONS = {{ qc_questions | tojson }};
 
     /* ── State ── */
     let _currentInventoryId = null;

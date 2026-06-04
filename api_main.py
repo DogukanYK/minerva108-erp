@@ -398,7 +398,10 @@ def qc_page(request: Request, db: Session = Depends(get_db)):
     user = _resolve_active_user(payload, db)
     if not _user_can(user, "qc", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("qc.html", _page_ctx(request, payload, user))
+    from core.qc_questions import QC_QUESTIONS
+    ctx = _page_ctx(request, payload, user)
+    ctx["qc_questions"] = QC_QUESTIONS   # tek kaynak — qc.html window.QC_QUESTIONS olarak kullanır
+    return templates.TemplateResponse("qc.html", ctx)
 
 
 @app.get("/receiving", response_class=HTMLResponse)

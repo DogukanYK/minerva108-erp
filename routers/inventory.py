@@ -951,8 +951,12 @@ def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(
             "created_at":     to_tr(inv.created_at).strftime("%d.%m.%Y %H:%M") if inv.created_at else "",
             "updated_at":     to_tr(inv.updated_at).strftime("%d.%m.%Y %H:%M") if inv.updated_at else "",
         }
+        # ── QC formu (varsa) — soru metinleriyle etiketlenmiş okunur görünüm ──
+        from core.qc_report import parse_qc_form
+        out["qc_form"] = parse_qc_form(inv, item)
     else:
         out["lot_info"] = None
+        out["qc_form"]  = None
 
     # ── Üretim kaydı + tüketilen hammaddeler ────────────────────────────────
     if prod:
