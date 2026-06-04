@@ -38,6 +38,11 @@ class ProductionCreateRequest(BaseModel):
     # Şahit numune adedi — üretilen X adetten kaçı şahit numune dolabına
     # ayrılacak.  Varsayılan 2.  Kalan X-witness adet showroom'a gider.
     witness_quantity: Optional[float] = Field(0, ge=0)
+    # Faz 2 — her hammadde için hangi lot/tedarikçiden tüketileceği seçimi:
+    # {item_id: inventory_id}.  Seçilmeyen kalemler FIFO (en eski APPROVED lot)
+    # ile düşer.  Seçilen lot yetersizse üretim NET HATA ile durur (sessizce
+    # başka lottan düşmez).  Ambalaj/etiket bu seçimden muaftır (toplam stok).
+    ingredient_lot_choices: Optional[dict] = None
 
 
 class QCActionRequest(BaseModel):
@@ -277,6 +282,71 @@ def production_export(
     )
 
 
+_EPS = 1e-9   # kayan nokta toleransı (stok karşılaştırmaları)
+
+
+class _LotChoiceError(Exception):
+    """Seçilen lot bulunamadı / yetersiz — üretim net hatayla durur."""
+
+
+def _plan_lot_allocation(db, item, gross_qty, chosen_inv_id):
+    """
+    Bir hammadde kalemi için gross_qty'yi hangi Inventory lot(lar)ından
+    düşeceğimizi planlar.  Inventory satırları with_for_update ile kilitlenir
+    (aynı anda iki üretim aynı lottan düşmesin).
+
+    Dönüş: (allocations, uncovered)
+      • allocations: [(inventory_row, take_qty), …]
+      • uncovered:   lot kaydı bulunmayan ama current_stock'tan düşülecek artık
+                     (eski/lotsuz kalemlerde geri uyum — üretimi engellemez)
+
+    Kurallar:
+      • chosen_inv_id verilmişse O lottan düşülür; lot yok/uygun değil ya da
+        miktarı yetersizse _LotChoiceError fırlatır (sessizce başka lota geçmez).
+      • Seçim yoksa FIFO: en eski APPROVED lotlardan sırayla düşülür.
+    """
+    # NOT: with_for_update() ile joinedload(supplier) BİRLEŞTİRİLMEZ —
+    # PostgreSQL "FOR UPDATE cannot be applied to the nullable side of an
+    # outer join" hatası verir.  Sadece inventory satırları kilitlenir;
+    # supplier (gerekiyorsa) tüketim aşamasında lazy yüklenir.
+    lots = (
+        db.query(Inventory)
+        .filter(
+            Inventory.item_id == item.id,
+            Inventory.status == "APPROVED",
+            Inventory.quantity > 0,
+        )
+        .order_by(Inventory.created_at.asc(), Inventory.id.asc())
+        .with_for_update()
+        .all()
+    )
+
+    if chosen_inv_id:
+        lot = next((l for l in lots if l.id == int(chosen_inv_id)), None)
+        if not lot:
+            raise _LotChoiceError(
+                f"'{item.name}' için seçilen lot bulunamadı veya stokta uygun değil."
+            )
+        if (lot.quantity or 0) + _EPS < gross_qty:
+            raise _LotChoiceError(
+                f"'{item.name}' için seçilen lot ({lot.lot_number}) yetersiz: "
+                f"{round(lot.quantity, 4)} {item.unit or ''} var, "
+                f"{round(gross_qty, 4)} {item.unit or ''} gerekiyor."
+            )
+        return [(lot, gross_qty)], 0.0
+
+    # FIFO — en eski lotlardan tüket
+    allocations, remaining = [], gross_qty
+    for lot in lots:
+        if remaining <= _EPS:
+            break
+        take = min(float(lot.quantity or 0), remaining)
+        if take > _EPS:
+            allocations.append((lot, round(take, 6)))
+            remaining -= take
+    return allocations, max(0.0, round(remaining, 6))
+
+
 @router.post("/production", status_code=201)
 def start_production(
     data: ProductionCreateRequest,
@@ -305,9 +375,16 @@ def start_production(
 
     try:
         # ── Önce tüm brüt miktarları hesapla ve stok kontrolü yap ──────────
-        ing_plan = []          # (ing, effective_item, gross_qty, is_ambalaj)
+        ing_plan = []          # (ing, item, gross_qty, is_ambalaj, allocations, uncovered)
         label_warnings = []    # seçilen dilde etiketi olmayan kalemler
         processed_groups = set()  # aynı label_group iki kez tüketilmesin
+        # Hammadde lot/tedarikçi seçimleri — {item_id: inventory_id}
+        lot_choices = {}
+        for _k, _v in (data.ingredient_lot_choices or {}).items():
+            try:
+                lot_choices[int(_k)] = int(_v)
+            except (TypeError, ValueError):
+                continue
         for ing in recipe.ingredients:
             item = db.query(Item).filter(Item.id == ing.item_id).with_for_update().first()
             if not item:
@@ -341,9 +418,22 @@ def start_production(
             is_ambalaj = (item.category == "Ambalaj")
             factor     = 1.0 if is_ambalaj else waste_factor   # ambalaja fire uygulanmaz
             gross_qty  = round(ing.quantity * multiplier * factor, 6)
-            ing_plan.append((ing, item, gross_qty, is_ambalaj))
 
-        for ing, item, gross_qty, is_ambalaj in ing_plan:
+            # ── Lot/tedarikçi tahsisi (yalnızca hammadde) ──────────────────
+            # Ambalaj/etiket toplam stoktan düşer (allocations=None).  Hammadde
+            # için seçili lot ya da FIFO planlanır; seçili lot yetersizse net hata.
+            allocations, uncovered = None, 0.0
+            if not is_ambalaj:
+                try:
+                    allocations, uncovered = _plan_lot_allocation(
+                        db, item, gross_qty, lot_choices.get(item.id)
+                    )
+                except _LotChoiceError as e:
+                    db.rollback()
+                    return JSONResponse(status_code=400, content={"detail": str(e)})
+            ing_plan.append((ing, item, gross_qty, is_ambalaj, allocations, uncovered))
+
+        for ing, item, gross_qty, is_ambalaj, _alloc, _unc in ing_plan:
             if item.current_stock < gross_qty:
                 db.rollback()
                 fire_note = "" if is_ambalaj else f" (%{recipe.waste_percentage or 0} fire dahil)"
@@ -362,21 +452,47 @@ def start_production(
         # NOT: item burada *çözülmüş* malzeme — etiket dil çözümü sonrası
         # kardeş etikete inilmiş olabilir, o yüzden Transaction.item_id = item.id
         # (ing.item_id değil — reçetedeki orijinal değil, gerçekten tüketilen).
-        for ing, item, gross_qty, is_ambalaj in ing_plan:
+        for ing, item, gross_qty, is_ambalaj, allocations, uncovered in ing_plan:
+            # current_stock kaynak-of-truth: her zaman tam brüt kadar düşer.
             item.current_stock = round(item.current_stock - gross_qty, 6)
             fire_note = (
                 f" | %{recipe.waste_percentage or 0} fire dahil, brüt girdi"
                 if not is_ambalaj and (recipe.waste_percentage or 0) > 0
                 else ""
             )
-            db.add(Transaction(
-                item_id=item.id,
-                transaction_type="Output",
-                quantity=gross_qty,
-                notes=(f"Üretim tüketimi — Reçete: {recipe.name}{fire_note} | "
-                       f"Dil: {sel_lang_label} | Üretim Lot: {produced_lot}"),
-                performed_by=actor,
-            ))
+            base_note = (f"Üretim tüketimi — Reçete: {recipe.name}{fire_note} | "
+                         f"Dil: {sel_lang_label}")
+
+            if not allocations:
+                # Ambalaj/etiket ya da lotsuz hammadde — toplam stoktan, lot kaydı yok
+                db.add(Transaction(
+                    item_id=item.id, transaction_type="Output", quantity=gross_qty,
+                    notes=f"{base_note} | Üretim Lot: {produced_lot}",
+                    performed_by=actor,
+                ))
+            else:
+                # Hammadde — seçilen/FIFO lot(lar)ından düş, her tahsis ayrı Output
+                # (Transaction.lot_number = KAYNAK lot → izlenebilirlikte kesin).
+                for lot, take in allocations:
+                    lot.quantity = round((lot.quantity or 0) - take, 6)
+                    sup = lot.supplier.name if lot.supplier else "—"
+                    smp = " (numune)" if lot.is_sample else ""
+                    db.add(Transaction(
+                        item_id=item.id, transaction_type="Output", quantity=take,
+                        lot_number=lot.lot_number,
+                        notes=(f"{base_note} | Tedarikçi: {sup}{smp} | "
+                               f"Kaynak Lot: {lot.lot_number} | Üretim Lot: {produced_lot}"),
+                        performed_by=actor,
+                    ))
+                # Lot toplamı brütü karşılamadıysa (eksik lot verisi) artığı toplam
+                # stoktan düş — audit bütünlüğü için yine Output yaz (toplam = brüt).
+                if uncovered > _EPS:
+                    db.add(Transaction(
+                        item_id=item.id, transaction_type="Output", quantity=round(uncovered, 6),
+                        notes=(f"{base_note} | (lot kaydı dışı, toplam stoktan) | "
+                               f"Üretim Lot: {produced_lot}"),
+                        performed_by=actor,
+                    ))
 
         # ── Şahit numune ayrımı ─────────────────────────────────────────────
         # Üretilen X adetin Y'si "Şahit Numune Dolabı"na (marka bazlı), kalanı
@@ -469,7 +585,7 @@ def start_production(
         #     queues exactly one notification (one per ingredient line, not one
         #     per stock unit). Snapshots primitive values now; the BackgroundTask
         #     fires after the response is sent so the user sees no extra latency.
-        for _ing, item, _gross, _amb in ing_plan:
+        for _ing, item, _gross, _amb, _al, _un in ing_plan:
             if item.min_stock_level > 0 and item.current_stock <= item.min_stock_level:
                 background_tasks.add_task(
                     notify_low_stock,
@@ -478,8 +594,8 @@ def start_production(
 
         # ── Stoktan düşülen kalem özeti — lab "ne düştü" diye sormasın ─────
         # ing_plan = gerçekten tüketilen kalemler.  Hammadde / ambalaj ayrımı.
-        hammadde_n = sum(1 for _i, _it, _g, amb in ing_plan if not amb)
-        ambalaj_n  = sum(1 for _i, _it, _g, amb in ing_plan if amb)
+        hammadde_n = sum(1 for _i, _it, _g, amb, _al, _un in ing_plan if not amb)
+        ambalaj_n  = sum(1 for _i, _it, _g, amb, _al, _un in ing_plan if amb)
 
         msg = f"Üretim tamamlandı ({sel_lang_label}). {data.produced_quantity} birim stoğa eklendi."
         msg += f"  Stoktan düşülen: {hammadde_n} hammadde + {ambalaj_n} ambalaj/etiket kalemi."

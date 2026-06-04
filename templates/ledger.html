@@ -662,14 +662,15 @@
         if (d.lots.length) {
           const rows = d.lots.map(l => `
             <tr>
-              <td style="font-family:monospace;font-size:0.8rem;">${escHtml(l.lot_number || '—')}</td>
+              <td style="font-family:monospace;font-size:0.8rem;">${escHtml(l.lot_number || '—')}${l.is_sample ? ' <span style="background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;border-radius:10px;padding:1px 7px;font-size:0.66rem;font-weight:700;">NUMUNE</span>' : ''}</td>
+              <td>${escHtml(l.supplier_name || '—')}</td>
               <td>${escHtml(l.location)}</td>
               <td style="text-align:right;">${fmt(l.quantity)} ${escHtml(d.unit)}</td>
               <td>${escHtml(l.status)}${l.qc_required ? ' <span style="color:#b45309;">· QC bekliyor</span>' : ''}</td>
               <td style="color:#6b7280;">${escHtml(l.created_at)}</td>
             </tr>`).join('');
           lotTable = `<table class="loc-table">
-              <thead><tr><th>Lot</th><th>Konum</th><th style="text-align:right;">Miktar</th><th>Durum</th><th>Tarih</th></tr></thead>
+              <thead><tr><th>Lot</th><th>Tedarikçi</th><th>Konum</th><th style="text-align:right;">Miktar</th><th>Durum</th><th>Tarih</th></tr></thead>
               <tbody>${rows}</tbody></table>`;
         }
 

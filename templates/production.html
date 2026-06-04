@@ -629,6 +629,33 @@
   <script>
     let allRecipes   = [];
     let selectedRecipeDetail = null;
+    // Faz 2 — hammadde başına tüketilebilir lotlar ve kullanıcı seçimi
+    let availableLotsByItem = {};   // { item_id: [ {inventory_id, lot_number, supplier_name, quantity, is_sample, ...} ] }
+    let lotChoices = {};            // { item_id: inventory_id }  (boş = otomatik/FIFO)
+
+    /* Hammadde başına tüketilebilir lotları çek (üretim lot/tedarikçi seçimi). */
+    async function loadAvailableLots() {
+      availableLotsByItem = {};
+      if (!selectedRecipeDetail) return;
+      const ids = (selectedRecipeDetail.ingredients || [])
+        .filter(ing => !ing.is_ambalaj && !(ing.language && ing.label_group))
+        .map(ing => ing.item_id);
+      if (!ids.length) return;
+      try {
+        const res = await fetch('/api/inventory/available-lots', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ item_ids: ids }),
+        });
+        if (res.ok) availableLotsByItem = await res.json();
+      } catch { /* sessiz — seçim olmazsa backend FIFO uygular */ }
+    }
+
+    /* Lot seçimi değişince kaydet (boş = otomatik/FIFO). */
+    function setLotChoice(itemId, val) {
+      if (val) lotChoices[itemId] = parseInt(val);
+      else delete lotChoices[itemId];
+    }
 
     /* ── Etiket dil indeksi ────────────────────────────────────────────────
        label_group → { TR: item, EN: item }.  Üretim önizlemesi, reçetedeki
@@ -713,6 +740,8 @@
     async function onRecipeChange() {
       const id = document.getElementById('prodRecipe').value;
       selectedRecipeDetail = null;
+      lotChoices = {};                     // yeni reçete → seçimleri sıfırla
+      availableLotsByItem = {};
       document.getElementById('previewPanel').style.display = 'none';
       document.getElementById('prodUnitAddon').textContent = '—';
       document.getElementById('prodQuantity').value = '';
@@ -723,6 +752,7 @@
         selectedRecipeDetail = await res.json();
         document.getElementById('prodUnitAddon').textContent =
           selectedRecipeDetail.target_item_unit || 'birim';
+        await loadAvailableLots();         // hammadde lotlarını çek (tedarikçi seçimi)
         updatePreview();
       } catch { showToast('Reçete detayı yüklenirken hata oluştu.'); }
     }
@@ -854,6 +884,33 @@
                          : 'col-stock-after';
         const afterText  = (after < 0 ? '' : '') + fmt(after) + ' ' + escHtml(unit);
 
+        // Faz 2 — hammadde için lot/tedarikçi seçim satırı (yalnızca ≥2 lot varsa:
+        // ör. normal lot + numune).  Tek lot varsa otomatik, satır gösterilmez.
+        let lotPickerRow = '';
+        if (!isAmbalaj && !isLabel) {
+          const lots = availableLotsByItem[ing.item_id] || [];
+          if (lots.length >= 2) {
+            const chosen = lotChoices[ing.item_id] || '';
+            const opts = ['<option value="">Otomatik — en eski lot (FIFO)</option>']
+              .concat(lots.map(l =>
+                `<option value="${l.inventory_id}" ${String(chosen) === String(l.inventory_id) ? 'selected' : ''}>`
+                + `${escHtml(l.supplier_name)} · ${escHtml(l.lot_number)} — ${fmt(l.quantity)} ${escHtml(unit)}`
+                + `${l.is_sample ? ' · NUMUNE' : ''}</option>`)).join('');
+            lotPickerRow = `
+              <tr class="lot-pick-row">
+                <td colspan="6" style="background:#faf8f4;padding:0.45rem 0.9rem;">
+                  <span style="font-size:0.74rem;color:#6b7280;font-weight:600;margin-right:0.5rem;">
+                    <i class="bi bi-truck"></i> ${escHtml(ing.item_name)} — tedarikçi/lot seçimi:
+                  </span>
+                  <select onchange="setLotChoice(${ing.item_id}, this.value)"
+                          style="font-size:0.8rem;padding:0.25rem 0.5rem;border:1.5px solid #e5e7eb;border-radius:6px;min-width:300px;">
+                    ${opts}
+                  </select>
+                </td>
+              </tr>`;
+          }
+        }
+
         return `
           <tr>
             <td>
@@ -871,7 +928,7 @@
             <td class="col-num ${afterClass}" title="Mevcut − Brüt (fireli)">
               ${afterText}
             </td>
-          </tr>`;
+          </tr>${lotPickerRow}`;
       }).join('');
 
       body.innerHTML = rowsHtml;
@@ -959,6 +1016,7 @@
             produced_quantity: qty,
             label_language: selLang,
             witness_quantity: witness,
+            ingredient_lot_choices: lotChoices,   // {item_id: inventory_id} — boş = FIFO
           }),
         });
         const data = await res.json();
@@ -980,6 +1038,8 @@
       document.getElementById('previewPanel').style.display = 'none';
       document.getElementById('prodUnitAddon').textContent = '—';
       selectedRecipeDetail = null;
+      lotChoices = {};
+      availableLotsByItem = {};
     });
 
     /* ── Logout ── */

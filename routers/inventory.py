@@ -92,6 +92,9 @@ class StockReceiveRequest(BaseModel):
     expiry_date: Optional[str] = Field(None, max_length=20)
     quantity: float
     location: Optional[str] = Field(None, max_length=100)
+    # Numune kabulü — alternatif tedarikçiden gelen numune partisi.  Ayrı lot
+    # olarak işaretlenir, normal lotla birleşmez; üretimde tedarikçi seçilebilir.
+    is_sample: Optional[bool] = False
 
 
 class StockAdjustRequest(BaseModel):
@@ -585,11 +588,19 @@ def receive_stock(
 
     actor = current_user.get("full_name") or current_user.get("username") or "—"
 
+    is_sample = bool(data.is_sample)
+    # Numune için varsayılan konum "Numune" (kullanıcı vermezse) — stok
+    # sayfasında normal stoktan görsel olarak ayrışsın.
+    location = data.location or ("Numune" if is_sample else None)
+
     try:
         # ── Upsert Logic (4.7) ──────────────────────────────────────────────
+        # Numune lotları normal lotlarla BİRLEŞMEZ — is_sample da eşleşme
+        # anahtarına dahil (aynı lot no farklı tedarikçi/numune ayrı kalır).
         existing = db.query(Inventory).filter(
             Inventory.item_id == data.item_id,
             Inventory.lot_number == data.lot_number,
+            Inventory.is_sample == is_sample,
         ).first()
 
         new_inventory: Optional[Inventory] = None
@@ -599,8 +610,8 @@ def receive_stock(
             # Miktarı topla; location/supplier_id sadece yeni değer varsa güncelle (COALESCE)
             existing.quantity   += data.quantity
             existing.updated_at  = __import__("datetime").datetime.utcnow()
-            if data.location:
-                existing.location = data.location
+            if location:
+                existing.location = location
             if data.supplier_id is not None:
                 existing.supplier_id = data.supplier_id
             if data.expiry_date:
@@ -614,19 +625,21 @@ def receive_stock(
                 lot_number=data.lot_number,
                 expiry_date=data.expiry_date,
                 quantity=data.quantity,
-                location=data.location,
+                location=location,
                 status="APPROVED",
                 received_by=actor,                      # Audit trail
+                is_sample=is_sample,
             )
             db.add(new_inventory)
 
         # ── Transaction kaydı (2.4) ─────────────────────────────────────────
+        kabul_label = "Numune kabul" if is_sample else "Mal kabul"
         tx = Transaction(
             item_id=data.item_id,
             lot_number=data.lot_number,
             transaction_type="Input",
             quantity=data.quantity,
-            notes=f"Mal kabul — Lot: {data.lot_number}" + (f", Konum: {data.location}" if data.location else ""),
+            notes=f"{kabul_label} — Lot: {data.lot_number}" + (f", Konum: {location}" if location else ""),
             performed_by=actor,                          # Audit trail
         )
         db.add(tx)
@@ -666,7 +679,10 @@ def receive_stock(
                 pass
 
         db.commit()
-        return {"message": f"Mal kabul başarılı. {data.quantity} {item.unit} stoka eklendi."}
+        msg = (f"Numune kabul başarılı. {data.quantity} {item.unit} numune stoğa eklendi."
+               if is_sample else
+               f"Mal kabul başarılı. {data.quantity} {item.unit} stoka eklendi.")
+        return {"message": msg}
 
     except Exception:
         db.rollback()
@@ -838,6 +854,7 @@ def inventory_by_item(
 
     rows = (
         db.query(Inventory)
+        .options(joinedload(Inventory.supplier))
         .filter(Inventory.item_id == item_id)
         .order_by(Inventory.id.desc())
         .all()
@@ -850,14 +867,16 @@ def inventory_by_item(
         qty = float(r.quantity or 0)
         by_location[loc] = round(by_location.get(loc, 0.0) + qty, 4)
         lots.append({
-            "lot_number":  r.lot_number,
-            "location":    loc,
-            "quantity":    round(qty, 4),
-            "status":      r.status or "",
-            "qc_required": bool(r.qc_required),
-            "expiry_date": r.expiry_date or "",
-            "received_by": r.received_by or "",
-            "created_at":  to_tr(r.created_at).strftime("%d.%m.%Y %H:%M") if r.created_at else "",
+            "lot_number":    r.lot_number,
+            "location":      loc,
+            "quantity":      round(qty, 4),
+            "status":        r.status or "",
+            "qc_required":   bool(r.qc_required),
+            "is_sample":     bool(r.is_sample),
+            "supplier_name": (r.supplier.name if r.supplier else "—"),
+            "expiry_date":   r.expiry_date or "",
+            "received_by":   r.received_by or "",
+            "created_at":    to_tr(r.created_at).strftime("%d.%m.%Y %H:%M") if r.created_at else "",
         })
 
     return {
@@ -875,6 +894,78 @@ def inventory_by_item(
         ],
         "lots":          lots,
     }
+
+
+@router.get("/inventory/samples")
+def list_samples(db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+    """
+    Numune lotları — Ürünler sayfası "Numune" sekmesini besler.  Var olan
+    hammaddelere bağlı, alternatif tedarikçilerden gelen numune partileri.
+    """
+    rows = (
+        db.query(Inventory)
+        .options(joinedload(Inventory.item), joinedload(Inventory.supplier))
+        .filter(Inventory.is_sample == True)   # noqa: E712
+        .order_by(Inventory.id.desc())
+        .all()
+    )
+    return [
+        {
+            "inventory_id":  r.id,
+            "item_id":       r.item_id,
+            "item_name":     r.item.name if r.item else "—",
+            "unit":          (r.item.unit if r.item else "") or "",
+            "supplier_name": (r.supplier.name if r.supplier else "—"),
+            "lot_number":    r.lot_number,
+            "quantity":      round(float(r.quantity or 0), 4),
+            "expiry_date":   r.expiry_date or "—",
+            "created_at":    to_tr(r.created_at).strftime("%d.%m.%Y") if r.created_at else "—",
+        }
+        for r in rows
+    ]
+
+
+class _AvailableLotsRequest(BaseModel):
+    item_ids: List[int] = Field(..., max_length=300)
+
+
+@router.post("/inventory/available-lots")
+def available_lots(
+    data: _AvailableLotsRequest,
+    db: Session = Depends(get_db),
+    _: dict = Depends(get_current_user),
+):
+    """
+    Üretim ekranı için: verilen hammaddelerin TÜKETİLEBİLİR lotları
+    (APPROVED + miktar>0), tedarikçi + numune bilgisiyle, FIFO sırasında
+    (en eski önce).  `{item_id: [ {inventory_id, lot_number, supplier_name,
+    quantity, is_sample, location, expiry_date}, … ]}` döner.
+    """
+    if not data.item_ids:
+        return {}
+    rows = (
+        db.query(Inventory)
+        .options(joinedload(Inventory.supplier))
+        .filter(
+            Inventory.item_id.in_(data.item_ids),
+            Inventory.status == "APPROVED",
+            Inventory.quantity > 0,
+        )
+        .order_by(Inventory.created_at.asc(), Inventory.id.asc())
+        .all()
+    )
+    out: dict = {}
+    for r in rows:
+        out.setdefault(r.item_id, []).append({
+            "inventory_id":  r.id,
+            "lot_number":    r.lot_number,
+            "supplier_name": (r.supplier.name if r.supplier else "—"),
+            "quantity":      round(float(r.quantity or 0), 4),
+            "is_sample":     bool(r.is_sample),
+            "location":      r.location or "",
+            "expiry_date":   r.expiry_date or "",
+        })
+    return out
 
 
 @router.get("/transactions")
@@ -975,17 +1066,29 @@ def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(
         ingredients_consumed = []
         for tx in ing_outputs:
             tx_item = db.query(Item).filter(Item.id == tx.item_id).first()
-            # Best-guess source lot: most-recent APPROVED Inventory for this item before production date
-            tx_inv = (
-                db.query(Inventory)
-                .filter(
-                    Inventory.item_id == tx.item_id,
-                    Inventory.status == "APPROVED",
-                    Inventory.created_at <= (prod.produced_at or _import_dt().utcnow()),
+            # Faz 2 — tüketim Output'u artık KAYNAK lotu Transaction.lot_number'a
+            # yazıyor.  Varsa o kesin lottan tedarikçi/SKT/numune bilgisi gelir;
+            # yoksa (eski kayıtlar) eski "en yakın APPROVED lot" tahminine düşülür.
+            tx_inv = None
+            if tx.lot_number:
+                tx_inv = (
+                    db.query(Inventory)
+                    .filter(Inventory.item_id == tx.item_id,
+                            Inventory.lot_number == tx.lot_number)
+                    .order_by(Inventory.id.desc())
+                    .first()
                 )
-                .order_by(Inventory.created_at.desc())
-                .first()
-            )
+            if tx_inv is None:
+                tx_inv = (
+                    db.query(Inventory)
+                    .filter(
+                        Inventory.item_id == tx.item_id,
+                        Inventory.status == "APPROVED",
+                        Inventory.created_at <= (prod.produced_at or _import_dt().utcnow()),
+                    )
+                    .order_by(Inventory.created_at.desc())
+                    .first()
+                )
             tx_supplier = db.query(Supplier).filter(Supplier.id == tx_inv.supplier_id).first() if tx_inv and tx_inv.supplier_id else None
             ingredients_consumed.append({
                 "item_id":       tx.item_id,
@@ -993,8 +1096,9 @@ def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(
                 "item_category": tx_item.category if tx_item else "—",
                 "quantity":      tx.quantity,
                 "unit":          tx_item.unit if tx_item else "",
-                "source_lot":    tx_inv.lot_number   if tx_inv else "—",
+                "source_lot":    (tx.lot_number or (tx_inv.lot_number if tx_inv else None)) or "—",
                 "supplier_name": tx_supplier.name    if tx_supplier else "—",
+                "is_sample":     bool(tx_inv.is_sample) if tx_inv else False,
                 "expiry_date":   (tx_inv.expiry_date if tx_inv else None) or "—",
                 "received_by":   (tx_inv.received_by if tx_inv else None) or "—",
                 "performed_by":  tx.performed_by or "—",

@@ -179,6 +179,11 @@ class Inventory(Base):
     # status APPROVED bile olsa QC ekrana çıkar; QC karar verince
     # qc_required=False'a iner.
     qc_required = Column(Boolean, default=False, nullable=False)
+    # Numune lotu mu?  Var olan bir hammaddenin ALTERNATİF bir tedarikçiden
+    # numune olarak gelen partisi True ile işaretlenir (kendi supplier_id'siyle).
+    # Stoğa girer ve üretimde kullanılabilir; stok sayfası ayrı rozetle gösterir,
+    # üretimde hangi tedarikçinin/lotun tüketileceği seçilebilir.
+    is_sample = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -499,6 +504,8 @@ def init_db():
             # Phase 16 — Üretim föyü: FAZ + YAPILIŞI
             "ALTER TABLE recipe_ingredients ADD COLUMN phase VARCHAR(8)",
             "ALTER TABLE recipes            ADD COLUMN production_notes TEXT",
+            # Faz 2 — Numune lotu işareti (alternatif tedarikçi numuneleri)
+            "ALTER TABLE inventory          ADD COLUMN is_sample BOOLEAN DEFAULT FALSE",
         ):
             alter_safe(stmt)
 

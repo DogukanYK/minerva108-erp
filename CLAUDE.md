@@ -106,6 +106,20 @@ per-user JSON **permission override** that fully replaces the role default
   and a shared `label_group`; production resolves the right-language sibling.
 - `Item.current_stock` is the source of truth for stock; production/receiving/QC all
   update it directly and append immutable `Transaction` rows.
+- **Samples (numune)**: `Inventory.is_sample=True` marks a lot received from an
+  *alternate* supplier for an existing raw material (entered from the Items page
+  "Numune" tab → `/api/inventory/receive` with `is_sample`). Sample lots never merge
+  with normal lots (upsert key includes `is_sample`) and enter usable stock.
+- **Lot/supplier-aware consumption**: production decrements `Item.current_stock`
+  (authoritative gate) **and** specific Inventory lots. Per raw-material ingredient the
+  user may pick a lot via `ingredient_lot_choices {item_id: inventory_id}` (production
+  preview shows a picker when ≥2 lots exist); unpicked → FIFO (oldest APPROVED lot).
+  A **picked lot that is short → hard 400 error** (never silently spills). Each
+  consumed lot writes an `Output` `Transaction` whose `lot_number` is the *source* lot
+  (+ supplier in notes), so `trace_lot` shows exact provenance. Ambalaj/etiket stay
+  aggregate (no lot picker). Items with no lots fall back to today's aggregate-only
+  decrement (`_plan_lot_allocation` in `routers/production.py`). Available lots:
+  `POST /api/inventory/available-lots`.
 - Item delete is **soft** (`is_active=False`) when audit/transaction rows exist;
   hard delete only when there are no references.
 - **QC forms** are stored as JSON on `Inventory.qc_form_data` (written by

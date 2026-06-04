@@ -714,10 +714,15 @@
           Bitmiş Ürün
           <span class="tab-count" id="count-bitmis_urun">—</span>
         </button>
+        <button class="tab-btn" data-tab="numune" role="tab" aria-selected="false">
+          <i class="bi bi-eyedropper"></i>
+          Numune
+          <span class="tab-count" id="count-numune">—</span>
+        </button>
       </div>
 
       <!-- Table Card (flush with tabs above) -->
-      <div class="table-card">
+      <div class="table-card" id="itemsTableCard">
         <div class="table-responsive">
           <table id="itemsTable">
             <thead>
@@ -764,10 +769,83 @@
         </div>
       </div>
 
+      <!-- ════ NUMUNE PANELİ (Numune sekmesi aktifken görünür) ════ -->
+      <div class="table-card" id="numunePanel" style="display:none;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 1.25rem;border-bottom:1px solid #f0ece4;flex-wrap:wrap;">
+          <div>
+            <h2 style="font-family:'Playfair Display',serif;font-size:1.05rem;font-weight:600;color:var(--navy);margin:0;">Numune Girişleri</h2>
+            <p style="font-size:0.82rem;color:#6b7280;margin:0.2rem 0 0;">Var olan bir hammaddenin alternatif tedarikçiden gelen numune partileri. Stoğa girer; üretimde tedarikçi/lot seçilebilir.</p>
+          </div>
+          {% if can('inventory', 'receive') %}
+          <button class="btn-primary-gold" onclick="openSampleModal()">
+            <i class="bi bi-plus-lg"></i> Numune Girişi
+          </button>
+          {% endif %}
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th style="padding-left:1.1rem;">Hammadde</th>
+                <th>Tedarikçi</th>
+                <th>Lot / Parti</th>
+                <th style="text-align:right;">Miktar</th>
+                <th>Son Kullanma</th>
+                <th>Giriş Tarihi</th>
+              </tr>
+            </thead>
+            <tbody id="sampleBody">
+              <tr><td colspan="6"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
     </div>
   </main>
 
   <div id="toast-container"></div>
+
+  <!-- ════ MODAL: NUMUNE GİRİŞİ ════ -->
+  <div class="modal fade" id="sampleEntryModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" style="font-family:'Playfair Display',serif;color:var(--navy);">Numune Girişi</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:0.82rem;color:#6b7280;margin:0 0 1rem;">Numune, var olan bir hammaddeye bağlı ayrı bir lot olarak kaydedilir; normal stokla birleşmez.</p>
+          <div class="mb-3">
+            <label class="form-label-sm">Hammadde *</label>
+            <select class="form-select" id="sampleItem" required><option value="">— Hammadde seçiniz —</option></select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label-sm">Numune Tedarikçisi</label>
+            <select class="form-select" id="sampleSupplier"><option value="">— Tedarikçi seçiniz —</option></select>
+          </div>
+          <div class="row g-2">
+            <div class="col-12 col-md-6 mb-3">
+              <label class="form-label-sm">Lot / Parti No *</label>
+              <input type="text" class="form-control" id="sampleLot" placeholder="Örn: NUM-2026-001" />
+            </div>
+            <div class="col-12 col-md-6 mb-3">
+              <label class="form-label-sm">Miktar *</label>
+              <input type="number" class="form-control" id="sampleQty" min="0.001" step="0.001" placeholder="0.00" />
+            </div>
+          </div>
+          <div class="mb-1">
+            <label class="form-label-sm">Son Kullanma Tarihi</label>
+            <input type="date" class="form-control" id="sampleExpiry" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">İptal</button>
+          <button type="button" class="btn-save" id="sampleSaveBtn" onclick="submitSample()">Numuneyi Kaydet</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- ════ MODAL: YENİ ÜRÜN EKLE ════ -->
   <div class="modal fade" id="addItemModal" tabindex="-1" aria-labelledby="addItemModalLabel" aria-hidden="true">
@@ -1459,9 +1537,85 @@
         document.getElementById('selectAll').checked = false;
         updateBulkBtn();
 
+        // Numune sekmesi: ürün tablosu yerine numune panelini göster
+        const isNumune = (activeTab === 'numune');
+        document.getElementById('itemsTableCard').style.display = isNumune ? 'none' : '';
+        document.getElementById('numunePanel').style.display = isNumune ? 'block' : 'none';
+        if (isNumune) { renderSamples(); return; }
+
         applyFiltersAndSort();
       });
     });
+
+    /* ── Numune paneli ── */
+    async function renderSamples() {
+      const tbody = document.getElementById('sampleBody');
+      try {
+        const res = await fetch('/api/inventory/samples');
+        const rows = res.ok ? await res.json() : [];
+        const cnt = document.getElementById('count-numune');
+        if (cnt) cnt.textContent = rows.length;
+        if (!rows.length) {
+          tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><i class="bi bi-eyedropper"></i><p>Henüz numune girişi yok. "Numune Girişi" ile ekleyin.</p></div></td></tr>`;
+          return;
+        }
+        tbody.innerHTML = rows.map(r => `
+          <tr>
+            <td style="padding-left:1.1rem;font-weight:600;color:#1f2937;">${escHtml(r.item_name)}</td>
+            <td><i class="bi bi-truck" style="color:var(--gold);"></i> ${escHtml(r.supplier_name || '—')}</td>
+            <td style="font-family:monospace;font-size:0.82rem;color:var(--navy);">${escHtml(r.lot_number)}</td>
+            <td style="text-align:right;font-weight:600;">${Number(r.quantity).toLocaleString('tr-TR',{maximumFractionDigits:4})} ${escHtml(r.unit || '')}</td>
+            <td style="color:#6b7280;">${escHtml(r.expiry_date || '—')}</td>
+            <td style="color:#6b7280;">${escHtml(r.created_at || '—')}</td>
+          </tr>`).join('');
+      } catch { tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><p>Numuneler yüklenemedi.</p></div></td></tr>`; }
+    }
+
+    async function openSampleModal() {
+      // Hammadde + tedarikçi dropdownlarını doldur
+      const itemSel = document.getElementById('sampleItem');
+      const suppSel = document.getElementById('sampleSupplier');
+      itemSel.innerHTML = '<option value="">— Hammadde seçiniz —</option>';
+      suppSel.innerHTML = '<option value="">— Tedarikçi seçiniz —</option>';
+      try {
+        const items = window.fetchItems ? await window.fetchItems()
+                    : await fetch('/api/items').then(r => r.json());
+        window.trSortBy(items.filter(i => i.category !== 'Ambalaj' && i.category !== 'Bitmiş Ürün'), 'name')
+          .forEach(i => { const o = document.createElement('option'); o.value = i.id; o.textContent = i.name; o.dataset.unit = i.unit || ''; itemSel.appendChild(o); });
+      } catch {}
+      try {
+        const supps = await fetch('/api/suppliers').then(r => r.json());
+        window.trSortBy(supps, 'name').forEach(s => { const o = document.createElement('option'); o.value = s.id; o.textContent = s.name; suppSel.appendChild(o); });
+      } catch {}
+      ['sampleLot','sampleQty','sampleExpiry'].forEach(id => document.getElementById(id).value = '');
+      new bootstrap.Modal(document.getElementById('sampleEntryModal')).show();
+    }
+
+    async function submitSample() {
+      const itemId = parseInt(document.getElementById('sampleItem').value);
+      const suppId = parseInt(document.getElementById('sampleSupplier').value) || null;
+      const lot    = document.getElementById('sampleLot').value.trim();
+      const qty    = parseFloat(document.getElementById('sampleQty').value);
+      const expiry = document.getElementById('sampleExpiry').value || null;
+      if (!itemId) { showToast('Lütfen bir hammadde seçiniz.'); return; }
+      if (!lot)    { showToast('Lot / Parti No zorunludur.'); return; }
+      if (!qty || qty <= 0) { showToast('Geçerli bir miktar giriniz.'); return; }
+      const btn = document.getElementById('sampleSaveBtn');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/inventory/receive', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ item_id: itemId, supplier_id: suppId, lot_number: lot, quantity: qty, expiry_date: expiry, is_sample: true }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Numune kaydedilemedi.'); return; }
+        showToast(data.message, 'success');
+        bootstrap.Modal.getInstance(document.getElementById('sampleEntryModal')).hide();
+        renderSamples();
+        if (window.invalidateItemsCache) window.invalidateItemsCache();
+      } catch { showToast('Sunucuya bağlanılamadı.'); }
+      finally { btn.disabled = false; }
+    }
 
     /* ── Search ── */
     document.getElementById('searchInput').addEventListener('input', applyFiltersAndSort);
