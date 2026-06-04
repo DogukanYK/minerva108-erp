@@ -37,3 +37,9 @@ Thumbs.db
 
 # Claude Code worktrees (her dal kendi .git'iyle çalışır)
 .claude/worktrees/
+# Kişisel/yerel Claude Code ayarları — settings.json (hook'lar) tracked kalır,
+# .local kişiseldir ve her kullanımda değişir → repoya girmez
+.claude/settings.local.json
+
+# Kişisel müzakere belgeleri — repoya girmez (yerelde kalır)
+Minerva108_Calisma_Iliskisi_Revizyon_Dosyasi.*
