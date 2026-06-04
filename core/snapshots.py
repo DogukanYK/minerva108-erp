@@ -88,11 +88,17 @@ def compute_stock_at(db: Session, eom: _dt.datetime, *item_filters) -> tuple[dic
 
 # ── Snapshot kayıt ─────────────────────────────────────────────────────────
 
-def snapshot_exists(db: Session, year: int, month: int) -> bool:
-    """Bu yıl/ay için dondurulmuş snapshot var mı?"""
-    return db.query(StockSnapshot.id).filter(
+def snapshot_exists(db: Session, year: int, month: int, domain: Optional[str] = None) -> bool:
+    """Bu yıl/ay için dondurulmuş snapshot var mı?
+
+    domain verilirse YALNIZCA o panele ait satırlar aranır — bir panelin
+    snapshot'ı varken diğerinin live'a düşmesi gerekebilir (Faz 3)."""
+    q = db.query(StockSnapshot.id).filter(
         StockSnapshot.year == year, StockSnapshot.month == month
-    ).first() is not None
+    )
+    if domain is not None:
+        q = q.filter(StockSnapshot.domain == domain)
+    return q.first() is not None
 
 
 def capture_month_snapshot(db: Session, year: int, month: int) -> int:
@@ -121,6 +127,7 @@ def capture_month_snapshot(db: Session, year: int, month: int) -> int:
             pkg_type=it.pkg_type,
             unit=it.unit,
             stock=stocks.get(it.id, 0.0),
+            domain=(it.domain or "cosmetics"),   # Faz 3 — item'ın paneli
             captured_at=now,
         ))
         written += 1

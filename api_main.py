@@ -36,7 +36,8 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router
+from core.domain import get_active_domain, domain_label
 
 
 # ─── App init ───────────────────────────────────────────────────────────────
@@ -232,6 +233,7 @@ app.include_router(backup.router)
 app.include_router(debug.router)
 app.include_router(undo.router)
 app.include_router(system.router)
+app.include_router(domain_router.router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────
@@ -279,15 +281,18 @@ def _page_ctx(request: Request, payload: dict, user: User) -> dict:
     def _can(category: str, action: str) -> bool:
         return bool(perms.get(category, {}).get(action, False))
 
+    active_domain = get_active_domain(request)
     return {
-        "request":     request,
-        "username":    payload.get("username"),
-        "full_name":   payload.get("full_name"),
-        "role":        role,
-        "role_label":  _ROLE_LABELS.get(role, role),
-        "user_id":     user.id,
-        "permissions": perms,    # full dict — useful for debug/advanced template logic
-        "can":         _can,     # callable — primary template API
+        "request":      request,
+        "username":     payload.get("username"),
+        "full_name":    payload.get("full_name"),
+        "role":         role,
+        "role_label":   _ROLE_LABELS.get(role, role),
+        "user_id":      user.id,
+        "permissions":  perms,    # full dict — useful for debug/advanced template logic
+        "can":          _can,     # callable — primary template API
+        "domain":       active_domain,                 # Faz 3 — aktif panel
+        "domain_label": domain_label(active_domain),
     }
 
 

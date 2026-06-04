@@ -91,6 +91,7 @@ class Supplier(Base):
     notes = Column(Text)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Faz 3 — Kozmetik / Food Supplement
 
     items = relationship("Item", back_populates="supplier")
 
@@ -118,6 +119,7 @@ class Item(Base):
     label_group = Column(String(255), nullable=True, index=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Faz 3 — Kozmetik / Food Supplement
 
     supplier = relationship("Supplier", back_populates="items")
     recipe_ingredients = relationship("RecipeIngredient", back_populates="item")
@@ -136,6 +138,7 @@ class Recipe(Base):
     production_notes = Column(Text, nullable=True)  # Üretim föyü "YAPILIŞI" metni
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Faz 3 — Kozmetik / Food Supplement
 
     target_item = relationship("Item", foreign_keys=[target_item_id])
     ingredients = relationship(
@@ -184,6 +187,7 @@ class Inventory(Base):
     # Stoğa girer ve üretimde kullanılabilir; stok sayfası ayrı rozetle gösterir,
     # üretimde hangi tedarikçinin/lotun tüketileceği seçilebilir.
     is_sample = Column(Boolean, default=False, nullable=False)
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Faz 3 — item.domain ile aynı
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -247,6 +251,7 @@ class Quotation(Base):
 
     # Lifecycle audit
     status       = Column(String(20),  nullable=False, default="DRAFT", index=True)  # DRAFT / CONFIRMED
+    domain       = Column(String(20),  nullable=False, default="cosmetics", index=True)  # Faz 3
     created_at   = Column(DateTime,    default=datetime.utcnow)
     created_by   = Column(String(50),  nullable=True)
     confirmed_at = Column(DateTime,    nullable=True)
@@ -289,6 +294,7 @@ class ProductionHistory(Base):
     produced_at = Column(DateTime, default=datetime.utcnow)
     produced_by = Column(String(50), nullable=True)             # Audit: who started production
     lot_number = Column(String(100), nullable=True, index=True) # Genealogy: lot of finished good
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Faz 3 — Kozmetik / Food Supplement
 
 
 class AdminAuditLog(Base):
@@ -410,6 +416,7 @@ class StockSnapshot(Base):
     pkg_type    = Column(String(20),  nullable=True)
     unit        = Column(String(20),  nullable=True)
     stock       = Column(Float, nullable=False, default=0.0)
+    domain      = Column(String(20), default="cosmetics", nullable=False, index=True)  # Faz 3
     captured_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -506,6 +513,22 @@ def init_db():
             "ALTER TABLE recipes            ADD COLUMN production_notes TEXT",
             # Faz 2 — Numune lotu işareti (alternatif tedarikçi numuneleri)
             "ALTER TABLE inventory          ADD COLUMN is_sample BOOLEAN DEFAULT FALSE",
+            # Faz 3 — Kozmetik / Food Supplement domain ayrımı.  PG'de DEFAULT'lu
+            # ADD COLUMN mevcut satırları otomatik 'cosmetics' ile doldurur.
+            "ALTER TABLE items              ADD COLUMN domain VARCHAR(20) NOT NULL DEFAULT 'cosmetics'",
+            "ALTER TABLE suppliers          ADD COLUMN domain VARCHAR(20) NOT NULL DEFAULT 'cosmetics'",
+            "ALTER TABLE recipes            ADD COLUMN domain VARCHAR(20) NOT NULL DEFAULT 'cosmetics'",
+            "ALTER TABLE inventory          ADD COLUMN domain VARCHAR(20) NOT NULL DEFAULT 'cosmetics'",
+            "ALTER TABLE production_history ADD COLUMN domain VARCHAR(20) NOT NULL DEFAULT 'cosmetics'",
+            "ALTER TABLE quotations         ADD COLUMN domain VARCHAR(20) NOT NULL DEFAULT 'cosmetics'",
+            "ALTER TABLE stock_snapshot     ADD COLUMN domain VARCHAR(20) NOT NULL DEFAULT 'cosmetics'",
+            "CREATE INDEX IF NOT EXISTS ix_items_domain      ON items(domain)",
+            "CREATE INDEX IF NOT EXISTS ix_suppliers_domain  ON suppliers(domain)",
+            "CREATE INDEX IF NOT EXISTS ix_recipes_domain    ON recipes(domain)",
+            "CREATE INDEX IF NOT EXISTS ix_inventory_domain  ON inventory(domain)",
+            "CREATE INDEX IF NOT EXISTS ix_prodhist_domain   ON production_history(domain)",
+            "CREATE INDEX IF NOT EXISTS ix_quotations_domain ON quotations(domain)",
+            "CREATE INDEX IF NOT EXISTS ix_snapshot_domain   ON stock_snapshot(domain)",
         ):
             alter_safe(stmt)
 

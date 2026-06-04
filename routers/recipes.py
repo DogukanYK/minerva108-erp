@@ -16,6 +16,7 @@ from typing import Optional, List
 from database import get_db, Item, Recipe, RecipeIngredient, to_tr
 from core.auth import get_current_user
 from core.permissions import _can_see_finance, require_permission
+from core.domain import active_domain
 
 router = APIRouter(prefix="/api", tags=["recipes"])
 
@@ -94,8 +95,11 @@ def list_recipes(
     include_ingredients: bool = False,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    domain: str = Depends(active_domain),
 ):
-    rows = db.query(Recipe).filter(Recipe.is_active == True).order_by(Recipe.id.desc()).all()
+    rows = (db.query(Recipe)
+            .filter(Recipe.is_active == True, Recipe.domain == domain)
+            .order_by(Recipe.id.desc()).all())
     finance_ok = _can_see_finance(current_user)
     result = []
     for r in rows:
@@ -147,6 +151,7 @@ def create_recipe(data: RecipeCreateRequest, db: Session = Depends(get_db), _: d
             waste_percentage=round(data.waste_percentage or 0.0, 4),
             description=f"Hedef: {target_item.name}",
             production_notes=(data.production_notes or "").strip() or None,
+            domain=(target_item.domain or "cosmetics"),   # Faz 3 — hedef ürünün paneli
         )
         db.add(recipe)
         db.flush()  # recipe.id'yi al, commit etme

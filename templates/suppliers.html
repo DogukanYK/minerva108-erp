@@ -12,6 +12,7 @@
        still use {% if can(...) %} — it's the same source of truth. #}
   <script>
     window.PERMS = {{ permissions | tojson }};
+    window.DOMAIN = {{ domain | tojson }};
     window.can = function (category, action) {
       const cat = window.PERMS && window.PERMS[category];
       return !!(cat && cat[action]);
@@ -309,6 +310,11 @@
   <header class="topnav">
     <span class="topnav-title">Tedarikçiler</span>
     <div class="topnav-right">
+      <button id="domainSwitchBtn" type="button" title="Panel değiştir (Kozmetik ↔ Food Supplement)"
+        onclick="fetch('/api/domain/switch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:(window.DOMAIN==='supplement'?'cosmetics':'supplement')})}).then(function(r){if(r.ok)location.reload();})"
+        style="display:flex;align-items:center;gap:0.4rem;padding:0.4rem 0.85rem;border:1.5px solid var(--gold);border-radius:8px;background:var(--white);color:var(--navy);font-family:'Jost',sans-serif;font-size:0.82rem;font-weight:600;cursor:pointer;">
+        <i class="bi bi-arrow-left-right"></i><span>{{ domain_label }}</span>
+      </button>
       <button
         id="enablePushBtn"
         type="button"

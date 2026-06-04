@@ -25,6 +25,7 @@ from database import (
 )
 from core.permissions import require_permission
 from core.snapshots import compute_stock_at, snapshot_exists
+from core.domain import active_domain
 
 router = APIRouter(prefix="/api", tags=["reports"])
 
@@ -72,11 +73,13 @@ def _snapshot_category_filter(category_key: str):
     return ()
 
 
-def _rows_from_snapshot(db: Session, year: int, month: int, category_key: str) -> list[dict]:
+def _rows_from_snapshot(db: Session, year: int, month: int, category_key: str,
+                        domain: str = "cosmetics") -> list[dict]:
     """Dondurulmuş `stock_snapshot` satırlarından kategori bazlı rapor satırları."""
     rows = (
         db.query(StockSnapshot)
         .filter(StockSnapshot.year == year, StockSnapshot.month == month,
+                StockSnapshot.domain == domain,
                 *_snapshot_category_filter(category_key))
         .all()
     )
@@ -97,9 +100,10 @@ def _rows_from_snapshot(db: Session, year: int, month: int, category_key: str) -
     return out
 
 
-def _rows_live(db: Session, eom: _dt.datetime, category_key: str) -> list[dict]:
+def _rows_live(db: Session, eom: _dt.datetime, category_key: str,
+               domain: str = "cosmetics") -> list[dict]:
     """Snapshot yoksa: `core.snapshots.compute_stock_at` ile canlı rekonstrüksiyon."""
-    stocks, items = compute_stock_at(db, eom, *_category_filter(category_key))
+    stocks, items = compute_stock_at(db, eom, Item.domain == domain, *_category_filter(category_key))
     out = []
     for it in items:
         stock = float(stocks.get(it.id, 0.0))
@@ -124,10 +128,12 @@ def report_monthly_stock(
     category: str = Query("all", regex="^(all|hammadde|ambalaj|etiket|finished)$"),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
 ):
     """
     Verilen ay sonunda mevcut stok dökümü.  Tarihçe rekonstrüksiyonu —
-    Transaction'lardaki signed delta'ların kümülatif toplamı.
+    Transaction'lardaki signed delta'ların kümülatif toplamı.  Aktif panele
+    (domain) göre süzülür.
 
     category: all | hammadde | ambalaj | etiket | finished
     """
@@ -154,13 +160,13 @@ def report_monthly_stock(
 
     # Geçmiş bir ay için dondurulmuş snapshot varsa onu kullan — kesin ve
     # transaction değişikliklerinden etkilenmez.  Yoksa canlı rekonstrüksiyon.
-    use_snapshot = snapshot_exists(db, year, month)
+    use_snapshot = snapshot_exists(db, year, month, domain)
 
     result = []
     for key, label in sections:
-        rows = (_rows_from_snapshot(db, year, month, key)
+        rows = (_rows_from_snapshot(db, year, month, key, domain)
                 if use_snapshot else
-                _rows_live(db, eom, key))
+                _rows_live(db, eom, key, domain))
         result.append({
             "category": key,
             "label":    label,
@@ -190,9 +196,10 @@ def report_monthly_stock_export(
     category: str = Query("all", regex="^(all|hammadde|ambalaj|etiket|finished)$"),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
 ):
     """Aylık stok raporu .xlsx — her kategori ayrı sheet."""
-    data = report_monthly_stock(year, month, category, db, _)
+    data = report_monthly_stock(year, month, category, db, _, domain)
     if isinstance(data, JSONResponse):
         return data
 
@@ -264,6 +271,7 @@ def report_monthly_stock_export(
 def report_top_usage(
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
 ):
     import datetime as _dt
     from sqlalchemy import func
@@ -279,6 +287,7 @@ def report_top_usage(
         .filter(
             Transaction.transaction_type == "Output",
             Transaction.timestamp >= since,
+            Item.domain == domain,
         )
         .group_by(Item.id)
         .order_by(func.sum(Transaction.quantity).desc())
@@ -295,12 +304,15 @@ def report_top_usage(
 def report_production_trends(
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
 ):
     import datetime as _dt
     from sqlalchemy import func
     today = _dt.date.today()
     since = _dt.datetime.combine(today - _dt.timedelta(days=6), _dt.time.min)
-    rows = db.query(ProductionHistory).filter(ProductionHistory.produced_at >= since).all()
+    rows = (db.query(ProductionHistory)
+            .filter(ProductionHistory.produced_at >= since,
+                    ProductionHistory.domain == domain).all())
     # Gün gün topla
     day_map = {}
     for i in range(7):
@@ -318,6 +330,7 @@ def report_production_trends(
 def report_low_stock_alert(
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
 ):
     items = (
         db.query(Item)
@@ -325,6 +338,7 @@ def report_low_stock_alert(
             Item.is_active == True,
             Item.min_stock_level > 0,
             Item.current_stock <= Item.min_stock_level,
+            Item.domain == domain,
         )
         .order_by(Item.current_stock.asc())
         .all()
@@ -358,10 +372,11 @@ def report_low_stock_alert(
 def dashboard_stats(
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
 ):
-    total_items     = db.query(Item).filter(Item.is_active == True).count()
-    total_suppliers = db.query(Supplier).filter(Supplier.is_active == True).count()
-    total_recipes   = db.query(Recipe).filter(Recipe.is_active == True).count()
+    total_items     = db.query(Item).filter(Item.is_active == True, Item.domain == domain).count()
+    total_suppliers = db.query(Supplier).filter(Supplier.is_active == True, Supplier.domain == domain).count()
+    total_recipes   = db.query(Recipe).filter(Recipe.is_active == True, Recipe.domain == domain).count()
 
     # ── Critical stock: items at or below min level ────────────────────────
     critical_items_raw = (
@@ -370,6 +385,7 @@ def dashboard_stats(
             Item.is_active == True,
             Item.min_stock_level > 0,
             Item.current_stock <= Item.min_stock_level,
+            Item.domain == domain,
         )
         .order_by(Item.current_stock.asc())
         .all()
@@ -391,6 +407,8 @@ def dashboard_stats(
     # ── Recent transactions (last 5) ───────────────────────────────────────
     recent_txs = (
         db.query(Transaction)
+        .join(Item, Item.id == Transaction.item_id)
+        .filter(Item.domain == domain)
         .order_by(Transaction.id.desc())
         .limit(5)
         .all()
@@ -410,6 +428,7 @@ def dashboard_stats(
     # ── Recent production (last 5) ─────────────────────────────────────────
     recent_prod = (
         db.query(ProductionHistory)
+        .filter(ProductionHistory.domain == domain)
         .order_by(ProductionHistory.id.desc())
         .limit(5)
         .all()

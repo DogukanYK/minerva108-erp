@@ -16,6 +16,7 @@ from typing import Optional, List
 from database import get_db, Item, Transaction, Quotation, QuotationItem, to_tr
 from core.permissions import require_permission
 from core.notifications import notify_low_stock
+from core.domain import active_domain
 
 router = APIRouter(prefix="/api", tags=["b2b"])
 
@@ -198,6 +199,7 @@ def create_quotation(
     data: QuotationCreateRequest,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("b2b", "create")),
+    domain: str = Depends(active_domain),
 ):
     """Save a quotation as DRAFT. Validates quote_number uniqueness + at least one line."""
     actor = current_user.get("full_name") or current_user.get("username") or "—"
@@ -234,6 +236,7 @@ def create_quotation(
             notes=data.notes,
             valid_days=data.valid_days,
             status="DRAFT",
+            domain=domain,                     # Faz 3 — aktif panel
             created_by=actor,
         )
         db.add(q)
@@ -269,8 +272,9 @@ def list_quotations(
     _: dict = Depends(require_permission("b2b", "view")),
     limit:  int = 50,
     status: Optional[str] = None,
+    domain: str = Depends(active_domain),
 ):
-    q = db.query(Quotation).order_by(Quotation.id.desc())
+    q = db.query(Quotation).filter(Quotation.domain == domain).order_by(Quotation.id.desc())
     if status:
         q = q.filter(Quotation.status == status.upper())
     return [_serialize_quotation_summary(r) for r in q.limit(limit).all()]

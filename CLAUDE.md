@@ -95,6 +95,23 @@ per-user JSON **permission override** that fully replaces the role default
 `window.can(category, action)` (server-injected `window.PERMS`). Finance data
 (costs/margins/quotations) is additionally limited to `_FINANCE_ROLES`.
 
+### Domain (Kozmetik / Food Supplement panels)
+
+Two fully isolated product domains share one login. The active panel lives in a
+non-secret `active_domain` cookie (`cosmetics` | `supplement`, default `cosmetics`);
+the topnav switcher (`POST /api/domain/switch`) flips it and reloads. `core/domain.py`
+is the single source: `active_domain` is a FastAPI dependency (`domain: str =
+Depends(active_domain)`) and `_page_ctx` injects `window.DOMAIN` + `domain_label` into
+every page. **Every list endpoint filters by the active domain and every create stamps
+it** — `domain` columns exist on `Item`, `Supplier`, `Recipe`, `Inventory`,
+`ProductionHistory`, `Quotation`, `StockSnapshot` (all default `'cosmetics'`, so every
+pre-existing row + the cosmetics experience is unchanged). `Transaction` has no domain
+column — scope it by joining `Item`. Inventory/production/recipe rows inherit their
+parent's domain (lot ← item, output ← recipe). `snapshot_exists(…, domain)` is
+domain-aware so one panel's monthly snapshot doesn't hide the other's live data. When
+adding an endpoint that lists or creates domain-scoped data, **you must** add the
+`active_domain` dependency + filter/stamp, or data leaks across panels.
+
 ### Production / recipe domain logic
 
 - A recipe has ingredients (`recipe_ingredients`), a `waste_percentage` (fire), an

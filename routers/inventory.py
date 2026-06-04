@@ -46,6 +46,7 @@ from core.auth import get_current_user
 from core.permissions import _can_see_finance, require_permission
 from core.notifications import notify_low_stock
 from core.undo import record as record_undoable
+from core.domain import active_domain
 
 router = APIRouter(prefix="/api", tags=["inventory"])
 
@@ -116,8 +117,11 @@ class StockAdjustRequest(BaseModel):
 def list_items(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    domain: str = Depends(active_domain),
 ):
-    items = db.query(Item).filter(Item.is_active == True).order_by(Item.id.desc()).all()
+    items = (db.query(Item)
+             .filter(Item.is_active == True, Item.domain == domain)
+             .order_by(Item.id.desc()).all())
 
     # Resolve parent names + child counts in O(n) — avoids N+1 queries
     name_by_id = {i.id: i.name for i in items}
@@ -192,7 +196,9 @@ def _validate_variation(
 
 
 @router.post("/items", status_code=201)
-def create_item(data: ItemCreateRequest, db: Session = Depends(get_db), _: dict = Depends(require_permission("items", "create"))):
+def create_item(data: ItemCreateRequest, db: Session = Depends(get_db),
+                _: dict = Depends(require_permission("items", "create")),
+                domain: str = Depends(active_domain)):
     err = _validate_variation(db, data.parent_id, data.variation_name)
     if err: return err
 
@@ -215,6 +221,7 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db), _: dict 
         language=lang,
         label_group=grp,
         supplier_id=data.supplier_id,
+        domain=domain,                     # Faz 3 — aktif panele damgala
     )
     db.add(item)
     db.commit()
@@ -411,6 +418,7 @@ def get_item_by_barcode(
     barcode: str,
     db: Session = Depends(get_db),
     _: dict = Depends(get_current_user),
+    domain: str = Depends(active_domain),
 ):
     """
     Server-side resolver — useful when the client doesn't have the full item
@@ -423,7 +431,7 @@ def get_item_by_barcode(
         return JSONResponse(status_code=400, content={"detail": "Barkod boş."})
     item = (
         db.query(Item)
-        .filter(Item.barcode == code, Item.is_active == True)
+        .filter(Item.barcode == code, Item.is_active == True, Item.domain == domain)
         .first()
     )
     if not item:
@@ -497,8 +505,10 @@ def bulk_delete_items(data: BulkDeleteRequest, db: Session = Depends(get_db), _:
 # ─── Suppliers Endpoints ─────────────────────────────────────────────────────
 
 @router.get("/suppliers")
-def list_suppliers(db: Session = Depends(get_db)):
-    rows = db.query(Supplier).filter(Supplier.is_active == True).order_by(Supplier.id.desc()).all()
+def list_suppliers(db: Session = Depends(get_db), domain: str = Depends(active_domain)):
+    rows = (db.query(Supplier)
+            .filter(Supplier.is_active == True, Supplier.domain == domain)
+            .order_by(Supplier.id.desc()).all())
     return [
         {
             "id": s.id,
@@ -514,13 +524,16 @@ def list_suppliers(db: Session = Depends(get_db)):
 
 
 @router.post("/suppliers", status_code=201)
-def create_supplier(data: SupplierCreateRequest, db: Session = Depends(get_db), _: dict = Depends(require_permission("items", "create"))):
+def create_supplier(data: SupplierCreateRequest, db: Session = Depends(get_db),
+                    _: dict = Depends(require_permission("items", "create")),
+                    domain: str = Depends(active_domain)):
     supplier = Supplier(
         name=data.name,
         contact_person=data.contact_person,
         email=data.email,
         phone=data.phone,
         notes=data.notes,
+        domain=domain,                     # Faz 3 — aktif panele damgala
     )
     db.add(supplier)
     db.commit()
@@ -548,11 +561,12 @@ def bulk_delete_suppliers(data: SupplierBulkDeleteRequest, db: Session = Depends
 # ─── Inventory / Receiving Endpoints ────────────────────────────────────────
 
 @router.get("/inventory")
-def list_inventory(db: Session = Depends(get_db)):
+def list_inventory(db: Session = Depends(get_db), domain: str = Depends(active_domain)):
     # joinedload — item + supplier ilişkileri tek query'de gelir (N+1 önler)
     rows = (
         db.query(Inventory)
         .options(joinedload(Inventory.item), joinedload(Inventory.supplier))
+        .filter(Inventory.domain == domain)
         .order_by(Inventory.id.desc())
         .all()
     )
@@ -629,6 +643,7 @@ def receive_stock(
                 status="APPROVED",
                 received_by=actor,                      # Audit trail
                 is_sample=is_sample,
+                domain=(item.domain or "cosmetics"),    # Faz 3 — lot, item ile aynı panelde
             )
             db.add(new_inventory)
 
@@ -799,7 +814,7 @@ def adjust_stock(
 # ─── Inventory summary + transactions feed ──────────────────────────────────
 
 @router.get("/inventory/summary")
-def inventory_summary(db: Session = Depends(get_db)):
+def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(active_domain)):
     """
     Mevcut stok özeti — `Item.current_stock` source-of-truth olarak
     kullanılır. Önceden APPROVED Inventory satırlarının quantity'lerini
@@ -810,7 +825,7 @@ def inventory_summary(db: Session = Depends(get_db)):
     """
     items = (
         db.query(Item)
-        .filter(Item.is_active == True)
+        .filter(Item.is_active == True, Item.domain == domain)
         .order_by(Item.category, Item.name)
         .all()
     )
@@ -897,7 +912,8 @@ def inventory_by_item(
 
 
 @router.get("/inventory/samples")
-def list_samples(db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+def list_samples(db: Session = Depends(get_db), _: dict = Depends(get_current_user),
+                 domain: str = Depends(active_domain)):
     """
     Numune lotları — Ürünler sayfası "Numune" sekmesini besler.  Var olan
     hammaddelere bağlı, alternatif tedarikçilerden gelen numune partileri.
@@ -905,7 +921,7 @@ def list_samples(db: Session = Depends(get_db), _: dict = Depends(get_current_us
     rows = (
         db.query(Inventory)
         .options(joinedload(Inventory.item), joinedload(Inventory.supplier))
-        .filter(Inventory.is_sample == True)   # noqa: E712
+        .filter(Inventory.is_sample == True, Inventory.domain == domain)   # noqa: E712
         .order_by(Inventory.id.desc())
         .all()
     )
@@ -934,6 +950,7 @@ def available_lots(
     data: _AvailableLotsRequest,
     db: Session = Depends(get_db),
     _: dict = Depends(get_current_user),
+    domain: str = Depends(active_domain),
 ):
     """
     Üretim ekranı için: verilen hammaddelerin TÜKETİLEBİLİR lotları
@@ -950,6 +967,7 @@ def available_lots(
             Inventory.item_id.in_(data.item_ids),
             Inventory.status == "APPROVED",
             Inventory.quantity > 0,
+            Inventory.domain == domain,
         )
         .order_by(Inventory.created_at.asc(), Inventory.id.asc())
         .all()
@@ -969,11 +987,14 @@ def available_lots(
 
 
 @router.get("/transactions")
-def list_transactions(db: Session = Depends(get_db)):
-    # 500 satır × N+1 ürün lookup'ı yerine joinedload ile tek query
+def list_transactions(db: Session = Depends(get_db), domain: str = Depends(active_domain)):
+    # 500 satır × N+1 ürün lookup'ı yerine joinedload ile tek query.
+    # Transaction'da domain kolonu yok → Item join'iyle aktif panele süzülür.
     rows = (
         db.query(Transaction)
         .options(joinedload(Transaction.item))
+        .join(Item, Item.id == Transaction.item_id)
+        .filter(Item.domain == domain)
         .order_by(Transaction.id.desc())
         .limit(500)
         .all()
@@ -1141,7 +1162,8 @@ def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(
 
 
 @router.get("/traceability/expiring")
-def list_expiring(db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+def list_expiring(db: Session = Depends(get_db), _: dict = Depends(get_current_user),
+                  domain: str = Depends(active_domain)):
     """All APPROVED inventory lots expiring within the next 60 days, sorted most-urgent first."""
     from datetime import datetime as _dt, timedelta
 
@@ -1154,6 +1176,7 @@ def list_expiring(db: Session = Depends(get_db), _: dict = Depends(get_current_u
             Inventory.expiry_date.isnot(None),
             Inventory.expiry_date != "",
             Inventory.status == "APPROVED",
+            Inventory.domain == domain,
         )
         .all()
     )
@@ -1442,6 +1465,7 @@ async def import_items_from_excel(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
     _: dict = Depends(require_permission("items", "import")),
+    domain: str = Depends(active_domain),
 ):
     """Excel (.xlsx) dosyasından toplu ürün içe aktarma — SKU bazlı upsert."""
     import io, datetime as _dt
@@ -1514,6 +1538,7 @@ async def import_items_from_excel(
                     name=item_name, sku=sku, category=category,
                     unit=unit, current_stock=round(stock, 6),
                     cost_price=cost_price, min_stock_level=min_stock,
+                    domain=domain,                      # Faz 3 — aktif panel
                 )
                 db.add(new_item)
                 db.flush()   # ID'yi al
@@ -1523,7 +1548,7 @@ async def import_items_from_excel(
                     db.add(Inventory(
                         item_id=new_item.id, lot_number=lot,
                         quantity=stock, status="APPROVED",
-                        received_by=actor,
+                        received_by=actor, domain=domain,
                     ))
                     db.add(Transaction(
                         item_id=new_item.id, lot_number=lot,
@@ -1683,6 +1708,7 @@ async def smart_excel_import(
     _: dict = Depends(require_permission("admin", "import_excel")),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    domain: str = Depends(active_domain),
 ):
     """
     Smart Excel importer.
@@ -1787,7 +1813,7 @@ async def smart_excel_import(
                 sk = row["supplier"].strip().upper()
                 supplier_obj = supp_index.get(sk)
                 if not supplier_obj:
-                    supplier_obj = Supplier(name=row["supplier"], is_active=True)
+                    supplier_obj = Supplier(name=row["supplier"], is_active=True, domain=domain)
                     db.add(supplier_obj)
                     db.flush()
                     supp_index[sk] = supplier_obj
@@ -1810,6 +1836,7 @@ async def smart_excel_import(
                     cost_price=0.0,
                     supplier_id=supplier_obj.id if supplier_obj else None,
                     is_active=True,
+                    domain=domain,                      # Faz 3 — aktif panel
                 )
                 db.add(item)
                 db.flush()
@@ -1826,6 +1853,7 @@ async def smart_excel_import(
                     quantity=row["quantity"],
                     status="APPROVED",
                     received_by=actor,
+                    domain=domain,
                 ))
                 inv_rows_created += 1
 

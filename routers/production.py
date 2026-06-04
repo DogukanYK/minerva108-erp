@@ -23,6 +23,7 @@ from database import (
 from core.auth import get_current_user
 from core.permissions import require_permission
 from core.notifications import notify_low_stock
+from core.domain import active_domain
 
 router = APIRouter(prefix="/api", tags=["production"])
 
@@ -63,8 +64,10 @@ class QCFormRequest(BaseModel):
 # ─── Production Endpoints ────────────────────────────────────────────────────
 
 @router.get("/production")
-def list_production_history(db: Session = Depends(get_db)):
-    rows = db.query(ProductionHistory).order_by(ProductionHistory.id.desc()).limit(100).all()
+def list_production_history(db: Session = Depends(get_db), domain: str = Depends(active_domain)):
+    rows = (db.query(ProductionHistory)
+            .filter(ProductionHistory.domain == domain)
+            .order_by(ProductionHistory.id.desc()).limit(100).all())
     return [
         {
             "id": r.id,
@@ -537,6 +540,7 @@ def start_production(
                     status="APPROVED",
                     received_by=actor,
                     qc_required=True,
+                    domain=(recipe.domain or "cosmetics"),   # Faz 3 — reçetenin paneli
                 ))
             # 2) Şahit numune lot'u — varsa
             if witness_qty > 0:
@@ -548,6 +552,7 @@ def start_production(
                     status="APPROVED",
                     received_by=actor,
                     qc_required=True,
+                    domain=(recipe.domain or "cosmetics"),
                 ))
             # Tek toplam Input transaction'ı — audit'te bölünme not olarak yazılır
             split_note = (f" | Showroom: {showroom_qty}, Şahit: {witness_qty} ({brand})"
@@ -577,6 +582,7 @@ def start_production(
             produced_quantity=data.produced_quantity,
             produced_by=actor,                       # Audit
             lot_number=produced_lot if recipe.target_item_id else None,
+            domain=(recipe.domain or "cosmetics"),   # Faz 3 — reçetenin paneli
         ))
 
         db.commit()
@@ -624,16 +630,18 @@ def start_production(
 # ─── QC Endpoints ────────────────────────────────────────────────────────────
 
 @router.get("/qc/quarantine")
-def list_quarantine(db: Session = Depends(get_db)):
+def list_quarantine(db: Session = Depends(get_db), domain: str = Depends(active_domain)):
     """
     QC sayfasının beslediği endpoint.  İki kaynaktan gelir:
       • status='QUARANTINE' — geleneksel mal kabul karantinası
       • qc_required=True   — üretim çıktıları (stok eklendi ama QC görmeli)
+    Aktif panele (domain) göre süzülür.
     """
     from sqlalchemy import or_
     rows = (
         db.query(Inventory)
         .filter(
+            Inventory.domain == domain,
             or_(
                 Inventory.status == "QUARANTINE",
                 Inventory.qc_required == True,
