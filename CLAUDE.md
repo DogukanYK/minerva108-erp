@@ -5,8 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Minerva 108 ERP/IMS — internal inventory + production system for a vegan cosmetics
-company. FastAPI backend, server-rendered Jinja2 templates, PostgreSQL. Used live by
-a lab team, so changes deploy as small bundles with a ~3-4 second restart.
+company. It runs two isolated product lines as in-app "domains" — **Kozmetik**
+(cosmetics) and **Food Supplement** — sharing one login (see the Domain section).
+FastAPI backend, server-rendered Jinja2 templates, PostgreSQL. Used live by a lab
+team, so changes deploy as small bundles with a ~3-4 second restart.
 
 ## Commands
 
@@ -45,9 +47,9 @@ drop/creates all tables per test function. It never touches dev/prod DBs.
 Jinja **page routes** (`/`, `/items`, `/recipes`, `/production`, `/stocks`, …), and
 `include_router(...)` calls. All **API endpoints** live in `routers/` by domain
 (`inventory`, `recipes`, `production`, `b2b`, `reports`, `notifications`, `backup`,
-`undo`, `debug`, `system`, `auth`, `users`). Page routes resolve the user, check
-permission via `_user_can(...)`, and render templates; the template's JS then calls
-`/api/*`.
+`undo`, `debug`, `system`, `domain`, `auth`, `users`). Page routes resolve the user,
+check permission via `_user_can(...)`, and render templates; the template's JS then
+calls `/api/*`.
 
 **System health** — the `system` router exposes `GET /health` (unauthenticated,
 lightweight DB-ping liveness probe → 200/503, for external uptime monitors) and
@@ -67,8 +69,10 @@ to `system_reports/` on the 1st of each month. PDF rendering uses `reportlab`
 low-stock alerts), `scheduler.py` (APScheduler — daily 09:00 expiry scan, monthly
 stock snapshot on day 1 at 00:30, monthly system report on day 1 at 01:00, plus a
 startup backfill), `snapshots.py` (month-end stock freeze / reconstruction),
-`monthly_report.py` (aylık detaylı PDF/Excel sistem raporu üretici), `undo.py`
-(undo log), `password_strength.py`, `limiter.py` (SlowAPI).
+`monthly_report.py` (aylık detaylı PDF/Excel sistem raporu üretici), `qc_report.py` +
+`qc_questions.py` (QC form parse + PDF/Excel), `domain.py` (Kozmetik/Food Supplement
+panel scoping — see Domain section), `undo.py` (undo log), `password_strength.py`,
+`limiter.py` (SlowAPI).
 
 **Middleware stack** (api_main.py): `SecurityHeadersMiddleware` (CSP + headers),
 `CSRFMiddleware` (Origin/Referer check on mutating verbs; exempts `/api/login`,
@@ -150,6 +154,12 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   `StockSnapshot` row when one exists for that month (badge: *DONDURULMUŞ KAYIT*),
   otherwise reconstructs live (badge: *CANLI HESAP*). Reconstruction =
   `current_stock − (transactions after month-end)`, never a sum-from-zero.
+- **Production stock simulation** (`core/production_sim.py`; `/api/reports/production-plan`,
+  `/products`, `/export`; a panel on the Reports page) — "produce N of each selected
+  product → how much material is consumed, what's left, what's short, per-product
+  producible-in-isolation, and a purchase list" + 4-sheet Excel. Consumption rules are
+  **identical to `start_production`** (fire on raw materials, ambalaj/etiket exempt,
+  label-language resolution). Domain-scoped; `simulate()` is the reusable engine.
 
 ### Timezone
 
@@ -176,7 +186,7 @@ Turkish alphabetical sorting uses `window.trSort` / `trSortBy` (Intl.Collator 't
 
 - Inline-JS edits: extract `<script>` blocks, strip `{{ }}`/`{% %}`, run
   `node --check`. A syntax error in one template's JS breaks the whole page.
-- Run `make test` (48 tests) before deploying.
+- Run `make test` (full suite) before deploying — `./deploy.sh` gates on it anyway.
 
 ## Deploy
 

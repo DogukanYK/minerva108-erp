@@ -262,6 +262,65 @@
         </div>
       </div>
 
+      <style>
+        .plan-chip{font-size:0.78rem;font-weight:600;padding:0.3rem 0.75rem;border-radius:20px;border:1.5px solid #e5e7eb;background:#fff;color:#374151;cursor:pointer;}
+        .plan-chip:hover{border-color:var(--navy);}
+        .plan-chip.active{background:var(--navy);color:#fff;border-color:var(--navy);}
+        .plan-prow{display:flex;align-items:center;font-size:0.84rem;color:#374151;padding:0.18rem 0;gap:0.5rem;}
+        .plan-prow input{accent-color:var(--navy);}
+        .plan-tbl{width:100%;border-collapse:collapse;font-size:0.8rem;}
+        .plan-tbl th{position:sticky;top:0;background:#232E6E;color:#fff;text-align:left;padding:0.4rem 0.6rem;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.04em;}
+        .plan-tbl td{padding:0.35rem 0.6rem;border-bottom:1px solid #f3f0ea;}
+        .plan-short{color:#b91c1c;font-weight:700;}
+        .plan-ok{color:#15803d;}
+      </style>
+
+      <!-- ════ ÜRETİM STOK ANALİZİ ════ -->
+      <div class="panel" style="margin-bottom:1.5rem;">
+        <div class="panel-header" style="display:flex;align-items:center;gap:0.75rem;padding:1rem 1.25rem;">
+          <div class="panel-icon panel-icon-gold"><i class="bi bi-calculator"></i></div>
+          <div style="flex:1;min-width:200px;">
+            <p class="panel-title" style="margin:0;">Üretim Stok Analizi</p>
+            <p class="panel-subtitle" style="margin:0;">Seçilen ürünlerden kaç adet üretsek malzeme yeter mi? Eksikler + tek başına üretilebilir adet + satın alma listesi + Excel.</p>
+          </div>
+        </div>
+        <div class="panel-body" style="padding:1.1rem 1.25rem;">
+          <div style="margin-bottom:0.6rem;display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;">
+            <span style="font-size:0.72rem;font-weight:700;text-transform:uppercase;color:#9ca3af;">Marka:</span>
+            <span id="planBrands" style="display:flex;gap:0.4rem;flex-wrap:wrap;"></span>
+            <button type="button" class="plan-chip" onclick="planSelectAll(true)">Tümünü seç</button>
+            <button type="button" class="plan-chip" onclick="planSelectAll(false)">Temizle</button>
+            <input type="text" id="planSearch" placeholder="Ürün ara…" oninput="planFilterList()"
+              style="margin-left:auto;padding:0.35rem 0.7rem;border:1.5px solid #e5e7eb;border-radius:8px;font-size:0.82rem;min-width:160px;">
+          </div>
+          <div id="planProducts" style="max-height:220px;overflow-y:auto;border:1px solid #f0ece4;border-radius:10px;padding:0.5rem 0.85rem;background:#faf8f4;">
+            <div style="color:#9ca3af;font-size:0.85rem;">Yükleniyor…</div>
+          </div>
+          <div style="display:flex;gap:0.85rem;align-items:flex-end;flex-wrap:wrap;margin-top:0.9rem;">
+            <div>
+              <label style="display:block;font-size:0.7rem;font-weight:700;text-transform:uppercase;color:#6b7280;margin-bottom:0.25rem;">Her üründen adet</label>
+              <input type="number" id="planQty" value="250" min="1" step="1"
+                style="width:120px;padding:0.5rem 0.7rem;border:1.5px solid #e5e7eb;border-radius:8px;font-size:0.9rem;">
+            </div>
+            <div>
+              <label style="display:block;font-size:0.7rem;font-weight:700;text-transform:uppercase;color:#6b7280;margin-bottom:0.25rem;">Etiket dili</label>
+              <select id="planLang" style="padding:0.5rem 0.7rem;border:1.5px solid #e5e7eb;border-radius:8px;font-size:0.9rem;">
+                <option value="TR">Türkçe</option><option value="EN">İngilizce</option>
+              </select>
+            </div>
+            <button type="button" id="planRunBtn" onclick="planRun()" class="btn-primary-gold">
+              <i class="bi bi-play-fill"></i> Rapor Üret
+            </button>
+            <button type="button" id="planXlsBtn" onclick="planExport()" disabled
+              style="display:inline-flex;align-items:center;gap:0.4rem;padding:0.52rem 1.1rem;background:#fff;color:var(--navy);border:1.5px solid #e5e7eb;border-radius:8px;font-size:0.88rem;font-weight:600;cursor:pointer;opacity:0.55;">
+              <i class="bi bi-filetype-xlsx"></i> Excel İndir
+            </button>
+            <span id="planSelCount" style="font-size:0.8rem;color:#9ca3af;align-self:center;"></span>
+          </div>
+          <div id="planResult" style="margin-top:1rem;display:none;"></div>
+        </div>
+      </div>
+
       <!-- ════ AYLIK STOK RAPORU ════ -->
       <div class="panel" style="margin-bottom:1.5rem;">
         <div class="panel-header" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;padding:1rem 1.25rem;">
@@ -616,6 +675,120 @@
     })();
 
     loadAll();
+
+    /* ════ Üretim Stok Analizi ════ */
+    let _planProducts = [];
+    let _planReport = null;
+    function planEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    function planFmt(n){return Number(n||0).toLocaleString('tr-TR',{maximumFractionDigits:2});}
+
+    async function loadPlanProducts(){
+      const box=document.getElementById('planProducts');
+      try{
+        const r=await fetch('/api/reports/production-plan/products');
+        const d=await r.json();
+        _planProducts=d.products||[];
+      }catch{ box.innerHTML='<div style="color:#b91c1c;font-size:0.85rem;">Ürün listesi alınamadı.</div>'; return; }
+      const brands=[...new Set(_planProducts.map(p=>p.brand))].sort();
+      document.getElementById('planBrands').innerHTML=brands.map(b=>
+        `<button type="button" class="plan-chip" data-brand="${planEsc(b)}" onclick="planBrandToggle('${planEsc(b)}')">${planEsc(b)}</button>`).join('');
+      planRenderList();
+    }
+    function planRenderList(){
+      const box=document.getElementById('planProducts');
+      if(!_planProducts.length){ box.innerHTML='<div style="color:#9ca3af;font-size:0.85rem;">Bu panelde reçeteli ürün yok.</div>'; return; }
+      box.innerHTML=_planProducts.map(p=>
+        `<label class="plan-prow" data-name="${planEsc((p.name||'').toLowerCase())}">
+          <input type="checkbox" value="${p.recipe_id}" data-brand="${planEsc(p.brand)}" onchange="planUpdateCount()">
+          <span><b style="color:#9ca3af;font-weight:600;">${planEsc(p.brand)}</b> · ${planEsc(p.name)}</span>
+        </label>`).join('');
+      planUpdateCount();
+    }
+    function planBoxes(){return Array.from(document.querySelectorAll('#planProducts input[type=checkbox]'));}
+    function planBrandToggle(brand){
+      const els=planBoxes().filter(e=>e.dataset.brand===brand);
+      const all=els.every(e=>e.checked);
+      els.forEach(e=>{e.checked=!all;});
+      planUpdateCount();
+    }
+    function planSelectAll(v){ planBoxes().forEach(e=>{ if(e.closest('.plan-prow').style.display!=='none') e.checked=v;}); planUpdateCount(); }
+    function planSyncChips(){
+      document.querySelectorAll('#planBrands .plan-chip').forEach(ch=>{
+        const els=planBoxes().filter(e=>e.dataset.brand===ch.dataset.brand);
+        ch.classList.toggle('active', els.length>0 && els.every(e=>e.checked));
+      });
+    }
+    function planFilterList(){
+      const q=(document.getElementById('planSearch').value||'').toLowerCase();
+      document.querySelectorAll('#planProducts .plan-prow').forEach(row=>{ row.style.display=row.dataset.name.includes(q)?'flex':'none'; });
+    }
+    function planUpdateCount(){
+      const n=planBoxes().filter(e=>e.checked).length;
+      document.getElementById('planSelCount').textContent = n ? `${n} ürün seçili` : '';
+      planSyncChips();
+    }
+    function planPayload(){
+      return { ids: planBoxes().filter(e=>e.checked).map(e=>parseInt(e.value)),
+               qty: parseFloat(document.getElementById('planQty').value),
+               lang: document.getElementById('planLang').value };
+    }
+    async function planRun(){
+      const {ids,qty,lang}=planPayload();
+      if(!ids.length){ showToast('Lütfen en az bir ürün seçin.'); return; }
+      if(!qty||qty<=0){ showToast('Geçerli bir adet girin.'); return; }
+      const btn=document.getElementById('planRunBtn'); btn.disabled=true; btn.innerHTML='<i class="bi bi-hourglass-split"></i> Hesaplanıyor…';
+      try{
+        const r=await fetch('/api/reports/production-plan',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({recipe_ids:ids,quantity:qty,language:lang})});
+        const d=await r.json();
+        if(!r.ok){ showToast(d.detail||'Rapor üretilemedi.'); return; }
+        _planReport=d; planRenderResult(d);
+        const x=document.getElementById('planXlsBtn'); x.disabled=false; x.style.opacity='1';
+      }catch{ showToast('Sunucuya bağlanılamadı.'); }
+      finally{ btn.disabled=false; btn.innerHTML='<i class="bi bi-play-fill"></i> Rapor Üret'; }
+    }
+    function planRenderResult(d){
+      const s=d.summary;
+      const matRows=d.materials.map(m=>{
+        const cls=m.remaining<0?'plan-short':'';
+        const durum=m.remaining<0?'YETERSİZ':'<span class="plan-ok">Yeterli</span>';
+        const eksik=m.remaining<0?(planFmt(m.shortfall)+' '+planEsc(m.unit)):'—';
+        return `<tr><td>${planEsc(m.name)}</td><td>${planEsc(m.category)}</td><td>${planFmt(m.used)} ${planEsc(m.unit)}</td><td>${planFmt(m.current)}</td><td class="${cls}">${planFmt(m.remaining)}</td><td class="${cls}">${durum}</td><td class="${cls}">${eksik}</td></tr>`;
+      }).join('');
+      const prodRows=d.producible.map(p=>{
+        const cls=p.producible<p.target?'plan-short':'plan-ok';
+        return `<tr><td>${planEsc(p.product)}</td><td>${p.target}</td><td class="${cls}">${p.producible}</td><td>${planEsc(p.limiting)}</td><td>${p.limit_stock==null?'—':planFmt(p.limit_stock)} ${planEsc(p.unit)}</td></tr>`;
+      }).join('');
+      const buyRows=d.purchase.map(m=>`<tr><td>${planEsc(m.name)}</td><td>${planEsc(m.category)}</td><td>${planFmt(m.used)} ${planEsc(m.unit)}</td><td>${planFmt(m.current)}</td><td class="plan-short">${planFmt(m.shortfall)} ${planEsc(m.unit)}</td></tr>`).join('');
+      const tbl=(head,rows)=>`<div style="max-height:300px;overflow:auto;border:1px solid #f0ece4;border-radius:10px;margin-top:0.4rem;"><table class="plan-tbl"><thead>${head}</thead><tbody>${rows||'<tr><td>—</td></tr>'}</tbody></table></div>`;
+      const res=document.getElementById('planResult');
+      res.style.display='block';
+      res.innerHTML=`
+        <div style="background:#f9f7f3;border:1px solid #f0ece4;border-radius:10px;padding:0.7rem 1rem;font-size:0.85rem;color:#374151;">
+          <b>${s.products}</b> üründen <b>${planFmt(s.quantity)}</b>'er adet = <b>${planFmt(s.total_units)}</b> adet ·
+          <b>${s.materials}</b> malzeme · <span class="${s.short_count?'plan-short':'plan-ok'}"><b>${s.short_count}</b> yetersiz</span> ·
+          toplam hammadde <b>${planFmt(s.total_raw)}</b> g+ml · etiket dili ${planEsc(s.language)}
+        </div>
+        <div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;color:#9ca3af;margin:0.9rem 0 0.1rem;">Malzeme Tüketimi &amp; Kalan</div>
+        ${tbl('<tr><th>Malzeme</th><th>Kat.</th><th>Kullanılan</th><th>Mevcut</th><th>Kalan</th><th>Durum</th><th>Eksik</th></tr>',matRows)}
+        <div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;color:#9ca3af;margin:0.9rem 0 0.1rem;">Üretilebilir Adet (tek başına)</div>
+        ${tbl('<tr><th>Ürün</th><th>Hedef</th><th>Üretilebilir</th><th>Kısıtlayan</th><th>Kısıt Stok</th></tr>',prodRows)}
+        <div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;color:#9ca3af;margin:0.9rem 0 0.1rem;">Satın Alma Listesi (${d.purchase.length})</div>
+        ${tbl('<tr><th>Malzeme</th><th>Kat.</th><th>Gereken</th><th>Mevcut</th><th>Alınacak</th></tr>',buyRows)}`;
+    }
+    async function planExport(){
+      const {ids,qty,lang}=planPayload();
+      if(!ids.length){ showToast('Önce ürün seçip rapor üretin.'); return; }
+      try{
+        const r=await fetch('/api/reports/production-plan/export',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({recipe_ids:ids,quantity:qty,language:lang})});
+        if(!r.ok){ showToast('Excel indirilemedi.'); return; }
+        const blob=await r.blob(), url=URL.createObjectURL(blob);
+        const a=document.createElement('a'); a.href=url; a.download='uretim_stok_analizi.xlsx';
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      }catch{ showToast('Excel indirilemedi.'); }
+    }
+    loadPlanProducts();
   </script>
 </body>
 </html>

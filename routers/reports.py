@@ -11,10 +11,11 @@ import calendar
 import datetime as _dt
 import io
 import re
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
@@ -451,3 +452,58 @@ def dashboard_stats(
             for r in recent_prod
         ],
     }
+
+
+# ─── Üretim Stok Analizi (what-if simülasyonu) ──────────────────────────────
+# Lab ekibi: seçilen ürünlerden N'er adet üretsek malzeme yeter mi? Excel iner.
+
+class _PlanRequest(BaseModel):
+    recipe_ids: List[int] = Field(..., min_length=1, max_length=500)
+    quantity:   float     = Field(..., gt=0, le=1_000_000)
+    language:   Optional[str] = "TR"
+
+
+@router.get("/reports/production-plan/products")
+def production_plan_products(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
+):
+    """Aktif panelde reçetesi olan ürünler (marka + ad) — simülasyon seçim listesi."""
+    from core.production_sim import list_plan_products
+    return {"products": list_plan_products(db, domain)}
+
+
+@router.post("/reports/production-plan")
+def production_plan(
+    data: _PlanRequest,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
+):
+    """Seçilen ürünlerden quantity'şer adet üretim senaryosu — JSON rapor."""
+    from core.production_sim import simulate
+    return simulate(db, data.recipe_ids, data.quantity, data.language or "TR", domain)
+
+
+@router.post("/reports/production-plan/export")
+def production_plan_export(
+    data: _PlanRequest,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
+):
+    """Aynı senaryoyu 4-sayfalı Excel olarak indir."""
+    from core.production_sim import simulate, build_workbook
+    rep = simulate(db, data.recipe_ids, data.quantity, data.language or "TR", domain)
+    if not rep["materials"]:
+        return JSONResponse(status_code=400, content={"detail": "Seçilen ürünlerde malzeme bulunamadı."})
+    try:
+        content = build_workbook(rep, title_suffix=f"{rep['summary']['products']} ürün × {int(data.quantity)}")
+    except Exception:
+        return JSONResponse(status_code=500, content={"detail": "Excel üretilemedi."})
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="uretim_stok_analizi.xlsx"'},
+    )
