@@ -47,8 +47,8 @@ drop/creates all tables per test function. It never touches dev/prod DBs.
 Jinja **page routes** (`/`, `/items`, `/recipes`, `/production`, `/stocks`, …), and
 `include_router(...)` calls. All **API endpoints** live in `routers/` by domain
 (`inventory`, `recipes`, `production`, `b2b`, `reports`, `notifications`, `backup`,
-`undo`, `debug`, `system`, `domain`, `auth`, `users`). Page routes resolve the user,
-check permission via `_user_can(...)`, and render templates; the template's JS then
+`undo`, `debug`, `system`, `domain`, `drive`, `auth`, `users`). Page routes resolve the
+user, check permission via `_user_can(...)`, and render templates; the template's JS then
 calls `/api/*`.
 
 **System health** — the `system` router exposes `GET /health` (unauthenticated,
@@ -56,6 +56,17 @@ lightweight DB-ping liveness probe → 200/503, for external uptime monitors) an
 `GET /api/system/health` (SuperAdmin — rich report: app uptime, DB latency/size,
 disk, scheduler jobs, last backup, last snapshot, system clock). The SuperAdmin-only
 `/system` page renders this with colored status cards and auto-refreshes every 30 s.
+
+**Minerva Drive** (`routers/drive.py`, `core/drive.py`) — a self-hosted file-share
+("mini Drive"). Login-gated management at `/drive`: upload files, group them into
+named "collections" (links), each with an unguessable `share_token` + optional bcrypt
+**password** and **expiry**. Public, **unauthenticated** share page `GET /s/{token}`
+(+ `/s/{token}/unlock` password POST → HMAC unlock cookie, `/s/{token}/f/{id}`
+download). Files live on disk under `DRIVE_DIR` (`drive_files/`, random names,
+**not** in the DB or `pg_dump`) — the hourly snapshot script tars them daily.
+Downloads are forced `attachment` + `octet-stream` (no inline render → XSS-safe).
+Tables: `drive_file`, `drive_collection`, `drive_collection_file` (created by
+`init_db` create_all). Not domain-scoped — it's a cross-cutting utility.
 The same router also produces the **monthly detailed system report** (SuperAdmin):
 `GET /api/system/report?year=&month=&format=pdf|excel` builds a top-to-bottom report
 on demand (production line, materials consumed, per-user activity, audit events,

@@ -30,6 +30,8 @@ os.environ["SEED_DEFAULT_PASSWORD"] = "minerva123"
 # Test'lerde APScheduler'ı devre dışı bırak — lifespan event'i async loop
 # kapanırken hata atıyor; testlerde zaten gerek yok.
 os.environ["DISABLE_SCHEDULER"] = "true"
+# Drive yüklemeleri repo'ya değil geçici dizine yazılsın (test izolasyonu)
+os.environ["MINERVA_DRIVE_DIR"] = "/tmp/minerva_test_drive"
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402

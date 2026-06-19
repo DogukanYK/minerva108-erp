@@ -19,6 +19,9 @@ backups/
 # Otomatik üretilen aylık sistem raporları (PDF/Excel)
 system_reports/
 
+# Minerva Drive — yüklenen dosyalar (DB'de değil, diskte; ayrı yedeklenir)
+drive_files/
+
 # Env / secrets — NEVER commit
 .env
 .env.local

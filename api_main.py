@@ -36,7 +36,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router
 from core.domain import get_active_domain, domain_label
 
 
@@ -234,6 +234,8 @@ app.include_router(debug.router)
 app.include_router(undo.router)
 app.include_router(system.router)
 app.include_router(domain_router.router)
+app.include_router(drive_router.router)
+app.include_router(drive_router.share_router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────
@@ -460,3 +462,44 @@ def system_page(request: Request, db: Session = Depends(get_db)):
     if user.role != "SuperAdmin":
         return RedirectResponse(url="/", status_code=302)
     return templates.TemplateResponse("system.html", _page_ctx(request, payload, user))
+
+
+@app.get("/drive", response_class=HTMLResponse)
+def drive_page(request: Request, db: Session = Depends(get_db)):
+    """Minerva Drive — dosya paylaşım yönetimi (oturum gerekir)."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("drive.html", _page_ctx(request, payload, user))
+
+
+@app.get("/s/{token}", response_class=HTMLResponse)
+def share_page(token: str, request: Request, db: Session = Depends(get_db)):
+    """Public paylaşım sayfası — auth YOK.  Şifre/süre durumuna göre render."""
+    from database import DriveCollection, DriveFile, DriveCollectionFile
+    from core import drive as D
+    c = db.query(DriveCollection).filter(DriveCollection.share_token == token).first()
+    ctx = {"request": request, "token": token, "coll_name": "", "files": [],
+           "error": request.query_params.get("e") == "1"}
+    if not c:
+        ctx["state"] = "notfound"
+        return templates.TemplateResponse("share.html", ctx, status_code=404)
+    ctx["coll_name"] = c.name
+    if D.is_expired(c):
+        ctx["state"] = "expired"
+        return templates.TemplateResponse("share.html", ctx)
+    if c.password_hash:
+        sig = request.cookies.get(D.unlock_cookie_name(token), "")
+        if not D.verify_unlock(token, sig):
+            ctx["state"] = "locked"
+            return templates.TemplateResponse("share.html", ctx)
+    files = (db.query(DriveFile)
+             .join(DriveCollectionFile, DriveCollectionFile.file_id == DriveFile.id)
+             .filter(DriveCollectionFile.collection_id == c.id)
+             .order_by(DriveCollectionFile.sort_order, DriveCollectionFile.id)
+             .all())
+    ctx["state"] = "open"
+    ctx["files"] = [{"id": f.id, "name": f.original_name, "size": D.humanize(f.size_bytes)} for f in files]
+    return templates.TemplateResponse("share.html", ctx)

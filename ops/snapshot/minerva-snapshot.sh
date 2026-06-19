@@ -74,4 +74,22 @@ echo "[$(date -u -Iseconds)] snapshot ok: $OUT (${SIZE_KB} KB)"
 DELETED=$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'minerva_auto_*.dump' -mtime +"$RETENTION_DAYS" -print -delete | wc -l | tr -d ' ')
 [[ "$DELETED" -gt 0 ]] && echo "[$(date -u -Iseconds)] retention: $DELETED eski auto-snapshot silindi"
 
+# ─── Minerva Drive dosya yedeği — GÜNDE BİR kez tarball ──────────────────────
+# Drive dosyaları DB'de değil; pg_dump kapsamaz.  Günde bir .tar.gz alınır
+# (saatlik değil — savurganlık olmasın).  TÜM blok hata-toleranslı: bir sorun
+# olsa bile kritik DB snapshot'ını ASLA bozmaz (|| true).
+{
+  DRIVE_DIR="${MINERVA_DRIVE_DIR:-/var/www/minerva/drive_files}"
+  if [[ -d "$DRIVE_DIR" ]] && [[ -n "$(ls -A "$DRIVE_DIR" 2>/dev/null)" ]]; then
+    DAY="$(date -u +%Y%m%d)"
+    if ! ls "$BACKUP_DIR"/minerva_drive_"${DAY}"-*.tar.gz >/dev/null 2>&1; then
+      DOUT="$BACKUP_DIR/minerva_drive_${TS}.tar.gz"
+      tar -czf "$DOUT" -C "$(dirname "$DRIVE_DIR")" "$(basename "$DRIVE_DIR")" \
+        && chmod 600 "$DOUT" \
+        && echo "[$(date -u -Iseconds)] drive yedek ok: $DOUT ($(du -k "$DOUT" | cut -f1) KB)"
+    fi
+    find "$BACKUP_DIR" -maxdepth 1 -type f -name 'minerva_drive_*.tar.gz' -mtime +"$RETENTION_DAYS" -delete
+  fi
+} || true
+
 exit 0

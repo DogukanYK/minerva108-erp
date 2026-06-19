@@ -441,6 +441,46 @@ class SystemEvent(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
+# ─── Minerva Drive — dosya paylaşım (self-hosted) ────────────────────────────
+
+class DriveFile(Base):
+    """Yüklenmiş bir dosya.  Fiziksel dosya diskte `stored_name` ile (rastgele);
+    `original_name` yalnızca gösterim için.  İçerik DB'de DEĞİL, diskte."""
+    __tablename__ = "drive_file"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    original_name = Column(String(255), nullable=False)
+    stored_name   = Column(String(80),  nullable=False, unique=True)   # diskteki rastgele ad
+    size_bytes    = Column(Integer, nullable=False, default=0)
+    content_type  = Column(String(120), nullable=True)
+    uploaded_by   = Column(String(100), nullable=True)
+    created_at    = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class DriveCollection(Base):
+    """Bir paylaşım 'linki' — bir ad + tahmin edilemez kod + (opsiyonel) şifre/süre.
+    İçindeki dosyalar drive_collection_file ile (çoka-çok: bir dosya çok linkte)."""
+    __tablename__ = "drive_collection"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    name          = Column(String(150), nullable=False)
+    share_token   = Column(String(64), nullable=False, unique=True, index=True)
+    password_hash = Column(String(255), nullable=True)   # bcrypt; NULL = şifresiz
+    expires_at    = Column(DateTime, nullable=True)      # NULL = süresiz
+    created_by    = Column(String(100), nullable=True)
+    created_at    = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class DriveCollectionFile(Base):
+    """Hangi dosya hangi koleksiyonda (çoka-çok bağ)."""
+    __tablename__ = "drive_collection_file"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    collection_id = Column(Integer, ForeignKey("drive_collection.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_id       = Column(Integer, ForeignKey("drive_file.id", ondelete="CASCADE"), nullable=False, index=True)
+    sort_order    = Column(Integer, default=0)
+
+
 def log_system_event(event_type: str, detail: str = None) -> None:
     """Bir sistem olayını (örn. 'app_start') kaydet.
 
