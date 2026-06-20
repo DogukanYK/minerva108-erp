@@ -48,6 +48,19 @@ def new_token(n: int = 16) -> str:
     return secrets.token_urlsafe(n)
 
 
+_TR_MAP = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
+
+
+def slugify(s: str) -> str:
+    """Kullanıcı metnini URL-güvenli özel link koduna çevir.
+    'Geven Belgeleri' → 'geven-belgeleri'.  Türkçe karakterler sadeleştirilir."""
+    import unicodedata
+    s = (s or "").translate(_TR_MAP)
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+    s = re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-").lower()
+    return s[:64]
+
+
 def hash_password(pw: str) -> str:
     return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
 

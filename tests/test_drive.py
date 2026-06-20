@@ -96,6 +96,32 @@ def test_unknown_share_404():
     assert pub.get("/s/yok-boyle-bir-link").status_code == 404
 
 
+def test_custom_slug(authed_client: TestClient):
+    fid = _upload(authed_client)
+    r = authed_client.post("/api/drive/collections",
+                           json={"name": "Geven", "file_ids": [fid], "custom_slug": "Geven Belgeleri"},
+                           headers=_H)
+    assert r.status_code == 201, r.text
+    assert r.json()["token"] == "geven-belgeleri"        # slugify
+    pub = TestClient(app)
+    assert pub.get("/s/geven-belgeleri").status_code == 200
+
+
+def test_custom_slug_collision_and_too_short(authed_client: TestClient):
+    fid = _upload(authed_client)
+    a = authed_client.post("/api/drive/collections",
+                           json={"name": "A", "file_ids": [fid], "custom_slug": "rapor-2026"}, headers=_H)
+    assert a.status_code == 201
+    # aynı slug → çakışma
+    b = authed_client.post("/api/drive/collections",
+                           json={"name": "B", "file_ids": [fid], "custom_slug": "rapor-2026"}, headers=_H)
+    assert b.status_code == 400
+    # çok kısa → 400
+    c = authed_client.post("/api/drive/collections",
+                           json={"name": "C", "file_ids": [fid], "custom_slug": "ab"}, headers=_H)
+    assert c.status_code == 400
+
+
 def test_delete_file_removes_from_collection(authed_client: TestClient):
     fid = _upload(authed_client)
     c = _collection(authed_client, [fid])

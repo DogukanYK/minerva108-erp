@@ -157,27 +157,33 @@
         <div class="card2-head"><i class="bi bi-link-45deg"></i><h2>Yeni Paylaşım Linki</h2></div>
         <div class="card2-body">
           <div style="display:flex;gap:0.8rem;flex-wrap:wrap;align-items:flex-end;">
-            <div style="flex:1;min-width:180px;">
+            <div style="flex:1;min-width:160px;">
               <label class="muted" style="display:block;margin-bottom:0.25rem;">Link adı *</label>
               <input type="text" id="linkName" class="ipt" placeholder="Örn: Geven Belgeleri" style="width:100%;" />
             </div>
+            <div style="flex:1;min-width:160px;">
+              <label class="muted" style="display:block;margin-bottom:0.25rem;">Özel link (opsiyonel)</label>
+              <input type="text" id="linkSlug" class="ipt" placeholder="boş = otomatik kod" style="width:100%;" oninput="slugPreview()" />
+            </div>
             <div>
               <label class="muted" style="display:block;margin-bottom:0.25rem;">Şifre (opsiyonel)</label>
-              <input type="text" id="linkPw" class="ipt" placeholder="boş = şifresiz" style="width:150px;" />
+              <input type="text" id="linkPw" class="ipt" placeholder="boş = şifresiz" style="width:140px;" />
             </div>
             <div>
               <label class="muted" style="display:block;margin-bottom:0.25rem;">Süre (gün)</label>
-              <input type="number" id="linkExp" class="ipt" placeholder="boş = süresiz" min="1" style="width:130px;" />
+              <input type="number" id="linkExp" class="ipt" placeholder="boş = süresiz" min="1" style="width:120px;" />
             </div>
             <button class="btn-g" id="createLinkBtn" onclick="createLink()"><i class="bi bi-link"></i> Seçili dosyalardan link oluştur</button>
           </div>
-          <p class="muted" style="margin:0.6rem 0 0;">Aşağıdaki tablodan dosyaları işaretle, sonra "link oluştur"a bas. <span id="selInfo"></span></p>
+          <p class="muted" style="margin:0.6rem 0 0;">Aşağıdaki tablodan dosyaları işaretle, sonra "link oluştur"a bas. <span id="selInfo"></span> <span id="slugPrev" style="color:var(--navy);font-family:monospace;"></span></p>
         </div>
       </div>
 
       <!-- Dosyalar -->
       <div class="card2">
-        <div class="card2-head"><i class="bi bi-files"></i><h2>Dosyalar</h2></div>
+        <div class="card2-head"><i class="bi bi-files"></i><h2>Dosyalar</h2>
+          <input type="text" id="fileSearch" class="ipt" placeholder="Dosya ara…" oninput="filterFiles()" style="margin-left:auto;width:220px;font-size:0.85rem;" />
+        </div>
         <div class="card2-body" style="overflow-x:auto;">
           <table>
             <thead><tr>
@@ -215,7 +221,7 @@
         const d = await (await fetch('/api/drive/files')).json();
         if(!d.length){ tb.innerHTML = '<tr><td colspan="7" class="muted">Henüz dosya yok.</td></tr>'; updateSel(); return; }
         tb.innerHTML = d.map(f=>`
-          <tr>
+          <tr data-name="${esc((f.name||'').toLowerCase())}">
             <td><input type="checkbox" class="fchk" value="${f.id}" onchange="updateSel()"></td>
             <td><i class="bi bi-file-earmark" style="color:var(--gold);"></i> ${esc(f.name)}</td>
             <td>${esc(f.size_human)}</td>
@@ -225,7 +231,18 @@
             <td><button class="ico-btn ico-del" title="Sil" onclick="delFile(${f.id})"><i class="bi bi-trash"></i></button></td>
           </tr>`).join('');
       }catch{ tb.innerHTML = '<tr><td colspan="7" class="muted">Dosyalar yüklenemedi.</td></tr>'; }
-      updateSel();
+      updateSel(); filterFiles();
+    }
+    function filterFiles(){
+      const q = (document.getElementById('fileSearch').value || '').toLowerCase();
+      document.querySelectorAll('#filesBody tr[data-name]').forEach(tr=>{
+        tr.style.display = tr.dataset.name.includes(q) ? '' : 'none';
+      });
+    }
+    function slugify(s){ return (s||'').toLowerCase().replace(/[çğıöşü]/g,m=>({'ç':'c','ğ':'g','ı':'i','ö':'o','ş':'s','ü':'u'}[m])).replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,64); }
+    function slugPreview(){
+      const s = slugify(document.getElementById('linkSlug').value);
+      document.getElementById('slugPrev').textContent = s ? (location.origin + '/s/' + s) : '';
     }
     function selectedIds(){ return Array.from(document.querySelectorAll('.fchk:checked')).map(c=>parseInt(c.value)); }
     function updateSel(){ const n=selectedIds().length; document.getElementById('selInfo').textContent = n?`(${n} dosya seçili)`:''; }
@@ -269,9 +286,11 @@
       if(!ids.length){ showToast('En az bir dosya işaretleyin.'); return; }
       const pw = document.getElementById('linkPw').value.trim();
       const expV = parseInt(document.getElementById('linkExp').value);
+      const slug = document.getElementById('linkSlug').value.trim();
       const body = { name, file_ids: ids };
       if(pw) body.password = pw;
       if(expV>0) body.expires_days = expV;
+      if(slug) body.custom_slug = slug;
       const btn = document.getElementById('createLinkBtn'); btn.disabled=true;
       try{
         const r = await fetch('/api/drive/collections',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -279,6 +298,7 @@
         if(!r.ok){ showToast(d.detail||'Link oluşturulamadı.'); return; }
         showToast('Link oluşturuldu.','success');
         document.getElementById('linkName').value=''; document.getElementById('linkPw').value=''; document.getElementById('linkExp').value='';
+        document.getElementById('linkSlug').value=''; slugPreview();
         document.querySelectorAll('.fchk').forEach(c=>c.checked=false); document.getElementById('selAll').checked=false; updateSel();
         loadLinks(); loadFiles();
         copyText(shareUrl(d.token), 'Link kopyalandı: '+shareUrl(d.token));

@@ -37,6 +37,7 @@ class CollectionCreate(BaseModel):
     file_ids:     List[int] = Field(default_factory=list, max_length=500)
     password:     Optional[str] = None          # boş/None = şifresiz
     expires_days: Optional[int] = Field(None, ge=0, le=3650)   # 0/None = süresiz
+    custom_slug:  Optional[str] = Field(None, max_length=80)   # boş = rastgele kod
 
 
 class CollectionUpdate(BaseModel):
@@ -45,6 +46,7 @@ class CollectionUpdate(BaseModel):
     password:     Optional[str] = None          # ""=şifre kaldır, "xx"=değiştir, None=dokunma
     clear_password: bool = False
     expires_days: Optional[int] = Field(None, ge=0, le=3650)
+    custom_slug:  Optional[str] = Field(None, max_length=80)
 
 
 # ─── Yönetim (login) ─────────────────────────────────────────────────────────
@@ -129,10 +131,18 @@ def create_collection(
     current_user: dict = Depends(get_current_user),
 ):
     actor = current_user.get("full_name") or current_user.get("username") or "—"
-    # benzersiz token
-    token = D.new_token()
-    while db.query(DriveCollection.id).filter(DriveCollection.share_token == token).first():
+    # token: özel link (slug) verilmişse onu, yoksa tahmin edilemez rastgele
+    if data.custom_slug and data.custom_slug.strip():
+        slug = D.slugify(data.custom_slug)
+        if len(slug) < 3:
+            return JSONResponse(status_code=400, content={"detail": "Özel link en az 3 geçerli karakter (harf/rakam) içermeli."})
+        if db.query(DriveCollection.id).filter(DriveCollection.share_token == slug).first():
+            return JSONResponse(status_code=400, content={"detail": f"'{slug}' zaten kullanımda — başka bir ad deneyin."})
+        token = slug
+    else:
         token = D.new_token()
+        while db.query(DriveCollection.id).filter(DriveCollection.share_token == token).first():
+            token = D.new_token()
     exp = (datetime.utcnow() + timedelta(days=data.expires_days)
            if data.expires_days else None)
     pw = D.hash_password(data.password) if (data.password and data.password.strip()) else None
@@ -157,6 +167,14 @@ def update_collection(
     c = db.query(DriveCollection).filter(DriveCollection.id == cid).first()
     if not c:
         return JSONResponse(status_code=404, content={"detail": "Link bulunamadı."})
+    if data.custom_slug is not None and data.custom_slug.strip():
+        slug = D.slugify(data.custom_slug)
+        if len(slug) < 3:
+            return JSONResponse(status_code=400, content={"detail": "Özel link en az 3 geçerli karakter içermeli."})
+        if db.query(DriveCollection.id).filter(DriveCollection.share_token == slug,
+                                               DriveCollection.id != cid).first():
+            return JSONResponse(status_code=400, content={"detail": f"'{slug}' zaten kullanımda."})
+        c.share_token = slug
     if data.name is not None and data.name.strip():
         c.name = data.name.strip()
     if data.clear_password:
