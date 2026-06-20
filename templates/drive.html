@@ -145,7 +145,7 @@
           <label class="dropzone" id="dropzone" for="fileInput">
             <i class="bi bi-cloud-arrow-up"></i>
             <div>Dosyaları buraya sürükle veya <b>tıklayıp seç</b></div>
-            <div style="font-size:0.76rem;margin-top:0.3rem;">Dosya başına en çok 200 MB</div>
+            <div style="font-size:0.76rem;margin-top:0.3rem;">Her dosya türü · dosya başına en çok 500 MB</div>
           </label>
           <input type="file" id="fileInput" multiple style="display:none;" />
           <div id="uploadStatus" style="margin-top:0.6rem;font-size:0.83rem;color:#6b7280;"></div>
@@ -270,7 +270,9 @@
         const fd = new FormData(); fd.append('file', files[i]);
         try{
           const r = await fetch('/api/drive/upload',{method:'POST',body:fd});
-          if(r.ok) ok++; else { fail++; const e=await r.json().catch(()=>({})); if(e.detail) showToast(e.detail); }
+          if(r.ok){ ok++; }
+          else if(r.status===413){ fail++; showToast(`"${files[i].name}" çok büyük — en fazla 500 MB.`); }
+          else { fail++; const e=await r.json().catch(()=>({})); showToast(e.detail || 'Yükleme başarısız.'); }
         }catch{ fail++; }
       }
       st.textContent = `${ok} dosya yüklendi${fail?`, ${fail} başarısız`:''}.`;

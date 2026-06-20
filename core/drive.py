@@ -33,8 +33,9 @@ try:
 except OSError:
     pass
 
-# Dosya başına azami boyut (MB).  DoS + disk koruması.
-MAX_UPLOAD_MB = int(os.environ.get("MINERVA_DRIVE_MAX_MB", "200"))
+# Dosya başına azami boyut (MB).  DoS + disk koruması.  nginx tarafında da
+# client_max_body_size bunun biraz üstünde olmalı (multipart payı için).
+MAX_UPLOAD_MB = int(os.environ.get("MINERVA_DRIVE_MAX_MB", "500"))
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 _SECRET = (os.environ.get("SECRET_KEY") or "minerva-drive-fallback").encode()
