@@ -257,3 +257,69 @@ def notify_expiry_summary(lots: Iterable[dict]) -> None:
         "url":   "/traceability",
         "requireInteraction": True,                # important — keep on screen until dismissed
     })
+
+
+def _send_push_to_users(user_ids: Iterable[int], payload: dict) -> None:
+    """Push'u BELİRLİ kullanıcıların abonelerine gönder (role audience değil).
+    CRM hatırlatmaları görevin atandığı kişiye gider.  VAPID yoksa no-op."""
+    cfg = _vapid_config()
+    if cfg is None:
+        return
+    ids = [int(u) for u in user_ids if u]
+    if not ids:
+        return
+    priv_key, subject = cfg
+    try:
+        from pywebpush import webpush, WebPushException
+    except ImportError:
+        logger.warning("pywebpush not installed — install it to enable push delivery")
+        return
+    from database import SessionLocal, PushSubscription
+
+    db = SessionLocal()
+    try:
+        subs = db.query(PushSubscription).filter(PushSubscription.user_id.in_(ids)).all()
+        if not subs:
+            return
+        body_json = json.dumps(payload, ensure_ascii=False)
+        dead_ids = []
+        for sub in subs:
+            try:
+                webpush(
+                    subscription_info={"endpoint": sub.endpoint,
+                                       "keys": {"p256dh": sub.p256dh, "auth": sub.auth}},
+                    data=body_json, vapid_private_key=priv_key,
+                    vapid_claims={"sub": subject}, ttl=86400,
+                )
+            except WebPushException as e:
+                status = e.response.status_code if e.response is not None else None
+                if status in (404, 410):
+                    dead_ids.append(sub.id)
+            except Exception as e:
+                logger.warning("CRM push send error for sub#%s: %s", sub.id, e)
+        if dead_ids:
+            db.query(PushSubscription).filter(
+                PushSubscription.id.in_(dead_ids)).delete(synchronize_session=False)
+            db.commit()
+    except Exception:
+        logger.exception("CRM push fan-out failed")
+    finally:
+        db.close()
+
+
+def notify_crm_reminder(user_id: int, count: int, sample_titles: Iterable[str]) -> None:
+    """CRM görev hatırlatması — atanan kişiye, vadesi gelen/geçen açık görevleri
+    için tek bir özet push.  Günlük scheduler taramasından çağrılır."""
+    titles = list(sample_titles)[:3]
+    sample = "; ".join(titles) + (" …" if count > len(titles) else "")
+    _emit("info", "CRM-REMINDER",
+          f"Kullanıcı#{user_id}: {count} CRM görevi vadesi geldi/geçti · {sample}",
+          user_id=user_id, count=count)
+    _send_push_to_users([user_id], {
+        "title": "📋 CRM Görev Hatırlatması",
+        "body":  (f"{count} görevin var: {sample}" if count > 1
+                  else f"Görev: {sample}"),
+        "tag":   f"crm-reminder-{user_id}",        # kişi başına tek bildirim, günlük yenilenir
+        "url":   "/crm",
+        "requireInteraction": False,
+    })

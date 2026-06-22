@@ -99,7 +99,10 @@ def login(request: Request, data: LoginRequest, response: Response, db: Session 
 
 @router.post("/logout")
 def logout(response: Response):
-    response.delete_cookie("access_token")
+    # delete_cookie domain'i set_auth_cookie ile aynı olmalı — aksi halde
+    # SSO (Domain=.minerva108.com) cookie'si silinmez ve oturum açık kalır.
+    from core.auth import COOKIE_DOMAIN
+    response.delete_cookie("access_token", domain=COOKIE_DOMAIN)
     return {"message": "Çıkış yapıldı"}
 
 

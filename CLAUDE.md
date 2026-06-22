@@ -75,11 +75,35 @@ to `system_reports/` on the 1st of each month. PDF rendering uses `reportlab`
 (`core/monthly_report.py`); app-restart tracking uses the `system_event` table, which
 `init_db()` startup writes an `app_start` row to on every boot.
 
+**CRM** (`routers/crm.py`, `core/crm.py`, `templates/crm.html` + `static/crm.js`) —
+Müşteri İlişkileri Yönetimi, served at its own subdomain **`crm.minerva108.com`**
+from the *same app/process* (one deploy, one DB). Login-gated SPA at `/crm`
+(tabs: Pano · Firmalar · Kişiler · Pipeline-Kanban · Görevler) with a slide-over
+detail drawer + shared activity timeline. **Cross-cutting — NOT domain-scoped**
+(no `domain` column; one unified CRM across Kozmetik/Supplement, like Drive).
+Access is *shared*: every CRM user sees all records/activities; `owner_*`/
+`assigned_to_*` are responsibility, not access control. Tables: `crm_company`,
+`crm_contact`, `crm_stage` (seeded with default pipeline in `init_db`), `crm_deal`
+(optional `quotation_id` bridge to B2B), `crm_activity` (note/call/meeting/email/
+whatsapp timeline), `crm_task` (reminders). RBAC via the new **`crm`** category
+(`view`/`create`/`edit`/`delete`) in `core/permissions.py`. Mutations write
+`log_admin_event` audit rows; soft-delete (`is_active`) on companies/contacts.
+A daily 08:00 scheduler job (`daily_crm_followup_scan`) web-pushes due/overdue
+task reminders to assignees (`notify_crm_reminder`). **Subdomain serving** (nginx
+server block + DNS A record + TLS) lives on `turhost` outside `deploy.sh`; the app
+itself is host-agnostic (`api_main._is_crm_host` redirects `crm.*` root → `/crm`).
+**SSO**: set `COOKIE_DOMAIN=.minerva108.com` in prod `.env` so one login spans
+`ims` + `crm` (handled in `core/auth.set_auth_cookie`; logout deletes with the
+same domain). WhatsApp Cloud API + Meta (Lead Ads, Messenger/Instagram DM) are
+planned later phases — they need Meta business setup + App Review and outbound
+calls via `httpx` + signature-verified public webhooks.
+
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +
-low-stock alerts), `scheduler.py` (APScheduler — daily 09:00 expiry scan, monthly
-stock snapshot on day 1 at 00:30, monthly system report on day 1 at 01:00, plus a
-startup backfill), `snapshots.py` (month-end stock freeze / reconstruction),
+low-stock alerts + CRM task reminders), `scheduler.py` (APScheduler — daily 08:00 CRM
+follow-up scan, daily 09:00 expiry scan, monthly stock snapshot on day 1 at 00:30,
+monthly system report on day 1 at 01:00, plus a startup backfill), `crm.py` (CRM
+serializers + `wa.me` helper), `snapshots.py` (month-end stock freeze / reconstruction),
 `monthly_report.py` (aylık detaylı PDF/Excel sistem raporu üretici), `qc_report.py` +
 `qc_questions.py` (QC form parse + PDF/Excel), `domain.py` (Kozmetik/Food Supplement
 panel scoping — see Domain section), `undo.py` (undo log), `password_strength.py`,

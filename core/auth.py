@@ -38,6 +38,15 @@ ALGORITHM = "HS256"
 # gönderilir.  Lokal dev http://localhost için COOKIE_SECURE=false set et.
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() in ("1", "true", "yes")
 
+# ─── Cookie Domain — alt alanlar arası tek oturum (SSO) ─────────────────────
+# Boş (default) → cookie yalnızca isteğin geldiği host'a aittir (eski davranış,
+# lokal dev için doğru).  Prod'da COOKIE_DOMAIN=.minerva108.com set edilirse
+# auth cookie hem ims.minerva108.com hem crm.minerva108.com için geçerli olur
+# → kullanıcı bir kez giriş yapar, her iki panelde de oturumu açıktır.
+# Mevcut host-kilitli cookie'ler geçerli kalır; yalnızca yeni login'ler bu
+# geniş scope'u alır.  Logout aynı domain ile silmek zorunda — yoksa cookie kalır.
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
+
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -63,6 +72,7 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False):
         max_age=max_age,
         samesite="lax",
         secure=COOKIE_SECURE,   # Prod: True (HTTPS-only); Lokal: env'de False'a çek
+        domain=COOKIE_DOMAIN,   # None → host-scoped; '.minerva108.com' → alt alanlar arası SSO
     )
 
 

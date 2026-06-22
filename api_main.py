@@ -36,7 +36,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router
 from core.domain import get_active_domain, domain_label
 
 
@@ -236,6 +236,7 @@ app.include_router(system.router)
 app.include_router(domain_router.router)
 app.include_router(drive_router.router)
 app.include_router(drive_router.share_router)
+app.include_router(crm_router.router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────
@@ -308,11 +309,23 @@ def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
 
+def _is_crm_host(request: Request) -> bool:
+    """İstek crm.minerva108.com (veya crm.* herhangi bir host) için mi geldi?
+    Aynı app/process iki subdomain'i sunar; kök (/) host'a göre yönlenir."""
+    host = (request.headers.get("host", "") or "").split(":")[0].lower()
+    return host.startswith("crm.")
+
+
 @app.get("/", response_class=HTMLResponse)
 def root(request: Request, db: Session = Depends(get_db)):
     """Dashboard — open to any authenticated user; the data fetched on this
     page is reports.view-gated at the API layer, so users without that perm
-    will simply see empty cards rather than be bounced into a redirect loop."""
+    will simply see empty cards rather than be bounced into a redirect loop.
+
+    crm.minerva108.com'dan gelen istekler CRM ana sayfasına yönlenir — tek
+    app, iki panel.  Auth cookie SSO ile paylaşıldığından oturum ortaktır."""
+    if _is_crm_host(request):
+        return RedirectResponse(url="/crm", status_code=302)
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
     user = _resolve_active_user(payload, db)
@@ -473,6 +486,19 @@ def drive_page(request: Request, db: Session = Depends(get_db)):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     return templates.TemplateResponse("drive.html", _page_ctx(request, payload, user))
+
+
+@app.get("/crm", response_class=HTMLResponse)
+def crm_page(request: Request, db: Session = Depends(get_db)):
+    """CRM — Müşteri İlişkileri Yönetimi (tek birleşik panel, oturum gerekir).
+    crm.minerva108.com'un ana sayfası buraya yönlenir."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "crm", "view"):
+        # Yetkisiz: CRM host'unda /login'e, IMS host'unda anasayfaya yolla
+        return RedirectResponse(url="/login" if _is_crm_host(request) else "/", status_code=302)
+    return templates.TemplateResponse("crm.html", _page_ctx(request, payload, user))
 
 
 @app.get("/s/{token}", response_class=HTMLResponse)

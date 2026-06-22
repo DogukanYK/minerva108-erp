@@ -35,8 +35,8 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from database import SessionLocal, Inventory, Item
-from core.notifications import notify_expiry_summary
+from database import SessionLocal, Inventory, Item, CrmTask, TR_OFFSET
+from core.notifications import notify_expiry_summary, notify_crm_reminder
 from core.snapshots import capture_previous_month, backfill_missing_snapshots
 
 logger = logging.getLogger("minerva108.scheduler")
@@ -99,6 +99,47 @@ def scan_expiring_lots() -> None:
         db.close()
 
 
+def daily_crm_followup_scan() -> None:
+    """
+    Günlük job (08:00): vadesi BUGÜN dolan veya geçmiş, henüz hatırlatılmamış
+    açık CRM görevlerini bul, atanan kişi başına tek özet push gönder, ve
+    reminder_sent=True ile işaretle (tekrarlı bildirimi önle).
+    """
+    db = SessionLocal()
+    try:
+        # Bugünün (TR) gün sonunun UTC karşılığı
+        tr_today = (datetime.utcnow() + TR_OFFSET).date()
+        tr_end = datetime(tr_today.year, tr_today.month, tr_today.day, 23, 59, 59)
+        due_cutoff = tr_end - TR_OFFSET
+
+        rows = (db.query(CrmTask).filter(
+            CrmTask.status == "open",
+            CrmTask.reminder_sent == False,          # noqa: E712
+            CrmTask.due_at.isnot(None),
+            CrmTask.due_at <= due_cutoff,
+            CrmTask.assigned_to_user_id.isnot(None),
+        ).all())
+
+        by_user: dict[int, list] = {}
+        for t in rows:
+            by_user.setdefault(t.assigned_to_user_id, []).append(t)
+
+        for uid, tasks in by_user.items():
+            try:
+                notify_crm_reminder(uid, len(tasks), [t.title for t in tasks])
+            except Exception:
+                logger.exception("notify_crm_reminder failed for user %s", uid)
+            for t in tasks:
+                t.reminder_sent = True
+        db.commit()
+        if by_user:
+            logger.info("daily_crm_followup_scan: %d kullanıcıya hatırlatma", len(by_user))
+    except Exception:
+        logger.exception("daily_crm_followup_scan failed")
+    finally:
+        db.close()
+
+
 def monthly_stock_snapshot() -> None:
     """
     Aylık job: her ayın 1'i 00:30'da bir önceki ayın stok durumunu
@@ -149,6 +190,15 @@ def start_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
         coalesce=True,                       # if missed (sleep/restart), run ONE catch-up not all
+    )
+
+    scheduler.add_job(
+        daily_crm_followup_scan,
+        CronTrigger(hour=8, minute=0),       # 08:00 her gün — kullanıcılar gelmeden önce
+        id="daily_crm_followup",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
 
     scheduler.add_job(

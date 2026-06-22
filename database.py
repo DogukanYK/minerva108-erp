@@ -481,6 +481,142 @@ class DriveCollectionFile(Base):
     sort_order    = Column(Integer, default=0)
 
 
+# ─── CRM — Müşteri İlişkileri Yönetimi (cross-cutting, domain'siz) ────────────
+# CRM tek birleşik platformdur — Kozmetik/Supplement domain ayrımına TABİ DEĞİL
+# (Drive gibi cross-cutting).  Bu yüzden bu tablolarda `domain` kolonu YOKTUR.
+# Erişim paylaşımlıdır: tüm CRM kullanıcıları tüm kayıt/aktiviteleri görür;
+# `owner_*` alanları sorumluluk içindir, erişim kısıtı değil.
+# Aktör alanları mevcut desene uyar: string snapshot (full_name) + opsiyonel FK.
+# Tüm datetime'lar naive UTC (datetime.utcnow); gösterimde to_tr() ile çevrilir.
+
+class CrmCompany(Base):
+    """Firma kartı — bir B2B müşteri/aday firma."""
+    __tablename__ = "crm_company"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    name          = Column(String(200), nullable=False, index=True)
+    sector        = Column(String(100), nullable=True)
+    website       = Column(String(200), nullable=True)
+    phone         = Column(String(50),  nullable=True)
+    email         = Column(String(150), nullable=True)
+    address       = Column(Text,        nullable=True)
+    city          = Column(String(100), nullable=True)
+    country       = Column(String(100), nullable=True)
+    tax_office    = Column(String(120), nullable=True)
+    tax_no        = Column(String(50),  nullable=True)
+    notes         = Column(Text,        nullable=True)
+    owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    owner_name    = Column(String(100), nullable=True)        # sorumlu kişi snapshot
+    is_active     = Column(Boolean, default=True, nullable=False)   # soft-delete
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    created_by    = Column(String(100), nullable=True)
+
+
+class CrmContact(Base):
+    """Kişi kartı — bir firmaya bağlı (opsiyonel) kişi."""
+    __tablename__ = "crm_contact"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    company_id      = Column(Integer, ForeignKey("crm_company.id", ondelete="SET NULL"), nullable=True, index=True)
+    full_name       = Column(String(150), nullable=False, index=True)
+    title           = Column(String(100), nullable=True)     # unvan
+    phone           = Column(String(50),  nullable=True)
+    mobile          = Column(String(50),  nullable=True)
+    email           = Column(String(150), nullable=True)
+    whatsapp_number = Column(String(50),  nullable=True)      # E.164 tercih edilir (+90…)
+    source          = Column(String(50),  nullable=True)      # manual / lead_ad / whatsapp / referral
+    notes           = Column(Text,        nullable=True)
+    owner_user_id   = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    owner_name      = Column(String(100), nullable=True)
+    is_active       = Column(Boolean, default=True, nullable=False)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    created_by      = Column(String(100), nullable=True)
+
+    company = relationship("CrmCompany", foreign_keys=[company_id])
+
+
+class CrmStage(Base):
+    """Satış pipeline aşaması — varsayılan setle seed'lenir, düzenlenebilir."""
+    __tablename__ = "crm_stage"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    name       = Column(String(80), nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
+    is_won     = Column(Boolean, default=False, nullable=False)   # kazanıldı aşaması mı
+    is_lost    = Column(Boolean, default=False, nullable=False)   # kaybedildi aşaması mı
+    is_active  = Column(Boolean, default=True, nullable=False)
+
+
+class CrmDeal(Base):
+    """Fırsat (opportunity) — pipeline'da bir satış adayı."""
+    __tablename__ = "crm_deal"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    title             = Column(String(200), nullable=False)
+    company_id        = Column(Integer, ForeignKey("crm_company.id", ondelete="SET NULL"), nullable=True, index=True)
+    contact_id        = Column(Integer, ForeignKey("crm_contact.id", ondelete="SET NULL"), nullable=True, index=True)
+    stage_id          = Column(Integer, ForeignKey("crm_stage.id",   ondelete="SET NULL"), nullable=True, index=True)
+    value             = Column(Float,   default=0.0)
+    currency          = Column(String(3), nullable=False, default="TRY")
+    probability       = Column(Integer, default=0)          # 0–100
+    expected_close_at = Column(DateTime, nullable=True)
+    status            = Column(String(20), nullable=False, default="open", index=True)  # open / won / lost
+    lost_reason       = Column(Text, nullable=True)
+    owner_user_id     = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    owner_name        = Column(String(100), nullable=True)
+    # B2B köprüsü — kazanılan fırsat mevcut bir Quotation'a atıfta bulunabilir
+    quotation_id      = Column(Integer, ForeignKey("quotations.id", ondelete="SET NULL"), nullable=True)
+    sort_order        = Column(Integer, default=0)          # Kanban'da aşama-içi sıralama
+    created_at        = Column(DateTime, default=datetime.utcnow)
+    created_by        = Column(String(100), nullable=True)
+    won_at            = Column(DateTime, nullable=True)
+    closed_at         = Column(DateTime, nullable=True)
+
+    company = relationship("CrmCompany", foreign_keys=[company_id])
+    contact = relationship("CrmContact", foreign_keys=[contact_id])
+    stage   = relationship("CrmStage",   foreign_keys=[stage_id])
+
+
+class CrmActivity(Base):
+    """Paylaşımlı zaman çizelgesi kaydı — not / arama / toplantı / e-posta / whatsapp.
+    Bir firmaya ve/veya kişiye ve/veya fırsata bağlanabilir.  Herkes görür."""
+    __tablename__ = "crm_activity"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    company_id     = Column(Integer, ForeignKey("crm_company.id", ondelete="CASCADE"), nullable=True, index=True)
+    contact_id     = Column(Integer, ForeignKey("crm_contact.id", ondelete="CASCADE"), nullable=True, index=True)
+    deal_id        = Column(Integer, ForeignKey("crm_deal.id",    ondelete="CASCADE"), nullable=True, index=True)
+    type           = Column(String(20), nullable=False, default="note")   # note|call|meeting|email|whatsapp
+    subject        = Column(String(200), nullable=True)
+    body           = Column(Text, nullable=True)
+    author_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    author_name    = Column(String(100), nullable=True)
+    is_pinned      = Column(Boolean, default=False, nullable=False)
+    created_at     = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CrmTask(Base):
+    """Hatırlatma / görev — son tarihli, bir kullanıcıya atanır.  Günlük scheduler
+    taraması vadesi gelen/geçen açık görevler için web push gönderir."""
+    __tablename__ = "crm_task"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    title               = Column(String(200), nullable=False)
+    notes               = Column(Text, nullable=True)
+    due_at              = Column(DateTime, nullable=True, index=True)
+    status              = Column(String(20), nullable=False, default="open", index=True)  # open / done
+    company_id          = Column(Integer, ForeignKey("crm_company.id", ondelete="SET NULL"), nullable=True, index=True)
+    contact_id          = Column(Integer, ForeignKey("crm_contact.id", ondelete="SET NULL"), nullable=True, index=True)
+    deal_id             = Column(Integer, ForeignKey("crm_deal.id",    ondelete="SET NULL"), nullable=True, index=True)
+    assigned_to_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    assigned_to_name    = Column(String(100), nullable=True)
+    created_at          = Column(DateTime, default=datetime.utcnow)
+    created_by          = Column(String(100), nullable=True)
+    completed_at        = Column(DateTime, nullable=True)
+    # Tekrarlı push'u önlemek için — bir görev için hatırlatma yollandı mı?
+    reminder_sent       = Column(Boolean, default=False, nullable=False)
+
+
 def log_system_event(event_type: str, detail: str = None) -> None:
     """Bir sistem olayını (örn. 'app_start') kaydet.
 
@@ -603,3 +739,26 @@ def init_db():
             db.commit()
         finally:
             db.close()
+
+    # ── CRM pipeline aşamaları — varsayılan set (idempotent) ────────────────
+    # SEED_DEFAULT_USERS'tan BAĞIMSIZ: aşamalar prod'da da olmalı, yoksa
+    # pipeline boş açılır.  Hiç aşama yoksa varsayılan akışı kurar; mevcutsa
+    # dokunmaz (kullanıcı düzenlemiş olabilir).
+    db = SessionLocal()
+    try:
+        if db.query(CrmStage).count() == 0:
+            _default_stages = [
+                ("Yeni",            0, False, False),
+                ("İletişim Kuruldu", 1, False, False),
+                ("Teklif",          2, False, False),
+                ("Müzakere",        3, False, False),
+                ("Kazanıldı",       4, True,  False),
+                ("Kaybedildi",      5, False, True),
+            ]
+            for nm, so, won, lost in _default_stages:
+                db.add(CrmStage(name=nm, sort_order=so, is_won=won, is_lost=lost))
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()

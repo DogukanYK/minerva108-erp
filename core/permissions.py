@@ -55,6 +55,7 @@ PERMISSION_CATEGORIES = {
     "qc":         ["view", "approve"],
     "finance":    ["view"],            # Cost prices, recipe BOM costs, margins
     "b2b":        ["view", "create", "confirm"],
+    "crm":        ["view", "create", "edit", "delete"],   # Müşteri İlişkileri (cross-cutting)
     "reports":    ["view"],
     "admin":      ["view", "create", "edit", "delete", "import_excel", "view_audit", "backup"],
 }
@@ -70,6 +71,7 @@ _DEFAULT_PERMISSIONS = {
         "qc":         {"view": True,  "approve": True},
         "finance":    {"view": True},
         "b2b":        {"view": True,  "create": True,  "confirm": True},
+        "crm":        {"view": True,  "create": True,  "edit": True,  "delete": True},
         "reports":    {"view": True},
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": True, "backup": False},
     },
@@ -81,6 +83,7 @@ _DEFAULT_PERMISSIONS = {
         "qc":         {"view": True,  "approve": True},
         "finance":    {"view": False},
         "b2b":        {"view": False, "create": False, "confirm": False},
+        "crm":        {"view": True,  "create": True,  "edit": True,  "delete": False},
         "reports":    {"view": True},
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
     },
@@ -92,6 +95,7 @@ _DEFAULT_PERMISSIONS = {
         "qc":         {"view": True,  "approve": False},
         "finance":    {"view": False},
         "b2b":        {"view": False, "create": False, "confirm": False},
+        "crm":        {"view": True,  "create": True,  "edit": True,  "delete": False},
         "reports":    {"view": True},
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
     },
@@ -104,6 +108,7 @@ _DEFAULT_PERMISSIONS = {
         "qc":         {"view": True,  "approve": False},
         "finance":    {"view": False},
         "b2b":        {"view": False, "create": False, "confirm": False},
+        "crm":        {"view": True,  "create": True,  "edit": False, "delete": False},
         "reports":    {"view": True},
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
     },
