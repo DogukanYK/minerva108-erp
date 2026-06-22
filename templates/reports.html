@@ -323,6 +323,48 @@
         </div>
       </div>
 
+      <!-- ════ TEDARİKÇİ FİYATLARI ════ -->
+      <div class="panel" style="margin-bottom:1.5rem;">
+        <div class="panel-header" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;padding:1rem 1.25rem;">
+          <div class="panel-icon panel-icon-navy"><i class="bi bi-tags-fill"></i></div>
+          <div style="flex:1;min-width:200px;">
+            <p class="panel-title" style="margin:0;">Tedarikçi Fiyatları</p>
+            <p class="panel-subtitle" style="margin:0;">Malzeme başına tedarikçi · alınabilecek miktar · birim fiyat. Üretim Stok Analizi Excel'inin <b>Satın Alma</b> sayfasını otomatik doldurur.</p>
+          </div>
+          {% if role in ['SuperAdmin','Manager'] %}
+          <button type="button" onclick="document.getElementById('spImport').click()" class="btn-primary-gold">
+            <i class="bi bi-upload"></i> Excel'den İçe Aktar
+          </button>
+          <input type="file" id="spImport" accept=".xlsx,.xlsm" style="display:none;" onchange="spDoImport(this)">
+          {% endif %}
+        </div>
+        <div class="panel-body" style="padding:0.6rem 1.25rem 1.1rem;">
+          {% if role in ['SuperAdmin','Manager'] %}
+          <div style="font-size:0.76rem;color:#9ca3af;margin-bottom:0.6rem;">
+            Işık Hanım'ın <b>“Stok Son Durum”</b> Excel'ini (Malzeme + 3 tedarikçiye kadar ad/miktar/fiyat) yükleyin; malzeme başına eski fiyatlar değiştirilir.
+          </div>
+          {% endif %}
+          <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin-bottom:0.7rem;">
+            <input type="text" id="spSearch" placeholder="Malzeme ara…" oninput="spRender()"
+              style="padding:0.4rem 0.7rem;border:1.5px solid #e5e7eb;border-radius:8px;font-size:0.82rem;min-width:180px;">
+            <span id="spSummary" style="font-size:0.8rem;color:#9ca3af;"></span>
+          </div>
+          <div id="spImportInfo" style="display:none;margin-bottom:0.7rem;font-size:0.82rem;line-height:1.4;"></div>
+          <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.84rem;">
+              <thead>
+                <tr style="text-align:left;color:#6b7280;border-bottom:2px solid #f0ece4;">
+                  <th style="padding:0.4rem 0.5rem;">Malzeme</th>
+                  <th style="padding:0.4rem 0.5rem;">Birim</th>
+                  <th style="padding:0.4rem 0.5rem;">Tedarikçiler (ucuzdan pahalıya · ad · miktar · ₺)</th>
+                </tr>
+              </thead>
+              <tbody id="spBody"><tr><td colspan="3" style="padding:0.8rem;color:#9ca3af;">Yükleniyor…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- ════ AYLIK STOK RAPORU ════ -->
       <div class="panel" style="margin-bottom:1.5rem;">
         <div class="panel-header" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;padding:1rem 1.25rem;">
@@ -791,6 +833,67 @@
       }catch{ showToast('Excel indirilemedi.'); }
     }
     loadPlanProducts();
+
+    /* ════ Tedarikçi Fiyatları ════ */
+    const SP_CAN_EDIT = {{ 'true' if role in ['SuperAdmin','Manager'] else 'false' }};
+    let _spData = [];
+    function _spEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    function _spMoney(v){ return v==null?'—':Number(v).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+    async function spLoad(){
+      const body=document.getElementById('spBody');
+      try{
+        const r=await fetch('/api/supplier-prices');
+        if(!r.ok){ body.innerHTML='<tr><td colspan="3" style="padding:0.8rem;color:#9ca3af;">Yüklenemedi.</td></tr>'; return; }
+        const j=await r.json();
+        _spData=j.items||[];
+        document.getElementById('spSummary').textContent=`${j.total_items} malzeme · ${j.total_prices} fiyat satırı`;
+        spRender();
+      }catch{ body.innerHTML='<tr><td colspan="3" style="padding:0.8rem;color:#9ca3af;">Yüklenemedi.</td></tr>'; }
+    }
+    function spRender(){
+      const q=(document.getElementById('spSearch').value||'').toLocaleLowerCase('tr');
+      const rows=_spData.filter(it=>!q||(it.material||'').toLocaleLowerCase('tr').includes(q));
+      const body=document.getElementById('spBody');
+      if(!rows.length){ body.innerHTML=`<tr><td colspan="3" style="padding:0.8rem;color:#9ca3af;">${_spData.length?'Eşleşen malzeme yok.':'Henüz fiyat yok — Excel\'den içe aktarın.'}</td></tr>`; return; }
+      body.innerHTML=rows.map(it=>{
+        const sup=(it.suppliers||[]).map((s,i)=>{
+          const style=i===0?'background:#15803d;color:#fff;':'background:#eef0f5;color:#374151;';
+          const pkg=s.package_size!=null?` · ${s.package_size}`:'';
+          const price=s.unit_price!=null?` · <b>${_spMoney(s.unit_price)}₺</b>`:'';
+          const warn=s.matched?'':' <span title="tedarikçi sistemde eşleşmedi — serbest metin" style="color:#b45309;">⚠</span>';
+          const del=SP_CAN_EDIT?` <a href="#" onclick="spDelete(${s.id});return false;" title="sil" style="color:#fff;opacity:0.85;text-decoration:none;font-weight:700;">×</a>`:'';
+          return `<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:999px;${style}font-size:0.78rem;">${_spEsc(s.supplier_name)}${pkg}${price}${warn}${del}</span>`;
+        }).join('');
+        return `<tr style="border-bottom:1px solid #f5f2ea;"><td style="padding:0.4rem 0.5rem;font-weight:600;">${_spEsc(it.material)}</td><td style="padding:0.4rem 0.5rem;color:#6b7280;">${_spEsc(it.unit||'')}</td><td style="padding:0.4rem 0.5rem;">${sup||'<span style="color:#9ca3af;">—</span>'}</td></tr>`;
+      }).join('');
+    }
+    async function spDelete(id){
+      if(!SP_CAN_EDIT) return;
+      if(!confirm('Bu tedarikçi fiyat satırı silinsin mi?')) return;
+      try{
+        const r=await fetch('/api/supplier-prices/'+id,{method:'DELETE'});
+        if(r.ok){ showToast('Silindi.','success'); spLoad(); } else { showToast('Silinemedi.'); }
+      }catch{ showToast('Silinemedi.'); }
+    }
+    async function spDoImport(input){
+      const f=input.files&&input.files[0]; if(!f) return;
+      const info=document.getElementById('spImportInfo');
+      info.style.display='block'; info.style.color='#6b7280'; info.textContent='İçe aktarılıyor…';
+      const fd=new FormData(); fd.append('file',f);
+      try{
+        const r=await fetch('/api/supplier-prices/import',{method:'POST',body:fd});
+        const j=await r.json().catch(()=>({}));
+        if(!r.ok){ info.style.color='#b91c1c'; info.textContent=j.detail||'İçe aktarılamadı.'; input.value=''; return; }
+        let msg=`✓ ${j.items_updated} malzeme güncellendi · ${j.prices_inserted} fiyat satırı.`;
+        if(j.unmatched_materials&&j.unmatched_materials.length) msg+=` ⚠ Eşleşmeyen malzeme (${j.unmatched_materials.length}): ${j.unmatched_materials.slice(0,10).join(', ')}${j.unmatched_materials.length>10?'…':''}.`;
+        if(j.unmatched_suppliers&&j.unmatched_suppliers.length) msg+=` Tedarikçi eşleşmedi (${j.unmatched_suppliers.length}, serbest metin saklandı): ${j.unmatched_suppliers.slice(0,10).join(', ')}${j.unmatched_suppliers.length>10?'…':''}.`;
+        info.style.color='#15803d'; info.textContent=msg;
+        showToast('Fiyatlar içe aktarıldı.','success');
+        spLoad();
+      }catch{ info.style.color='#b91c1c'; info.textContent='İçe aktarılamadı.'; }
+      input.value='';
+    }
+    spLoad();
   </script>
 </body>
 </html>

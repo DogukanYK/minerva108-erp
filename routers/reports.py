@@ -13,7 +13,7 @@ import io
 import re
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func
@@ -22,9 +22,10 @@ from sqlalchemy.orm import Session
 from database import (
     to_tr,
     get_db, Item, Supplier, Recipe, Transaction, ProductionHistory, Inventory,
-    StockSnapshot,
+    StockSnapshot, SupplierPrice,
 )
 from core.permissions import require_permission
+from core.auth import require_role
 from core.snapshots import compute_stock_at, snapshot_exists
 from core.domain import active_domain
 
@@ -493,13 +494,16 @@ def production_plan_export(
     _: dict = Depends(require_permission("reports", "view")),
     domain: str = Depends(active_domain),
 ):
-    """Aynı senaryoyu 4-sayfalı Excel olarak indir."""
+    """Aynı senaryoyu 4-sayfalı Excel olarak indir (Satın Alma sayfası tedarikçi/fiyatla zenginleşir)."""
     from core.production_sim import simulate, build_workbook
+    from core.supplier_prices import prices_for_items
     rep = simulate(db, data.recipe_ids, data.quantity, data.language or "TR", domain)
     if not rep["materials"]:
         return JSONResponse(status_code=400, content={"detail": "Seçilen ürünlerde malzeme bulunamadı."})
+    purchase_ids = [m["item_id"] for m in rep["purchase"] if m.get("item_id")]
+    prices = prices_for_items(db, purchase_ids, domain)
     try:
-        content = build_workbook(rep, title_suffix=f"{rep['summary']['products']} ürün × {int(data.quantity)}")
+        content = build_workbook(rep, title_suffix=f"{rep['summary']['products']} ürün × {int(data.quantity)}", prices=prices)
     except Exception:
         return JSONResponse(status_code=500, content={"detail": "Excel üretilemedi."})
     return StreamingResponse(
@@ -507,3 +511,82 @@ def production_plan_export(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="uretim_stok_analizi.xlsx"'},
     )
+
+
+# ─── Tedarikçi fiyat listesi (satın alma raporunu besler) ───────────────────
+_FINANCE = ["SuperAdmin", "Manager"]
+
+
+@router.get("/supplier-prices")
+def list_supplier_prices(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
+):
+    """Malzemeye göre gruplu tedarikçi fiyat listesi (görüntüleme paneli)."""
+    rows = db.query(SupplierPrice).filter(SupplierPrice.domain == domain).all()
+    item_ids = {r.item_id for r in rows}
+    meta = {}
+    if item_ids:
+        for it in db.query(Item).filter(Item.id.in_(item_ids)).all():
+            meta[it.id] = {"name": it.name, "unit": it.unit or "", "category": it.category or ""}
+    groups: dict = {}
+    for r in rows:
+        g = groups.setdefault(r.item_id, {
+            "item_id": r.item_id,
+            "material": meta.get(r.item_id, {}).get("name", "—"),
+            "unit": meta.get(r.item_id, {}).get("unit", ""),
+            "category": meta.get(r.item_id, {}).get("category", ""),
+            "suppliers": [],
+        })
+        g["suppliers"].append({
+            "id": r.id,
+            "supplier_name": r.supplier_name or (r.supplier.name if r.supplier else "—"),
+            "package_size": r.package_size,
+            "unit_price": r.unit_price,
+            "matched": r.supplier_id is not None,
+        })
+    out = sorted(groups.values(), key=lambda g: (g["material"] or "").lower())
+    for g in out:
+        g["suppliers"].sort(key=lambda s: (s["unit_price"] is None, s["unit_price"] or 0.0))
+    return {"items": out, "total_items": len(out), "total_prices": len(rows)}
+
+
+@router.post("/supplier-prices/import")
+async def import_supplier_prices(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_role(_FINANCE)),
+    domain: str = Depends(active_domain),
+):
+    """Işık Hanım'ın 'Stok Son Durum' Excel'ini içe aktarır (malzeme başına eski satırları değiştirir)."""
+    from core import supplier_prices as SP
+    if not (file.filename or "").lower().endswith((".xlsx", ".xlsm")):
+        return JSONResponse(status_code=400, content={"detail": "Lütfen .xlsx dosyası yükleyin."})
+    data = await file.read()
+    try:
+        rows = SP.parse_stok_son_durum(data)
+    except Exception:
+        return JSONResponse(status_code=400, content={"detail": "Excel okunamadı — beklenen 'Stok Son Durum' düzeni mi?"})
+    if not rows:
+        return JSONResponse(status_code=400, content={"detail": "Dosyada veri satırı bulunamadı."})
+    summary = SP.import_prices(db, rows, domain)
+    return summary
+
+
+@router.delete("/supplier-prices/{price_id}")
+def delete_supplier_price(
+    price_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_role(_FINANCE)),
+    domain: str = Depends(active_domain),
+):
+    """Tek bir tedarikçi fiyat satırını siler."""
+    row = db.query(SupplierPrice).filter(
+        SupplierPrice.id == price_id, SupplierPrice.domain == domain
+    ).first()
+    if not row:
+        return JSONResponse(status_code=404, content={"detail": "Kayıt bulunamadı."})
+    db.delete(row)
+    db.commit()
+    return {"ok": True}

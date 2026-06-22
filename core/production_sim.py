@@ -107,6 +107,7 @@ def simulate(db: Session, recipe_ids: list, qty: float, lang: str, domain: str) 
             gross = ing.quantity * mult * factor
 
             d = used.setdefault(it.id, {
+                "item_id": it.id,
                 "name": it.name, "category": it.category or "",
                 "pkg": it.pkg_type or "", "unit": it.unit or "",
                 "current": float(it.current_stock or 0.0), "used": 0.0,
@@ -148,6 +149,7 @@ def simulate(db: Session, recipe_ids: list, qty: float, lang: str, domain: str) 
         if d["category"] == "Hammadde":
             total_raw += d["used"]
         row = {
+            "item_id": d.get("item_id"),
             "name": d["name"], "category": catlbl(d), "unit": d["unit"],
             "used": round(d["used"], 2), "current": round(d["current"], 2),
             "remaining": rem, "status": "YETERSİZ" if is_short else "Yeterli",
@@ -181,8 +183,14 @@ def simulate(db: Session, recipe_ids: list, qty: float, lang: str, domain: str) 
 
 # ─── Excel üretimi ──────────────────────────────────────────────────────────
 
-def build_workbook(report: dict, title_suffix: str = "") -> bytes:
-    """Simülasyon raporundan 4-sayfalı .xlsx üretir (Özet / Tüketim / Üretilebilir / Satın Alma)."""
+def build_workbook(report: dict, title_suffix: str = "", prices: dict = None) -> bytes:
+    """Simülasyon raporundan 4-sayfalı .xlsx üretir (Özet / Tüketim / Üretilebilir / Satın Alma).
+
+    `prices` verilirse ({item_id: [{supplier_name, package_size, unit_price}, …]}),
+    'Satın Alma Listesi' sayfası her malzeme için 3 tedarikçiye kadar
+    [Tedarikçi · Alınabilecek Miktar · Birim Fiyat] sütunlarıyla genişler
+    (Işık Hanım'ın "Stok Son Durum" tablosu). Boşsa sayfa eski sade halinde kalır.
+    """
     from io import BytesIO
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -249,17 +257,42 @@ def build_workbook(report: dict, title_suffix: str = "") -> bytes:
             if ci == 3: c.font = RED if p["producible"] < p["target"] else GRN
     ws.freeze_panes = "A2"; widths(ws, [46, 8, 22, 40, 12, 18, 8])
 
-    # Satın Alma Listesi
+    # Satın Alma Listesi  (+ varsa tedarikçi/paket/fiyat sütunları)
     ws = wb.create_sheet("Satın Alma Listesi")
-    hrow(ws, ["Malzeme", "Kategori", "Birim", "Toplam Gereken (fireli)", "Mevcut Stok", "ALINACAK (eksik)"])
+    show_sup = bool(prices)
+    SUP_SLOTS = 3
+    base_headers = ["Malzeme", "Kategori", "Birim", "Toplam Gereken (fireli)", "Mevcut Stok", "ALINACAK (eksik)"]
+    headers = list(base_headers)
+    if show_sup:
+        for n in range(1, SUP_SLOTS + 1):
+            headers += [f"TEDARİKÇİ-{n}", "Alınabilecek Miktar", "Birim Fiyat"]
+    hrow(ws, headers)
     for ri, m in enumerate(report["purchase"], 2):
         vals = [m["name"], m["category"], m["unit"], m["used"], m["current"], m["shortfall"]]
+        if show_sup:
+            plist = prices.get(m.get("item_id"), [])
+            for i in range(SUP_SLOTS):
+                p = plist[i] if i < len(plist) else None
+                vals += [
+                    (p["supplier_name"] if p else ""),
+                    (p["package_size"] if p and p["package_size"] is not None else ""),
+                    (p["unit_price"] if p and p["unit_price"] is not None else ""),
+                ]
         for ci, v in enumerate(vals, 1):
             c = ws.cell(ri, ci, v); c.border = thin
             if ci == 6: c.font = RED
+            if show_sup and ci == 7 and v: c.font = BLD   # en ucuz tedarikçi vurgulansın
     last = len(report["purchase"]) + 3
-    ws.cell(last, 1, "Not: 'Alınacak' = brüt gereken − mevcut. Fire zaten gerekene dahildir.").font = Font(italic=True, color="6b7280")
-    ws.freeze_panes = "A2"; widths(ws, [40, 11, 8, 22, 14, 18])
+    note = "Not: 'Alınacak' = brüt gereken − mevcut. Fire zaten gerekene dahildir."
+    if show_sup:
+        note += "  Tedarikçiler en ucuzdan pahalıya sıralı (Tedarikçi-1 en uygun)."
+    ws.cell(last, 1, note).font = Font(italic=True, color="6b7280")
+    ws.freeze_panes = "A2"
+    w = [40, 11, 8, 22, 14, 18]
+    if show_sup:
+        for _n in range(SUP_SLOTS):
+            w += [22, 16, 12]
+    widths(ws, w)
 
     buf = BytesIO()
     wb.save(buf)

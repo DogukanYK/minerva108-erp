@@ -195,6 +195,35 @@ class Inventory(Base):
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
 
 
+class SupplierPrice(Base):
+    """Malzeme × tedarikçi fiyat / paket listesi — satın alma raporunu otomatik doldurur.
+
+    Sistemde malzeme başına yalnızca tek `Item.cost_price` ve tek varsayılan
+    tedarikçi var. Satın alma kararı için TEDARİKÇİ-bazlı **birim fiyat** ve
+    **alınabilecek paket / min-sipariş miktarı** burada tutulur — Işık Hanım'ın
+    "Stok Son Durum" tablosunun veri kaynağı. Bir malzemenin birden çok satırı
+    (tedarikçisi) olabilir; rapor en ucuzdan başlayarak ilk N tanesini gösterir.
+    `supplier_name` her zaman saklanır (görüntü için); `supplier_id` eşleşirse
+    bağlanır, eşleşmezse NULL kalır (serbest metin tedarikçi).
+    """
+    __tablename__ = "supplier_prices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False, index=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
+    supplier_name = Column(String(150), nullable=True)   # görüntü adı (eşleşmese de saklanır)
+    package_size = Column(Float, nullable=True)          # alınabilecek miktar / min sipariş (malzeme birimi cinsinden)
+    unit_price = Column(Float, nullable=True)            # birim fiyat
+    currency = Column(String(8), default="TRY")
+    note = Column(Text, nullable=True)
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Kozmetik / Food Supplement
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    item = relationship("Item", foreign_keys=[item_id])
+    supplier = relationship("Supplier", foreign_keys=[supplier_id])
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
 

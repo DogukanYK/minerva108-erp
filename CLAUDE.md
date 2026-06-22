@@ -199,6 +199,16 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   producible-in-isolation, and a purchase list" + 4-sheet Excel. Consumption rules are
   **identical to `start_production`** (fire on raw materials, ambalaj/etiket exempt,
   label-language resolution). Domain-scoped; `simulate()` is the reusable engine.
+- **Supplier prices → enriched purchase list** (`core/supplier_prices.py`, table
+  `supplier_prices`: per material × supplier → `package_size` + `unit_price`, domain-scoped).
+  Maintained by **importing the lab's "Stok Son Durum" Excel** (`POST
+  /api/supplier-prices/import`, finance-only; `parse_stok_son_durum` reads Işık Hanım's
+  fixed column layout — supplier-1's package sits *before* its name; materials matched to
+  `Item.name`, suppliers to `Supplier.name` via Turkish-folded `normalize`, unmatched
+  suppliers kept as free text). The production-plan `/export` then auto-fills the **Satın
+  Alma Listesi** sheet with up to 3 suppliers (cheapest-first) — `build_workbook(...,
+  prices=…)`; empty → the old plain 6-column sheet. A "Tedarikçi Fiyatları" panel on the
+  Reports page lists/imports/deletes (import+delete gated to `SuperAdmin`/`Manager`).
 
 ### Timezone
 
