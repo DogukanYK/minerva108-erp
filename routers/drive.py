@@ -54,6 +54,7 @@ class CollectionUpdate(BaseModel):
 @router.post("/upload", status_code=201)
 async def upload_file(
     file: UploadFile = File(...),
+    rel_path: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -64,7 +65,10 @@ async def upload_file(
         return JSONResponse(status_code=413, content={"detail": str(e)})
     except Exception:
         return JSONResponse(status_code=500, content={"detail": "Yükleme sırasında hata oluştu."})
-    rec = DriveFile(original_name=(file.filename or "dosya")[:255], stored_name=stored,
+    # Klasör yüklemesinde tarayıcı göreli yolu (alt klasörler dahil) gönderir;
+    # bunu görüntü adı olarak saklarız (indirirken yalnızca son parça kullanılır).
+    display = D.clean_rel_path(rel_path) if rel_path else (file.filename or "dosya")
+    rec = DriveFile(original_name=display[:255], stored_name=stored,
                     size_bytes=size, content_type=ctype, uploaded_by=actor)
     db.add(rec); db.commit(); db.refresh(rec)
     return {"id": rec.id, "name": rec.original_name, "size_human": D.humanize(size)}

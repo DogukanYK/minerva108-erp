@@ -41,6 +41,40 @@ def test_upload_and_list(authed_client: TestClient):
     assert any(f["id"] == fid for f in files)
 
 
+def test_folder_upload_keeps_path_downloads_basename(authed_client: TestClient):
+    """Klasör yüklemesi: göreli yol görüntü adında saklanır, indirirken son parça kullanılır."""
+    r = authed_client.post(
+        "/api/drive/upload",
+        files={"file": ("rapor.pdf", b"PDFDATA", "application/pdf")},
+        data={"rel_path": "Belgeler/2026/rapor.pdf"},
+        headers=_H,
+    )
+    assert r.status_code == 201, r.text
+    fid = r.json()["id"]
+    files = authed_client.get("/api/drive/files").json()
+    rec = next(f for f in files if f["id"] == fid)
+    assert rec["name"] == "Belgeler/2026/rapor.pdf"          # yol korunur (görüntü)
+
+    c = _collection(authed_client, [fid], name="Klasör Linki")
+    pub = TestClient(app)
+    dl = pub.get(f"/s/{c['token']}/f/{fid}")
+    assert dl.status_code == 200 and dl.content == b"PDFDATA"
+    cd = dl.headers.get("content-disposition", "")
+    assert "rapor.pdf" in cd and "Belgeler" not in cd        # indirme adı = sade dosya adı
+
+
+def test_folder_upload_strips_path_traversal(authed_client: TestClient):
+    """'..'/kök kaçışı göreli yoldan ayıklanır (görüntü adı temiz kalır)."""
+    r = authed_client.post(
+        "/api/drive/upload",
+        files={"file": ("x.txt", b"x", "text/plain")},
+        data={"rel_path": "../../etc/gizli.txt"},
+        headers=_H,
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["name"] == "etc/gizli.txt"
+
+
 def test_share_open_and_download(authed_client: TestClient):
     fid = _upload(authed_client, content=b"DATA123")
     c = _collection(authed_client, [fid], name="Geven Belgeleri")

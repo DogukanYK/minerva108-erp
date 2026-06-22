@@ -58,8 +58,12 @@ disk, scheduler jobs, last backup, last snapshot, system clock). The SuperAdmin-
 `/system` page renders this with colored status cards and auto-refreshes every 30 s.
 
 **Minerva Drive** (`routers/drive.py`, `core/drive.py`) — a self-hosted file-share
-("mini Drive"). Login-gated management at `/drive`: upload files, group them into
-named "collections" (links), each with an unguessable `share_token` + optional bcrypt
+("mini Drive"). Login-gated management at `/drive`: upload individual files **or a
+whole folder** (the "Klasör Yükle" button uses `<input webkitdirectory>`; the browser's
+per-file `webkitRelativePath` is POSTed as `rel_path` and stored in `original_name` —
+no schema change — so the subfolder path shows in listings while downloads use only the
+basename via `safe_download_name`; `clean_rel_path` strips `..`/root escapes), group them
+into named "collections" (links), each with an unguessable `share_token` + optional bcrypt
 **password** and **expiry**. Public, **unauthenticated** share page `GET /s/{token}`
 (+ `/s/{token}/unlock` password POST → HMAC unlock cookie, `/s/{token}/f/{id}`
 download). Files live on disk under `DRIVE_DIR` (`drive_files/`, random names,

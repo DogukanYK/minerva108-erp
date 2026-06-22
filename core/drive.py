@@ -159,6 +159,25 @@ def humanize(n) -> str:
     return f"{n:.1f} GB"
 
 
+def clean_rel_path(path: str) -> str:
+    """Klasör yüklemesinde tarayıcının verdiği göreli yolu görüntü için temizler.
+
+    Diskteki ad zaten rastgele (stored_name) — bu yol yalnızca görüntüleme/indirme
+    adı içindir, ama yine de '..'/kök kaçışı ve kontrol karakterleri ayıklanır.
+    """
+    p = (path or "").replace("\\", "/")
+    parts = [seg.strip() for seg in p.split("/")]
+    parts = [seg for seg in parts if seg and seg not in (".", "..")]
+    p = "/".join(parts)
+    p = re.sub(r"[\r\n\t]+", "", p)
+    return p[:255] or "dosya"
+
+
 def safe_download_name(name: str) -> str:
-    """Content-Disposition için güvenli dosya adı (satır sonu / tırnak temizliği)."""
-    return re.sub(r'[\r\n"]+', "_", (name or "dosya")).strip()[:200] or "dosya"
+    """Content-Disposition için güvenli dosya adı.
+
+    Klasör yüklemelerinde ad bir yol olabilir (`alt/klasor/a.pdf`); indirirken
+    yalnızca son parça (asıl dosya adı) kullanılır.
+    """
+    base = re.split(r"[\\/]", (name or "dosya"))[-1]
+    return re.sub(r'[\r\n"]+', "_", base).strip()[:200] or "dosya"
