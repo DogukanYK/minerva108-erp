@@ -306,7 +306,13 @@ def login_page(request: Request):
     token = request.cookies.get("access_token")
     if token and decode_token(token):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request})
+    # crm.minerva108.com'da CRM markası göster (aynı login, host'a göre etiket)
+    is_crm = _is_crm_host(request)
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "is_crm": is_crm,
+        "brand_tagline": "CRM Sistemi" if is_crm else "ERP Sistemi",
+    })
 
 
 def _is_crm_host(request: Request) -> bool:

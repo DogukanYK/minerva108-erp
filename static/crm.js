@@ -88,8 +88,7 @@
           html += `<div style="margin-bottom:0.7rem;">
             <div style="display:flex;justify-content:space-between;font-size:0.84rem;margin-bottom:0.2rem;">
               <span>${esc(s.stage)} <span class="muted">(${s.count})</span></span><b>${money(s.value)}</b></div>
-            <div style="height:8px;background:#efe9dd;border-radius:6px;overflow:hidden;">
-              <div style="height:100%;width:${pct}%;background:var(--gold);"></div></div></div>`;
+            <div class="bar-track"><div class="bar-fill" style="width:${pct}%;"></div></div></div>`;
         });
       }
       html += "</div></div>";
@@ -112,7 +111,7 @@
 
   function taskRow(t) {
     const cls = t.overdue ? "pill pill-o" : "pill pill-gray";
-    return `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0;border-bottom:1px solid #f3f0ea;">
+    return `<div class="row-sep" style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0;">
       <button class="ico-btn" title="Tamamla" onclick="CRM.toggleTask(${t.id})"><i class="bi bi-circle"></i></button>
       <div style="flex:1;"><div style="font-size:0.88rem;">${esc(t.title)}</div>
       <div class="muted" style="font-size:0.74rem;">${t.due_label ? esc(t.due_label) : "tarih yok"} · ${esc(t.assigned_to_name)}</div></div>
@@ -239,7 +238,7 @@
       if (!rows.length) { box.innerHTML = '<div class="empty">Görev yok.</div>'; return; }
       box.innerHTML = rows.map((t) => {
         const done = t.status === "done";
-        return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.55rem 0;border-bottom:1px solid #f3f0ea;">
+        return `<div class="row-sep" style="display:flex;align-items:center;gap:0.6rem;padding:0.55rem 0;">
           <button class="ico-btn" onclick="CRM.toggleTask(${t.id})" title="${done ? "Geri al" : "Tamamla"}"><i class="bi bi-${done ? "check-circle-fill" : "circle"}" style="${done ? "color:#22c55e;" : ""}"></i></button>
           <div style="flex:1;${done ? "opacity:0.55;text-decoration:line-through;" : ""}">
             <div style="font-size:0.9rem;">${esc(t.title)}</div>
@@ -358,7 +357,7 @@
   }
 
   function sectionList(title, rows, rowFn, addBtn) {
-    let h = `<div style="margin-top:1.1rem;display:flex;align-items:center;justify-content:space-between;"><b style="color:var(--navy);">${esc(title)}</b>${addBtn || ""}</div>`;
+    let h = `<div style="margin-top:1.1rem;display:flex;align-items:center;justify-content:space-between;"><b style="color:var(--heading);">${esc(title)}</b>${addBtn || ""}</div>`;
     if (!rows || !rows.length) h += '<div class="muted" style="font-size:0.82rem;padding:0.4rem 0;">Kayıt yok.</div>';
     else h += rows.map(rowFn).join("");
     return h;
@@ -391,7 +390,7 @@
     if (!tasks.length) html += '<div class="muted">Görev yok.</div>';
     else html += tasks.map((t) => {
       const done = t.status === "done";
-      return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0;border-bottom:1px solid #efe9dd;">
+      return `<div class="row-sep" style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0;">
         <button class="ico-btn" onclick="CRM.toggleTask(${t.id},true)"><i class="bi bi-${done ? "check-circle-fill" : "circle"}" style="${done ? "color:#22c55e;" : ""}"></i></button>
         <div style="flex:1;${done ? "opacity:0.55;text-decoration:line-through;" : ""}"><div style="font-size:0.88rem;">${esc(t.title)}</div>
         <div class="muted" style="font-size:0.74rem;">${t.due_label ? esc(t.due_label) : "tarih yok"} · ${esc(t.assigned_to_name)}</div></div>

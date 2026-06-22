@@ -21,7 +21,55 @@
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
   <style>
-    :root{ --navy:#232E6E; --gold:#C9AC6F; --gold2:#D9BE85; --cream:#f5f0e8; --white:#fff; --sidebar-width:240px; --navbar-height:64px; --ink:#1f2937; --muted:#6b7280; }
+    :root{ --navy:#232E6E; --gold:#C9AC6F; --gold2:#D9BE85; --cream:#f5f0e8; --white:#fff; --sidebar-width:240px; --navbar-height:64px; --ink:#1f2937; --muted:#6b7280; --faint:#9ca3af; --border:#f0ece4; --border-2:#e5e7eb; --hover:#faf8f4; --surface-2:#efe9dd; --heading:#232E6E; }
+    /* ── Koyu mod — theme.js <html data-theme="dark"> set eder; dark.css'ten
+         SONRA tanımlandığı için CRM paletini bu blok yönetir. ── */
+    :root[data-theme="dark"]{ --gold:#D9BE85; --gold2:#E6CFA0; --cream:#0E1322; --white:#1A2138; --ink:#E2E5EC; --muted:#9aa3bb; --faint:#5D6786; --border:#222C46; --border-2:#2A3454; --hover:#232B45; --surface-2:#161D30; --heading:#E6CFA0; }
+    :root[data-theme="dark"] .topnav{ border-bottom-color:var(--border); }
+    :root[data-theme="dark"] .topnav-title,
+    :root[data-theme="dark"] .page-title,
+    :root[data-theme="dark"] .card2-head h2,
+    :root[data-theme="dark"] .stat .v,
+    :root[data-theme="dark"] .modal-head,
+    :root[data-theme="dark"] .kcol-head .nm,
+    :root[data-theme="dark"] .kcard .v{ color:var(--heading); }
+    :root[data-theme="dark"] .user-name{ color:#C4CAD8; }
+    :root[data-theme="dark"] .btn-logout{ border-color:var(--border-2); }
+    :root[data-theme="dark"] .btn-o{ border-color:var(--border-2); color:var(--gold2); }
+    :root[data-theme="dark"] .btn-o:hover{ background:var(--hover); }
+    :root[data-theme="dark"] .ipt,
+    :root[data-theme="dark"] select.ipt,
+    :root[data-theme="dark"] textarea.ipt{ background:var(--surface-2); border-color:var(--border-2); }
+    :root[data-theme="dark"] .ipt::placeholder{ color:var(--faint); }
+    :root[data-theme="dark"] .card2{ border:1px solid var(--border); box-shadow:none; }
+    :root[data-theme="dark"] .card2-head{ border-bottom-color:var(--border); }
+    :root[data-theme="dark"] .stat{ border:1px solid var(--border); box-shadow:none; }
+    :root[data-theme="dark"] th{ color:var(--faint); border-bottom-color:var(--border-2); }
+    :root[data-theme="dark"] td{ border-bottom-color:var(--border); }
+    :root[data-theme="dark"] tr.clickable:hover td{ background:var(--hover); }
+    :root[data-theme="dark"] .ico-btn:hover{ background:var(--hover); color:var(--gold2); }
+    :root[data-theme="dark"] .kcol{ background:var(--surface-2); }
+    :root[data-theme="dark"] .kcard{ box-shadow:0 1px 3px rgba(0,0,0,0.35); }
+    :root[data-theme="dark"] .tl-item{ border-left-color:var(--border); }
+    :root[data-theme="dark"] .kv{ border-bottom-color:var(--border); }
+    :root[data-theme="dark"] .mobnav{ background:var(--surface-2); border-top-color:var(--border); }
+    :root[data-theme="dark"] .mobnav button.active{ color:var(--gold2); }
+    :root[data-theme="dark"] .mobnav button.active i{ color:var(--gold); }
+    :root[data-theme="dark"] .toolbar .search i{ color:var(--faint); }
+    :root[data-theme="dark"] .row-sep{ border-bottom-color:var(--border); }
+    /* Yardımcı sınıflar (tema-duyarlı) — crm.js render'ında kullanılır */
+    .row-sep{ border-bottom:1px solid var(--border); }
+    .bar-track{ height:8px; background:var(--surface-2); border-radius:6px; overflow:hidden; }
+    .bar-fill{ height:100%; background:var(--gold); border-radius:6px; }
+    .theme-toggle{ background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:rgba(255,255,255,0.7); width:34px; height:34px; border-radius:8px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; font-size:1rem; flex-shrink:0; }
+    .theme-toggle:hover{ color:var(--gold2); border-color:rgba(217,190,133,0.4); }
+    .theme-toggle .bi-sun-fill{ display:none; }
+    :root[data-theme="dark"] .theme-toggle .bi-moon-stars-fill{ display:none; }
+    :root[data-theme="dark"] .theme-toggle .bi-sun-fill{ display:inline; }
+    .topnav .theme-toggle{ background:var(--cream); border-color:var(--border-2); color:var(--muted); }
+    .topnav .theme-toggle:hover{ color:var(--navy); border-color:var(--gold); }
+    :root[data-theme="dark"] .topnav .theme-toggle{ background:var(--surface-2); color:var(--muted); }
+    :root[data-theme="dark"] .topnav .theme-toggle:hover{ color:var(--gold2); }
     *,*::before,*::after{ box-sizing:border-box; }
     body{ margin:0; font-family:'Jost',sans-serif; background:var(--cream); color:var(--ink); }
     a{ text-decoration:none; color:inherit; }
@@ -181,6 +229,10 @@
       <button class="nav-link-item" data-tab="contacts"><i class="bi bi-people nav-icon"></i>Kişiler</button>
       <button class="nav-link-item" data-tab="pipeline"><i class="bi bi-kanban nav-icon"></i>Pipeline</button>
       <button class="nav-link-item" data-tab="tasks"><i class="bi bi-check2-square nav-icon"></i>Görevler<span class="nav-badge" id="navTaskBadge" style="display:none;">0</span></button>
+      {% if can('admin','view') %}
+      <div class="nav-section-label" style="margin-top:0.8rem;">Sistem</div>
+      <a href="/admin" class="nav-link-item"><i class="bi bi-shield-lock nav-icon"></i>Yönetim Paneli</a>
+      {% endif %}
     </nav>
     <div class="sidebar-footer">
       <a href="/" title="Envanter sistemine geç"><i class="bi bi-box-seam"></i> Envanter Sistemi</a>
@@ -190,6 +242,7 @@
   <header class="topnav">
     <span class="topnav-title" id="topTitle">Pano</span>
     <div class="topnav-right">
+      <button type="button" class="theme-toggle" onclick="toggleTheme()" title="Tema değiştir" aria-label="Tema değiştir"><i class="bi bi-moon-stars-fill"></i><i class="bi bi-sun-fill"></i></button>
       <div class="user-chip">
         <div class="user-avatar">{{ full_name[0] | upper }}</div>
         <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>

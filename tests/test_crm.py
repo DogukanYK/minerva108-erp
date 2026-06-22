@@ -187,10 +187,32 @@ def test_dashboard_counts(authed_client: TestClient):
 
 # ─── RBAC ─────────────────────────────────────────────────────────────────────
 
-def test_labtech_can_create_but_not_delete(labtech_client: TestClient):
-    # LabTech default: crm view/create/edit True, delete False
-    c = _company(labtech_client, name="LabTech Firması")
-    cid = c["id"]
-    # silme yetkisi yok → 403
-    r = labtech_client.delete(f"/api/crm/companies/{cid}", headers=_H)
-    assert r.status_code == 403
+def test_crm_access_off_by_default(labtech_client: TestClient):
+    # CRM varsayılan KAPALI — yalnızca SuperAdmin + yetki matrisinden açılanlar girer.
+    # LabTech (meltem) hiçbir CRM yetkisine sahip değil → 403.
+    assert labtech_client.get("/api/crm/companies").status_code == 403
+    assert labtech_client.post("/api/crm/companies",
+                               json={"name": "X"}, headers=_H).status_code == 403
+
+
+def test_granting_crm_permission_enables_access(labtech_client: TestClient, db_session):
+    # Yetki matrisinden (admin) CRM erişimi verilince kullanıcı girebilir.
+    import json
+    from database import User
+    u = db_session.query(User).filter(User.username == "meltem").first()
+    u.permissions = json.dumps({"crm": {"view": True, "create": True, "edit": False, "delete": False}})
+    db_session.commit()
+
+    assert labtech_client.get("/api/crm/companies").status_code == 200
+    c = labtech_client.post("/api/crm/companies", json={"name": "İzinli Firma"}, headers=_H)
+    assert c.status_code == 201
+    # delete yetkisi verilmedi → 403
+    assert labtech_client.delete(f"/api/crm/companies/{c.json()['id']}", headers=_H).status_code == 403
+
+
+def test_crm_users_lists_only_crm_enabled(authed_client: TestClient):
+    # /users yalnızca CRM yetkili kullanıcıları döndürür (lab kullanıcıları değil).
+    users = authed_client.get("/api/crm/users").json()
+    names = [u["username"] for u in users]
+    assert "dogukan" in names            # SuperAdmin — her zaman CRM erişimi
+    assert "meltem" not in names         # LabTech — varsayılan CRM kapalı

@@ -32,7 +32,7 @@ from database import (
     get_db, User, TR_OFFSET,
     CrmCompany, CrmContact, CrmStage, CrmDeal, CrmActivity, CrmTask, Quotation,
 )
-from core.permissions import require_permission
+from core.permissions import require_permission, _has_permission
 from core.audit import log_admin_event
 from core import crm as C
 
@@ -142,9 +142,12 @@ class TaskIn(BaseModel):
 
 @router.get("/users")
 def list_users(db: Session = Depends(get_db), _: dict = Depends(require_permission("crm", "view"))):
-    """Sahip/atanan seçimleri için aktif kullanıcılar."""
+    """Sahip/atanan seçimleri için SADECE CRM erişimi olan aktif kullanıcılar.
+    Lab/IMS'te olup CRM yetkisi olmayanlar listeye düşmez — atama/sorumlu
+    yalnızca CRM kullanıcılarına yapılır."""
     rows = db.query(User).filter(User.is_active == True).order_by(User.full_name).all()  # noqa: E712
-    return [{"id": u.id, "full_name": u.full_name, "username": u.username} for u in rows]
+    return [{"id": u.id, "full_name": u.full_name, "username": u.username}
+            for u in rows if _has_permission(u, "crm", "view")]
 
 
 @router.get("/stages")
