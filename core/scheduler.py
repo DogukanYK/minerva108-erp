@@ -140,6 +140,29 @@ def daily_crm_followup_scan() -> None:
         db.close()
 
 
+def kommo_periodic_sync() -> None:
+    """
+    Periyodik job (15 dk): Kommo yapılandırılmışsa delta senkron çalıştırır —
+    son senkron imlecinden beri güncellenen firma/kişi/fırsatları çeker.  Webhook
+    plan kapsamı dışında olsa bile veri akışını garanti eder.  Yapılandırma yoksa
+    sessizce atlar.
+    """
+    from core import kommo as K
+    if not K.is_configured():
+        return
+    db = SessionLocal()
+    try:
+        from database import CrmIntegrationState
+        s = db.query(CrmIntegrationState).filter(CrmIntegrationState.provider == "kommo").first()
+        since = int(s.cursor) if (s and s.cursor) else None
+        counts = K.run_sync(db, since_epoch=since)
+        logger.info("kommo_periodic_sync tamam: %s", counts)
+    except Exception:
+        logger.exception("kommo_periodic_sync failed")
+    finally:
+        db.close()
+
+
 def monthly_stock_snapshot() -> None:
     """
     Aylık job: her ayın 1'i 00:30'da bir önceki ayın stok durumunu
@@ -200,6 +223,21 @@ def start_scheduler() -> None:
         max_instances=1,
         coalesce=True,
     )
+
+    # Kommo delta senkron — yalnızca yapılandırılmışsa kaydet (env yoksa job yok)
+    try:
+        from core import kommo as _K
+        if _K.is_configured():
+            scheduler.add_job(
+                kommo_periodic_sync,
+                CronTrigger(minute="*/15"),       # her 15 dk
+                id="kommo_periodic_sync",
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+            )
+    except Exception:
+        logger.exception("kommo_periodic_sync job kaydı atlandı")
 
     scheduler.add_job(
         monthly_stock_snapshot,

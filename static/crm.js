@@ -45,6 +45,7 @@
     contacts: { title: "Kişiler", render: renderContacts },
     pipeline: { title: "Pipeline", render: renderPipeline },
     tasks: { title: "Görevler", render: renderTasks },
+    integrations: { title: "Entegrasyonlar", render: renderIntegrations },
   };
 
   function switchTab(tab) {
@@ -249,6 +250,52 @@
         </div>`;
       }).join("");
     } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
+  }
+
+  // ── Entegrasyonlar (Kommo) ──────────────────────────────────────────────
+  function kvRow(k, v) { return `<div class="kv"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`; }
+
+  async function renderIntegrations() {
+    const v = el("view-integrations");
+    v.innerHTML = '<div class="empty">Yükleniyor…</div>';
+    try {
+      const s = await api("/integrations/kommo/status");
+      const webhookUrl = location.origin + "/api/crm/integrations/kommo/webhook/<KOMMO_WEBHOOK_SECRET>";
+      let html = '<h2 class="page-title" style="margin-bottom:1rem;">Entegrasyonlar</h2>';
+      html += '<div class="card2"><div class="card2-head"><i class="bi bi-diagram-3"></i><h2>Kommo CRM → Minerva (tek yön)</h2></div><div class="card2-body">';
+      if (!s.configured) {
+        html += '<div class="pill pill-o" style="margin-bottom:0.9rem;display:inline-block;">Yapılandırılmadı</div>';
+        html += '<p class="muted">Sunucudaki <code>.env</code> dosyasına aşağıdakileri ekleyip uygulamayı yeniden başlatın (deploy):</p>';
+        html += '<pre style="background:var(--surface-2);padding:0.8rem;border-radius:8px;white-space:pre-wrap;font-size:0.8rem;">KOMMO_SUBDOMAIN=hesabiniz      # örn. minerva (minerva.kommo.com)\nKOMMO_TOKEN=uzun-omurlu-token  # Kommo: Ayarlar → Entegrasyonlar → özel entegrasyon\nKOMMO_WEBHOOK_SECRET=rastgele-uzun-bir-dize</pre>';
+      } else {
+        html += `<div class="pill pill-g" style="margin-bottom:0.9rem;display:inline-block;">Bağlı · ${esc(s.subdomain)}.kommo.com</div>`;
+        html += kvRow("Son senkron", s.last_sync_at || "—") + kvRow("Son durum", s.last_status || "—") + kvRow("Toplam içe aktarılan", s.imported_total);
+        html += '<div style="display:flex;gap:0.6rem;margin:1.1rem 0;flex-wrap:wrap;">' +
+          '<button class="btn-g" id="kommoImport"><i class="bi bi-cloud-download"></i> Tam İçe Aktar</button>' +
+          '<button class="btn-g btn-o" id="kommoSync"><i class="bi bi-arrow-repeat"></i> Delta Senkron</button></div>';
+        html += '<p class="muted" style="margin-top:0.6rem;">Gerçek-zamanlı akış için Kommo → <b>Ayarlar → Entegrasyonlar → Webhook\'lar</b>\'a şu URL\'i ekleyin:</p>';
+        html += `<div class="ipt" style="word-break:break-all;font-family:monospace;font-size:0.78rem;">${esc(webhookUrl)}</div>`;
+        html += '<p class="muted" style="font-size:0.78rem;margin-top:0.4rem;">' +
+          (s.webhook_secret_set
+            ? "✓ Webhook secret ayarlı — URL'deki &lt;KOMMO_WEBHOOK_SECRET&gt; yerine .env'deki değeri yazın."
+            : "⚠ KOMMO_WEBHOOK_SECRET ayarlı değil — webhook çalışmaz (yine de periyodik senkron 15 dk'da bir çeker).") + '</p>';
+      }
+      html += '</div></div>';
+      v.innerHTML = html;
+      const imp = el("kommoImport"); if (imp) imp.addEventListener("click", () => kommoRun("import", imp));
+      const syn = el("kommoSync"); if (syn) syn.addEventListener("click", () => kommoRun("sync", syn));
+    } catch (e) { v.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
+  }
+
+  async function kommoRun(which, btn) {
+    btn.disabled = true; const orig = btn.innerHTML; btn.innerHTML = "Çalışıyor…";
+    try {
+      const r = await api("/integrations/kommo/" + which, { method: "POST" });
+      const c = r.counts || {};
+      toast(`Tamam — firma ${c.companies || 0} · kişi ${c.contacts || 0} · fırsat ${c.leads || 0}`, "success");
+      renderIntegrations();
+    } catch (e) { toast(e.message); }
+    finally { btn.disabled = false; btn.innerHTML = orig; }
   }
 
   // ── Zaman çizelgesi öğesi (paylaşımlı) ─────────────────────────────────────
@@ -601,6 +648,37 @@
     } catch (e) { /* sessiz */ }
   }
 
+  // ── PWA "Ana ekrana ekle" ───────────────────────────────────────────────
+  let _deferredPrompt = null;
+  function setupInstall() {
+    const btn = el("installBtn");
+    if (!btn) return;
+    const standalone = window.navigator.standalone === true ||
+      (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+    if (standalone) return;  // zaten yüklü
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+    window.addEventListener("beforeinstallprompt", (e) => {
+      e.preventDefault(); _deferredPrompt = e; btn.style.display = "";
+    });
+    window.addEventListener("appinstalled", () => { btn.style.display = "none"; _deferredPrompt = null; });
+
+    btn.addEventListener("click", async () => {
+      if (_deferredPrompt) {
+        _deferredPrompt.prompt();
+        try { await _deferredPrompt.userChoice; } catch (e) { /* yoksay */ }
+        _deferredPrompt = null; btn.style.display = "none";
+      } else if (isIOS) {
+        toast("iPhone/iPad: Safari'de alttaki Paylaş düğmesine dokunup 'Ana Ekrana Ekle'yi seçin.", "success");
+      } else {
+        toast("Tarayıcı menüsünden 'Uygulamayı yükle / Ana ekrana ekle' seçeneğini kullanın.", "success");
+      }
+    });
+
+    // iOS'ta beforeinstallprompt yok — düğmeyi göster ki talimat verebilelim
+    if (isIOS) btn.style.display = "";
+  }
+
   // ── Açılış ────────────────────────────────────────────────────────────────
   async function boot() {
     document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
@@ -611,6 +689,7 @@
     });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); closeDrawer(); } });
     el("mSave").addEventListener("click", function () { if (_modalSave) _modalSave(); });
+    setupInstall();
 
     // Referans verileri yükle (aşamalar + kullanıcılar)
     try { state.stages = await api("/stages"); } catch (e) { state.stages = []; }

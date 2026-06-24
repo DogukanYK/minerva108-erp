@@ -36,7 +36,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router
 from core.domain import get_active_domain, domain_label
 
 
@@ -129,6 +129,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if request.method in _CSRF_SAFE_METHODS:
             return await call_next(request)
         if request.url.path in _CSRF_EXEMPT_PATHS:
+            return await call_next(request)
+        # Kommo webhook'u dış servisten gelir (tarayıcı değil) — Origin/Referer yok;
+        # secret'lı path + (handler'da) hmac kontrolü korur.  CSRF'ten muaf.
+        if request.url.path.startswith("/api/crm/integrations/kommo/webhook/"):
             return await call_next(request)
         # Cookie tabanlı auth değilse (örn token-only API çağrısı) muaf —
         # bizde access_token cookie var, dolayısıyla saldırı yüzeyi cookie.
@@ -237,6 +241,8 @@ app.include_router(domain_router.router)
 app.include_router(drive_router.router)
 app.include_router(drive_router.share_router)
 app.include_router(crm_router.router)
+app.include_router(kommo_router.router)
+app.include_router(kommo_router.public_router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────

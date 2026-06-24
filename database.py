@@ -6,7 +6,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 import os
 from sqlalchemy import (
-    create_engine, Column, Integer, String, Float,
+    create_engine, Column, Integer, BigInteger, String, Float,
     Boolean, Text, DateTime, ForeignKey, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
@@ -536,6 +536,8 @@ class CrmCompany(Base):
     notes         = Column(Text,        nullable=True)
     owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     owner_name    = Column(String(100), nullable=True)        # sorumlu kişi snapshot
+    source        = Column(String(50),  nullable=True)        # manual / kommo / import …
+    kommo_id      = Column(BigInteger, nullable=True, index=True)  # Kommo aynası — upsert anahtarı
     is_active     = Column(Boolean, default=True, nullable=False)   # soft-delete
     created_at    = Column(DateTime, default=datetime.utcnow)
     created_by    = Column(String(100), nullable=True)
@@ -553,7 +555,8 @@ class CrmContact(Base):
     mobile          = Column(String(50),  nullable=True)
     email           = Column(String(150), nullable=True)
     whatsapp_number = Column(String(50),  nullable=True)      # E.164 tercih edilir (+90…)
-    source          = Column(String(50),  nullable=True)      # manual / lead_ad / whatsapp / referral
+    source          = Column(String(50),  nullable=True)      # manual / kommo / lead_ad / whatsapp / referral
+    kommo_id        = Column(BigInteger, nullable=True, index=True)   # Kommo aynası — upsert anahtarı
     notes           = Column(Text,        nullable=True)
     owner_user_id   = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     owner_name      = Column(String(100), nullable=True)
@@ -596,6 +599,8 @@ class CrmDeal(Base):
     # B2B köprüsü — kazanılan fırsat mevcut bir Quotation'a atıfta bulunabilir
     quotation_id      = Column(Integer, ForeignKey("quotations.id", ondelete="SET NULL"), nullable=True)
     sort_order        = Column(Integer, default=0)          # Kanban'da aşama-içi sıralama
+    source            = Column(String(50), nullable=True)   # manual / kommo / import …
+    kommo_id          = Column(BigInteger, nullable=True, index=True)   # Kommo aynası — upsert anahtarı
     created_at        = Column(DateTime, default=datetime.utcnow)
     created_by        = Column(String(100), nullable=True)
     won_at            = Column(DateTime, nullable=True)
@@ -644,6 +649,21 @@ class CrmTask(Base):
     completed_at        = Column(DateTime, nullable=True)
     # Tekrarlı push'u önlemek için — bir görev için hatırlatma yollandı mı?
     reminder_sent       = Column(Boolean, default=False, nullable=False)
+
+
+class CrmIntegrationState(Base):
+    """Harici CRM entegrasyon durumu (şimdilik Kommo) — delta senkron imleci +
+    son çalıştırma özeti.  Her sağlayıcı için tek satır (provider unique)."""
+    __tablename__ = "crm_integration_state"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    provider      = Column(String(40), nullable=False, unique=True, index=True)  # 'kommo'
+    last_sync_at  = Column(DateTime, nullable=True)   # en son başarılı senkron (UTC)
+    cursor        = Column(BigInteger, nullable=True) # delta için epoch (updated_at) imleci
+    last_status   = Column(String(255), nullable=True)  # son çalıştırma özeti / hata
+    last_run_at   = Column(DateTime, nullable=True)
+    imported_total = Column(Integer, default=0, nullable=False)
+    updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 def log_system_event(event_type: str, detail: str = None) -> None:
@@ -734,6 +754,15 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS ix_prodhist_domain   ON production_history(domain)",
             "CREATE INDEX IF NOT EXISTS ix_quotations_domain ON quotations(domain)",
             "CREATE INDEX IF NOT EXISTS ix_snapshot_domain   ON stock_snapshot(domain)",
+            # CRM Kommo aynası — kommo_id (upsert anahtarı) + source
+            "ALTER TABLE crm_company ADD COLUMN source VARCHAR(50)",
+            "ALTER TABLE crm_company ADD COLUMN kommo_id BIGINT",
+            "ALTER TABLE crm_contact ADD COLUMN kommo_id BIGINT",
+            "ALTER TABLE crm_deal    ADD COLUMN source VARCHAR(50)",
+            "ALTER TABLE crm_deal    ADD COLUMN kommo_id BIGINT",
+            "CREATE INDEX IF NOT EXISTS ix_crm_company_kommo ON crm_company(kommo_id)",
+            "CREATE INDEX IF NOT EXISTS ix_crm_contact_kommo ON crm_contact(kommo_id)",
+            "CREATE INDEX IF NOT EXISTS ix_crm_deal_kommo    ON crm_deal(kommo_id)",
         ):
             alter_safe(stmt)
 
