@@ -92,3 +92,26 @@ def test_plan_domain_isolation(authed_client: TestClient, db_session: Session):
     r = authed_client.post("/api/reports/production-plan",
                            json={"recipe_ids": [sup], "quantity": 100, "language": "TR"}, headers=_HDR)
     assert r.status_code == 200 and r.json()["summary"]["products"] == 0
+
+
+def test_recipeless_products_listed(db_session: Session):
+    """Reçetesi olmayan bitmiş ürün recipeless'ta çıkar; reçeteli olan çıkmaz."""
+    from core.production_sim import list_recipeless_products
+    _recipe(db_session, brand="Serenida")   # reçeteli bitmiş ürün: 'Serenida Krem Ürün'
+    db_session.add(Item(name="Minerva Foot Care Cream", sku="x-foot", category="Bitmiş Ürün",
+                        unit="adet", current_stock=24, domain="cosmetics"))
+    db_session.commit()
+    names = [p["name"] for p in list_recipeless_products(db_session, "cosmetics")]
+    assert "Minerva Foot Care Cream" in names
+    assert "Serenida Krem Ürün" not in names      # reçetesi var → listede yok
+    # başka panelde görünmez (domain-kapsamlı)
+    assert "Minerva Foot Care Cream" not in [p["name"] for p in list_recipeless_products(db_session, "supplement")]
+
+
+def test_products_endpoint_includes_recipeless(authed_client: TestClient, db_session: Session):
+    db_session.add(Item(name="Reçetesiz Ürün X", sku="x-rl", category="Bitmiş Ürün",
+                        unit="adet", current_stock=5, domain="cosmetics"))
+    db_session.commit()
+    d = authed_client.get("/api/reports/production-plan/products").json()
+    assert "recipeless" in d
+    assert any(p["name"] == "Reçetesiz Ürün X" for p in d["recipeless"])

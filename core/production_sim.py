@@ -53,6 +53,31 @@ def list_plan_products(db: Session, domain: str) -> list:
     return out
 
 
+def list_recipeless_products(db: Session, domain: str) -> list:
+    """Aktif panelde *bitmiş ürün* olup aktif reçetesi OLMAYAN ürünler.
+
+    Üretim Stok Analizi reçeteye dayalı olduğundan, formülü girilmemiş bitmiş
+    ürünler seçim listesinde ve hesapta çıkmaz. Bu yardımcı onları stoklarıyla
+    ayrıca raporlar ki gözden kaçmasın (ör. reçetesi henüz girilmemiş ürünler).
+    """
+    targeted = (db.query(Recipe.target_item_id)
+                .filter(Recipe.is_active == True, Recipe.domain == domain,
+                        Recipe.target_item_id.isnot(None)))
+    items = (db.query(Item)
+             .filter(Item.is_active == True, Item.domain == domain,
+                     Item.category == "Bitmiş Ürün",
+                     ~Item.id.in_(targeted))
+             .all())
+    out = [{
+        "name":          it.name,
+        "brand":         brand_of(it.name),
+        "current_stock": round(float(it.current_stock or 0.0), 2),
+        "unit":          it.unit or "adet",
+    } for it in items]
+    out.sort(key=lambda x: (x["brand"].lower(), x["name"].lower()))
+    return out
+
+
 def _resolve_label(db: Session, item, lang: str):
     """Etiket dil çözümü — seçilen dilin kardeşine in; o dilde yoksa None."""
     if item.language and item.label_group and item.language != lang:
@@ -183,7 +208,8 @@ def simulate(db: Session, recipe_ids: list, qty: float, lang: str, domain: str) 
 
 # ─── Excel üretimi ──────────────────────────────────────────────────────────
 
-def build_workbook(report: dict, title_suffix: str = "", prices: dict = None) -> bytes:
+def build_workbook(report: dict, title_suffix: str = "", prices: dict = None,
+                   recipeless: list = None) -> bytes:
     """Simülasyon raporundan 4-sayfalı .xlsx üretir (Özet / Tüketim / Üretilebilir / Satın Alma).
 
     `prices` verilirse ({item_id: [{supplier_name, package_size, unit_price}, …]}),
@@ -293,6 +319,22 @@ def build_workbook(report: dict, title_suffix: str = "", prices: dict = None) ->
         for _n in range(SUP_SLOTS):
             w += [22, 16, 12]
     widths(ws, w)
+
+    # Reçetesiz Ürünler — bitmiş ürün ama aktif reçetesi yok (hesaba giremez)
+    rl = recipeless if recipeless is not None else report.get("recipeless")
+    if rl:
+        ws = wb.create_sheet("Reçetesiz Ürünler")
+        hrow(ws, ["Ürün", "Marka", "Mevcut Stok", "Birim", "Durum"])
+        for ri, p in enumerate(rl, 2):
+            vals = [p["name"], p.get("brand", ""), p.get("current_stock", 0),
+                    p.get("unit", ""), "REÇETESİZ — planlamaya girmez"]
+            for ci, v in enumerate(vals, 1):
+                c = ws.cell(ri, ci, v); c.border = thin
+                if ci == 5: c.font = RED
+        note_row = len(rl) + 3
+        ws.cell(note_row, 1, "Not: Bu ürünlerin reçetesi (formülü) girilmediği için üretim "
+                             "hesabına katılamaz. Reçete girilince otomatik listeye dahil olur.").font = Font(italic=True, color="6b7280")
+        ws.freeze_panes = "A2"; widths(ws, [46, 14, 14, 8, 28])
 
     buf = BytesIO()
     wb.save(buf)

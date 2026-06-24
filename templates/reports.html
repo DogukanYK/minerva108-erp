@@ -298,6 +298,7 @@
           <div id="planProducts" style="max-height:220px;overflow-y:auto;border:1px solid #f0ece4;border-radius:10px;padding:0.5rem 0.85rem;background:#faf8f4;">
             <div style="color:#9ca3af;font-size:0.85rem;">Yükleniyor…</div>
           </div>
+          <div id="planRecipeless" style="margin-top:0.6rem;"></div>
           <div style="display:flex;gap:0.85rem;align-items:flex-end;flex-wrap:wrap;margin-top:0.9rem;">
             <div>
               <label style="display:block;font-size:0.7rem;font-weight:700;text-transform:uppercase;color:#6b7280;margin-bottom:0.25rem;">Her üründen adet</label>
@@ -722,9 +723,23 @@
 
     /* ════ Üretim Stok Analizi ════ */
     let _planProducts = [];
+    let _planRecipeless = [];
     let _planReport = null;
     function planEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
     function planFmt(n){return Number(n||0).toLocaleString('tr-TR',{maximumFractionDigits:2});}
+    function planRenderRecipeless(){
+      const box=document.getElementById('planRecipeless');
+      if(!box) return;
+      if(!_planRecipeless.length){ box.innerHTML=''; return; }
+      const chips=_planRecipeless.map(p=>{
+        const stok=(p.current_stock!=null&&p.current_stock!==0)?` <span style="opacity:0.7;">· stok ${planFmt(p.current_stock)} ${planEsc(p.unit||'')}</span>`:'';
+        return `<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 9px;border-radius:999px;background:#fff3cd;color:#92750e;font-size:0.76rem;border:1px solid #f0e3b8;"><b>${planEsc(p.brand)}</b> ${planEsc(p.name)}${stok}</span>`;
+      }).join('');
+      box.innerHTML=`<div style="border:1px solid #f0e3b8;background:#fffdf5;border-radius:10px;padding:0.6rem 0.85rem;">
+        <div style="font-size:0.78rem;font-weight:700;color:#92750e;margin-bottom:0.4rem;">
+          <i class="bi bi-exclamation-triangle-fill"></i> Reçetesiz ${_planRecipeless.length} bitmiş ürün — bu listede/üretim hesabında çıkmaz (reçete girilince otomatik katılır)
+        </div>${chips}</div>`;
+    }
 
     async function loadPlanProducts(){
       const box=document.getElementById('planProducts');
@@ -732,7 +747,9 @@
         const r=await fetch('/api/reports/production-plan/products');
         const d=await r.json();
         _planProducts=d.products||[];
+        _planRecipeless=d.recipeless||[];
       }catch{ box.innerHTML='<div style="color:#b91c1c;font-size:0.85rem;">Ürün listesi alınamadı.</div>'; return; }
+      planRenderRecipeless();
       const brands=[...new Set(_planProducts.map(p=>p.brand))].sort();
       document.getElementById('planBrands').innerHTML=brands.map(b=>
         `<button type="button" class="plan-chip" data-brand="${planEsc(b)}" onclick="planBrandToggle('${planEsc(b)}')">${planEsc(b)}</button>`).join('');

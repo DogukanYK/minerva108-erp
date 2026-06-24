@@ -470,9 +470,10 @@ def production_plan_products(
     _: dict = Depends(require_permission("reports", "view")),
     domain: str = Depends(active_domain),
 ):
-    """Aktif panelde reçetesi olan ürünler (marka + ad) — simülasyon seçim listesi."""
-    from core.production_sim import list_plan_products
-    return {"products": list_plan_products(db, domain)}
+    """Aktif panelde reçetesi olan ürünler + reçetesi olmayan bitmiş ürünler (uyarı için)."""
+    from core.production_sim import list_plan_products, list_recipeless_products
+    return {"products": list_plan_products(db, domain),
+            "recipeless": list_recipeless_products(db, domain)}
 
 
 @router.post("/reports/production-plan")
@@ -494,16 +495,18 @@ def production_plan_export(
     _: dict = Depends(require_permission("reports", "view")),
     domain: str = Depends(active_domain),
 ):
-    """Aynı senaryoyu 4-sayfalı Excel olarak indir (Satın Alma sayfası tedarikçi/fiyatla zenginleşir)."""
-    from core.production_sim import simulate, build_workbook
+    """Aynı senaryoyu Excel olarak indir (Satın Alma tedarikçi/fiyatla + Reçetesiz Ürünler sayfası)."""
+    from core.production_sim import simulate, build_workbook, list_recipeless_products
     from core.supplier_prices import prices_for_items
     rep = simulate(db, data.recipe_ids, data.quantity, data.language or "TR", domain)
     if not rep["materials"]:
         return JSONResponse(status_code=400, content={"detail": "Seçilen ürünlerde malzeme bulunamadı."})
     purchase_ids = [m["item_id"] for m in rep["purchase"] if m.get("item_id")]
     prices = prices_for_items(db, purchase_ids, domain)
+    recipeless = list_recipeless_products(db, domain)
     try:
-        content = build_workbook(rep, title_suffix=f"{rep['summary']['products']} ürün × {int(data.quantity)}", prices=prices)
+        content = build_workbook(rep, title_suffix=f"{rep['summary']['products']} ürün × {int(data.quantity)}",
+                                 prices=prices, recipeless=recipeless)
     except Exception:
         return JSONResponse(status_code=500, content={"detail": "Excel üretilemedi."})
     return StreamingResponse(
