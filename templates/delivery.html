@@ -89,6 +89,8 @@
   <script src="/static/mobile.js" defer></script>
   <script src="/static/toast.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
+  <script src="/static/scanner.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
 </head>
 <body>
   <aside class="sidebar">
@@ -154,6 +156,10 @@
             <div class="card2-head"><i class="bi bi-upc-scan"></i><h2>Ürün Okut</h2></div>
             <div class="card2-body">
               <input type="text" id="scan" class="scan-input" placeholder="Barkodu okut veya yaz + Enter…" autocomplete="off" />
+              <button type="button" id="camBtn" onclick="startCamera()"
+                style="width:100%;margin-top:0.6rem;display:inline-flex;align-items:center;justify-content:center;gap:0.5rem;padding:0.75rem;background:var(--gold);color:var(--navy);border:none;border-radius:10px;font-family:'Jost',sans-serif;font-size:0.98rem;font-weight:700;cursor:pointer;">
+                <i class="bi bi-camera-fill" style="font-size:1.15rem;"></i> Telefon Kamerasıyla Tara
+              </button>
               <div style="margin-top:0.5rem;position:relative;">
                 <input type="text" id="manual" class="ipt" placeholder="Barkodsuz ürün? Ada göre ara…" autocomplete="off" />
                 <div id="matches" style="position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,0.1);z-index:20;max-height:240px;overflow-y:auto;display:none;"></div>
@@ -243,11 +249,28 @@
       ev.preventDefault();
       const code = scan.value.trim();
       scan.value='';
-      if(!code) return;
-      const it = _items.find(x => (x.barcode||'').trim() === code);
-      if(it){ addToCart(it); beep(true); }
-      else { setHint(`Barkod bulunamadı: ${code}`, true); beep(false); }
+      resolveBarcode(code);
     });
+
+    function resolveBarcode(code){
+      const c = String(code||'').trim();
+      if(!c) return;
+      const it = _items.find(x => (x.barcode||'').trim() === c);
+      if(it){ addToCart(it); beep(true); }
+      else { setHint(`Barkod bulunamadı: ${c}`, true); beep(false); showToast(`Barkod eşleşmedi: ${c}`); }
+    }
+
+    /* ── Telefon kamerasıyla tarama (sürekli — modalı kapatınca durur) ── */
+    function startCamera(){
+      if(typeof openBarcodeScanner !== 'function'){ showToast('Kamera tarayıcısı yüklenemedi — sayfayı yenileyin.'); return; }
+      scanLoop();
+    }
+    function scanLoop(){
+      openBarcodeScanner(function(code){
+        resolveBarcode(code);
+        setTimeout(scanLoop, 700);   // bir sonraki ürün için kamerayı tekrar aç; kullanıcı modalı kapatınca döngü durur
+      });
+    }
 
     function setHint(msg, warn){
       const h=document.getElementById('scanHint');
