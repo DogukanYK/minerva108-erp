@@ -11,11 +11,26 @@ Router (routers/crm.py) bu fonksiyonları kullanarak SQLAlchemy modellerini
 JSON'a çevirir.  Tüm datetime'lar DB'de naive UTC; burada gösterim için
 to_tr() ile Türkiye saatine çevrilir.  İş mantığı (FIFO vb.) yok — saf dönüşüm.
 """
+import os
 import re
 from datetime import datetime
 from typing import Optional
 
 from database import to_tr, TR_OFFSET
+
+
+def kommo_url(kommo_id, kind: str) -> Optional[str]:
+    """Kommo'daki kayda (lead/kişi/firma) derin bağlantı — sohbet/WhatsApp orada.
+    KOMMO_SUBDOMAIN yoksa veya kommo_id yoksa None.  core.kommo'yu import etmez
+    (döngüsel import'tan kaçınmak için env'i doğrudan okur)."""
+    if not kommo_id:
+        return None
+    sub = (os.getenv("KOMMO_SUBDOMAIN", "") or "").strip().lower()
+    sub = sub.replace("https://", "").replace("http://", "").split(".")[0]
+    if not sub:
+        return None
+    path = {"deal": "leads", "contact": "contacts", "company": "companies"}.get(kind, "leads")
+    return f"https://{sub}.kommo.com/{path}/detail/{kommo_id}"
 
 
 def parse_tr_to_utc(s: Optional[str]) -> Optional[datetime]:
@@ -117,6 +132,7 @@ def serialize_contact(c, *, company_name: str = "") -> dict:
         "phone": c.phone or "", "mobile": c.mobile or "", "email": c.email or "",
         "whatsapp_number": c.whatsapp_number or "",
         "source": c.source or "manual", "source_label": source_label(c.source),
+        "kommo_url": kommo_url(c.kommo_id, "contact"),
         "notes": c.notes or "",
         "owner_user_id": c.owner_user_id, "owner_name": c.owner_name or "",
         "wa_link": wa_link(c.whatsapp_number or c.mobile or c.phone),
@@ -137,6 +153,7 @@ def serialize_deal(d, *, company_name: str = "", contact_name: str = "", stage_n
         "status": d.status, "lost_reason": d.lost_reason or "",
         "owner_user_id": d.owner_user_id, "owner_name": d.owner_name or "",
         "source": d.source or "manual", "source_label": source_label(d.source),
+        "kommo_url": kommo_url(d.kommo_id, "deal"),
         "quotation_id": d.quotation_id, "sort_order": d.sort_order or 0,
         "created_at": fmt_dt(d.created_at), "created_by": d.created_by or "",
         "won_at": fmt_dt(d.won_at), "closed_at": fmt_dt(d.closed_at),

@@ -87,7 +87,13 @@
       const c = d.counts;
       const stat = (val, lbl, warn) =>
         `<div class="stat${warn ? " warn" : ""}"><div class="v">${val}</div><div class="l">${lbl}</div></div>`;
-      let html = '<div class="stat-grid">';
+      let html = "";
+      if (can("admin", "view")) {
+        html += '<div style="margin-bottom:1rem;display:flex;gap:0.6rem;flex-wrap:wrap;">' +
+          '<button class="btn-g btn-o btn-sm" onclick="CRM.go(\'integrations\')"><i class="bi bi-plug"></i> Entegrasyonlar (Kommo)</button>' +
+          '<a class="btn-g btn-o btn-sm" href="/admin"><i class="bi bi-shield-lock"></i> Yönetim</a></div>';
+      }
+      html += '<div class="stat-grid">';
       html += stat(c.companies, "Firma");
       html += stat(c.contacts, "Kişi");
       html += stat(c.open_deals, "Açık Fırsat");
@@ -398,6 +404,7 @@
     // Üst aksiyonlar
     html += '<div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">';
     if (e.wa_link) html += `<a class="btn-g btn-sm" style="background:#25d366;" href="${esc(e.wa_link)}" target="_blank"><i class="bi bi-whatsapp"></i> WhatsApp</a>`;
+    if (e.kommo_url) html += `<a class="btn-g btn-sm btn-o" href="${esc(e.kommo_url)}" target="_blank" title="Sohbeti/kaydı Kommo'da aç — orada görüp cevaplayabilirsin"><i class="bi bi-chat-dots"></i> Kommo'da Aç</a>`;
     if (can("crm", "edit")) {
       const editFn = kind === "company" ? "companyModal" : kind === "contact" ? "contactModal" : "dealModal";
       html += `<button class="btn-g btn-sm btn-o" onclick="CRM.${editFn}(${e.id})"><i class="bi bi-pencil"></i> Düzenle</button>`;
@@ -741,6 +748,7 @@
 
   // Onclick köprüsü — render edilen HTML global CRM.* çağırır
   window.CRM = {
+    go: switchTab,
     openCompany, openContact, openDeal, dwSwitch,
     companyModal, contactModal, dealModal, taskModal,
     delCompany, delContact, delDeal, delTask,
