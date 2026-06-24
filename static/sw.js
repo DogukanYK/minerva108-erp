@@ -12,7 +12,7 @@
  * Bump CACHE_NAME any time you ship a breaking static-asset change so users
  * pick it up on next reload instead of being stuck on stale CSS/JS.
  */
-const CACHE_NAME = 'minerva108-v3';      // bumped — CRM (crm.js/crm.css) + Kommo + kaynak filtreleri
+const CACHE_NAME = 'minerva108-v4';      // bumped — CRM WhatsApp aktivite özeti (crm.js)
 
 const PRECACHE = [
   '/static/dark.css',
