@@ -224,6 +224,46 @@ class SupplierPrice(Base):
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
 
 
+class Delivery(Base):
+    """Hediye / numune teslimatı — üretim/satış dışı stok çıkışı.
+
+    Ofise gelene hediye, numune gönderimi gibi durumlarda ürünün barkodu
+    okutularak (market kasası mantığı) stok düşülür ve imzalı bir teslim
+    belgesi üretilir. Her teslimat bir veya çok kalemden oluşur; her kalem
+    `Item.current_stock`'tan düşülür ve immutable bir Transaction(Output) yazılır.
+    """
+    __tablename__ = "deliveries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_no = Column(String(40), unique=True, index=True)   # TES-2026-00042
+    recipient_name = Column(String(150), nullable=False)        # alıcı ad-soyad (sistemden girilir)
+    recipient_org = Column(String(150), nullable=True)          # firma / kurum (opsiyonel)
+    recipient_phone = Column(String(40), nullable=True)         # kargo için (opsiyonel)
+    delivery_type = Column(String(20), default="hediye")        # hediye / numune / diğer
+    method = Column(String(20), default="elden")                # elden / kargo
+    note = Column(Text, nullable=True)
+    dispatched_by = Column(String(80), nullable=True)           # teslim eden (audit)
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    items = relationship("DeliveryItem", back_populates="delivery",
+                         cascade="all, delete-orphan")
+
+
+class DeliveryItem(Base):
+    __tablename__ = "delivery_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    delivery_id = Column(Integer, ForeignKey("deliveries.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=True)   # ürün silinse de belge okunur
+    item_name = Column(String(150), nullable=False)   # snapshot (ürün adı sonradan değişse de belge sabit)
+    quantity = Column(Float, nullable=False)
+    unit = Column(String(20), nullable=True)
+
+    delivery = relationship("Delivery", back_populates="items")
+    item = relationship("Item", foreign_keys=[item_id])
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
 
