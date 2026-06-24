@@ -459,7 +459,15 @@
   function renderDrawerNotes(d) {
     const dr = state.drawer;
     const acts = d.activities || [];
+    const ent = d.deal || d.contact || d.company || {};
     let html = "";
+    if (d.wa && d.wa.count > 0) {
+      html += `<div class="card2" style="margin-bottom:0.8rem;"><div class="card2-body" style="display:flex;align-items:center;gap:0.6rem;">
+        <i class="bi bi-whatsapp" style="color:#25d366;font-size:1.4rem;"></i>
+        <div style="flex:1;"><b>${d.wa.count} WhatsApp mesajı</b><div class="muted" style="font-size:0.78rem;">Son: ${esc(d.wa.last || "—")} · metni Kommo'da</div></div>
+        ${ent.kommo_url ? `<a class="btn-g btn-sm btn-o" href="${esc(ent.kommo_url)}" target="_blank"><i class="bi bi-box-arrow-up-right"></i> Aç</a>` : ""}
+      </div></div>`;
+    }
     if (can("crm", "create")) {
       html += `<div class="card2" style="margin-bottom:1rem;"><div class="card2-body">
         <div class="mb"><select class="ipt" id="acType">

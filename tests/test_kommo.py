@@ -8,7 +8,7 @@ Kommo entegrasyonu testleri (tek yön ayna) — httpx MOCK'lu, ağ yok.
 from fastapi.testclient import TestClient
 
 from core import kommo as K
-from database import CrmCompany, CrmContact, CrmDeal
+from database import CrmCompany, CrmContact, CrmDeal, CrmActivity
 
 _H = {"Origin": "http://testserver"}
 
@@ -66,9 +66,10 @@ def test_run_sync_maps_and_idempotent(db_session, monkeypatch):
     _setup_env(monkeypatch)
     monkeypatch.setattr(K, "_iter_entities", _fake_iter)
     monkeypatch.setattr(K, "_load_status_names", lambda client: {})
+    monkeypatch.setattr(K, "_sync_chat_events", lambda db, client, since: 0)  # ağ çağrısı yok
 
     counts = K.run_sync(db_session)
-    assert counts == {"companies": 1, "contacts": 1, "leads": 1}
+    assert counts == {"companies": 1, "contacts": 1, "leads": 1, "messages": 0}
 
     co = db_session.query(CrmCompany).filter(CrmCompany.kommo_id == 9001).one()
     assert co.name == "Kommo Firma A.Ş." and co.phone == "+90 212 000 00 00" and co.source == "kommo"
@@ -141,6 +142,28 @@ def test_source_filter_companies(authed_client: TestClient, db_session):
     manual = authed_client.get("/api/crm/companies?source=manual").json()
     names = [c["name"] for c in manual]
     assert "Elle Co" in names and "Meta Co" not in names and "Kommo Co" not in names
+
+
+def test_chat_event_ingest_creates_activity(db_session):
+    # 'incoming_chat_message' olayı → WhatsApp aktivitesi (metin yok), deal'e bağlı; dedup.
+    d = CrmDeal(title="Chat Deal", kommo_id=5555, source="meta")
+    db_session.add(d); db_session.commit()
+    ev = {"id": 99001, "type": "incoming_chat_message",
+          "entity_type": "lead", "entity_id": 5555, "created_at": 1782200000}
+    assert K._ingest_chat_event(db_session, ev) is True
+    db_session.commit()
+    a = db_session.query(CrmActivity).filter(CrmActivity.external_id == "kommo_evt_99001").one()
+    assert a.type == "whatsapp" and a.deal_id == d.id and a.contact_id is None
+    # aynı olay tekrar → çift kayıt yok
+    assert K._ingest_chat_event(db_session, ev) is False
+    assert db_session.query(CrmActivity).filter(CrmActivity.external_id == "kommo_evt_99001").count() == 1
+
+
+def test_chat_event_unlinked_skipped(db_session):
+    # eşleşen deal/contact yoksa atla
+    ev = {"id": 99002, "type": "outgoing_chat_message",
+          "entity_type": "lead", "entity_id": 88888, "created_at": 1782200000}
+    assert K._ingest_chat_event(db_session, ev) is False
 
 
 def test_webhook_id_parser():

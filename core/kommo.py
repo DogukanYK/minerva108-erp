@@ -26,7 +26,7 @@ from typing import Optional, Iterable
 import httpx
 from sqlalchemy.orm import Session
 
-from database import CrmCompany, CrmContact, CrmDeal, CrmStage, CrmIntegrationState
+from database import CrmCompany, CrmContact, CrmDeal, CrmStage, CrmActivity, CrmIntegrationState
 
 logger = logging.getLogger("minerva108.kommo")
 
@@ -243,6 +243,78 @@ def _state(db: Session) -> CrmIntegrationState:
     return s
 
 
+# ─── Sohbet (WhatsApp/Meta) mesaj AKTİVİTESİ — metin değil, yön+zaman ─────────
+# Kommo mesaj METNİNİ API'de vermiyor (Chats API ayrı kanal için).  Ama olaylar
+# 'incoming/outgoing_chat_message' veriyor → bunları CRM zaman çizelgesine
+# "📩 Gelen / 📤 Giden mesaj (metni Kommo'da)" aktivitesi olarak çekiyoruz.
+# Dedup: external_id = 'kommo_evt_<id>'.  Metni okumak için kartta "Kommo'da Aç".
+
+def _ingest_chat_event(db: Session, ev: dict) -> bool:
+    eid = ev.get("id")
+    if eid is None:
+        return False
+    ext = f"kommo_evt_{eid}"
+    if db.query(CrmActivity.id).filter(CrmActivity.external_id == ext).first():
+        return False
+    etype = ev.get("entity_type")
+    ent_id = ev.get("entity_id")
+    deal_id = contact_id = None
+    try:
+        ent_id = int(ent_id) if ent_id is not None else None
+    except (TypeError, ValueError):
+        ent_id = None
+    if etype == "lead" and ent_id:
+        row = db.query(CrmDeal.id, CrmDeal.contact_id).filter(CrmDeal.kommo_id == ent_id).first()
+        if row:
+            deal_id, contact_id = row[0], row[1]
+    elif etype == "contact" and ent_id:
+        row = db.query(CrmContact.id).filter(CrmContact.kommo_id == ent_id).first()
+        if row:
+            contact_id = row[0]
+    if not deal_id and not contact_id:
+        return False                       # ilişkilendirilemeyen mesajı atla
+    incoming = (ev.get("type") == "incoming_chat_message")
+    ts = ev.get("created_at")
+    try:
+        created_at = datetime.utcfromtimestamp(int(ts)) if ts else datetime.utcnow()
+    except (TypeError, ValueError, OSError):
+        created_at = datetime.utcnow()
+    db.add(CrmActivity(
+        type="whatsapp", subject="WhatsApp",
+        body=("📩 Gelen mesaj" if incoming else "📤 Giden mesaj") + " — metni Kommo'da",
+        deal_id=deal_id, contact_id=contact_id,
+        author_name="WhatsApp", external_id=ext, created_at=created_at,
+    ))
+    return True
+
+
+def _sync_chat_events(db: Session, client: httpx.Client, since_epoch: Optional[int]) -> int:
+    """Kommo'dan sohbet mesaj olaylarını çekip aktivite olarak ekle (capped, deduped)."""
+    params = {"limit": _PAGE_LIMIT,
+              "filter[type][]": ["incoming_chat_message", "outgoing_chat_message"]}
+    if since_epoch:
+        params["filter[created_at][from]"] = int(since_epoch)
+    created, page = 0, 1
+    while page <= 20:                      # ~5000 olay tavanı (güvenlik)
+        params["page"] = page
+        try:
+            data = _get_page(client, "/events", params)
+        except Exception:
+            logger.warning("Kommo events sayfa %s çekilemedi", page, exc_info=True)
+            break
+        evs = ((data.get("_embedded") or {}).get("events")) or []
+        if not evs:
+            break
+        for ev in evs:
+            if _ingest_chat_event(db, ev):
+                created += 1
+        db.commit()
+        if not ((data.get("_links") or {}).get("next")):
+            break
+        page += 1
+    return created
+
+
 def run_sync(db: Session, since_epoch: Optional[int] = None) -> dict:
     """Kommo'dan companies→contacts→leads çekip upsert eder.  since_epoch verilirse
     yalnızca o andan beri güncellenenler (delta).  Sayım döndürür."""
@@ -251,7 +323,7 @@ def run_sync(db: Session, since_epoch: Optional[int] = None) -> dict:
     extra = {}
     if since_epoch:
         extra = {"filter[updated_at][from]": int(since_epoch)}
-    counts = {"companies": 0, "contacts": 0, "leads": 0}
+    counts = {"companies": 0, "contacts": 0, "leads": 0, "messages": 0}
     started = datetime.utcnow()
     with _client() as client:
         status_names = _load_status_names(client)
@@ -266,13 +338,16 @@ def run_sync(db: Session, since_epoch: Optional[int] = None) -> dict:
         for kl in _iter_entities(client, "/leads", "leads", lead_params):
             upsert_lead(db, kl, status_names); counts["leads"] += 1
         db.commit()
+        # WhatsApp/sohbet mesaj aktivitesi (metin değil) → zaman çizelgesine
+        counts["messages"] = _sync_chat_events(db, client, since_epoch)
 
     st = _state(db)
     st.last_sync_at = started
     st.last_run_at = datetime.utcnow()
     st.cursor = int(started.timestamp())
     st.imported_total = (st.imported_total or 0) + sum(counts.values())
-    st.last_status = f"OK · firma {counts['companies']} · kişi {counts['contacts']} · fırsat {counts['leads']}"
+    st.last_status = (f"OK · firma {counts['companies']} · kişi {counts['contacts']} · "
+                      f"fırsat {counts['leads']} · mesaj {counts['messages']}")
     db.commit()
     logger.info("Kommo sync tamam: %s", counts)
     return counts

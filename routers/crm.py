@@ -66,6 +66,21 @@ def _today_end_utc() -> datetime:
     return tr_end - TR_OFFSET
 
 
+def _wa_summary(db: Session, *, contact_id=None, deal_id=None) -> dict:
+    """WhatsApp/sohbet mesaj aktivitesi özeti (Kommo'dan çekilen) — sayı + son zaman.
+    Metin Kommo'da; burada sadece kaç mesaj/ne zaman görünür."""
+    q = db.query(CrmActivity).filter(CrmActivity.type == "whatsapp")
+    if deal_id:
+        q = q.filter(CrmActivity.deal_id == deal_id)
+    elif contact_id:
+        q = q.filter(CrmActivity.contact_id == contact_id)
+    else:
+        return {"count": 0, "last": None}
+    cnt = q.count()
+    last = q.order_by(CrmActivity.created_at.desc()).first() if cnt else None
+    return {"count": cnt, "last": C.fmt_dt(last.created_at) if last else None}
+
+
 def _source_filter(query, model, source: Optional[str]):
     """Kaynak filtresi: meta / kommo / manual (manual = NULL veya 'manual').
     Boş/all → filtre yok."""
@@ -342,6 +357,7 @@ def contact_detail(cid: int, db: Session = Depends(get_db),
         "contact": C.serialize_contact(ct, company_name=cname or ""),
         "activities": [C.serialize_activity(a) for a in activities],
         "tasks": [C.serialize_task(t, overdue=(t.status == "open" and t.due_at and t.due_at < now)) for t in tasks],
+        "wa": _wa_summary(db, contact_id=cid),
     }
 
 
@@ -474,6 +490,7 @@ def deal_detail(did: int, db: Session = Depends(get_db),
                                  stage_name=stage_names.get(d.stage_id, "")),
         "activities": [C.serialize_activity(a) for a in activities],
         "tasks": [C.serialize_task(t, overdue=(t.status == "open" and t.due_at and t.due_at < now)) for t in tasks],
+        "wa": _wa_summary(db, deal_id=did),
     }
 
 

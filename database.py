@@ -666,6 +666,8 @@ class CrmActivity(Base):
     author_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     author_name    = Column(String(100), nullable=True)
     is_pinned      = Column(Boolean, default=False, nullable=False)
+    # Harici kaynak referansı (örn. 'kommo_evt_<id>') — tekrar senkronda çift kayıt önler
+    external_id    = Column(String(80), nullable=True, index=True)
     created_at     = Column(DateTime, default=datetime.utcnow, index=True)
 
 
@@ -803,6 +805,9 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS ix_crm_company_kommo ON crm_company(kommo_id)",
             "CREATE INDEX IF NOT EXISTS ix_crm_contact_kommo ON crm_contact(kommo_id)",
             "CREATE INDEX IF NOT EXISTS ix_crm_deal_kommo    ON crm_deal(kommo_id)",
+            # CRM aktivite — harici kaynak referansı (Kommo mesaj olayları dedup)
+            "ALTER TABLE crm_activity ADD COLUMN external_id VARCHAR(80)",
+            "CREATE INDEX IF NOT EXISTS ix_crm_activity_extid ON crm_activity(external_id)",
         ):
             alter_safe(stmt)
 
