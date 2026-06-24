@@ -124,7 +124,9 @@
     const pick =
          back.find(c => /\b(back|rear|arka)\b/.test(lc(c.label)) && !isTele(c) && !isUltra(c))  // ana arka lens
       || back.find(c => !isTele(c) && !isUltra(c))   // tele/ultra olmayan herhangi arka kamera
-      || back[0];                                    // ilk arka kamera (genelde varsayılan = ana)
+      || back.find(c => !isTele(c))                  // en azından teleobjektif DEĞİL (ultra olabilir)
+      || back.find(c => !/\btele|telefoto\b/.test(lc(c.label)))  // teleobjektifi en sona bırak
+      || back[0];                                    // son çare
     if (pick)        return { id: pick.id, label: pick.label, picked: 'rear' };
     return cams.length ? { id: cams[0].id, label: cams[0].label, picked: 'fallback' } : null;
   }
