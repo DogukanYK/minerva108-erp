@@ -249,6 +249,16 @@
         const d = await r.json();
         _items = (Array.isArray(d) ? d : (d.items || [])).filter(x => (x.category||'') === 'Bitmiş Ürün');
       }catch{ _items = []; }
+      renderNoBarcode();
+    }
+
+    function renderNoBarcode(){
+      const box=document.getElementById('noBarcodeBox');
+      if(!box) return;
+      const none=_items.filter(x => !(x.barcode||'').trim());
+      if(!none.length){ box.innerHTML='<span style="color:#15803d;font-weight:600;"><i class="bi bi-check-circle"></i> Tüm bitmiş ürünlerin barkodu var.</span>'; return; }
+      box.innerHTML=`<div style="font-weight:700;color:#b45309;margin-bottom:0.4rem;"><i class="bi bi-exclamation-triangle-fill"></i> ${none.length} ürünün barkodu yok</div>`
+        + none.map(x=>`<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 9px;border-radius:999px;background:#fff3cd;color:#92750e;font-size:0.78rem;border:1px solid #f0e3b8;">${esc(x.name)}</span>`).join('');
     }
 
     /* ── Barkod okutma (market kasası) ── */
@@ -262,12 +272,29 @@
       resolveBarcode(code);
     });
 
+    // Döner: {ok:true,item} | {ok:false,code} | null(boş)
     function resolveBarcode(code){
       const c = String(code||'').trim();
-      if(!c) return;
+      if(!c) return null;
       const it = _items.find(x => (x.barcode||'').trim() === c);
-      if(it){ addToCart(it); beep(true); }
-      else { setHint(`Barkod bulunamadı: ${c}`, true); beep(false); showToast(`Barkod eşleşmedi: ${c}`); }
+      if(it){
+        addToCart(it); beep(true);
+        showScanBanner('ok', `<b>${esc(c)}</b> okundu → eklendi: ${esc(it.name)}`);
+        return {ok:true, item:it};
+      }
+      beep(false);
+      showScanBanner('warn', `<b>${esc(c)}</b> okundu — ⚠ bu barkod sistemde KAYITLI DEĞİL`);
+      return {ok:false, code:c};
+    }
+
+    function showScanBanner(type, html){
+      const b=document.getElementById('scanBanner');
+      if(!b) return;
+      b.style.display='block';
+      if(type==='ok'){ b.style.background='#f0fdf4'; b.style.color='#15803d'; b.style.border='1px solid #bbf7d0';
+        b.innerHTML='<i class="bi bi-check-circle-fill"></i> '+html; }
+      else { b.style.background='#fff7ed'; b.style.color='#b45309'; b.style.border='1px solid #fed7aa';
+        b.innerHTML='<i class="bi bi-exclamation-triangle-fill"></i> '+html; }
     }
 
     /* ── Telefon kamerasıyla tarama (sürekli — modalı kapatınca durur) ── */
@@ -277,8 +304,11 @@
     }
     function scanLoop(){
       openBarcodeScanner(function(code){
-        resolveBarcode(code);
-        setTimeout(scanLoop, 700);   // bir sonraki ürün için kamerayı tekrar aç; kullanıcı modalı kapatınca döngü durur
+        const res = resolveBarcode(code);
+        // Bulunduysa kamerayı tekrar aç (market kasası); bulunamadıysa AÇMA ki
+        // uyarı ekranda görünsün — kullanıcı isterse butona tekrar basıp tarar.
+        if(res && res.ok){ setTimeout(scanLoop, 700); }
+        else if(!res){ setTimeout(scanLoop, 500); }   // boş okuma → devam
       });
     }
 
