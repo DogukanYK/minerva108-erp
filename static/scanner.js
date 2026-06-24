@@ -115,13 +115,18 @@
 
     const lc = (s) => (s || '').toLowerCase();
     const isFront = (c) => /front|selfie|user|facetime|ön/.test(lc(c.label));
-    const isMacro = (c) => /macro|makro|micro|mikro|close[\s-]?up/.test(lc(c.label));
+    // Teleobjektif (ör. iPhone 16 PM 5x) ve ultra geniş açı barkod için KÖTÜ:
+    // yakın netleme yok / zoomlu açılıyor. Ana (geniş açı) arka kamerayı seç.
+    const isTele  = (c) => /tele|telefoto|zoom/.test(lc(c.label));
+    const isUltra = (c) => /ultra|0\.5|geniş açı|wide.?angle/.test(lc(c.label));
 
     const back = cams.filter(c => !isFront(c));
-    const macro = back.find(isMacro);
-    if (macro)         return { id: macro.id, label: macro.label, picked: 'macro' };
-    if (back.length)   return { id: back[back.length - 1].id, label: back[back.length - 1].label, picked: 'rear' };
-    return { id: cams[cams.length - 1].id, label: cams[cams.length - 1].label, picked: 'fallback' };
+    const pick =
+         back.find(c => /\b(back|rear|arka)\b/.test(lc(c.label)) && !isTele(c) && !isUltra(c))  // ana arka lens
+      || back.find(c => !isTele(c) && !isUltra(c))   // tele/ultra olmayan herhangi arka kamera
+      || back[0];                                    // ilk arka kamera (genelde varsayılan = ana)
+    if (pick)        return { id: pick.id, label: pick.label, picked: 'rear' };
+    return cams.length ? { id: cams[0].id, label: cams[0].label, picked: 'fallback' } : null;
   }
 
   /**

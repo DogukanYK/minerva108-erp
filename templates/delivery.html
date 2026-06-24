@@ -234,10 +234,11 @@
     let _cart = [];       // {item_id, name, unit, stock, qty}
 
     async function loadItems(){
+      // Teslimatta yalnızca BİTMİŞ ÜRÜNLER verilir — hammadde/ambalaj/etiket listelenmez.
       try{
         const r = await fetch('/api/items');
         const d = await r.json();
-        _items = (Array.isArray(d) ? d : (d.items || [])).filter(x => (x.category||'') !== '');
+        _items = (Array.isArray(d) ? d : (d.items || [])).filter(x => (x.category||'') === 'Bitmiş Ürün');
       }catch{ _items = []; }
     }
 
