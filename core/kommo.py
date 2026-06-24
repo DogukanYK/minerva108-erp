@@ -17,6 +17,7 @@ Senkron httpx.Client kullanılır (uygulamanın sync DB/route desenine uyumlu).
 Env yoksa modül import edilebilir kalır; `is_configured()` False döner (no-op).
 """
 import os
+import re
 import time
 import logging
 from datetime import datetime
@@ -110,6 +111,18 @@ def _cf(entity: dict, code: str) -> Optional[str]:
     return None
 
 
+# Meta (Facebook/Instagram) reklam lead'leri Kommo'da 'fb…'/'ig…' etiketiyle gelir.
+_META_TAG_RE = re.compile(r"^(fb|ig)", re.IGNORECASE)
+
+
+def _source_from_tags(entity: dict) -> str:
+    """Entity etiketlerine bakıp kaynağı belirle: 'meta' (fb/ig etiketi) yoksa 'kommo'."""
+    for t in ((entity.get("_embedded") or {}).get("tags") or []):
+        if _META_TAG_RE.match((t.get("name") or "").strip()):
+            return "meta"
+    return "kommo"
+
+
 # ─── Aşama çözümü (Kommo status → CrmStage) ──────────────────────────────────
 
 def _load_status_names(client: httpx.Client) -> dict:
@@ -158,7 +171,7 @@ def upsert_company(db: Session, kco: dict) -> CrmCompany:
     c.name = (kco.get("name") or f"Kommo #{kid}")[:200]
     c.phone = c.phone or _cf(kco, "PHONE")
     c.email = c.email or _cf(kco, "EMAIL")
-    c.source = "kommo"
+    c.source = _source_from_tags(kco)
     db.flush()
     return c
 
@@ -173,7 +186,7 @@ def upsert_contact(db: Session, kc: dict, company_map: Optional[dict] = None) ->
     c.phone = _cf(kc, "PHONE") or c.phone
     c.email = _cf(kc, "EMAIL") or c.email
     c.whatsapp_number = c.whatsapp_number or _cf(kc, "PHONE")
-    c.source = "kommo"
+    c.source = _source_from_tags(kc)
     # firma bağı — kommo company id → bizim company id
     emb = (kc.get("_embedded") or {}).get("companies") or []
     if emb:
@@ -215,7 +228,7 @@ def upsert_lead(db: Session, kl: dict, status_names: dict) -> CrmDeal:
         row = db.query(CrmContact.id).filter(CrmContact.kommo_id == int(cts[0]["id"])).first()
         if row:
             d.contact_id = row[0]
-    d.source = "kommo"
+    d.source = _source_from_tags(kl)
     db.flush()
     return d
 

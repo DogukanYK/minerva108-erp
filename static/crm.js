@@ -22,6 +22,24 @@
   }
   function initials(name) { return (name || "?").trim().charAt(0).toUpperCase(); }
 
+  // Kaynak rozeti + filtre — Meta / Kommo / Elle
+  const SOURCE_PILL = { meta: "pill-b", kommo: "pill-g", manual: "pill-gray" };
+  function sourcePill(row) {
+    const s = row.source || "manual";
+    return `<span class="pill ${SOURCE_PILL[s] || "pill-gray"}">${esc(row.source_label || "Elle")}</span>`;
+  }
+  function sourceSelect(id) {
+    return `<select class="ipt" id="${id}" style="max-width:150px;" title="Kaynağa göre filtrele">
+      <option value="">Tüm kaynaklar</option>
+      <option value="meta">Meta</option>
+      <option value="kommo">Kommo</option>
+      <option value="manual">Elle girilen</option></select>`;
+  }
+  function srcParam(id) {
+    const e = el(id);
+    return e && e.value ? e.value : "";
+  }
+
   async function api(path, opts) {
     const r = await fetch("/api/crm" + path, opts || {});
     let d = null;
@@ -126,10 +144,12 @@
       v.dataset.init = "1";
       v.innerHTML = `<div class="toolbar">
         <div class="search"><i class="bi bi-search"></i><input class="ipt" id="coSearch" placeholder="Firma ara…"></div>
+        ${sourceSelect("coSource")}
         ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.companyModal()"><i class="bi bi-plus-lg"></i> Yeni Firma</button>' : ""}
       </div><div class="card2"><div class="card2-body" style="overflow-x:auto;"><div id="coList"></div></div></div>`;
       let tmr;
       el("coSearch").addEventListener("input", function () { clearTimeout(tmr); tmr = setTimeout(loadCompanies, 250); });
+      el("coSource").addEventListener("change", loadCompanies);
     }
     loadCompanies();
   }
@@ -138,14 +158,18 @@
     box.innerHTML = '<div class="empty">Yükleniyor…</div>';
     try {
       const q = (el("coSearch").value || "").trim();
-      const rows = await api("/companies" + (q ? "?q=" + encodeURIComponent(q) : ""));
-      if (!rows.length) { box.innerHTML = '<div class="empty">Firma yok. Yeni firma ekleyin.</div>'; return; }
-      box.innerHTML = '<table><thead><tr><th>Firma</th><th>Şehir</th><th>Kişi</th><th>Açık Fırsat</th><th>Sorumlu</th><th></th></tr></thead><tbody>' +
+      const params = [];
+      if (q) params.push("q=" + encodeURIComponent(q));
+      if (srcParam("coSource")) params.push("source=" + encodeURIComponent(srcParam("coSource")));
+      const rows = await api("/companies" + (params.length ? "?" + params.join("&") : ""));
+      if (!rows.length) { box.innerHTML = '<div class="empty">Firma yok.</div>'; return; }
+      box.innerHTML = '<table><thead><tr><th>Firma</th><th>Şehir</th><th>Kişi</th><th>Açık Fırsat</th><th>Kaynak</th><th>Sorumlu</th><th></th></tr></thead><tbody>' +
         rows.map((c) => `<tr class="clickable" onclick="CRM.openCompany(${c.id})">
           <td><span class="av">${initials(c.name)}</span><b>${esc(c.name)}</b>${c.sector ? '<div class="muted" style="font-size:0.76rem;margin-left:2.4rem;">' + esc(c.sector) + "</div>" : ""}</td>
           <td class="muted">${esc(c.city) || "—"}</td>
           <td>${c.contact_count}</td>
           <td>${c.open_deal_count ? '<span class="pill pill-b">' + c.open_deal_count + "</span>" : '<span class="muted">—</span>'}</td>
+          <td>${sourcePill(c)}</td>
           <td class="muted">${esc(c.owner_name) || "—"}</td>
           <td onclick="event.stopPropagation();">${c.wa_link ? '<a class="ico-btn wa" href="' + esc(c.wa_link) + '" target="_blank" title="WhatsApp"><i class="bi bi-whatsapp"></i></a>' : ""}</td>
         </tr>`).join("") + "</tbody></table>";
@@ -159,10 +183,12 @@
       v.dataset.init = "1";
       v.innerHTML = `<div class="toolbar">
         <div class="search"><i class="bi bi-search"></i><input class="ipt" id="ctSearch" placeholder="Kişi ara…"></div>
+        ${sourceSelect("ctSource")}
         ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.contactModal()"><i class="bi bi-plus-lg"></i> Yeni Kişi</button>' : ""}
       </div><div class="card2"><div class="card2-body" style="overflow-x:auto;"><div id="ctList"></div></div></div>`;
       let tmr;
       el("ctSearch").addEventListener("input", function () { clearTimeout(tmr); tmr = setTimeout(loadContacts, 250); });
+      el("ctSource").addEventListener("change", loadContacts);
     }
     loadContacts();
   }
@@ -171,13 +197,17 @@
     box.innerHTML = '<div class="empty">Yükleniyor…</div>';
     try {
       const q = (el("ctSearch").value || "").trim();
-      const rows = await api("/contacts" + (q ? "?q=" + encodeURIComponent(q) : ""));
+      const params = [];
+      if (q) params.push("q=" + encodeURIComponent(q));
+      if (srcParam("ctSource")) params.push("source=" + encodeURIComponent(srcParam("ctSource")));
+      const rows = await api("/contacts" + (params.length ? "?" + params.join("&") : ""));
       if (!rows.length) { box.innerHTML = '<div class="empty">Kişi yok.</div>'; return; }
-      box.innerHTML = '<table><thead><tr><th>Kişi</th><th>Firma</th><th>Telefon</th><th>E-posta</th><th></th></tr></thead><tbody>' +
+      box.innerHTML = '<table><thead><tr><th>Kişi</th><th>Firma</th><th>Telefon</th><th>Kaynak</th><th>E-posta</th><th></th></tr></thead><tbody>' +
         rows.map((c) => `<tr class="clickable" onclick="CRM.openContact(${c.id})">
           <td><span class="av">${initials(c.full_name)}</span><b>${esc(c.full_name)}</b>${c.title ? '<div class="muted" style="font-size:0.76rem;margin-left:2.4rem;">' + esc(c.title) + "</div>" : ""}</td>
           <td class="muted">${esc(c.company_name) || "—"}</td>
           <td class="muted">${esc(c.mobile || c.phone) || "—"}</td>
+          <td>${sourcePill(c)}</td>
           <td class="muted">${esc(c.email) || "—"}</td>
           <td onclick="event.stopPropagation();">${c.wa_link ? '<a class="ico-btn wa" href="' + esc(c.wa_link) + '" target="_blank" title="WhatsApp"><i class="bi bi-whatsapp"></i></a>' : ""}</td>
         </tr>`).join("") + "</tbody></table>";
@@ -187,11 +217,17 @@
   // ── Pipeline (Kanban) ──────────────────────────────────────────────────────
   async function renderPipeline() {
     const v = el("view-pipeline");
-    v.innerHTML = `<div class="toolbar"><h2 class="page-title" style="margin:0;flex:1;">Satış Pipeline</h2>
+    v.innerHTML = `<div class="toolbar"><h2 class="page-title" style="margin:0;flex:1;min-width:140px;">Satış Pipeline</h2>
+      ${sourceSelect("pipeSource")}
       ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.dealModal()"><i class="bi bi-plus-lg"></i> Yeni Fırsat</button>' : ""}
       </div><div id="kanban" class="kanban"><div class="empty">Yükleniyor…</div></div>`;
+    const ps = el("pipeSource");
+    if (ps) {
+      ps.value = state.pipeSource || "";
+      ps.addEventListener("change", () => { state.pipeSource = ps.value; renderPipeline(); });
+    }
     try {
-      const d = await api("/pipeline");
+      const d = await api("/pipeline" + (state.pipeSource ? "?source=" + encodeURIComponent(state.pipeSource) : ""));
       const editable = can("crm", "edit");
       let html = "";
       d.stages.forEach((s) => {
@@ -209,6 +245,7 @@
     return `<div class="kcard" ${editable ? 'draggable="true" ondragstart="CRM.dragDeal(event,' + d.id + ')"' : ""} onclick="CRM.openDeal(${d.id})">
       <div class="t">${esc(d.title)}</div>
       <div class="sub">${esc(d.company_name || d.contact_name || "—")}</div>
+      <div style="margin:0.3rem 0;">${sourcePill(d)}</div>
       <div class="v">${money(d.value, d.currency)}${d.probability ? ' · %' + d.probability : ""}</div>
       ${d.expected_close_label ? '<div class="sub" style="margin-top:0.2rem;"><i class="bi bi-calendar3"></i> ' + esc(d.expected_close_label) + "</div>" : ""}
     </div>`;
@@ -380,6 +417,7 @@
         kv("Web", e.website ? `<a href="${esc(e.website)}" target="_blank">${esc(e.website)}</a>` : "") +
         kv("Adres", esc([e.address, e.city, e.country].filter(Boolean).join(", "))) +
         kv("Vergi", esc([e.tax_office, e.tax_no].filter(Boolean).join(" / "))) +
+        kv("Kaynak", esc(e.source_label)) +
         kv("Sorumlu", esc(e.owner_name)) + kv("Not", esc(e.notes));
       // Kişiler
       html += sectionList("Kişiler", d.contacts, (c) => `<div class="kv"><div class="v"><a href="#" onclick="CRM.openContact(${c.id});return false;"><b>${esc(c.full_name)}</b></a> <span class="muted">${esc(c.title)}</span></div></div>`, can("crm", "create") ? `<button class="btn-g btn-sm" onclick="CRM.contactModal(null,${e.id})"><i class="bi bi-plus"></i> Kişi</button>` : "");
@@ -389,7 +427,7 @@
       html += kv("Firma", e.company_id ? `<a href="#" onclick="CRM.openCompany(${e.company_id});return false;">${esc(e.company_name)}</a>` : "") +
         kv("Unvan", esc(e.title)) + kv("Telefon", esc(e.phone)) + kv("Mobil", esc(e.mobile)) +
         kv("WhatsApp", esc(e.whatsapp_number)) + kv("E-posta", esc(e.email)) +
-        kv("Kaynak", esc(e.source)) + kv("Sorumlu", esc(e.owner_name)) + kv("Not", esc(e.notes));
+        kv("Kaynak", esc(e.source_label)) + kv("Sorumlu", esc(e.owner_name)) + kv("Not", esc(e.notes));
     } else {
       const dl = d.deal;
       html += kv("Firma", dl.company_id ? `<a href="#" onclick="CRM.openCompany(${dl.company_id});return false;">${esc(dl.company_name)}</a>` : "") +
@@ -398,6 +436,7 @@
         kv("Olasılık", dl.probability ? "%" + dl.probability : "") +
         kv("Beklenen Kapanış", esc(dl.expected_close_label)) +
         kv("Durum", '<span class="pill ' + (dl.status === "won" ? "pill-g" : dl.status === "lost" ? "pill-o" : "pill-b") + '">' + (dl.status === "won" ? "Kazanıldı" : dl.status === "lost" ? "Kaybedildi" : "Açık") + "</span>") +
+        kv("Kaynak", esc(dl.source_label)) +
         kv("Sorumlu", esc(dl.owner_name)) + (dl.lost_reason ? kv("Kayıp Nedeni", esc(dl.lost_reason)) : "");
     }
     el("dwBody").innerHTML = html;

@@ -50,6 +50,16 @@ def fmt_iso(dt: Optional[datetime]) -> Optional[str]:
     return to_tr(dt).strftime("%Y-%m-%dT%H:%M") if dt else None
 
 
+# ─── Kaynak (source) etiketleri — Meta / Kommo / Elle ────────────────────────
+# Meta = Facebook/Instagram reklam lead'leri (Kommo'da 'fb…'/'ig…' etiketi).
+# Kommo = Kommo'dan gelen diğer kayıtlar.  Elle = CRM'de elle oluşturulan (NULL/manual).
+SOURCE_LABELS = {"meta": "Meta", "kommo": "Kommo", "manual": "Elle"}
+
+
+def source_label(s) -> str:
+    return SOURCE_LABELS.get((s or "manual"), "Elle")
+
+
 # ─── WhatsApp tıkla-konuş köprüsü (Phase 3 öncesi anında kazanım) ────────────
 
 def normalize_phone(raw: Optional[str]) -> str:
@@ -93,6 +103,7 @@ def serialize_company(c, *, contact_count: int = 0, open_deal_count: int = 0) ->
         "tax_office": c.tax_office or "", "tax_no": c.tax_no or "",
         "notes": c.notes or "",
         "owner_user_id": c.owner_user_id, "owner_name": c.owner_name or "",
+        "source": c.source or "manual", "source_label": source_label(c.source),
         "wa_link": wa_link(c.phone),
         "contact_count": contact_count, "open_deal_count": open_deal_count,
         "created_at": fmt_dt(c.created_at), "created_by": c.created_by or "",
@@ -104,7 +115,8 @@ def serialize_contact(c, *, company_name: str = "") -> dict:
         "id": c.id, "company_id": c.company_id, "company_name": company_name,
         "full_name": c.full_name, "title": c.title or "",
         "phone": c.phone or "", "mobile": c.mobile or "", "email": c.email or "",
-        "whatsapp_number": c.whatsapp_number or "", "source": c.source or "",
+        "whatsapp_number": c.whatsapp_number or "",
+        "source": c.source or "manual", "source_label": source_label(c.source),
         "notes": c.notes or "",
         "owner_user_id": c.owner_user_id, "owner_name": c.owner_name or "",
         "wa_link": wa_link(c.whatsapp_number or c.mobile or c.phone),
@@ -124,6 +136,7 @@ def serialize_deal(d, *, company_name: str = "", contact_name: str = "", stage_n
         "expected_close_label": fmt_date(d.expected_close_at),
         "status": d.status, "lost_reason": d.lost_reason or "",
         "owner_user_id": d.owner_user_id, "owner_name": d.owner_name or "",
+        "source": d.source or "manual", "source_label": source_label(d.source),
         "quotation_id": d.quotation_id, "sort_order": d.sort_order or 0,
         "created_at": fmt_dt(d.created_at), "created_by": d.created_by or "",
         "won_at": fmt_dt(d.won_at), "closed_at": fmt_dt(d.closed_at),

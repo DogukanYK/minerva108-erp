@@ -66,6 +66,16 @@ def _today_end_utc() -> datetime:
     return tr_end - TR_OFFSET
 
 
+def _source_filter(query, model, source: Optional[str]):
+    """Kaynak filtresi: meta / kommo / manual (manual = NULL veya 'manual').
+    Boş/all → filtre yok."""
+    if not source or source == "all":
+        return query
+    if source == "manual":
+        return query.filter(or_(model.source.is_(None), model.source == "manual"))
+    return query.filter(model.source == source)
+
+
 # ─── Pydantic şemaları ───────────────────────────────────────────────────────
 
 class CompanyIn(BaseModel):
@@ -162,6 +172,7 @@ def list_stages(db: Session = Depends(get_db), _: dict = Depends(require_permiss
 @router.get("/companies")
 def list_companies(
     q: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
     include_inactive: bool = Query(False),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("crm", "view")),
@@ -169,6 +180,7 @@ def list_companies(
     query = db.query(CrmCompany)
     if not include_inactive:
         query = query.filter(CrmCompany.is_active == True)  # noqa: E712
+    query = _source_filter(query, CrmCompany, source)
     if q and q.strip():
         like = f"%{q.strip()}%"
         query = query.filter(or_(
@@ -204,6 +216,7 @@ def create_company(
         city=data.city, country=data.country, tax_office=data.tax_office,
         tax_no=data.tax_no, notes=data.notes,
         owner_user_id=data.owner_user_id, owner_name=_user_name(db, data.owner_user_id),
+        source="manual",
         created_by=_actor(current_user),
     )
     db.add(c); db.commit(); db.refresh(c)
@@ -273,11 +286,13 @@ def delete_company(cid: int, request: Request, db: Session = Depends(get_db),
 @router.get("/contacts")
 def list_contacts(
     q: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
     company_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("crm", "view")),
 ):
     query = db.query(CrmContact).filter(CrmContact.is_active == True)  # noqa: E712
+    query = _source_filter(query, CrmContact, source)
     if company_id:
         query = query.filter(CrmContact.company_id == company_id)
     if q and q.strip():
@@ -372,12 +387,14 @@ def _deal_names(db: Session):
 
 
 @router.get("/pipeline")
-def pipeline(db: Session = Depends(get_db), _: dict = Depends(require_permission("crm", "view"))):
+def pipeline(source: Optional[str] = Query(None),
+             db: Session = Depends(get_db),
+             _: dict = Depends(require_permission("crm", "view"))):
     """Kanban verisi — aşamalar + her aşamadaki açık fırsatlar + aşama toplamları."""
     stages = (db.query(CrmStage).filter(CrmStage.is_active == True)  # noqa: E712
               .order_by(CrmStage.sort_order, CrmStage.id).all())
-    deals = (db.query(CrmDeal).filter(CrmDeal.status == "open")
-             .order_by(CrmDeal.sort_order, CrmDeal.created_at.desc()).all())
+    dq = _source_filter(db.query(CrmDeal).filter(CrmDeal.status == "open"), CrmDeal, source)
+    deals = dq.order_by(CrmDeal.sort_order, CrmDeal.created_at.desc()).all()
     companies, contacts, stage_names = _deal_names(db)
     by_stage, totals = {}, {}
     for s in stages:
@@ -398,12 +415,14 @@ def pipeline(db: Session = Depends(get_db), _: dict = Depends(require_permission
 @router.get("/deals")
 def list_deals(
     status: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("crm", "view")),
 ):
     query = db.query(CrmDeal)
     if status in ("open", "won", "lost"):
         query = query.filter(CrmDeal.status == status)
+    query = _source_filter(query, CrmDeal, source)
     deals = query.order_by(CrmDeal.created_at.desc()).all()
     companies, contacts, stage_names = _deal_names(db)
     return [C.serialize_deal(d, company_name=companies.get(d.company_id, ""),
@@ -426,7 +445,7 @@ def create_deal(data: DealIn, request: Request, db: Session = Depends(get_db),
         probability=data.probability or 0,
         expected_close_at=C.parse_tr_to_utc(data.expected_close_at),
         owner_user_id=data.owner_user_id, owner_name=_user_name(db, data.owner_user_id),
-        quotation_id=data.quotation_id, created_by=_actor(current_user),
+        quotation_id=data.quotation_id, source="manual", created_by=_actor(current_user),
     )
     db.add(d); db.commit(); db.refresh(d)
     log_admin_event(db, request, actor=current_user, action="crm.deal.create",

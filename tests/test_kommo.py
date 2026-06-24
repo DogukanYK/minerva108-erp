@@ -108,6 +108,41 @@ def test_webhook_accepts_good_secret(client: TestClient, monkeypatch):
     assert calls[0].get("leads[add][0][id]") == "7001"
 
 
+def test_meta_source_from_fb_tag(db_session, monkeypatch):
+    # 'fb…' etiketli lead → source 'meta'; etiketsiz → 'kommo'
+    _setup_env(monkeypatch)
+    meta_lead = {"id": 7777, "name": "Meta Lead", "price": 0, "status_id": None,
+                 "_embedded": {"tags": [{"name": "fb2022990439093077"}]}}
+    plain_lead = {"id": 7778, "name": "Düz Lead", "price": 0, "status_id": None,
+                  "_embedded": {"tags": []}}
+
+    def fake_iter(client, path, key, extra=None):
+        return iter([meta_lead, plain_lead]) if key == "leads" else iter([])
+    monkeypatch.setattr(K, "_iter_entities", fake_iter)
+    monkeypatch.setattr(K, "_load_status_names", lambda c: {})
+
+    K.run_sync(db_session)
+    assert db_session.query(CrmDeal).filter(CrmDeal.kommo_id == 7777).one().source == "meta"
+    assert db_session.query(CrmDeal).filter(CrmDeal.kommo_id == 7778).one().source == "kommo"
+
+
+def test_source_filter_companies(authed_client: TestClient, db_session):
+    from database import CrmCompany
+    db_session.add(CrmCompany(name="Meta Co", source="meta"))
+    db_session.add(CrmCompany(name="Kommo Co", source="kommo"))
+    db_session.commit()
+    # manuel firma (UI ucundan) → source 'manual'
+    authed_client.post("/api/crm/companies", json={"name": "Elle Co"}, headers=_H)
+
+    meta = authed_client.get("/api/crm/companies?source=meta").json()
+    assert [c["name"] for c in meta] == ["Meta Co"]
+    assert meta[0]["source_label"] == "Meta"
+
+    manual = authed_client.get("/api/crm/companies?source=manual").json()
+    names = [c["name"] for c in manual]
+    assert "Elle Co" in names and "Meta Co" not in names and "Kommo Co" not in names
+
+
 def test_webhook_id_parser():
     ids = K._entity_ids_from_webhook({
         "leads[add][0][id]": "1", "contacts[update][0][id]": "2",
