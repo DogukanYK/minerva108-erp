@@ -169,14 +169,14 @@
       if (srcParam("coSource")) params.push("source=" + encodeURIComponent(srcParam("coSource")));
       const rows = await api("/companies" + (params.length ? "?" + params.join("&") : ""));
       if (!rows.length) { box.innerHTML = '<div class="empty">Firma yok.</div>'; return; }
-      box.innerHTML = '<table><thead><tr><th>Firma</th><th>Şehir</th><th>Kişi</th><th>Açık Fırsat</th><th>Kaynak</th><th>Sorumlu</th><th></th></tr></thead><tbody>' +
+      box.innerHTML = '<table><thead><tr><th>Firma</th><th class="col-sec">Şehir</th><th class="col-sec">Kişi</th><th class="col-sec">Açık Fırsat</th><th>Kaynak</th><th class="col-sec">Sorumlu</th><th></th></tr></thead><tbody>' +
         rows.map((c) => `<tr class="clickable" onclick="CRM.openCompany(${c.id})">
           <td><span class="av">${initials(c.name)}</span><b>${esc(c.name)}</b>${c.sector ? '<div class="muted" style="font-size:0.76rem;margin-left:2.4rem;">' + esc(c.sector) + "</div>" : ""}</td>
-          <td class="muted">${esc(c.city) || "—"}</td>
-          <td>${c.contact_count}</td>
-          <td>${c.open_deal_count ? '<span class="pill pill-b">' + c.open_deal_count + "</span>" : '<span class="muted">—</span>'}</td>
+          <td class="muted col-sec">${esc(c.city) || "—"}</td>
+          <td class="col-sec">${c.contact_count}</td>
+          <td class="col-sec">${c.open_deal_count ? '<span class="pill pill-b">' + c.open_deal_count + "</span>" : '<span class="muted">—</span>'}</td>
           <td>${sourcePill(c)}</td>
-          <td class="muted">${esc(c.owner_name) || "—"}</td>
+          <td class="muted col-sec">${esc(c.owner_name) || "—"}</td>
           <td onclick="event.stopPropagation();">${c.wa_link ? '<a class="ico-btn wa" href="' + esc(c.wa_link) + '" target="_blank" title="WhatsApp"><i class="bi bi-whatsapp"></i></a>' : ""}</td>
         </tr>`).join("") + "</tbody></table>";
     } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
@@ -208,13 +208,13 @@
       if (srcParam("ctSource")) params.push("source=" + encodeURIComponent(srcParam("ctSource")));
       const rows = await api("/contacts" + (params.length ? "?" + params.join("&") : ""));
       if (!rows.length) { box.innerHTML = '<div class="empty">Kişi yok.</div>'; return; }
-      box.innerHTML = '<table><thead><tr><th>Kişi</th><th>Firma</th><th>Telefon</th><th>Kaynak</th><th>E-posta</th><th></th></tr></thead><tbody>' +
+      box.innerHTML = '<table><thead><tr><th>Kişi</th><th class="col-sec">Firma</th><th>Telefon</th><th>Kaynak</th><th class="col-sec">E-posta</th><th></th></tr></thead><tbody>' +
         rows.map((c) => `<tr class="clickable" onclick="CRM.openContact(${c.id})">
           <td><span class="av">${initials(c.full_name)}</span><b>${esc(c.full_name)}</b>${c.title ? '<div class="muted" style="font-size:0.76rem;margin-left:2.4rem;">' + esc(c.title) + "</div>" : ""}</td>
-          <td class="muted">${esc(c.company_name) || "—"}</td>
+          <td class="muted col-sec">${esc(c.company_name) || "—"}</td>
           <td class="muted">${esc(c.mobile || c.phone) || "—"}</td>
           <td>${sourcePill(c)}</td>
-          <td class="muted">${esc(c.email) || "—"}</td>
+          <td class="muted col-sec">${esc(c.email) || "—"}</td>
           <td onclick="event.stopPropagation();">${c.wa_link ? '<a class="ico-btn wa" href="' + esc(c.wa_link) + '" target="_blank" title="WhatsApp"><i class="bi bi-whatsapp"></i></a>' : ""}</td>
         </tr>`).join("") + "</tbody></table>";
     } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }

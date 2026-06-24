@@ -169,7 +169,7 @@
     /* Drawer (slide-over) */
     .scrim{ position:fixed; inset:0; background:rgba(20,20,40,0.4); z-index:200; opacity:0; pointer-events:none; transition:opacity .2s; }
     .scrim.open{ opacity:1; pointer-events:auto; }
-    .drawer{ position:fixed; top:0; right:0; height:100vh; width:480px; max-width:94vw; background:var(--cream); z-index:210; transform:translateX(100%); transition:transform .25s ease; display:flex; flex-direction:column; box-shadow:-8px 0 30px rgba(0,0,0,0.18); }
+    .drawer{ position:fixed; top:0; right:0; height:100vh; height:100dvh; width:480px; max-width:94vw; background:var(--cream); z-index:210; transform:translateX(100%); transition:transform .25s ease; display:flex; flex-direction:column; box-shadow:-8px 0 30px rgba(0,0,0,0.18); }
     .drawer.open{ transform:translateX(0); }
     .drawer-head{ background:var(--navy); color:#fff; padding:1.1rem 1.2rem; display:flex; align-items:flex-start; justify-content:space-between; gap:0.5rem; }
     .drawer-head h3{ font-family:'Playfair Display',serif; margin:0; font-size:1.15rem; }
@@ -197,11 +197,31 @@
     @media (max-width:768px){
       .sidebar{ display:none; }
       .topnav{ left:0; padding:0 1rem; }
-      .topnav-title{ font-size:1.05rem; }
+      .topnav-title{ font-size:1.05rem; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+      .topnav{ gap:0.5rem; }
+      .topnav-right{ gap:0.45rem; flex-shrink:0; }
       .user-name{ display:none; }
       .main-content{ margin-left:0; padding-bottom:64px; }
-      .content-inner{ padding:1rem 1rem 5rem; }
+      .content-inner{ padding:1rem 0.9rem 5rem; }
       .frow{ grid-template-columns:1fr; }
+      /* Mobilde ikincil tablo sütunlarını gizle — yatay kaydırma yerine 'detay için dokun' */
+      .col-sec{ display:none; }
+      table{ font-size:0.92rem; }
+      td{ padding:0.7rem 0.5rem; }
+      /* Araç çubuğu: arama tam satır, filtre+buton alt satırda */
+      .toolbar{ gap:0.5rem; }
+      .toolbar .search{ flex:1 1 100%; min-width:0; }
+      .toolbar .page-title{ flex:1 1 100%; margin-bottom:0.2rem; }
+      .toolbar select.ipt{ max-width:none; flex:1; }
+      /* iOS: 16px altı input font'u odaklanınca otomatik zoom yapar — engelle */
+      .ipt,select.ipt,textarea.ipt{ font-size:16px; }
+      /* Dokunma hedeflerini büyüt */
+      .ico-btn{ padding:0.5rem 0.55rem; font-size:1.15rem; }
+      .stat .v{ font-size:1.4rem; }
+      .card2-body{ padding:0.85rem 0.9rem; }
+      .kcol{ flex:0 0 80vw; }   /* Kanban kolonu ekranın çoğunu kaplasın */
+      .modal-box{ border-radius:14px 14px 0 0; align-self:flex-end; width:100%; max-width:100%; max-height:90vh; }
+      .modal-ov{ padding:0; align-items:flex-end; }
       .mobnav{ display:flex; position:fixed; bottom:0; left:0; right:0; height:60px; background:var(--white); border-top:1px solid #ece6da; z-index:95; padding-bottom:env(safe-area-inset-bottom); }
       .mobnav button{ flex:1; background:none; border:none; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; color:var(--muted); font-family:inherit; font-size:0.62rem; cursor:pointer; position:relative; }
       .mobnav button.active{ color:var(--navy); }
