@@ -379,10 +379,62 @@
             : "⚠ KOMMO_WEBHOOK_SECRET ayarlı değil — webhook çalışmaz (yine de periyodik senkron 15 dk'da bir çeker).") + '</p>';
       }
       html += '</div></div>';
+      html += '<div class="card2"><div class="card2-head"><i class="bi bi-tags"></i><h2>Etiketler</h2></div><div class="card2-body" id="tagMgmt"></div></div>';
+      html += '<div class="card2"><div class="card2-head"><i class="bi bi-input-cursor-text"></i><h2>Özel Alanlar</h2></div><div class="card2-body" id="fieldMgmt"></div></div>';
       v.innerHTML = html;
       const imp = el("kommoImport"); if (imp) imp.addEventListener("click", () => kommoRun("import", imp));
       const syn = el("kommoSync"); if (syn) syn.addEventListener("click", () => kommoRun("sync", syn));
+      loadTagMgmt(); loadFieldMgmt();
     } catch (e) { v.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
+  }
+
+  async function loadTagMgmt() {
+    const box = el("tagMgmt"); if (!box) return;
+    try {
+      const tags = await api("/tags");
+      let h = '<div style="display:flex;gap:0.4rem;margin-bottom:0.8rem;flex-wrap:wrap;align-items:center;"><input class="ipt" id="mgTagName" placeholder="Etiket adı" style="max-width:200px;"><input type="color" id="mgTagColor" value="#6b7280" style="width:42px;height:38px;border:1px solid var(--border-2);border-radius:8px;padding:2px;"><button class="btn-g btn-sm" onclick="CRM.addTagMgmt()"><i class="bi bi-plus"></i> Ekle</button></div>';
+      h += tags.length ? '<div style="display:flex;gap:0.4rem;flex-wrap:wrap;">' + tags.map((t) => `<span class="pill" style="background:${esc(t.color)}22;color:${esc(t.color)};border:1px solid ${esc(t.color)}55;">${esc(t.name)} <a href="#" onclick="CRM.delTagMgmt(${t.id});return false;" style="color:inherit;text-decoration:none;font-weight:700;">×</a></span>`).join("") + "</div>" : '<div class="muted">Henüz etiket yok.</div>';
+      box.innerHTML = h;
+    } catch (e) { box.innerHTML = '<div class="muted">' + esc(e.message) + "</div>"; }
+  }
+  async function addTagMgmt() {
+    const nm = inputVal("mgTagName"); if (!nm) return;
+    try { await api("/tags", jbody({ name: nm, color: el("mgTagColor").value })); loadTagMgmt(); }
+    catch (e) { toast(e.message); }
+  }
+  async function delTagMgmt(id) {
+    if (!confirm("Etiket silinsin mi? (Tüm kayıtlardan kaldırılır)")) return;
+    try { await api("/tags/" + id, { method: "DELETE" }); loadTagMgmt(); } catch (e) { toast(e.message); }
+  }
+  async function loadFieldMgmt() {
+    const box = el("fieldMgmt"); if (!box) return;
+    try {
+      let h = '<div style="display:flex;gap:0.4rem;margin-bottom:0.4rem;flex-wrap:wrap;align-items:flex-end;">' +
+        '<div><label class="fld">Varlık</label><select class="ipt" id="mgFEnt" style="max-width:120px;"><option value="company">Firma</option><option value="contact">Kişi</option><option value="deal">Fırsat</option></select></div>' +
+        '<div><label class="fld">Alan adı</label><input class="ipt" id="mgFLabel" style="max-width:180px;"></div>' +
+        '<div><label class="fld">Tip</label><select class="ipt" id="mgFType" style="max-width:110px;"><option value="text">Metin</option><option value="number">Sayı</option><option value="date">Tarih</option><option value="select">Seçim</option></select></div>' +
+        '<button class="btn-g btn-sm" onclick="CRM.addFieldMgmt()"><i class="bi bi-plus"></i> Ekle</button></div>' +
+        '<input class="ipt mb" id="mgFOpts" placeholder="Seçim tipi için seçenekler: a, b, c">';
+      const ents = [["company", "Firma"], ["contact", "Kişi"], ["deal", "Fırsat"]];
+      for (const pair of ents) {
+        const defs = await api("/fields?entity=" + pair[0]);
+        h += `<div style="margin-top:0.7rem;"><b style="font-size:0.82rem;color:var(--heading);">${pair[1]}</b>`;
+        h += defs.length ? defs.map((f) => `<div class="row-sep" style="display:flex;justify-content:space-between;align-items:center;padding:0.3rem 0;font-size:0.86rem;"><span>${esc(f.label)} <span class="muted">(${f.field_type})</span></span><button class="ico-btn del" onclick="CRM.delFieldMgmt(${f.id})"><i class="bi bi-trash"></i></button></div>`).join("") : '<div class="muted" style="font-size:0.8rem;">Alan yok.</div>';
+        h += "</div>";
+      }
+      box.innerHTML = h;
+    } catch (e) { box.innerHTML = '<div class="muted">' + esc(e.message) + "</div>"; }
+  }
+  async function addFieldMgmt() {
+    const ent = el("mgFEnt").value, label = inputVal("mgFLabel"), type = el("mgFType").value;
+    if (!label) { toast("Alan adı girin."); return; }
+    const opts = type === "select" ? (inputVal("mgFOpts") || "").split(",").map((s) => s.trim()).filter(Boolean) : null;
+    try { await api("/fields", jbody({ entity: ent, label: label, field_type: type, options: opts })); loadFieldMgmt(); }
+    catch (e) { toast(e.message); }
+  }
+  async function delFieldMgmt(id) {
+    if (!confirm("Alan silinsin mi? (Tüm değerleri silinir)")) return;
+    try { await api("/fields/" + id, { method: "DELETE" }); loadFieldMgmt(); } catch (e) { toast(e.message); }
   }
 
   async function kommoRun(which, btn) {
@@ -522,13 +574,15 @@
     else sub = [ent.company_name, ent.stage_name, money(ent.value, ent.currency)].filter(Boolean).join(" · ");
     el("dwSub").textContent = sub;
 
-    const tabs = [["summary", "Özet"], ["notes", "Zaman Çizelgesi"], ["tasks", "Görevler"]];
+    const tabs = [["summary", "Özet"], ["notes", "Notlar"], ["tasks", "Görevler"], ["files", "Ekler"], ["history", "Geçmiş"]];
     el("dwTabs").innerHTML = tabs.map((t) =>
       `<button class="drawer-tab ${state.dwTab === t[0] ? "active" : ""}" onclick="CRM.dwSwitch('${t[0]}')">${t[1]}</button>`).join("");
 
     if (state.dwTab === "summary") renderDrawerSummary(kind, d);
     else if (state.dwTab === "notes") renderDrawerNotes(d);
-    else renderDrawerTasks(d);
+    else if (state.dwTab === "tasks") renderDrawerTasks(d);
+    else if (state.dwTab === "files") renderDrawerFiles();
+    else renderDrawerHistory();
   }
 
   function dwSwitch(tab) { state.dwTab = tab; renderDrawer(); }
@@ -583,7 +637,9 @@
         kv("Kaynak", esc(dl.source_label)) +
         kv("Sorumlu", esc(dl.owner_name)) + (dl.lost_reason ? kv("Kayıp Nedeni", esc(dl.lost_reason)) : "");
     }
+    html += '<div id="dwTags" style="margin-top:1.1rem;"></div><div id="dwFields"></div>';
     el("dwBody").innerHTML = html;
+    loadDrawerTags(); loadDrawerFields();
   }
 
   function sectionList(title, rows, rowFn, addBtn) {
@@ -635,6 +691,115 @@
         ${t.overdue && !done ? '<span class="pill pill-o">Gecikti</span>' : ""}</div>`;
     }).join("");
     el("dwBody").innerHTML = html;
+  }
+
+  // Drawer: Etiketler (özet içinde)
+  async function loadDrawerTags() {
+    const dr = state.drawer; const box = el("dwTags"); if (!box || !dr) return;
+    try {
+      const tags = await api("/" + dr.kind + "/" + dr.id + "/tags");
+      let h = '<div style="display:flex;align-items:center;gap:0.4rem;margin-bottom:0.4rem;"><b style="color:var(--heading);font-size:0.84rem;">Etiketler</b>';
+      if (can("crm", "edit")) h += `<button class="ico-btn" onclick="CRM.tagPicker()" title="Etiket düzenle"><i class="bi bi-pencil"></i></button>`;
+      h += '</div><div style="display:flex;gap:0.35rem;flex-wrap:wrap;">';
+      h += tags.length ? tags.map((t) => `<span class="pill" style="background:${esc(t.color)}22;color:${esc(t.color)};border:1px solid ${esc(t.color)}55;">${esc(t.name)}</span>`).join("") : '<span class="muted" style="font-size:0.82rem;">Etiket yok</span>';
+      box.innerHTML = h + "</div>";
+    } catch (e) { /* sessiz */ }
+  }
+  async function tagPicker() {
+    const dr = state.drawer;
+    try {
+      const all = await api("/tags");
+      const cur = await api("/" + dr.kind + "/" + dr.id + "/tags");
+      const curIds = new Set(cur.map((t) => t.id));
+      openModal("Etiketler", `
+        <div id="tagList" style="display:flex;flex-direction:column;gap:0.35rem;max-height:40vh;overflow-y:auto;">
+          ${all.map((t) => `<label style="display:flex;align-items:center;gap:0.5rem;"><input type="checkbox" class="tagck" value="${t.id}" ${curIds.has(t.id) ? "checked" : ""}> <span class="pill" style="background:${esc(t.color)}22;color:${esc(t.color)};">${esc(t.name)}</span></label>`).join("") || '<span class="muted">Henüz etiket yok.</span>'}
+        </div>
+        <div style="margin-top:0.8rem;display:flex;gap:0.4rem;"><input class="ipt" id="newTag" placeholder="Yeni etiket"><button class="btn-g btn-sm" onclick="CRM.addTag()">Ekle</button></div>`,
+        async function () {
+          const ids = Array.from(document.querySelectorAll(".tagck:checked")).map((c) => parseInt(c.value, 10));
+          try { await api("/" + dr.kind + "/" + dr.id + "/tags", jbody({ tag_ids: ids }, "PUT")); closeModal(); toast("Etiketler güncellendi.", "success"); loadDrawerTags(); }
+          catch (e) { toast(e.message); }
+        });
+    } catch (e) { toast(e.message); }
+  }
+  async function addTag() {
+    const nm = inputVal("newTag"); if (!nm) return;
+    try {
+      const t = await api("/tags", jbody({ name: nm }));
+      const lbl = document.createElement("label");
+      lbl.style.cssText = "display:flex;align-items:center;gap:0.5rem;";
+      lbl.innerHTML = `<input type="checkbox" class="tagck" value="${t.id}" checked> <span class="pill" style="background:${esc(t.color)}22;color:${esc(t.color)};">${esc(t.name)}</span>`;
+      el("tagList").appendChild(lbl); el("newTag").value = "";
+    } catch (e) { toast(e.message); }
+  }
+
+  // Drawer: Özel alanlar (özet içinde)
+  async function loadDrawerFields() {
+    const dr = state.drawer; const box = el("dwFields"); if (!box || !dr) return;
+    try {
+      const fields = await api("/" + dr.kind + "/" + dr.id + "/fields");
+      if (!fields.length) { box.innerHTML = ""; return; }
+      let h = '<div style="margin-top:1.1rem;margin-bottom:0.4rem;"><b style="color:var(--heading);font-size:0.84rem;">Özel Alanlar</b></div>';
+      fields.forEach((f) => {
+        const id = "cf_" + f.id; let inp;
+        if (f.field_type === "select") inp = `<select class="ipt" id="${id}"><option value="">—</option>${f.options.map((o) => `<option ${f.value === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+        else inp = `<input class="ipt" id="${id}" type="${f.field_type === "number" ? "number" : f.field_type === "date" ? "date" : "text"}" value="${esc(f.value)}">`;
+        h += `<div class="mb"><label class="fld">${esc(f.label)}</label>${inp}</div>`;
+      });
+      if (can("crm", "edit")) h += `<button class="btn-g btn-sm" onclick="CRM.saveFields()"><i class="bi bi-check2"></i> Alanları Kaydet</button>`;
+      box.innerHTML = h; box.dataset.fieldIds = fields.map((f) => f.id).join(",");
+    } catch (e) { /* sessiz */ }
+  }
+  async function saveFields() {
+    const dr = state.drawer; const box = el("dwFields");
+    const ids = (box.dataset.fieldIds || "").split(",").filter(Boolean);
+    const values = {}; ids.forEach((fid) => { const e = el("cf_" + fid); if (e) values[fid] = e.value; });
+    try { await api("/" + dr.kind + "/" + dr.id + "/fields", jbody({ values: values }, "PUT")); toast("Kaydedildi.", "success"); }
+    catch (e) { toast(e.message); }
+  }
+
+  // Drawer: Ekler
+  async function renderDrawerFiles() {
+    const dr = state.drawer; if (!dr) return;
+    el("dwBody").innerHTML = '<div class="empty">Yükleniyor…</div>';
+    try {
+      const rows = await api("/" + dr.kind + "/" + dr.id + "/attachments");
+      let h = "";
+      if (can("crm", "create")) h += `<div class="mb"><label class="btn-g btn-sm" style="cursor:pointer;"><i class="bi bi-paperclip"></i> Dosya Ekle<input type="file" id="attFile" style="display:none;" onchange="CRM.uploadAttachment()"></label></div>`;
+      if (!rows.length) h += '<div class="muted">Henüz ek yok.</div>';
+      else h += rows.map((a) => `<div class="row-sep" style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0;">
+        <i class="bi bi-file-earmark" style="color:var(--gold);"></i>
+        <div style="flex:1;min-width:0;"><a href="/api/crm/attachments/${a.id}/download"><b>${esc(a.name)}</b></a><div class="muted" style="font-size:0.74rem;">${esc(a.size_human)} · ${esc(a.uploaded_by)} · ${esc(a.created_at)}</div></div>
+        ${can("crm", "delete") ? `<button class="ico-btn del" onclick="CRM.delAttachment(${a.id})"><i class="bi bi-trash"></i></button>` : ""}</div>`).join("");
+      el("dwBody").innerHTML = h;
+    } catch (e) { el("dwBody").innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
+  }
+  async function uploadAttachment() {
+    const dr = state.drawer; const f = el("attFile").files[0]; if (!f) return;
+    const fd = new FormData(); fd.append("file", f);
+    try {
+      const r = await fetch("/api/crm/" + dr.kind + "/" + dr.id + "/attachments", { method: "POST", body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(d.detail || "Yüklenemedi."); return; }
+      toast("Eklendi.", "success"); renderDrawerFiles();
+    } catch (e) { toast("Yükleme hatası."); }
+  }
+  async function delAttachment(id) {
+    if (!confirm("Dosya silinsin mi?")) return;
+    try { await api("/attachments/" + id, { method: "DELETE" }); renderDrawerFiles(); } catch (e) { toast(e.message); }
+  }
+
+  // Drawer: Geçmiş
+  async function renderDrawerHistory() {
+    const dr = state.drawer; if (!dr) return;
+    el("dwBody").innerHTML = '<div class="empty">Yükleniyor…</div>';
+    try {
+      const rows = await api("/" + dr.kind + "/" + dr.id + "/history");
+      if (!rows.length) { el("dwBody").innerHTML = '<div class="muted">Kayıt geçmişi yok.</div>'; return; }
+      el("dwBody").innerHTML = '<ul class="tl">' + rows.map((r) =>
+        `<li class="tl-item"><span class="tl-dot"><i class="bi bi-clock-history"></i></span><div class="tl-meta">${esc(r.action)} · ${esc(r.actor)} · ${esc(r.at)}</div></li>`).join("") + "</ul>";
+    } catch (e) { el("dwBody").innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
   }
 
   function drawerScope() {
@@ -905,6 +1070,8 @@
     dragDeal, allowDrop, dropDeal,
     exportXlsx, importModal,
     searchOpen, searchClose, searchGo,
+    tagPicker, addTag, saveFields, uploadAttachment, delAttachment,
+    addTagMgmt, delTagMgmt, addFieldMgmt, delFieldMgmt,
   };
   window.closeDrawer = closeDrawer;
   window.closeModal = closeModal;

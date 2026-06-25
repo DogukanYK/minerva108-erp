@@ -13,22 +13,34 @@ CRM Faz C — kurumsal uçlar (ayrı router, crm.py'yi şişirmemek için).
   • /tags … /fields … /attachments … /bulk … /history  (C3–C4)
 """
 import json
+from datetime import datetime
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, Request, Query
-from fastapi.responses import JSONResponse
-from sqlalchemy import or_
+from fastapi import APIRouter, Depends, Request, Query, UploadFile, File
+from fastapi.responses import JSONResponse, FileResponse
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
 from database import (
-    get_db, CrmCompany, CrmContact, CrmDeal, CrmSavedView,
+    get_db, User, AdminAuditLog,
+    CrmCompany, CrmContact, CrmDeal, CrmSavedView,
+    CrmTag, CrmEntityTag, CrmFieldDef, CrmFieldValue, CrmAttachment, to_tr,
 )
 from core.permissions import require_permission
+from core.audit import log_admin_event
 from core import crm as C
 from core import crm_reports as R
+from core import drive as D
 
 router = APIRouter(prefix="/api/crm", tags=["crm-advanced"])
+
+# entity (singular) → (model, geçerli)
+_ENT = {"company": CrmCompany, "contact": CrmContact, "deal": CrmDeal}
+
+
+def _actor(p: dict) -> str:
+    return p.get("full_name") or p.get("username") or "—"
 
 
 # ─── Global arama ────────────────────────────────────────────────────────────
@@ -115,3 +127,310 @@ def delete_view(vid: int, db: Session = Depends(get_db),
 def reports_summary(db: Session = Depends(get_db),
                     _: dict = Depends(require_permission("crm", "view"))):
     return R.report_summary(db)
+
+
+# ─── Etiketler (C3) ──────────────────────────────────────────────────────────
+
+class TagIn(BaseModel):
+    name:  str = Field(..., min_length=1, max_length=60)
+    color: Optional[str] = Field(None, max_length=20)
+
+
+class TagSet(BaseModel):
+    tag_ids: List[int] = Field(default_factory=list)
+
+
+@router.get("/tags")
+def list_tags(db: Session = Depends(get_db), _: dict = Depends(require_permission("crm", "view"))):
+    return [{"id": t.id, "name": t.name, "color": t.color or "#6b7280"}
+            for t in db.query(CrmTag).order_by(CrmTag.name).all()]
+
+
+@router.post("/tags", status_code=201)
+def create_tag(data: TagIn, db: Session = Depends(get_db),
+               _: dict = Depends(require_permission("crm", "edit"))):
+    nm = data.name.strip()
+    ex = db.query(CrmTag).filter(func.lower(CrmTag.name) == nm.lower()).first()
+    if ex:
+        return {"id": ex.id, "name": ex.name, "color": ex.color or "#6b7280"}
+    t = CrmTag(name=nm[:60], color=(data.color or "#6b7280")[:20])
+    db.add(t); db.commit(); db.refresh(t)
+    return {"id": t.id, "name": t.name, "color": t.color}
+
+
+@router.delete("/tags/{tid}")
+def delete_tag(tid: int, db: Session = Depends(get_db),
+               _: dict = Depends(require_permission("crm", "delete"))):
+    t = db.query(CrmTag).filter(CrmTag.id == tid).first()
+    if not t:
+        return JSONResponse(status_code=404, content={"detail": "Etiket bulunamadı."})
+    db.query(CrmEntityTag).filter(CrmEntityTag.tag_id == tid).delete()
+    db.delete(t); db.commit()
+    return {"message": "Etiket silindi."}
+
+
+def _entity_tags(db: Session, entity: str, eid: int):
+    rows = (db.query(CrmTag).join(CrmEntityTag, CrmEntityTag.tag_id == CrmTag.id)
+            .filter(CrmEntityTag.entity == entity, CrmEntityTag.entity_id == eid)
+            .order_by(CrmTag.name).all())
+    return [{"id": t.id, "name": t.name, "color": t.color or "#6b7280"} for t in rows]
+
+
+@router.get("/{entity}/{eid}/tags")
+def get_entity_tags(entity: str, eid: int, db: Session = Depends(get_db),
+                    _: dict = Depends(require_permission("crm", "view"))):
+    if entity not in _ENT:
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    return _entity_tags(db, entity, eid)
+
+
+@router.put("/{entity}/{eid}/tags")
+def set_entity_tags(entity: str, eid: int, data: TagSet, db: Session = Depends(get_db),
+                    _: dict = Depends(require_permission("crm", "edit"))):
+    if entity not in _ENT:
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    db.query(CrmEntityTag).filter(CrmEntityTag.entity == entity, CrmEntityTag.entity_id == eid).delete()
+    valid = {tid for (tid,) in db.query(CrmTag.id).filter(CrmTag.id.in_(data.tag_ids or [])).all()}
+    for tid in (data.tag_ids or []):
+        if tid in valid:
+            db.add(CrmEntityTag(entity=entity, entity_id=eid, tag_id=tid))
+    db.commit()
+    return _entity_tags(db, entity, eid)
+
+
+# ─── Özel alanlar (C3) ───────────────────────────────────────────────────────
+
+class FieldIn(BaseModel):
+    entity:     str = Field(..., pattern="^(company|contact|deal)$")
+    label:      str = Field(..., min_length=1, max_length=80)
+    field_type: str = Field("text", pattern="^(text|number|date|select)$")
+    options:    Optional[List[str]] = None
+
+
+class FieldValues(BaseModel):
+    values: dict = Field(default_factory=dict)   # {field_id(str): value}
+
+
+def _slug_key(label: str) -> str:
+    import re
+    tr = {"ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u"}
+    s = "".join(tr.get(ch, ch) for ch in label.lower())
+    return (re.sub(r"[^a-z0-9]+", "_", s).strip("_") or "alan")[:40]
+
+
+def _field_defs(db: Session, entity: str):
+    return (db.query(CrmFieldDef)
+            .filter(CrmFieldDef.entity == entity, CrmFieldDef.is_active == True)  # noqa: E712
+            .order_by(CrmFieldDef.sort_order, CrmFieldDef.id).all())
+
+
+@router.get("/fields")
+def list_fields(entity: str = Query(...), db: Session = Depends(get_db),
+                _: dict = Depends(require_permission("crm", "view"))):
+    if entity not in _ENT:
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    return [{"id": f.id, "key": f.key, "label": f.label, "field_type": f.field_type,
+             "options": json.loads(f.options or "[]")} for f in _field_defs(db, entity)]
+
+
+@router.post("/fields", status_code=201)
+def create_field(data: FieldIn, db: Session = Depends(get_db),
+                 _: dict = Depends(require_permission("admin", "view"))):
+    maxo = db.query(func.count(CrmFieldDef.id)).filter(CrmFieldDef.entity == data.entity).scalar() or 0
+    f = CrmFieldDef(entity=data.entity, key=_slug_key(data.label), label=data.label.strip()[:80],
+                    field_type=data.field_type, options=json.dumps(data.options or [], ensure_ascii=False),
+                    sort_order=maxo)
+    db.add(f); db.commit(); db.refresh(f)
+    return {"id": f.id, "label": f.label, "field_type": f.field_type}
+
+
+@router.delete("/fields/{fid}")
+def delete_field(fid: int, db: Session = Depends(get_db),
+                 _: dict = Depends(require_permission("admin", "view"))):
+    f = db.query(CrmFieldDef).filter(CrmFieldDef.id == fid).first()
+    if not f:
+        return JSONResponse(status_code=404, content={"detail": "Alan bulunamadı."})
+    db.query(CrmFieldValue).filter(CrmFieldValue.field_id == fid).delete()
+    db.delete(f); db.commit()
+    return {"message": "Alan silindi."}
+
+
+@router.get("/{entity}/{eid}/fields")
+def get_entity_fields(entity: str, eid: int, db: Session = Depends(get_db),
+                      _: dict = Depends(require_permission("crm", "view"))):
+    if entity not in _ENT:
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    vals = {v.field_id: v.value for v in db.query(CrmFieldValue)
+            .filter(CrmFieldValue.entity == entity, CrmFieldValue.entity_id == eid).all()}
+    return [{"id": f.id, "key": f.key, "label": f.label, "field_type": f.field_type,
+             "options": json.loads(f.options or "[]"), "value": vals.get(f.id, "")}
+            for f in _field_defs(db, entity)]
+
+
+@router.put("/{entity}/{eid}/fields")
+def set_entity_fields(entity: str, eid: int, data: FieldValues, db: Session = Depends(get_db),
+                      _: dict = Depends(require_permission("crm", "edit"))):
+    if entity not in _ENT:
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    own = {f.id for f in _field_defs(db, entity)}
+    for fid_str, val in (data.values or {}).items():
+        try:
+            fid = int(fid_str)
+        except (TypeError, ValueError):
+            continue
+        if fid not in own:
+            continue
+        ex = (db.query(CrmFieldValue)
+              .filter(CrmFieldValue.field_id == fid, CrmFieldValue.entity == entity,
+                      CrmFieldValue.entity_id == eid).first())
+        if ex:
+            ex.value = (val or None)
+        else:
+            db.add(CrmFieldValue(field_id=fid, entity=entity, entity_id=eid, value=(val or None)))
+    db.commit()
+    return {"message": "Kaydedildi."}
+
+
+# ─── Dosya ekleri (C4) ───────────────────────────────────────────────────────
+
+@router.get("/{entity}/{eid}/attachments")
+def list_attachments(entity: str, eid: int, db: Session = Depends(get_db),
+                     _: dict = Depends(require_permission("crm", "view"))):
+    if entity not in _ENT:
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    rows = (db.query(CrmAttachment)
+            .filter(CrmAttachment.entity == entity, CrmAttachment.entity_id == eid)
+            .order_by(CrmAttachment.id.desc()).all())
+    return [{"id": a.id, "name": a.original_name, "size_human": D.humanize(a.size_bytes),
+             "uploaded_by": a.uploaded_by or "—", "created_at": C.fmt_dt(a.created_at)} for a in rows]
+
+
+@router.post("/{entity}/{eid}/attachments", status_code=201)
+async def upload_attachment(entity: str, eid: int, file: UploadFile = File(...),
+                            db: Session = Depends(get_db),
+                            current_user: dict = Depends(require_permission("crm", "create"))):
+    if entity not in _ENT:
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    try:
+        stored, size, ctype = await D.save_upload(file)
+    except ValueError as e:
+        return JSONResponse(status_code=413, content={"detail": str(e)})
+    except Exception:
+        return JSONResponse(status_code=500, content={"detail": "Yükleme hatası."})
+    rec = CrmAttachment(entity=entity, entity_id=eid, original_name=(file.filename or "dosya")[:255],
+                        stored_name=stored, size_bytes=size, content_type=ctype,
+                        uploaded_by=_actor(current_user))
+    db.add(rec); db.commit(); db.refresh(rec)
+    return {"id": rec.id, "name": rec.original_name, "size_human": D.humanize(size)}
+
+
+@router.get("/attachments/{aid}/download")
+def download_attachment(aid: int, db: Session = Depends(get_db),
+                        _: dict = Depends(require_permission("crm", "view"))):
+    a = db.query(CrmAttachment).filter(CrmAttachment.id == aid).first()
+    if not a:
+        return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
+    try:
+        path = D.stored_path(a.stored_name)
+    except ValueError:
+        return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
+    if not path.is_file():
+        return JSONResponse(status_code=404, content={"detail": "Dosya diskte yok."})
+    return FileResponse(str(path), media_type="application/octet-stream",
+                        filename=D.safe_download_name(a.original_name))
+
+
+@router.delete("/attachments/{aid}")
+def delete_attachment(aid: int, db: Session = Depends(get_db),
+                      _: dict = Depends(require_permission("crm", "delete"))):
+    a = db.query(CrmAttachment).filter(CrmAttachment.id == aid).first()
+    if not a:
+        return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
+    stored = a.stored_name
+    db.delete(a); db.commit()
+    D.delete_stored(stored)
+    return {"message": "Dosya silindi."}
+
+
+# ─── Toplu işlemler (C4) ─────────────────────────────────────────────────────
+
+class BulkIn(BaseModel):
+    entity: str = Field(..., pattern="^(companies|contacts|deals)$")
+    ids:    List[int] = Field(..., min_length=1, max_length=1000)
+    action: str = Field(..., pattern="^(assign|source|tag|delete)$")
+    value:  Optional[str] = None        # assign→user_id, source→meta/kommo/manual, tag→tag_id
+
+
+_PLURAL = {"companies": (CrmCompany, "company"), "contacts": (CrmContact, "contact"),
+           "deals": (CrmDeal, "deal")}
+
+
+@router.post("/bulk")
+def bulk_action(data: BulkIn, request: Request, db: Session = Depends(get_db),
+                current_user: dict = Depends(require_permission("crm", "edit"))):
+    model, singular = _PLURAL[data.entity]
+    rows = db.query(model).filter(model.id.in_(data.ids)).all()
+    n = 0
+    if data.action == "assign":
+        uid = int(data.value) if data.value else None
+        name = None
+        if uid:
+            u = db.query(User.full_name).filter(User.id == uid).first()
+            name = u[0] if u else None
+        for r in rows:
+            r.owner_user_id = uid
+            if hasattr(r, "owner_name"):
+                r.owner_name = name
+            n += 1
+    elif data.action == "source":
+        for r in rows:
+            r.source = data.value or "manual"; n += 1
+    elif data.action == "tag":
+        tid = int(data.value) if data.value else None
+        if not tid or not db.query(CrmTag.id).filter(CrmTag.id == tid).first():
+            return JSONResponse(status_code=400, content={"detail": "Geçersiz etiket."})
+        for r in rows:
+            ex = (db.query(CrmEntityTag.id)
+                  .filter(CrmEntityTag.entity == singular, CrmEntityTag.entity_id == r.id,
+                          CrmEntityTag.tag_id == tid).first())
+            if not ex:
+                db.add(CrmEntityTag(entity=singular, entity_id=r.id, tag_id=tid))
+            n += 1
+    elif data.action == "delete":
+        if data.entity == "deals":
+            return JSONResponse(status_code=400, content={"detail": "Fırsatlar toplu silinemez."})
+        if not C.SOURCE_LABELS or not current_user:  # noqa
+            pass
+        # crm.delete yetkisi gerekir
+        from core.permissions import _has_permission
+        u = db.query(User).filter(User.id == int(current_user.get("sub", 0))).first()
+        if not (u and _has_permission(u, "crm", "delete")):
+            return JSONResponse(status_code=403, content={"detail": "Silme yetkiniz yok."})
+        for r in rows:
+            r.is_active = False; n += 1
+    db.commit()
+    log_admin_event(db, request, actor=current_user, action=f"crm.bulk.{data.action}",
+                    target_type="crm_" + data.entity, target_name=data.entity,
+                    details={"count": n, "value": data.value})
+    return {"message": f"{n} kayıt güncellendi.", "count": n}
+
+
+# ─── Kayıt geçmişi (C4) ──────────────────────────────────────────────────────
+
+@router.get("/{entity}/{eid}/history")
+def entity_history(entity: str, eid: int, db: Session = Depends(get_db),
+                   _: dict = Depends(require_permission("crm", "view"))):
+    if entity not in _ENT:
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    rows = (db.query(AdminAuditLog)
+            .filter(AdminAuditLog.target_type == "crm_" + entity, AdminAuditLog.target_id == eid)
+            .order_by(AdminAuditLog.timestamp.desc()).limit(50).all())
+    out = []
+    for r in rows:
+        try:
+            det = json.loads(r.details) if r.details else None
+        except Exception:
+            det = None
+        out.append({"action": r.action, "actor": r.actor_name or "—",
+                    "at": C.fmt_dt(r.timestamp), "details": det})
+    return out
