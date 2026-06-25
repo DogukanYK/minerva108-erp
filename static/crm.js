@@ -198,13 +198,19 @@
         <div class="search"><i class="bi bi-search"></i><input class="ipt" id="coSearch" placeholder="Firma ara…"></div>
         ${sourceSelect("coSource")}
         ${ownerSelect("coOwner")}
+        ${tagSelect("coTag")}
+        ${viewsSelect("companies")}
         ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.companyModal()"><i class="bi bi-plus-lg"></i> Yeni Firma</button>' : ""}
         ${ioButtons("companies")}
-      </div><div class="card2"><div class="card2-body" style="overflow-x:auto;"><div id="coList"></div></div></div>`;
+      </div>
+      ${bulkBar("companies")}
+      <div class="card2"><div class="card2-body" style="overflow-x:auto;"><div id="coList"></div></div></div>`;
       let tmr;
       el("coSearch").addEventListener("input", function () { clearTimeout(tmr); tmr = setTimeout(loadCompanies, 250); });
       el("coSource").addEventListener("change", loadCompanies);
       el("coOwner").addEventListener("change", loadCompanies);
+      const _coTag = el("coTag"); if (_coTag) _coTag.addEventListener("change", loadCompanies);
+      loadViews("companies");
     }
     loadCompanies();
   }
@@ -217,10 +223,14 @@
       if (q) params.push("q=" + encodeURIComponent(q));
       if (srcParam("coSource")) params.push("source=" + encodeURIComponent(srcParam("coSource")));
       if (srcParam("coOwner")) params.push("owner=" + encodeURIComponent(srcParam("coOwner")));
+      if (srcParam("coTag")) params.push("tag=" + encodeURIComponent(srcParam("coTag")));
       const rows = await api("/companies" + (params.length ? "?" + params.join("&") : ""));
+      bulkSel.companies.clear(); updateBulkBar("companies");
       if (!rows.length) { box.innerHTML = '<div class="empty">Firma yok.</div>'; return; }
-      box.innerHTML = '<table><thead><tr><th>Firma</th><th class="col-sec">Şehir</th><th class="col-sec">Kişi</th><th class="col-sec">Açık Fırsat</th><th>Kaynak</th><th class="col-sec">Sorumlu</th><th></th></tr></thead><tbody>' +
+      const selCol = can("crm", "edit");
+      box.innerHTML = '<table><thead><tr>' + (selCol ? '<th style="width:28px;"><input type="checkbox" onclick="CRM.bulkAll(\'companies\',this.checked)"></th>' : "") + '<th>Firma</th><th class="col-sec">Şehir</th><th class="col-sec">Kişi</th><th class="col-sec">Açık Fırsat</th><th>Kaynak</th><th class="col-sec">Sorumlu</th><th></th></tr></thead><tbody>' +
         rows.map((c) => `<tr class="clickable" onclick="CRM.openCompany(${c.id})">
+          ${selCol ? `<td onclick="event.stopPropagation();"><input type="checkbox" class="companies_chk" value="${c.id}" onchange="CRM.bulkToggle('companies',${c.id},this.checked)"></td>` : ""}
           <td><span class="av">${initials(c.name)}</span><b>${esc(c.name)}</b>${c.sector ? '<div class="muted" style="font-size:0.76rem;margin-left:2.4rem;">' + esc(c.sector) + "</div>" : ""}</td>
           <td class="muted col-sec">${esc(c.city) || "—"}</td>
           <td class="col-sec">${c.contact_count}</td>
@@ -241,13 +251,19 @@
         <div class="search"><i class="bi bi-search"></i><input class="ipt" id="ctSearch" placeholder="Kişi ara…"></div>
         ${sourceSelect("ctSource")}
         ${ownerSelect("ctOwner")}
+        ${tagSelect("ctTag")}
+        ${viewsSelect("contacts")}
         ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.contactModal()"><i class="bi bi-plus-lg"></i> Yeni Kişi</button>' : ""}
         ${ioButtons("contacts")}
-      </div><div class="card2"><div class="card2-body" style="overflow-x:auto;"><div id="ctList"></div></div></div>`;
+      </div>
+      ${bulkBar("contacts")}
+      <div class="card2"><div class="card2-body" style="overflow-x:auto;"><div id="ctList"></div></div></div>`;
       let tmr;
       el("ctSearch").addEventListener("input", function () { clearTimeout(tmr); tmr = setTimeout(loadContacts, 250); });
       el("ctSource").addEventListener("change", loadContacts);
       el("ctOwner").addEventListener("change", loadContacts);
+      const _ctTag = el("ctTag"); if (_ctTag) _ctTag.addEventListener("change", loadContacts);
+      loadViews("contacts");
     }
     loadContacts();
   }
@@ -260,10 +276,14 @@
       if (q) params.push("q=" + encodeURIComponent(q));
       if (srcParam("ctSource")) params.push("source=" + encodeURIComponent(srcParam("ctSource")));
       if (srcParam("ctOwner")) params.push("owner=" + encodeURIComponent(srcParam("ctOwner")));
+      if (srcParam("ctTag")) params.push("tag=" + encodeURIComponent(srcParam("ctTag")));
       const rows = await api("/contacts" + (params.length ? "?" + params.join("&") : ""));
+      bulkSel.contacts.clear(); updateBulkBar("contacts");
       if (!rows.length) { box.innerHTML = '<div class="empty">Kişi yok.</div>'; return; }
-      box.innerHTML = '<table><thead><tr><th>Kişi</th><th class="col-sec">Firma</th><th>Telefon</th><th>Kaynak</th><th class="col-sec">E-posta</th><th></th></tr></thead><tbody>' +
+      const selColC = can("crm", "edit");
+      box.innerHTML = '<table><thead><tr>' + (selColC ? '<th style="width:28px;"><input type="checkbox" onclick="CRM.bulkAll(\'contacts\',this.checked)"></th>' : "") + '<th>Kişi</th><th class="col-sec">Firma</th><th>Telefon</th><th>Kaynak</th><th class="col-sec">E-posta</th><th></th></tr></thead><tbody>' +
         rows.map((c) => `<tr class="clickable" onclick="CRM.openContact(${c.id})">
+          ${selColC ? `<td onclick="event.stopPropagation();"><input type="checkbox" class="contacts_chk" value="${c.id}" onchange="CRM.bulkToggle('contacts',${c.id},this.checked)"></td>` : ""}
           <td><span class="av">${initials(c.full_name)}</span><b>${esc(c.full_name)}</b>${c.title ? '<div class="muted" style="font-size:0.76rem;margin-left:2.4rem;">' + esc(c.title) + "</div>" : ""}</td>
           <td class="muted col-sec">${esc(c.company_name) || "—"}</td>
           <td class="muted">${esc(c.mobile || c.phone) || "—"}</td>
@@ -279,6 +299,7 @@
     const v = el("view-pipeline");
     v.innerHTML = `<div class="toolbar"><h2 class="page-title" style="margin:0;flex:1;min-width:140px;">Satış Pipeline</h2>
       ${sourceSelect("pipeSource")}
+      ${tagSelect("pipeTag")}
       ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.dealModal()"><i class="bi bi-plus-lg"></i> Yeni Fırsat</button>' : ""}
       ${ioButtons("deals")}
       </div><div id="kanban" class="kanban"><div class="empty">Yükleniyor…</div></div>`;
@@ -287,8 +308,16 @@
       ps.value = state.pipeSource || "";
       ps.addEventListener("change", () => { state.pipeSource = ps.value; renderPipeline(); });
     }
+    const pt = el("pipeTag");
+    if (pt) {
+      pt.value = state.pipeTag || "";
+      pt.addEventListener("change", () => { state.pipeTag = pt.value; renderPipeline(); });
+    }
     try {
-      const d = await api("/pipeline" + (state.pipeSource ? "?source=" + encodeURIComponent(state.pipeSource) : ""));
+      const pp = [];
+      if (state.pipeSource) pp.push("source=" + encodeURIComponent(state.pipeSource));
+      if (state.pipeTag) pp.push("tag=" + encodeURIComponent(state.pipeTag));
+      const d = await api("/pipeline" + (pp.length ? "?" + pp.join("&") : ""));
       const editable = can("crm", "edit");
       let html = "";
       d.stages.forEach((s) => {
@@ -500,6 +529,110 @@
       <option value="">Tüm sorumlular</option>` +
       state.users.map((u) => `<option value="${u.id}">${esc(u.full_name)}</option>`).join("") + `</select>`;
   }
+  function tagSelect(id) {
+    if (!state.tags || !state.tags.length) return "";
+    return `<select class="ipt" id="${id}" style="max-width:150px;" title="Etikete göre filtrele">
+      <option value="">Tüm etiketler</option>` +
+      state.tags.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("") + `</select>`;
+  }
+  // Kaydedilmiş görünümler
+  function viewsSelect(entity) {
+    return `<select class="ipt" id="${entity}_view" style="max-width:150px;" onchange="CRM.applyView('${entity}')" title="Kaydedilmiş görünüm"><option value="">Görünüm…</option></select>
+      <button class="btn-g btn-o btn-sm" onclick="CRM.saveView('${entity}')" title="Bu filtreyi görünüm olarak kaydet"><i class="bi bi-bookmark-plus"></i></button>`;
+  }
+  async function loadViews(entity) {
+    const sel = el(entity + "_view"); if (!sel) return;
+    try {
+      state._views = state._views || {};
+      const vs = await api("/views?entity=" + entity);
+      state._views[entity] = vs;
+      sel.innerHTML = '<option value="">Görünüm…</option>' +
+        vs.map((v) => `<option value="${v.id}">${esc(v.name)}</option>`).join("") +
+        '<option value="__del">— Sil…</option>';
+    } catch (e) { /* sessiz */ }
+  }
+  function _critIds(entity) { return entity === "companies" ? ["coSource", "coOwner", "coTag"] : ["ctSource", "ctOwner", "ctTag"]; }
+  function applyView(entity) {
+    const sel = el(entity + "_view"); const vid = sel.value;
+    if (vid === "__del") {
+      const vs = (state._views[entity] || []).filter((x) => x.id);
+      if (!vs.length) { sel.value = ""; return; }
+      const id = vs[0].id; // basitlik: ilkini sil seçeneği yerine prompt
+      const name = prompt("Silinecek görünüm adı:", vs[0].name);
+      const v = vs.find((x) => x.name === name);
+      if (v) api("/views/" + v.id, { method: "DELETE" }).then(() => { toast("Silindi.", "success"); loadViews(entity); });
+      sel.value = ""; return;
+    }
+    const v = (state._views[entity] || []).find((x) => String(x.id) === vid);
+    if (!v) return;
+    const c = v.criteria || {};
+    const map = entity === "companies"
+      ? { source: "coSource", owner: "coOwner", tag: "coTag", q: "coSearch" }
+      : { source: "ctSource", owner: "ctOwner", tag: "ctTag", q: "ctSearch" };
+    Object.keys(map).forEach((k) => { const e = el(map[k]); if (e) e.value = c[k] || ""; });
+    entity === "companies" ? loadCompanies() : loadContacts();
+  }
+  async function saveView(entity) {
+    const name = prompt("Görünüm adı:"); if (!name) return;
+    const map = entity === "companies"
+      ? { source: "coSource", owner: "coOwner", tag: "coTag", q: "coSearch" }
+      : { source: "ctSource", owner: "ctOwner", tag: "ctTag", q: "ctSearch" };
+    const criteria = {};
+    Object.keys(map).forEach((k) => { const val = inputVal(map[k]) || srcParam(map[k]); if (val) criteria[k] = val; });
+    try { await api("/views", jbody({ entity: entity, name: name, criteria: criteria })); toast("Görünüm kaydedildi.", "success"); loadViews(entity); }
+    catch (e) { toast(e.message); }
+  }
+
+  // ── Toplu işlemler (C4) ────────────────────────────────────────────────────
+  const bulkSel = { companies: new Set(), contacts: new Set() };
+  function bulkToggle(entity, id, on) {
+    if (on) bulkSel[entity].add(id); else bulkSel[entity].delete(id);
+    updateBulkBar(entity);
+  }
+  function bulkAll(entity, on) {
+    document.querySelectorAll("." + entity + "_chk").forEach((c) => { c.checked = on; bulkToggle(entity, parseInt(c.value, 10), on); });
+  }
+  function updateBulkBar(entity) {
+    const bar = el(entity + "_bulkbar"); if (!bar) return;
+    const n = bulkSel[entity].size;
+    bar.style.display = n ? "flex" : "none";
+    const cnt = el(entity + "_bulkcount"); if (cnt) cnt.textContent = n;
+  }
+  async function bulkRun(entity, action) {
+    const ids = Array.from(bulkSel[entity]); if (!ids.length) return;
+    let value = null;
+    if (action === "assign") {
+      const opts = state.users.map((u, i) => `${i + 1}) ${u.full_name}`).join("\n");
+      const pick = prompt("Sorumlu seç (numara):\n" + opts); if (!pick) return;
+      const u = state.users[parseInt(pick, 10) - 1]; if (!u) return; value = String(u.id);
+    } else if (action === "source") {
+      value = prompt("Kaynak (meta / kommo / manual):", "manual"); if (!value) return;
+    } else if (action === "tag") {
+      const opts = (state.tags || []).map((t, i) => `${i + 1}) ${t.name}`).join("\n");
+      if (!opts) { toast("Önce etiket oluşturun (Entegrasyonlar)."); return; }
+      const pick = prompt("Etiket seç (numara):\n" + opts); if (!pick) return;
+      const t = state.tags[parseInt(pick, 10) - 1]; if (!t) return; value = String(t.id);
+    } else if (action === "delete") {
+      if (!confirm(ids.length + " kayıt arşivlensin mi?")) return;
+    }
+    try {
+      const r = await api("/bulk", jbody({ entity: entity, ids: ids, action: action, value: value }));
+      toast(r.message || "Tamam.", "success");
+      bulkSel[entity].clear();
+      if (entity === "companies") { state._companies = null; loadCompanies(); } else loadContacts();
+    } catch (e) { toast(e.message); }
+  }
+  function bulkBar(entity) {
+    if (!can("crm", "edit")) return "";
+    return `<div id="${entity}_bulkbar" style="display:none;align-items:center;gap:0.5rem;flex-wrap:wrap;background:var(--surface-2);border-radius:8px;padding:0.5rem 0.8rem;margin-bottom:0.8rem;">
+      <b><span id="${entity}_bulkcount">0</span> seçili</b>
+      <button class="btn-g btn-sm btn-o" onclick="CRM.bulkRun('${entity}','assign')"><i class="bi bi-person-check"></i> Sorumlu</button>
+      <button class="btn-g btn-sm btn-o" onclick="CRM.bulkRun('${entity}','tag')"><i class="bi bi-tag"></i> Etiketle</button>
+      <button class="btn-g btn-sm btn-o" onclick="CRM.bulkRun('${entity}','source')"><i class="bi bi-funnel"></i> Kaynak</button>
+      ${can("crm", "delete") ? `<button class="btn-g btn-sm btn-o" style="color:#ef4444;border-color:#fecaca;" onclick="CRM.bulkRun('${entity}','delete')"><i class="bi bi-trash"></i> Sil</button>` : ""}
+    </div>`;
+  }
+
   function searchOpen() {
     el("searchOv").classList.add("open");
     const i = el("searchInput"); i.value = ""; el("searchResults").innerHTML = "";
@@ -1054,6 +1187,7 @@
     // Referans verileri yükle (aşamalar + kullanıcılar)
     try { state.stages = await api("/stages"); } catch (e) { state.stages = []; }
     try { state.users = await api("/users"); } catch (e) { state.users = []; }
+    try { state.tags = await api("/tags"); } catch (e) { state.tags = []; }
 
     switchTab("dashboard");
     refreshBadge();
@@ -1072,6 +1206,7 @@
     searchOpen, searchClose, searchGo,
     tagPicker, addTag, saveFields, uploadAttachment, delAttachment,
     addTagMgmt, delTagMgmt, addFieldMgmt, delFieldMgmt,
+    applyView, saveView, bulkToggle, bulkAll, bulkRun,
   };
   window.closeDrawer = closeDrawer;
   window.closeModal = closeModal;

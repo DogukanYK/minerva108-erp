@@ -32,7 +32,7 @@ from core import crm_export as CX
 
 from database import (
     get_db, User, TR_OFFSET,
-    CrmCompany, CrmContact, CrmStage, CrmDeal, CrmActivity, CrmTask, Quotation,
+    CrmCompany, CrmContact, CrmStage, CrmDeal, CrmActivity, CrmTask, CrmEntityTag, Quotation,
 )
 from core.permissions import require_permission, _has_permission
 from core.audit import log_admin_event
@@ -98,6 +98,15 @@ def _owner_filter(query, model, owner: Optional[int]):
     """Sorumlu kişiye göre filtre (user id).  Boş → filtre yok."""
     if owner:
         return query.filter(model.owner_user_id == owner)
+    return query
+
+
+def _tag_filter(db, query, model, entity: str, tag: Optional[int]):
+    """Etikete göre filtre (entity = company|contact|deal).  Boş → filtre yok."""
+    if tag:
+        sub = db.query(CrmEntityTag.entity_id).filter(
+            CrmEntityTag.entity == entity, CrmEntityTag.tag_id == tag)
+        return query.filter(model.id.in_(sub))
     return query
 
 
@@ -199,6 +208,7 @@ def list_companies(
     q: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
     owner: Optional[int] = Query(None),
+    tag: Optional[int] = Query(None),
     include_inactive: bool = Query(False),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("crm", "view")),
@@ -208,6 +218,7 @@ def list_companies(
         query = query.filter(CrmCompany.is_active == True)  # noqa: E712
     query = _source_filter(query, CrmCompany, source)
     query = _owner_filter(query, CrmCompany, owner)
+    query = _tag_filter(db, query, CrmCompany, "company", tag)
     if q and q.strip():
         like = f"%{q.strip()}%"
         query = query.filter(or_(
@@ -315,6 +326,7 @@ def list_contacts(
     q: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
     owner: Optional[int] = Query(None),
+    tag: Optional[int] = Query(None),
     company_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("crm", "view")),
@@ -322,6 +334,7 @@ def list_contacts(
     query = db.query(CrmContact).filter(CrmContact.is_active == True)  # noqa: E712
     query = _source_filter(query, CrmContact, source)
     query = _owner_filter(query, CrmContact, owner)
+    query = _tag_filter(db, query, CrmContact, "contact", tag)
     if company_id:
         query = query.filter(CrmContact.company_id == company_id)
     if q and q.strip():
@@ -419,6 +432,7 @@ def _deal_names(db: Session):
 @router.get("/pipeline")
 def pipeline(source: Optional[str] = Query(None),
              owner: Optional[int] = Query(None),
+             tag: Optional[int] = Query(None),
              db: Session = Depends(get_db),
              _: dict = Depends(require_permission("crm", "view"))):
     """Kanban verisi — aşamalar + her aşamadaki açık fırsatlar + aşama toplamları."""
@@ -426,6 +440,7 @@ def pipeline(source: Optional[str] = Query(None),
               .order_by(CrmStage.sort_order, CrmStage.id).all())
     dq = _source_filter(db.query(CrmDeal).filter(CrmDeal.status == "open"), CrmDeal, source)
     dq = _owner_filter(dq, CrmDeal, owner)
+    dq = _tag_filter(db, dq, CrmDeal, "deal", tag)
     deals = dq.order_by(CrmDeal.sort_order, CrmDeal.created_at.desc()).all()
     companies, contacts, stage_names = _deal_names(db)
     by_stage, totals = {}, {}

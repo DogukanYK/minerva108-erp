@@ -31,6 +31,16 @@ def test_tag_create_requires_edit(labtech_client: TestClient):
     assert labtech_client.post("/api/crm/tags", json={"name": "X"}, headers=_H).status_code == 403
 
 
+def test_tag_filter_on_list(authed_client: TestClient):
+    t = authed_client.post("/api/crm/tags", json={"name": "FiltreTag"}, headers=_H).json()
+    a = _company(authed_client, name="Tagli")
+    _company(authed_client, name="Tagsiz")
+    authed_client.put(f"/api/crm/company/{a['id']}/tags", json={"tag_ids": [t["id"]]}, headers=_H)
+    rows = authed_client.get(f"/api/crm/companies?tag={t['id']}").json()
+    names = [c["name"] for c in rows]
+    assert "Tagli" in names and "Tagsiz" not in names
+
+
 # ─── Özel alanlar (C3) ───────────────────────────────────────────────────────
 
 def test_custom_fields(authed_client: TestClient):
