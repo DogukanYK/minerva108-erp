@@ -108,6 +108,7 @@
     contacts: { title: "Kişiler", render: renderContacts },
     pipeline: { title: "Pipeline", render: renderPipeline },
     tasks: { title: "Görevler", render: renderTasks },
+    reports: { title: "Raporlar", render: renderReports },
     integrations: { title: "Entegrasyonlar", render: renderIntegrations },
   };
 
@@ -196,12 +197,14 @@
       v.innerHTML = `<div class="toolbar">
         <div class="search"><i class="bi bi-search"></i><input class="ipt" id="coSearch" placeholder="Firma ara…"></div>
         ${sourceSelect("coSource")}
+        ${ownerSelect("coOwner")}
         ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.companyModal()"><i class="bi bi-plus-lg"></i> Yeni Firma</button>' : ""}
         ${ioButtons("companies")}
       </div><div class="card2"><div class="card2-body" style="overflow-x:auto;"><div id="coList"></div></div></div>`;
       let tmr;
       el("coSearch").addEventListener("input", function () { clearTimeout(tmr); tmr = setTimeout(loadCompanies, 250); });
       el("coSource").addEventListener("change", loadCompanies);
+      el("coOwner").addEventListener("change", loadCompanies);
     }
     loadCompanies();
   }
@@ -213,6 +216,7 @@
       const params = [];
       if (q) params.push("q=" + encodeURIComponent(q));
       if (srcParam("coSource")) params.push("source=" + encodeURIComponent(srcParam("coSource")));
+      if (srcParam("coOwner")) params.push("owner=" + encodeURIComponent(srcParam("coOwner")));
       const rows = await api("/companies" + (params.length ? "?" + params.join("&") : ""));
       if (!rows.length) { box.innerHTML = '<div class="empty">Firma yok.</div>'; return; }
       box.innerHTML = '<table><thead><tr><th>Firma</th><th class="col-sec">Şehir</th><th class="col-sec">Kişi</th><th class="col-sec">Açık Fırsat</th><th>Kaynak</th><th class="col-sec">Sorumlu</th><th></th></tr></thead><tbody>' +
@@ -236,12 +240,14 @@
       v.innerHTML = `<div class="toolbar">
         <div class="search"><i class="bi bi-search"></i><input class="ipt" id="ctSearch" placeholder="Kişi ara…"></div>
         ${sourceSelect("ctSource")}
+        ${ownerSelect("ctOwner")}
         ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.contactModal()"><i class="bi bi-plus-lg"></i> Yeni Kişi</button>' : ""}
         ${ioButtons("contacts")}
       </div><div class="card2"><div class="card2-body" style="overflow-x:auto;"><div id="ctList"></div></div></div>`;
       let tmr;
       el("ctSearch").addEventListener("input", function () { clearTimeout(tmr); tmr = setTimeout(loadContacts, 250); });
       el("ctSource").addEventListener("change", loadContacts);
+      el("ctOwner").addEventListener("change", loadContacts);
     }
     loadContacts();
   }
@@ -253,6 +259,7 @@
       const params = [];
       if (q) params.push("q=" + encodeURIComponent(q));
       if (srcParam("ctSource")) params.push("source=" + encodeURIComponent(srcParam("ctSource")));
+      if (srcParam("ctOwner")) params.push("owner=" + encodeURIComponent(srcParam("ctOwner")));
       const rows = await api("/contacts" + (params.length ? "?" + params.join("&") : ""));
       if (!rows.length) { box.innerHTML = '<div class="empty">Kişi yok.</div>'; return; }
       box.innerHTML = '<table><thead><tr><th>Kişi</th><th class="col-sec">Firma</th><th>Telefon</th><th>Kaynak</th><th class="col-sec">E-posta</th><th></th></tr></thead><tbody>' +
@@ -387,6 +394,88 @@
       renderIntegrations();
     } catch (e) { toast(e.message); }
     finally { btn.disabled = false; btn.innerHTML = orig; }
+  }
+
+  // ── Raporlar (C2) ─────────────────────────────────────────────────────────
+  function repBar(label, sub, value, max, color) {
+    const pct = Math.round((value / (max || 1)) * 100);
+    return `<div style="margin-bottom:0.65rem;">
+      <div style="display:flex;justify-content:space-between;font-size:0.83rem;margin-bottom:0.2rem;gap:0.5rem;"><span>${label}</span><span>${sub}</span></div>
+      <div class="rep-bar"><div class="rep-fill" style="width:${pct}%;background:${color};"></div></div></div>`;
+  }
+  async function renderReports() {
+    const v = el("view-reports");
+    v.innerHTML = '<div class="empty">Yükleniyor…</div>';
+    try {
+      const d = await api("/reports/summary");
+      const t = d.totals;
+      const sc = (val, lbl, warn) => `<div class="stat${warn ? " warn" : ""}"><div class="v">${val}</div><div class="l">${lbl}</div></div>`;
+      let h = '<h2 class="page-title" style="margin-bottom:1rem;">Raporlar & Analitik</h2>';
+      h += '<div class="stat-grid">' +
+        sc(t.open_count, "Açık Fırsat") + sc(money(t.open_value), "Açık Değer") +
+        sc(t.won_count, "Kazanılan") + sc(money(t.won_value), "Kazanılan Değer") +
+        sc("%" + t.win_rate, "Kazanma Oranı") + sc(t.lost_count, "Kaybedilen", t.lost_count > 0) + "</div>";
+
+      h += '<div class="card2"><div class="card2-head"><i class="bi bi-funnel"></i><h2>Satış Hunisi (açık)</h2></div><div class="card2-body">';
+      if (!d.funnel.length) h += '<div class="muted">Aşama verisi yok.</div>';
+      else { const mx = Math.max.apply(null, d.funnel.map((s) => s.value).concat([1]));
+        d.funnel.forEach((s) => { h += repBar(`${esc(s.stage)} <span class="muted">(${s.count})</span>`, `<b>${money(s.value)}</b>`, s.value, mx, "var(--gold)"); }); }
+      h += "</div></div>";
+
+      h += '<div class="card2"><div class="card2-head"><i class="bi bi-bar-chart"></i><h2>Aylık Kazanılan / Kaybedilen</h2></div><div class="card2-body">';
+      const mw = Math.max.apply(null, d.monthly.map((m) => m.won_value).concat([1]));
+      d.monthly.forEach((m) => { h += repBar(m.month, `<b>${money(m.won_value)}</b> · ${m.won_count} kaz. · <span style="color:#c2410c;">${m.lost_count} kayıp</span>`, m.won_value, mw, "#16a34a"); });
+      h += "</div></div>";
+
+      h += '<div class="card2"><div class="card2-head"><i class="bi bi-graph-up"></i><h2>Tahmin (olasılık ağırlıklı)</h2></div><div class="card2-body">';
+      if (!d.forecast.length) h += '<div class="muted">Beklenen kapanış tarihli açık fırsat yok.</div>';
+      else { const mf = Math.max.apply(null, d.forecast.map((f) => f.weighted_value).concat([1]));
+        d.forecast.forEach((f) => { h += repBar(esc(f.month), `<b>${money(f.weighted_value)}</b>`, f.weighted_value, mf, "var(--navy)"); }); }
+      h += "</div></div>";
+
+      h += '<div class="card2"><div class="card2-head"><i class="bi bi-trophy"></i><h2>Performans (kişi bazında)</h2></div><div class="card2-body" style="overflow-x:auto;">';
+      if (!d.leaderboard.length) h += '<div class="muted">Veri yok.</div>';
+      else h += '<table><thead><tr><th>Kişi</th><th>Kazanılan</th><th>Değer</th><th class="col-sec">Açık</th><th class="col-sec">Aktivite</th></tr></thead><tbody>' +
+        d.leaderboard.map((u) => `<tr><td><b>${esc(u.name)}</b></td><td>${u.won}</td><td>${money(u.won_value)}</td><td class="col-sec">${u.open}</td><td class="col-sec">${u.activities}</td></tr>`).join("") + "</tbody></table>";
+      h += "</div></div>";
+      v.innerHTML = h;
+    } catch (e) { v.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
+  }
+
+  // ── Global arama (C1b) ────────────────────────────────────────────────────
+  function ownerSelect(id) {
+    return `<select class="ipt" id="${id}" style="max-width:160px;" title="Sorumluya göre filtrele">
+      <option value="">Tüm sorumlular</option>` +
+      state.users.map((u) => `<option value="${u.id}">${esc(u.full_name)}</option>`).join("") + `</select>`;
+  }
+  function searchOpen() {
+    el("searchOv").classList.add("open");
+    const i = el("searchInput"); i.value = ""; el("searchResults").innerHTML = "";
+    setTimeout(() => i.focus(), 60);
+  }
+  function searchClose() { el("searchOv").classList.remove("open"); }
+  let _searchTmr;
+  async function searchRun() {
+    const q = (el("searchInput").value || "").trim();
+    const box = el("searchResults");
+    if (q.length < 1) { box.innerHTML = ""; return; }
+    try {
+      const d = await api("/search?q=" + encodeURIComponent(q));
+      const ic = { company: "building", contact: "person", deal: "briefcase" };
+      const sec = (title, items, kind) => {
+        if (!items.length) return "";
+        return `<div class="sr-sec">${title}</div>` + items.map((it) =>
+          `<div class="sr-item" onclick="CRM.searchGo('${kind}',${it.id})"><i class="bi bi-${ic[kind]}" style="color:var(--gold);"></i><div><div class="t">${esc(it.label)}</div>${it.sub ? '<div class="s">' + esc(it.sub) + "</div>" : ""}</div></div>`).join("");
+      };
+      const h = sec("Firmalar", d.companies, "company") + sec("Kişiler", d.contacts, "contact") + sec("Fırsatlar", d.deals, "deal");
+      box.innerHTML = h || '<div class="empty">Sonuç yok.</div>';
+    } catch (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
+  }
+  function searchGo(kind, id) {
+    searchClose();
+    if (kind === "company") openCompany(id);
+    else if (kind === "contact") openContact(id);
+    else openDeal(id);
   }
 
   // ── Zaman çizelgesi öğesi (paylaşımlı) ─────────────────────────────────────
@@ -789,8 +878,12 @@
       try { await fetch("/api/logout", { method: "POST" }); window.location.href = "/login"; }
       catch (e) { toast("Çıkış hatası."); this.disabled = false; }
     });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); closeDrawer(); } });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); closeDrawer(); searchClose(); } });
     el("mSave").addEventListener("click", function () { if (_modalSave) _modalSave(); });
+    const si = el("searchInput");
+    if (si) si.addEventListener("input", function () { clearTimeout(_searchTmr); _searchTmr = setTimeout(searchRun, 250); });
+    const sov = el("searchOv");
+    if (sov) sov.addEventListener("click", function (e) { if (e.target === sov) searchClose(); });
     setupInstall();
 
     // Referans verileri yükle (aşamalar + kullanıcılar)
@@ -811,6 +904,7 @@
     toggleTask, closeDeal, addActivity, togglePin, delActivity,
     dragDeal, allowDrop, dropDeal,
     exportXlsx, importModal,
+    searchOpen, searchClose, searchGo,
   };
   window.closeDrawer = closeDrawer;
   window.closeModal = closeModal;

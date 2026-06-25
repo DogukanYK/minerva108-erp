@@ -181,3 +181,190 @@ def safe_download_name(name: str) -> str:
     """
     base = re.split(r"[\\/]", (name or "dosya"))[-1]
     return re.sub(r'[\r\n"]+', "_", base).strip()[:200] or "dosya"
+
+
+# ─── Klasör ağacı (hiyerarşik dosya sistemi) ─────────────────────────────────
+# Modeller (DriveFolder/DriveFile) lazy import edilir — core/drive.py'nin
+# database'e bağımlı olmadan import edilebilmesi için.
+
+_FOLDER_BAD = re.compile(r"[\x00-\x1f/\\]")
+
+
+def sanitize_folder_name(name: str) -> str:
+    """Klasör adı: kontrol karakter + slash temizliği, boşluk normalize, max 255."""
+    n = _FOLDER_BAD.sub(" ", (name or "").strip())
+    n = re.sub(r"\s+", " ", n).strip()
+    return n[:255]
+
+
+def get_or_create_folder(db, name, parent_id, actor=None) -> int:
+    """`parent_id` altında `name` klasörünü bul ya da oluştur → folder.id.
+    Klasör yüklemede yol segmentlerini ağaca çevirmek için kullanılır."""
+    from database import DriveFolder
+    nm = sanitize_folder_name(name) or "klasör"
+    q = db.query(DriveFolder).filter(DriveFolder.name == nm)
+    q = q.filter(DriveFolder.parent_id.is_(None) if parent_id is None
+                 else DriveFolder.parent_id == parent_id)
+    f = q.first()
+    if f:
+        return f.id
+    f = DriveFolder(name=nm, parent_id=parent_id, created_by=actor)
+    db.add(f)
+    db.flush()
+    return f.id
+
+
+def folder_descendants(db, folder_id) -> list:
+    """`folder_id`'nin TÜM alt klasör id'leri (kendisi hariç) — Python BFS.
+    Tüm klasörler bir kez yüklenir; orta ölçek için recursive CTE gerekmez."""
+    from database import DriveFolder
+    rows = db.query(DriveFolder.id, DriveFolder.parent_id).all()
+    children = {}
+    for fid, pid in rows:
+        children.setdefault(pid, []).append(fid)
+    out, stack = [], list(children.get(folder_id, []))
+    while stack:
+        cur = stack.pop()
+        out.append(cur)
+        stack.extend(children.get(cur, []))
+    return out
+
+
+def is_descendant(db, folder_id, maybe_ancestor_id) -> bool:
+    """`folder_id`, `maybe_ancestor_id`'nin altında mı (ya da aynı mı)?
+    Taşımada döngü-korumasına: klasörü kendi altına taşımayı engeller."""
+    if folder_id is None or maybe_ancestor_id is None:
+        return False
+    if folder_id == maybe_ancestor_id:
+        return True
+    return folder_id in folder_descendants(db, maybe_ancestor_id)
+
+
+def folder_path(db, folder_id) -> list:
+    """Kökten `folder_id`'ye breadcrumb: [{id, name}, …].  Kök/None → []."""
+    from database import DriveFolder
+    if folder_id is None:
+        return []
+    chain, seen = [], set()
+    cur = db.query(DriveFolder).filter(DriveFolder.id == folder_id).first()
+    while cur and cur.id not in seen:
+        seen.add(cur.id)
+        chain.append({"id": cur.id, "name": cur.name})
+        cur = (db.query(DriveFolder).filter(DriveFolder.id == cur.parent_id).first()
+               if cur.parent_id else None)
+    chain.reverse()
+    return chain
+
+
+# ─── Klasör paylaşımı (Faz 2 — gezilebilir share + ZIP) ──────────────────────
+
+def _linked_folder_ids(db, collection) -> list:
+    from database import DriveCollectionFolder
+    return [fid for (fid,) in db.query(DriveCollectionFolder.folder_id)
+            .filter(DriveCollectionFolder.collection_id == collection.id).all()]
+
+
+def _share_scope(db, collection):
+    """(scope, linked): scope = bağlı klasörler + tüm alt ağaçları; linked = bağlı kökler."""
+    linked = set(_linked_folder_ids(db, collection))
+    scope = set(linked)
+    for fid in list(linked):
+        scope.update(folder_descendants(db, fid))
+    return scope, linked
+
+
+def collect_share_file_ids(db, collection) -> set:
+    """Link'in TÜM dosya id'leri: doğrudan dosyalar + bağlı klasörlerin alt dosyaları."""
+    from database import DriveCollectionFile, DriveFile
+    direct = {fid for (fid,) in db.query(DriveCollectionFile.file_id)
+              .filter(DriveCollectionFile.collection_id == collection.id).all()}
+    scope, _ = _share_scope(db, collection)
+    if scope:
+        direct |= {fid for (fid,) in db.query(DriveFile.id)
+                   .filter(DriveFile.folder_id.in_(scope)).all()}
+    return direct
+
+
+def file_in_share(db, collection, file_id) -> bool:
+    """Dosya bu paylaşımda mı? (doğrudan ya da bağlı klasör alt ağacında)"""
+    from database import DriveCollectionFile, DriveFile
+    if db.query(DriveCollectionFile.id).filter(
+            DriveCollectionFile.collection_id == collection.id,
+            DriveCollectionFile.file_id == file_id).first():
+        return True
+    f = db.query(DriveFile).filter(DriveFile.id == file_id).first()
+    if not f or f.folder_id is None:
+        return False
+    scope, _ = _share_scope(db, collection)
+    return f.folder_id in scope
+
+
+def folder_in_share(db, collection, folder_id) -> bool:
+    """Klasör bu paylaşımda gezilebilir mi? (bağlı klasör ya da alt ağacı; None=kök)."""
+    if folder_id is None:
+        return True
+    scope, _ = _share_scope(db, collection)
+    return folder_id in scope
+
+
+def share_breadcrumb(db, collection, folder_id) -> list:
+    """Paylaşım-İÇİ breadcrumb — bağlı kök klasörden folder_id'ye (drive kökü değil)."""
+    if folder_id is None:
+        return []
+    full = folder_path(db, folder_id)
+    _, linked = _share_scope(db, collection)
+    idx = next((i for i, p in enumerate(full) if p["id"] in linked), 0)
+    return full[idx:]
+
+
+def _zip_arcname(db, f, linked_ids, root_folder_id) -> str:
+    fname = f.original_name or "dosya"
+    if f.folder_id is None:
+        return fname
+    full = folder_path(db, f.folder_id)
+    if root_folder_id is not None:
+        idx = next((i for i, p in enumerate(full) if p["id"] == root_folder_id), None)
+        start = (idx + 1) if idx is not None else 0   # root klasörün İÇİ
+    else:
+        idx = next((i for i, p in enumerate(full) if p["id"] in linked_ids), None)
+        start = idx if idx is not None else 0         # bağlı kök DAHİL
+    return "/".join([p["name"] for p in full[start:]] + [fname])
+
+
+def build_zip(db, collection, root_folder_id=None):
+    """Paylaşımın (ya da bir alt klasörün) dosyalarını yapı-koruyan ZIP'e yaz.
+
+    Döner: (tempfile_path, download_name).  Bellekte DEĞİL diske yazılır (büyük
+    paylaşımlarda OOM yok); çağıran FileResponse + BackgroundTask ile temp'i siler.
+    """
+    import tempfile
+    import zipfile
+    from database import DriveFile
+    _, linked = _share_scope(db, collection)
+    if root_folder_id is None:
+        file_ids = collect_share_file_ids(db, collection)
+    else:
+        sub = {root_folder_id} | set(folder_descendants(db, root_folder_id))
+        file_ids = {fid for (fid,) in db.query(DriveFile.id)
+                    .filter(DriveFile.folder_id.in_(sub)).all()}
+    files = db.query(DriveFile).filter(DriveFile.id.in_(file_ids)).all() if file_ids else []
+    tmp = tempfile.NamedTemporaryFile(prefix="drive_zip_", suffix=".zip", delete=False)
+    tmp.close()
+    with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zf:
+        used = {}
+        for f in files:
+            arc = _zip_arcname(db, f, linked, root_folder_id)
+            if arc in used:
+                used[arc] += 1
+                stem, dot, ext = arc.rpartition(".")
+                arc = (f"{stem} ({used[arc]}){dot}{ext}" if dot else f"{arc} ({used[arc]})")
+            else:
+                used[arc] = 0
+            try:
+                p = stored_path(f.stored_name)
+                if p.is_file():
+                    zf.write(str(p), arcname=arc)
+            except Exception:
+                continue
+    dl_name = (slugify(collection.name or "paylasim") or "paylasim") + ".zip"
+    return tmp.name, dl_name

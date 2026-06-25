@@ -14,13 +14,15 @@ Minerva Drive — yönetim (login'li) + public paylaşım uçları.
 import os
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, UploadFile, File, Form, Request
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Request, Query
 from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
+from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
-from database import get_db, DriveFile, DriveCollection, DriveCollectionFile
+from database import (get_db, DriveFile, DriveFolder, DriveCollection,
+                      DriveCollectionFile, DriveCollectionFolder)
 from core.auth import get_current_user
 from core import drive as D
 
@@ -34,7 +36,8 @@ _COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() not in ("0", "false"
 
 class CollectionCreate(BaseModel):
     name:         str = Field(..., min_length=1, max_length=150)
-    file_ids:     List[int] = Field(default_factory=list, max_length=500)
+    file_ids:     List[int] = Field(default_factory=list, max_length=2000)
+    folder_ids:   List[int] = Field(default_factory=list, max_length=500)   # klasör paylaşımı
     password:     Optional[str] = None          # boş/None = şifresiz
     expires_days: Optional[int] = Field(None, ge=0, le=3650)   # 0/None = süresiz
     custom_slug:  Optional[str] = Field(None, max_length=80)   # boş = rastgele kod
@@ -42,11 +45,31 @@ class CollectionCreate(BaseModel):
 
 class CollectionUpdate(BaseModel):
     name:         Optional[str] = Field(None, max_length=150)
-    file_ids:     Optional[List[int]] = Field(None, max_length=500)
+    file_ids:     Optional[List[int]] = Field(None, max_length=2000)
+    folder_ids:   Optional[List[int]] = Field(None, max_length=500)
     password:     Optional[str] = None          # ""=şifre kaldır, "xx"=değiştir, None=dokunma
     clear_password: bool = False
     expires_days: Optional[int] = Field(None, ge=0, le=3650)
     custom_slug:  Optional[str] = Field(None, max_length=80)
+
+
+class FolderCreate(BaseModel):
+    name:      str = Field(..., min_length=1, max_length=255)
+    parent_id: Optional[int] = None          # None = kök
+
+
+class FolderRename(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+
+
+class FileRename(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+
+
+class MoveRequest(BaseModel):
+    file_ids:         List[int] = Field(default_factory=list, max_length=2000)
+    folder_ids:       List[int] = Field(default_factory=list, max_length=500)
+    target_folder_id: Optional[int] = None   # None = kök
 
 
 # ─── Yönetim (login) ─────────────────────────────────────────────────────────
@@ -55,6 +78,7 @@ class CollectionUpdate(BaseModel):
 async def upload_file(
     file: UploadFile = File(...),
     rel_path: Optional[str] = Form(None),
+    folder_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -65,10 +89,20 @@ async def upload_file(
         return JSONResponse(status_code=413, content={"detail": str(e)})
     except Exception:
         return JSONResponse(status_code=500, content={"detail": "Yükleme sırasında hata oluştu."})
-    # Klasör yüklemesinde tarayıcı göreli yolu (alt klasörler dahil) gönderir;
-    # bunu görüntü adı olarak saklarız (indirirken yalnızca son parça kullanılır).
-    display = D.clean_rel_path(rel_path) if rel_path else (file.filename or "dosya")
-    rec = DriveFile(original_name=display[:255], stored_name=stored,
+    # Hedef klasör (yoksa kök); geçersiz folder_id → köke düş.
+    target = folder_id
+    if target is not None and not db.query(DriveFolder.id).filter(DriveFolder.id == target).first():
+        target = None
+    # Klasör yüklemesinde tarayıcı göreli yol gönderir → alt klasör ağacını
+    # hedef ALTINDA kur, dosyayı en derin klasöre koy, adı basename yap.
+    name = file.filename or "dosya"
+    if rel_path:
+        parts = [p for p in D.clean_rel_path(rel_path).split("/") if p]
+        if parts:
+            name = parts[-1]
+            for seg in parts[:-1]:
+                target = D.get_or_create_folder(db, seg, target, actor)
+    rec = DriveFile(original_name=name[:255], stored_name=stored, folder_id=target,
                     size_bytes=size, content_type=ctype, uploaded_by=actor)
     db.add(rec); db.commit(); db.refresh(rec)
     return {"id": rec.id, "name": rec.original_name, "size_human": D.humanize(size)}
@@ -110,11 +144,14 @@ def _serialize_collection(db: Session, c: DriveCollection) -> dict:
     from sqlalchemy import func
     n = db.query(func.count(DriveCollectionFile.id)).filter(
         DriveCollectionFile.collection_id == c.id).scalar() or 0
+    nf = db.query(func.count(DriveCollectionFolder.id)).filter(
+        DriveCollectionFolder.collection_id == c.id).scalar() or 0
     from database import to_tr
     return {
         "id": c.id, "name": c.name, "token": c.share_token,
         "share_path": f"/s/{c.share_token}",
         "file_count": int(n),
+        "folder_count": int(nf),
         "protected": bool(c.password_hash),
         "expires_at": to_tr(c.expires_at).strftime("%d.%m.%Y %H:%M") if c.expires_at else None,
         "expired": D.is_expired(c),
@@ -158,6 +195,11 @@ def create_collection(
     for i, fid in enumerate(data.file_ids or []):
         if fid in valid:
             db.add(DriveCollectionFile(collection_id=c.id, file_id=fid, sort_order=i))
+    # klasörleri bağla (paylaşım tüm alt ağacı kapsar)
+    vfold = {fid for (fid,) in db.query(DriveFolder.id).filter(DriveFolder.id.in_(data.folder_ids or [])).all()}
+    for i, fid in enumerate(data.folder_ids or []):
+        if fid in vfold:
+            db.add(DriveCollectionFolder(collection_id=c.id, folder_id=fid, sort_order=i))
     db.commit(); db.refresh(c)
     return _serialize_collection(db, c)
 
@@ -194,6 +236,12 @@ def update_collection(
         for i, fid in enumerate(data.file_ids):
             if fid in valid:
                 db.add(DriveCollectionFile(collection_id=cid, file_id=fid, sort_order=i))
+    if data.folder_ids is not None:
+        db.query(DriveCollectionFolder).filter(DriveCollectionFolder.collection_id == cid).delete()
+        vfold = {fid for (fid,) in db.query(DriveFolder.id).filter(DriveFolder.id.in_(data.folder_ids)).all()}
+        for i, fid in enumerate(data.folder_ids):
+            if fid in vfold:
+                db.add(DriveCollectionFolder(collection_id=cid, folder_id=fid, sort_order=i))
     db.commit(); db.refresh(c)
     return _serialize_collection(db, c)
 
@@ -206,6 +254,187 @@ def delete_collection(cid: int, db: Session = Depends(get_db), _: dict = Depends
     db.delete(c)   # drive_collection_file CASCADE; dosyalar (DriveFile) DURUR
     db.commit()
     return {"message": "Link silindi."}
+
+
+# ─── Klasör ağacı (browse / organize) ────────────────────────────────────────
+
+def _file_dict(r, counts, to_tr) -> dict:
+    return {
+        "id": r.id, "name": r.original_name,
+        "size_human": D.humanize(r.size_bytes),
+        "content_type": r.content_type or "",
+        "uploaded_by": r.uploaded_by or "—",
+        "in_collections": int(counts.get(r.id, 0)),
+        "folder_id": r.folder_id,
+        "created_at": to_tr(r.created_at).strftime("%d.%m.%Y %H:%M") if r.created_at else "",
+    }
+
+
+@router.get("/list")
+def list_folder(folder_id: Optional[int] = Query(None),
+                db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+    """Bir klasörün içeriği — breadcrumb + alt klasörler + dosyalar (Drive ana görünümü)."""
+    from sqlalchemy import func
+    from database import to_tr
+    if folder_id is not None and not db.query(DriveFolder.id).filter(DriveFolder.id == folder_id).first():
+        return JSONResponse(status_code=404, content={"detail": "Klasör bulunamadı."})
+    folders = (db.query(DriveFolder)
+               .filter(DriveFolder.parent_id.is_(None) if folder_id is None
+                       else DriveFolder.parent_id == folder_id)
+               .order_by(DriveFolder.name).all())
+    files = (db.query(DriveFile)
+             .filter(DriveFile.folder_id.is_(None) if folder_id is None
+                     else DriveFile.folder_id == folder_id)
+             .order_by(DriveFile.original_name).all())
+    counts = dict(db.query(DriveCollectionFile.file_id, func.count(DriveCollectionFile.id))
+                  .group_by(DriveCollectionFile.file_id).all())
+    # alt klasör başına öğe sayısı (dosya + alt klasör)
+    child_counts = {}
+    if folders:
+        fids = [f.id for f in folders]
+        for fid, c in (db.query(DriveFile.folder_id, func.count(DriveFile.id))
+                       .filter(DriveFile.folder_id.in_(fids)).group_by(DriveFile.folder_id).all()):
+            child_counts[fid] = child_counts.get(fid, 0) + c
+        for pid, c in (db.query(DriveFolder.parent_id, func.count(DriveFolder.id))
+                       .filter(DriveFolder.parent_id.in_(fids)).group_by(DriveFolder.parent_id).all()):
+            child_counts[pid] = child_counts.get(pid, 0) + c
+    return {
+        "folder_id": folder_id,
+        "breadcrumb": D.folder_path(db, folder_id),
+        "folders": [{"id": f.id, "name": f.name, "item_count": int(child_counts.get(f.id, 0))}
+                    for f in folders],
+        "files": [_file_dict(r, counts, to_tr) for r in files],
+    }
+
+
+@router.get("/tree")
+def folder_tree(db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+    """Tüm klasör ağacı — sol panel + 'Taşı' klasör seçici için."""
+    rows = db.query(DriveFolder).order_by(DriveFolder.name).all()
+    return {"folders": [{"id": f.id, "name": f.name, "parent_id": f.parent_id} for f in rows]}
+
+
+@router.post("/folders", status_code=201)
+def create_folder(data: FolderCreate, db: Session = Depends(get_db),
+                  current_user: dict = Depends(get_current_user)):
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
+    if data.parent_id is not None and not db.query(DriveFolder.id).filter(DriveFolder.id == data.parent_id).first():
+        return JSONResponse(status_code=404, content={"detail": "Üst klasör bulunamadı."})
+    name = D.sanitize_folder_name(data.name)
+    if not name:
+        return JSONResponse(status_code=400, content={"detail": "Geçerli bir klasör adı girin."})
+    fid = D.get_or_create_folder(db, name, data.parent_id, actor)
+    db.commit()
+    return {"id": fid, "name": name, "parent_id": data.parent_id}
+
+
+@router.put("/folders/{fid}")
+def rename_folder(fid: int, data: FolderRename, db: Session = Depends(get_db),
+                  _: dict = Depends(get_current_user)):
+    f = db.query(DriveFolder).filter(DriveFolder.id == fid).first()
+    if not f:
+        return JSONResponse(status_code=404, content={"detail": "Klasör bulunamadı."})
+    name = D.sanitize_folder_name(data.name)
+    if not name:
+        return JSONResponse(status_code=400, content={"detail": "Geçerli bir ad girin."})
+    f.name = name
+    db.commit()
+    return {"id": f.id, "name": f.name}
+
+
+@router.delete("/folders/{fid}")
+def delete_folder(fid: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+    """Klasörü ÖZYİNELEMELİ sil — alt klasörler + dosyalar (disk dahil) + link bağları."""
+    f = db.query(DriveFolder).filter(DriveFolder.id == fid).first()
+    if not f:
+        return JSONResponse(status_code=404, content={"detail": "Klasör bulunamadı."})
+    ids = [fid] + D.folder_descendants(db, fid)
+    files = db.query(DriveFile).filter(DriveFile.folder_id.in_(ids)).all()
+    for x in files:
+        D.delete_stored(x.stored_name)
+        db.delete(x)   # drive_collection_file CASCADE ile temizlenir
+    db.query(DriveFolder).filter(DriveFolder.id.in_(ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"message": "Klasör silindi.", "deleted_files": len(files), "deleted_folders": len(ids)}
+
+
+@router.put("/files/{file_id}")
+def rename_file(file_id: int, data: FileRename, db: Session = Depends(get_db),
+                _: dict = Depends(get_current_user)):
+    f = db.query(DriveFile).filter(DriveFile.id == file_id).first()
+    if not f:
+        return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
+    name = D.sanitize_folder_name(data.name)   # slash/kontrol temizler (tek parça ad)
+    if name:
+        f.original_name = name[:255]
+        db.commit()
+    return {"id": f.id, "name": f.original_name}
+
+
+@router.get("/dl/{file_id}")
+def download_own_file(file_id: int, db: Session = Depends(get_db),
+                      _: dict = Depends(get_current_user)):
+    """Oturum açmış kullanıcı bir Drive dosyasını indirir (yönetim görünümü)."""
+    f = db.query(DriveFile).filter(DriveFile.id == file_id).first()
+    if not f:
+        return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
+    try:
+        path = D.stored_path(f.stored_name)
+    except ValueError:
+        return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
+    if not path.is_file():
+        return JSONResponse(status_code=404, content={"detail": "Dosya diskte yok."})
+    return FileResponse(str(path), media_type="application/octet-stream",
+                        filename=D.safe_download_name(f.original_name))
+
+
+@router.post("/move")
+def move_items(data: MoveRequest, db: Session = Depends(get_db),
+               _: dict = Depends(get_current_user)):
+    """Dosya ve/veya klasörleri hedef klasöre taşı (target_folder_id None = kök)."""
+    target = data.target_folder_id
+    if target is not None and not db.query(DriveFolder.id).filter(DriveFolder.id == target).first():
+        return JSONResponse(status_code=404, content={"detail": "Hedef klasör bulunamadı."})
+    # Döngü koruması: bir klasörü kendi içine / alt ağacına taşıma
+    for fid in (data.folder_ids or []):
+        if D.is_descendant(db, target, fid):
+            return JSONResponse(status_code=400, content={"detail": "Bir klasörü kendi içine taşıyamazsınız."})
+    moved_f = 0
+    for fid in (data.folder_ids or []):
+        f = db.query(DriveFolder).filter(DriveFolder.id == fid).first()
+        if f and f.parent_id != target:
+            f.parent_id = target
+            moved_f += 1
+    moved_x = 0
+    if data.file_ids:
+        moved_x = (db.query(DriveFile).filter(DriveFile.id.in_(data.file_ids))
+                   .update({DriveFile.folder_id: target}, synchronize_session=False))
+    db.commit()
+    return {"moved_folders": moved_f, "moved_files": int(moved_x or 0)}
+
+
+@router.get("/search")
+def search_drive(q: str = Query("", max_length=120),
+                 db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+    """Ağaç genelinde dosya + klasör arama — sonuçlar yol bilgisiyle."""
+    term = (q or "").strip()
+    if len(term) < 2:
+        return {"folders": [], "files": []}
+    like = f"%{term}%"
+
+    def _path_str(folder_id):
+        return " / ".join(p["name"] for p in D.folder_path(db, folder_id)) or "Kök"
+
+    folders = (db.query(DriveFolder).filter(DriveFolder.name.ilike(like))
+               .order_by(DriveFolder.name).limit(100).all())
+    files = (db.query(DriveFile).filter(DriveFile.original_name.ilike(like))
+             .order_by(DriveFile.original_name).limit(200).all())
+    return {
+        "folders": [{"id": f.id, "name": f.name, "parent_id": f.parent_id,
+                     "path": _path_str(f.parent_id)} for f in folders],
+        "files": [{"id": r.id, "name": r.original_name, "size_human": D.humanize(r.size_bytes),
+                   "folder_id": r.folder_id, "path": _path_str(r.folder_id)} for r in files],
+    }
 
 
 # ─── Public paylaşım (auth YOK) ──────────────────────────────────────────────
@@ -242,11 +471,8 @@ def download_share_file(token: str, file_id: int, request: Request,
         sig = request.cookies.get(D.unlock_cookie_name(token), "")
         if not D.verify_unlock(token, sig):
             return JSONResponse(status_code=403, content={"detail": "Şifre gerekli."})
-    # dosya bu koleksiyonda mı?
-    link = (db.query(DriveCollectionFile)
-            .filter(DriveCollectionFile.collection_id == c.id,
-                    DriveCollectionFile.file_id == file_id).first())
-    if not link:
+    # dosya bu paylaşımda mı? (doğrudan ya da bağlı klasör alt ağacında)
+    if not D.file_in_share(db, c, file_id):
         return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
     f = db.query(DriveFile).filter(DriveFile.id == file_id).first()
     if not f:
@@ -260,3 +486,84 @@ def download_share_file(token: str, file_id: int, request: Request,
     # octet-stream + attachment → tarayıcıda çalıştırma/inline render yok (XSS guard)
     return FileResponse(str(path), media_type="application/octet-stream",
                         filename=D.safe_download_name(f.original_name))
+
+
+def _gate_share(c, token, request):
+    """Paylaşım kapısı: geçerliyse None, aksi halde engel JSONResponse döner."""
+    if not c:
+        return JSONResponse(status_code=404, content={"detail": "Link bulunamadı."})
+    if D.is_expired(c):
+        return JSONResponse(status_code=410, content={"detail": "Bu paylaşımın süresi doldu."})
+    if c.password_hash:
+        sig = request.cookies.get(D.unlock_cookie_name(token), "")
+        if not D.verify_unlock(token, sig):
+            return JSONResponse(status_code=403, content={"detail": "Şifre gerekli."})
+    return None
+
+
+@share_router.get("/s/{token}/browse")
+def browse_share(token: str, request: Request, folder: Optional[int] = Query(None),
+                 db: Session = Depends(get_db)):
+    """Paylaşım içeriğini gezilebilir döndürür (kök = bağlı klasörler + loose dosyalar)."""
+    c = _load_open_collection(db, token)
+    gate = _gate_share(c, token, request)
+    if gate is not None:
+        return gate
+    from sqlalchemy import func
+    if folder is None:
+        link_fids = [fid for (fid,) in db.query(DriveCollectionFolder.folder_id)
+                     .filter(DriveCollectionFolder.collection_id == c.id).all()]
+        folders = (db.query(DriveFolder).filter(DriveFolder.id.in_(link_fids))
+                   .order_by(DriveFolder.name).all()) if link_fids else []
+        direct = [fid for (fid,) in db.query(DriveCollectionFile.file_id)
+                  .filter(DriveCollectionFile.collection_id == c.id).all()]
+        files = (db.query(DriveFile).filter(DriveFile.id.in_(direct))
+                 .order_by(DriveFile.original_name).all()) if direct else []
+        breadcrumb = []
+    else:
+        if not D.folder_in_share(db, c, folder):
+            return JSONResponse(status_code=404, content={"detail": "Klasör bulunamadı."})
+        folders = (db.query(DriveFolder).filter(DriveFolder.parent_id == folder)
+                   .order_by(DriveFolder.name).all())
+        files = (db.query(DriveFile).filter(DriveFile.folder_id == folder)
+                 .order_by(DriveFile.original_name).all())
+        breadcrumb = D.share_breadcrumb(db, c, folder)
+    fids = [f.id for f in folders]
+    child = {}
+    if fids:
+        for fid, n in (db.query(DriveFile.folder_id, func.count(DriveFile.id))
+                       .filter(DriveFile.folder_id.in_(fids)).group_by(DriveFile.folder_id).all()):
+            child[fid] = child.get(fid, 0) + n
+        for pid, n in (db.query(DriveFolder.parent_id, func.count(DriveFolder.id))
+                       .filter(DriveFolder.parent_id.in_(fids)).group_by(DriveFolder.parent_id).all()):
+            child[pid] = child.get(pid, 0) + n
+    return {
+        "name": c.name, "folder_id": folder, "breadcrumb": breadcrumb,
+        "folders": [{"id": f.id, "name": f.name, "item_count": int(child.get(f.id, 0))} for f in folders],
+        "files": [{"id": r.id, "name": r.original_name, "size_human": D.humanize(r.size_bytes)} for r in files],
+    }
+
+
+@share_router.get("/s/{token}/zip")
+def zip_share(token: str, request: Request, folder: Optional[int] = Query(None),
+              db: Session = Depends(get_db)):
+    """Paylaşımın (ya da bir alt klasörün) tüm dosyalarını yapı-koruyan ZIP indir."""
+    c = _load_open_collection(db, token)
+    gate = _gate_share(c, token, request)
+    if gate is not None:
+        return gate
+    if folder is not None and not D.folder_in_share(db, c, folder):
+        return JSONResponse(status_code=404, content={"detail": "Klasör bulunamadı."})
+    try:
+        path, name = D.build_zip(db, c, folder)
+    except Exception:
+        return JSONResponse(status_code=500, content={"detail": "ZIP oluşturulamadı."})
+
+    def _cleanup():
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+    return FileResponse(path, media_type="application/zip", filename=name,
+                        background=BackgroundTask(_cleanup))

@@ -136,220 +136,394 @@
   </header>
 
   <main class="main-content">
+    <style>
+      .dm-wrap{ display:grid; grid-template-columns:250px 1fr; gap:1.2rem; align-items:start; }
+      @media(max-width:980px){ .dm-wrap{ grid-template-columns:1fr; } }
+      .dm-tree{ background:var(--white); border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.05); padding:0.7rem; max-height:74vh; overflow:auto; }
+      .tnode{ display:flex; align-items:center; gap:0.4rem; padding:0.34rem 0.45rem; border-radius:7px; cursor:pointer; font-size:0.85rem; color:#374151; white-space:nowrap; }
+      .tnode:hover{ background:var(--cream); }
+      .tnode.active{ background:rgba(184,150,90,0.18); color:var(--navy); font-weight:600; }
+      .tnode.drop{ outline:2px dashed var(--navy); background:#faf8f4; }
+      .tcaret{ width:16px; text-align:center; flex-shrink:0; }
+      .crumb{ display:flex; align-items:center; gap:0.3rem; flex-wrap:wrap; font-size:0.92rem; }
+      .crumb a{ color:var(--navy); text-decoration:none; cursor:pointer; } .crumb a:hover{ text-decoration:underline; }
+      .crumb .sep{ color:#cbd5e1; }
+      .dm-row.drop{ outline:2px dashed var(--navy); background:#faf8f4; }
+      .btn-o{ display:inline-flex; align-items:center; gap:0.35rem; padding:0.45rem 0.8rem; background:#fff; color:var(--navy); border:1.5px solid #e5e7eb; border-radius:8px; font-size:0.84rem; font-weight:600; cursor:pointer; text-decoration:none; }
+      .btn-o:hover{ border-color:var(--navy); }
+      .toolbar{ display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; margin-bottom:0.85rem; }
+      .selbar{ display:none; gap:0.5rem; align-items:center; flex-wrap:wrap; background:#eef2ff; border:1px solid #c7d2fe; border-radius:10px; padding:0.45rem 0.75rem; margin-bottom:0.8rem; }
+      .selbar.on{ display:flex; }
+      .modal-back{ position:fixed; inset:0; background:rgba(0,0,0,0.45); display:none; align-items:center; justify-content:center; z-index:1000; }
+      .modal-back.on{ display:flex; }
+      .modal-card{ background:#fff; border-radius:14px; width:480px; max-width:94vw; max-height:88vh; overflow:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3); }
+      .modal-h{ padding:0.95rem 1.25rem; border-bottom:1px solid #f0ece4; font-family:'Playfair Display',serif; font-weight:600; color:var(--navy); font-size:1.05rem; }
+      .modal-b{ padding:1.1rem 1.25rem; } .modal-f{ padding:0.8rem 1.25rem; border-top:1px solid #f0ece4; display:flex; gap:0.5rem; justify-content:flex-end; }
+      .picknode{ padding:0.35rem 0.5rem; border-radius:6px; cursor:pointer; font-size:0.86rem; white-space:nowrap; }
+      .picknode:hover{ background:var(--cream); } .picknode.sel{ background:rgba(184,150,90,0.22); color:var(--navy); font-weight:600; }
+    </style>
     <div class="content-inner">
       <h1 class="page-title">Dosya Paylaşım</h1>
-      <p class="page-subtitle">Dosyaları yükle, "link" altında grupla, paylaşılabilir bağlantıyı al — şifre/süre koyabilirsin.</p>
+      <p class="page-subtitle">Klasörlerle düzenle · sürükle-bırak ile taşı · klasör/dosya seç → süreli/şifreli link oluştur.</p>
 
-      <!-- Yükleme -->
-      <div class="card2">
-        <div class="card2-head"><i class="bi bi-cloud-arrow-up"></i><h2>Dosya Yükle</h2></div>
-        <div class="card2-body">
-          <label class="dropzone" id="dropzone" for="fileInput">
-            <i class="bi bi-cloud-arrow-up"></i>
-            <div>Dosyaları buraya sürükle veya <b>tıklayıp seç</b></div>
-            <div style="font-size:0.76rem;margin-top:0.3rem;">Her dosya türü · dosya başına en çok 500 MB</div>
-          </label>
-          <div style="margin-top:0.5rem;text-align:center;">
-            <button type="button" id="folderBtn" class="btn btn-sm btn-outline-secondary">
-              <i class="bi bi-folder-plus"></i> Klasör Yükle
-            </button>
-            <span style="font-size:0.74rem;color:#9ca3af;margin-left:0.4rem;">alt klasörlerle birlikte tüm dosyalar</span>
+      <div class="dm-wrap">
+        <!-- Sol: klasör ağacı -->
+        <div class="dm-tree">
+          <div class="tnode active" id="rootNode" onclick="openFolder(null)"
+               ondragover="treeOver(event,null)" ondragleave="treeLeave(event)" ondrop="treeDrop(event,null)">
+            <span class="tcaret"><i class="bi bi-hdd-stack-fill" style="color:var(--navy);"></i></span><span>Drive (Kök)</span>
           </div>
-          <input type="file" id="fileInput" multiple style="display:none;" />
-          <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none;" />
-          <div id="uploadStatus" style="margin-top:0.6rem;font-size:0.83rem;color:#6b7280;"></div>
+          <div id="treeBody"></div>
         </div>
-      </div>
 
-      <!-- Yeni link -->
-      <div class="card2">
-        <div class="card2-head"><i class="bi bi-link-45deg"></i><h2>Yeni Paylaşım Linki</h2></div>
-        <div class="card2-body">
-          <div style="display:flex;gap:0.8rem;flex-wrap:wrap;align-items:flex-end;">
-            <div style="flex:1;min-width:160px;">
-              <label class="muted" style="display:block;margin-bottom:0.25rem;">Link adı *</label>
-              <input type="text" id="linkName" class="ipt" placeholder="Örn: Geven Belgeleri" style="width:100%;" />
-            </div>
-            <div style="flex:1;min-width:160px;">
-              <label class="muted" style="display:block;margin-bottom:0.25rem;">Özel link (opsiyonel)</label>
-              <input type="text" id="linkSlug" class="ipt" placeholder="boş = otomatik kod" style="width:100%;" oninput="slugPreview()" />
-            </div>
-            <div>
-              <label class="muted" style="display:block;margin-bottom:0.25rem;">Şifre (opsiyonel)</label>
-              <input type="text" id="linkPw" class="ipt" placeholder="boş = şifresiz" style="width:140px;" />
-            </div>
-            <div>
-              <label class="muted" style="display:block;margin-bottom:0.25rem;">Süre (gün)</label>
-              <input type="number" id="linkExp" class="ipt" placeholder="boş = süresiz" min="1" style="width:120px;" />
-            </div>
-            <button class="btn-g" id="createLinkBtn" onclick="createLink()"><i class="bi bi-link"></i> Seçili dosyalardan link oluştur</button>
+        <!-- Sağ: ana panel -->
+        <div>
+          <div class="toolbar">
+            <button class="btn-g" style="padding:0.5rem 0.9rem;" onclick="newFolder()"><i class="bi bi-folder-plus"></i> Yeni Klasör</button>
+            <button class="btn-g" style="padding:0.5rem 0.9rem;" onclick="document.getElementById('fileInput').click()"><i class="bi bi-file-earmark-arrow-up"></i> Dosya Yükle</button>
+            <button class="btn-g" style="padding:0.5rem 0.9rem;background:var(--gold);color:var(--navy);" onclick="document.getElementById('folderInput').click()"><i class="bi bi-folder-symlink"></i> Klasör Yükle</button>
+            <input type="text" id="searchBox" class="ipt" placeholder="Tüm Drive'da ara…" oninput="onSearch()" style="margin-left:auto;width:240px;">
+            <input type="file" id="fileInput" multiple style="display:none;">
+            <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none;">
           </div>
-          <p class="muted" style="margin:0.6rem 0 0;">Aşağıdaki tablodan dosyaları işaretle, sonra "link oluştur"a bas. <span id="selInfo"></span> <span id="slugPrev" style="color:var(--navy);font-family:monospace;"></span></p>
-        </div>
-      </div>
 
-      <!-- Dosyalar -->
-      <div class="card2">
-        <div class="card2-head"><i class="bi bi-files"></i><h2>Dosyalar</h2>
-          <input type="text" id="fileSearch" class="ipt" placeholder="Dosya ara…" oninput="filterFiles()" style="margin-left:auto;width:220px;font-size:0.85rem;" />
-        </div>
-        <div class="card2-body" style="overflow-x:auto;">
-          <table>
-            <thead><tr>
-              <th style="width:34px;"><input type="checkbox" id="selAll" onchange="toggleAll(this)"></th>
-              <th>Dosya</th><th>Boyut</th><th>Linklerde</th><th>Yükleyen</th><th>Tarih</th><th></th>
-            </tr></thead>
-            <tbody id="filesBody"><tr><td colspan="7" class="muted">Yükleniyor…</td></tr></tbody>
-          </table>
-        </div>
-      </div>
+          <div class="selbar" id="selbar">
+            <b id="selCount">0 seçili</b>
+            <button class="btn-o" onclick="doMove()"><i class="bi bi-folder-symlink"></i> Taşı</button>
+            <button class="btn-o" onclick="openLinkModal()"><i class="bi bi-link-45deg"></i> Link Oluştur</button>
+            <button class="btn-o" style="color:#b91c1c;border-color:#fecaca;" onclick="doDeleteSelected()"><i class="bi bi-trash"></i> Sil</button>
+            <button class="btn-o" onclick="clearSel()">Vazgeç</button>
+          </div>
 
-      <!-- Linkler -->
-      <div class="card2">
-        <div class="card2-head"><i class="bi bi-share"></i><h2>Paylaşım Linkleri</h2></div>
-        <div class="card2-body" style="overflow-x:auto;">
-          <table>
-            <thead><tr><th>Ad</th><th>Dosya</th><th>Bağlantı</th><th>Durum</th><th>Süre</th><th></th></tr></thead>
-            <tbody id="linksBody"><tr><td colspan="6" class="muted">Yükleniyor…</td></tr></tbody>
-          </table>
+          <div class="card2">
+            <div class="card2-head" style="gap:0.5rem;">
+              <i class="bi bi-folder2-open"></i>
+              <div class="crumb" id="crumb"></div>
+              <span class="muted" style="margin-left:auto;font-size:0.74rem;">dosyaları buraya sürükleyip bırak → yükle</span>
+            </div>
+            <div class="card2-body" id="panelBody" style="overflow-x:auto;"
+                 ondragover="panelOver(event)" ondrop="panelDrop(event)">
+              <table>
+                <thead><tr>
+                  <th style="width:34px;"><input type="checkbox" id="selAll" onchange="toggleAll(this)"></th>
+                  <th>Ad</th><th>Boyut</th><th>Linklerde</th><th>Tarih</th><th></th>
+                </tr></thead>
+                <tbody id="listBody"><tr><td colspan="6" class="muted">Yükleniyor…</td></tr></tbody>
+              </table>
+              <div id="uploadStatus" class="muted" style="margin-top:0.6rem;font-size:0.83rem;"></div>
+            </div>
+          </div>
+
+          <div class="card2">
+            <div class="card2-head"><i class="bi bi-share"></i><h2>Paylaşım Linkleri</h2></div>
+            <div class="card2-body" style="overflow-x:auto;">
+              <table>
+                <thead><tr><th>Ad</th><th>İçerik</th><th>Bağlantı</th><th>Durum</th><th>Süre</th><th></th></tr></thead>
+                <tbody id="linksBody"><tr><td colspan="6" class="muted">Yükleniyor…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </main>
 
+  <!-- Link oluştur modal -->
+  <div class="modal-back" id="linkModal">
+    <div class="modal-card">
+      <div class="modal-h">Paylaşım Linki Oluştur</div>
+      <div class="modal-b">
+        <div id="linkSummary" class="muted" style="margin-bottom:0.8rem;"></div>
+        <label class="muted">Link adı *</label>
+        <input type="text" id="linkName" class="ipt" placeholder="Örn: Serenida MSDS" style="width:100%;margin:0.2rem 0 0.7rem;">
+        <label class="muted">Özel link (opsiyonel)</label>
+        <input type="text" id="linkSlug" class="ipt" placeholder="boş = otomatik kod" style="width:100%;margin:0.2rem 0 0.3rem;" oninput="slugPreview()">
+        <div id="slugPrev" style="font-family:monospace;color:var(--navy);font-size:0.78rem;margin-bottom:0.6rem;"></div>
+        <div style="display:flex;gap:0.6rem;">
+          <div style="flex:1;"><label class="muted">Şifre (opsiyonel)</label><input type="text" id="linkPw" class="ipt" placeholder="boş = şifresiz" style="width:100%;margin-top:0.2rem;"></div>
+          <div style="flex:1;"><label class="muted">Süre (gün)</label><input type="number" id="linkExp" class="ipt" placeholder="süresiz" min="1" style="width:100%;margin-top:0.2rem;"></div>
+        </div>
+      </div>
+      <div class="modal-f">
+        <button class="btn-o" onclick="closeModal('linkModal')">Vazgeç</button>
+        <button class="btn-g" id="createLinkBtn" onclick="createLink()"><i class="bi bi-link"></i> Oluştur</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Taşı modal -->
+  <div class="modal-back" id="moveModal">
+    <div class="modal-card">
+      <div class="modal-h">Taşı — hedef klasör seç</div>
+      <div class="modal-b" id="movePicker" style="max-height:52vh;overflow:auto;"></div>
+      <div class="modal-f">
+        <button class="btn-o" onclick="closeModal('moveModal')">Vazgeç</button>
+        <button class="btn-g" onclick="confirmMove()"><i class="bi bi-check2"></i> Buraya Taşı</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast-container"></div>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-    function shareUrl(token){ return location.origin + '/s/' + token; }
+    function shareUrl(t){ return location.origin + '/s/' + t; }
+    function copyText(t,m){ navigator.clipboard.writeText(t).then(()=>showToast(m||'Kopyalandı.','success')).catch(()=>showToast('Kopyalanamadı.')); }
 
-    /* ── Dosyalar ── */
-    async function loadFiles(){
-      const tb = document.getElementById('filesBody');
-      try{
-        const d = await (await fetch('/api/drive/files')).json();
-        if(!d.length){ tb.innerHTML = '<tr><td colspan="7" class="muted">Henüz dosya yok.</td></tr>'; updateSel(); return; }
-        tb.innerHTML = d.map(f=>`
-          <tr data-name="${esc((f.name||'').toLowerCase())}">
-            <td><input type="checkbox" class="fchk" value="${f.id}" onchange="updateSel()"></td>
-            <td><i class="bi bi-file-earmark" style="color:var(--gold);"></i> ${esc(f.name)}</td>
-            <td>${esc(f.size_human)}</td>
-            <td>${f.in_collections}</td>
-            <td class="muted">${esc(f.uploaded_by)}</td>
-            <td class="muted">${esc(f.created_at)}</td>
-            <td><button class="ico-btn ico-del" title="Sil" onclick="delFile(${f.id})"><i class="bi bi-trash"></i></button></td>
-          </tr>`).join('');
-      }catch{ tb.innerHTML = '<tr><td colspan="7" class="muted">Dosyalar yüklenemedi.</td></tr>'; }
-      updateSel(); filterFiles();
+    let _cur = null;            // aktif klasör (null=kök)
+    let _tree = [];            // [{id,name,parent_id}]
+    let _list = {folders:[],files:[]};
+    let _selF = new Set(), _selD = new Set();
+    let _drag = null;          // {files:[],folders:[]} iç sürükleme
+    let _moveTarget = null;
+
+    /* ── Sol ağaç ── */
+    async function loadTree(){
+      try{ const d=await (await fetch('/api/drive/tree')).json(); _tree=d.folders||[]; }catch{ _tree=[]; }
+      renderTree();
     }
-    function filterFiles(){
-      const q = (document.getElementById('fileSearch').value || '').toLowerCase();
-      document.querySelectorAll('#filesBody tr[data-name]').forEach(tr=>{
-        tr.style.display = tr.dataset.name.includes(q) ? '' : 'none';
+    function _childrenOf(pid){ return _tree.filter(f=>f.parent_id===pid).sort((a,b)=>(a.name||'').localeCompare(b.name||'','tr')); }
+    function renderTree(){
+      function node(f,depth){
+        const a=_cur===f.id?' active':'';
+        let h=`<div class="tnode${a}" style="padding-left:${0.45+depth*0.85}rem;" onclick="openFolder(${f.id})" draggable="true" ondragstart="dragStart(event,'folder',${f.id})" ondragover="treeOver(event,${f.id})" ondragleave="treeLeave(event)" ondrop="treeDrop(event,${f.id})"><span class="tcaret"><i class="bi bi-folder-fill" style="color:var(--gold);"></i></span><span>${esc(f.name)}</span></div>`;
+        _childrenOf(f.id).forEach(c=>h+=node(c,depth+1));
+        return h;
+      }
+      document.getElementById('treeBody').innerHTML=_childrenOf(null).map(f=>node(f,0)).join('');
+      document.getElementById('rootNode').classList.toggle('active',_cur===null);
+    }
+
+    /* ── Ana liste ── */
+    async function openFolder(id){ _cur=id; clearSel(); document.getElementById('searchBox').value=''; await loadList(); renderTree(); }
+    async function loadList(){
+      const tb=document.getElementById('listBody');
+      try{ _list=await (await fetch(_cur===null?'/api/drive/list':'/api/drive/list?folder_id='+_cur)).json(); }
+      catch{ tb.innerHTML='<tr><td colspan="6" class="muted">Yüklenemedi.</td></tr>'; return; }
+      renderCrumb(_list.breadcrumb||[]); renderList();
+    }
+    function renderCrumb(bc){
+      let h=`<a onclick="openFolder(null)"><i class="bi bi-house-door"></i> Kök</a>`;
+      bc.forEach(p=>{ h+=`<span class="sep">/</span><a onclick="openFolder(${p.id})">${esc(p.name)}</a>`; });
+      document.getElementById('crumb').innerHTML=h;
+    }
+    function renderList(){
+      const rows=[];
+      (_list.folders||[]).forEach(f=>{
+        const nm=esc(f.name).replace(/'/g,"&#39;");
+        rows.push(`<tr class="dm-row" draggable="true" ondragstart="dragStart(event,'folder',${f.id})" ondragover="rowOver(event,${f.id})" ondragleave="rowLeave(event)" ondrop="rowDrop(event,${f.id})">
+          <td><input type="checkbox" class="chk" data-kind="folder" value="${f.id}" onchange="onCheck()"></td>
+          <td><i class="bi bi-folder-fill" style="color:var(--gold);"></i> <b style="cursor:pointer;" onclick="openFolder(${f.id})">${esc(f.name)}</b></td>
+          <td class="muted">${f.item_count} öğe</td><td>—</td><td class="muted">—</td>
+          <td><button class="ico-btn ico-copy" title="Yeniden adlandır" onclick="renameItem('folder',${f.id},'${nm}')"><i class="bi bi-pencil"></i></button>
+              <button class="ico-btn ico-del" title="Sil" onclick="delFolder(${f.id})"><i class="bi bi-trash"></i></button></td></tr>`);
       });
+      (_list.files||[]).forEach(f=>{
+        const nm=esc(f.name).replace(/'/g,"&#39;");
+        rows.push(`<tr class="dm-row" draggable="true" ondragstart="dragStart(event,'file',${f.id})">
+          <td><input type="checkbox" class="chk" data-kind="file" value="${f.id}" onchange="onCheck()"></td>
+          <td><i class="bi bi-file-earmark" style="color:var(--navy);"></i> ${esc(f.name)}</td>
+          <td>${esc(f.size_human)}</td><td>${f.in_collections}</td><td class="muted">${esc(f.created_at)}</td>
+          <td><a class="ico-btn ico-copy" title="İndir" href="/api/drive/dl/${f.id}"><i class="bi bi-download"></i></a>
+              <button class="ico-btn ico-copy" title="Yeniden adlandır" onclick="renameItem('file',${f.id},'${nm}')"><i class="bi bi-pencil"></i></button>
+              <button class="ico-btn ico-del" title="Sil" onclick="delFile(${f.id})"><i class="bi bi-trash"></i></button></td></tr>`);
+      });
+      document.getElementById('listBody').innerHTML=rows.length?rows.join(''):'<tr><td colspan="6" class="muted">Bu klasör boş. Yükleyin ya da buraya sürükleyin.</td></tr>';
+      document.getElementById('selAll').checked=false;
     }
-    function slugify(s){ return (s||'').toLowerCase().replace(/[çğıöşü]/g,m=>({'ç':'c','ğ':'g','ı':'i','ö':'o','ş':'s','ü':'u'}[m])).replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,64); }
-    function slugPreview(){
-      const s = slugify(document.getElementById('linkSlug').value);
-      document.getElementById('slugPrev').textContent = s ? (location.origin + '/s/' + s) : '';
+
+    /* ── Seçim ── */
+    function onCheck(){
+      _selF=new Set(); _selD=new Set();
+      document.querySelectorAll('#listBody .chk:checked').forEach(c=>{
+        const id=parseInt(c.value); (c.dataset.kind==='file'?_selF:_selD).add(id);
+      });
+      const n=_selF.size+_selD.size;
+      document.getElementById('selCount').textContent=`${n} seçili · ${_selD.size} klasör, ${_selF.size} dosya`;
+      document.getElementById('selbar').classList.toggle('on',n>0);
     }
-    function selectedIds(){ return Array.from(document.querySelectorAll('.fchk:checked')).map(c=>parseInt(c.value)); }
-    function updateSel(){ const n=selectedIds().length; document.getElementById('selInfo').textContent = n?`(${n} dosya seçili)`:''; }
-    function toggleAll(el){ document.querySelectorAll('.fchk').forEach(c=>c.checked=el.checked); updateSel(); }
+    function toggleAll(el){ document.querySelectorAll('#listBody .chk').forEach(c=>c.checked=el.checked); onCheck(); }
+    function clearSel(){ _selF=new Set(); _selD=new Set(); document.querySelectorAll('#listBody .chk').forEach(c=>c.checked=false); const sa=document.getElementById('selAll'); if(sa)sa.checked=false; document.getElementById('selbar').classList.remove('on'); }
+
+    /* ── Klasör / dosya işlemleri ── */
+    async function newFolder(){
+      const name=prompt('Yeni klasör adı:'); if(!name||!name.trim()) return;
+      const r=await fetch('/api/drive/folders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.trim(),parent_id:_cur})});
+      const d=await r.json(); if(!r.ok){ showToast(d.detail||'Oluşturulamadı.'); return; }
+      showToast('Klasör oluşturuldu.','success'); await loadTree(); await loadList();
+    }
+    async function renameItem(kind,id,cur){
+      const name=prompt('Yeni ad:',cur); if(name===null) return;
+      if(!name.trim()){ showToast('Ad boş olamaz.'); return; }
+      const url=kind==='folder'?'/api/drive/folders/'+id:'/api/drive/files/'+id;
+      const r=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.trim()})});
+      if(r.ok){ showToast('Yeniden adlandırıldı.','success'); await loadTree(); await loadList(); } else showToast('Olmadı.');
+    }
+    async function delFolder(id){
+      if(!confirm('Bu klasör ve İÇİNDEKİ TÜM dosyalar/alt klasörler silinsin mi? Geri alınamaz.')) return;
+      const r=await fetch('/api/drive/folders/'+id,{method:'DELETE'});
+      const d=await r.json().catch(()=>({}));
+      if(r.ok){ showToast(`Silindi (${d.deleted_files||0} dosya).`,'success'); await loadTree(); await loadList(); loadLinks(); } else showToast(d.detail||'Silinemedi.');
+    }
     async function delFile(id){
       if(!confirm('Bu dosya silinsin mi? İçinde bulunduğu linklerden de çıkar.')) return;
-      const r = await fetch('/api/drive/files/'+id,{method:'DELETE'});
-      if(r.ok){ showToast('Dosya silindi.','success'); loadFiles(); loadLinks(); }
-      else showToast('Silinemedi.');
+      const r=await fetch('/api/drive/files/'+id,{method:'DELETE'});
+      if(r.ok){ showToast('Silindi.','success'); await loadList(); loadLinks(); } else showToast('Silinemedi.');
+    }
+    async function doDeleteSelected(){
+      const nf=_selF.size, nd=_selD.size; if(!nf&&!nd) return;
+      if(!confirm(`${nd} klasör + ${nf} dosya silinsin mi? Klasörler içindekilerle birlikte silinir. Geri alınamaz.`)) return;
+      for(const id of _selD){ await fetch('/api/drive/folders/'+id,{method:'DELETE'}); }
+      for(const id of _selF){ await fetch('/api/drive/files/'+id,{method:'DELETE'}); }
+      showToast('Silindi.','success'); clearSel(); await loadTree(); await loadList(); loadLinks();
     }
 
-    /* ── Yükleme ── */
-    const dz = document.getElementById('dropzone'), fi = document.getElementById('fileInput');
-    const folderInput = document.getElementById('folderInput');
-    fi.addEventListener('change', ()=>uploadList(fi.files));
-    document.getElementById('folderBtn').addEventListener('click', ()=>folderInput.click());
-    folderInput.addEventListener('change', ()=>uploadList(folderInput.files));
-    ;['dragover','dragenter'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('drag');}));
-    ;['dragleave','drop'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('drag');}));
-    dz.addEventListener('drop', ev=>{ if(ev.dataTransfer && ev.dataTransfer.files) uploadList(ev.dataTransfer.files); });
-
-    async function uploadList(files){
-      if(!files || !files.length) return;
-      const st = document.getElementById('uploadStatus');
-      let ok=0, fail=0;
+    /* ── Yükleme (aktif klasöre / hedefe) ── */
+    document.getElementById('fileInput').addEventListener('change',e=>uploadList(e.target.files,_cur));
+    document.getElementById('folderInput').addEventListener('change',e=>uploadList(e.target.files,_cur));
+    async function uploadList(files,folderId){
+      if(!files||!files.length) return;
+      const st=document.getElementById('uploadStatus'); let ok=0,fail=0;
       for(let i=0;i<files.length;i++){
-        const rel = files[i].webkitRelativePath || '';
-        st.textContent = `Yükleniyor… (${i+1}/${files.length}) ${rel || files[i].name}`;
-        const fd = new FormData(); fd.append('file', files[i]);
-        if(rel) fd.append('rel_path', rel);
+        const rel=files[i].webkitRelativePath||'';
+        st.textContent=`Yükleniyor… (${i+1}/${files.length}) ${rel||files[i].name}`;
+        const fd=new FormData(); fd.append('file',files[i]);
+        if(rel) fd.append('rel_path',rel);
+        if(folderId!=null) fd.append('folder_id',folderId);
         try{
-          const r = await fetch('/api/drive/upload',{method:'POST',body:fd});
-          if(r.ok){ ok++; }
-          else if(r.status===413){ fail++; showToast(`"${files[i].name}" çok büyük — en fazla 500 MB.`); }
-          else { fail++; const e=await r.json().catch(()=>({})); showToast(e.detail || 'Yükleme başarısız.'); }
+          const r=await fetch('/api/drive/upload',{method:'POST',body:fd});
+          if(r.ok) ok++;
+          else if(r.status===413){ fail++; showToast(`"${files[i].name}" çok büyük (max 500 MB).`); }
+          else { fail++; const e=await r.json().catch(()=>({})); showToast(e.detail||'Yükleme başarısız.'); }
         }catch{ fail++; }
       }
-      st.textContent = `${ok} dosya yüklendi${fail?`, ${fail} başarısız`:''}.`;
-      fi.value=''; folderInput.value=''; loadFiles();
+      st.textContent=`${ok} dosya yüklendi${fail?`, ${fail} başarısız`:''}.`;
+      document.getElementById('fileInput').value=''; document.getElementById('folderInput').value='';
+      await loadTree(); await loadList();
       if(ok) showToast(`${ok} dosya yüklendi.`,'success');
     }
 
-    /* ── Linkler ── */
-    async function createLink(){
-      const name = document.getElementById('linkName').value.trim();
-      const ids = selectedIds();
-      if(!name){ showToast('Link adı girin.'); return; }
-      if(!ids.length){ showToast('En az bir dosya işaretleyin.'); return; }
-      const pw = document.getElementById('linkPw').value.trim();
-      const expV = parseInt(document.getElementById('linkExp').value);
-      const slug = document.getElementById('linkSlug').value.trim();
-      const body = { name, file_ids: ids };
-      if(pw) body.password = pw;
-      if(expV>0) body.expires_days = expV;
-      if(slug) body.custom_slug = slug;
-      const btn = document.getElementById('createLinkBtn'); btn.disabled=true;
+    /* ── Sürükle-bırak ── */
+    function dragStart(ev,kind,id){
+      const inSel = kind==='file'?_selF.has(id):_selD.has(id);
+      _drag = inSel ? {files:[..._selF],folders:[..._selD]} : (kind==='file'?{files:[id],folders:[]}:{files:[],folders:[id]});
+      ev.dataTransfer.effectAllowed='move';
+      try{ ev.dataTransfer.setData('text/plain','move'); }catch(e){}
+    }
+    function _isFiles(ev){ return ev.dataTransfer && Array.prototype.indexOf.call(ev.dataTransfer.types||[],'Files')>=0; }
+    function rowOver(ev,fid){ if(_drag||_isFiles(ev)){ ev.preventDefault(); ev.stopPropagation(); ev.currentTarget.classList.add('drop'); } }
+    function rowLeave(ev){ ev.currentTarget.classList.remove('drop'); }
+    async function rowDrop(ev,fid){
+      ev.preventDefault(); ev.stopPropagation(); ev.currentTarget.classList.remove('drop');
+      if(ev.dataTransfer.files&&ev.dataTransfer.files.length){ await uploadList(ev.dataTransfer.files,fid); return; }
+      if(_drag) await moveTo(fid,_drag.files,_drag.folders);
+    }
+    function treeOver(ev,fid){ if(_drag||_isFiles(ev)){ ev.preventDefault(); ev.currentTarget.classList.add('drop'); } }
+    function treeLeave(ev){ ev.currentTarget.classList.remove('drop'); }
+    async function treeDrop(ev,fid){
+      ev.preventDefault(); ev.currentTarget.classList.remove('drop');
+      if(ev.dataTransfer.files&&ev.dataTransfer.files.length){ await uploadList(ev.dataTransfer.files,fid); return; }
+      if(_drag) await moveTo(fid,_drag.files,_drag.folders);
+    }
+    function panelOver(ev){ if(_isFiles(ev)) ev.preventDefault(); }
+    async function panelDrop(ev){ if(ev.dataTransfer.files&&ev.dataTransfer.files.length){ ev.preventDefault(); await uploadList(ev.dataTransfer.files,_cur); } }
+
+    async function moveTo(target,files,folders){
+      _drag=null;
+      if(!(files&&files.length)&&!(folders&&folders.length)) return;
       try{
-        const r = await fetch('/api/drive/collections',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        const d = await r.json();
-        if(!r.ok){ showToast(d.detail||'Link oluşturulamadı.'); return; }
-        showToast('Link oluşturuldu.','success');
-        document.getElementById('linkName').value=''; document.getElementById('linkPw').value=''; document.getElementById('linkExp').value='';
-        document.getElementById('linkSlug').value=''; slugPreview();
-        document.querySelectorAll('.fchk').forEach(c=>c.checked=false); document.getElementById('selAll').checked=false; updateSel();
-        loadLinks(); loadFiles();
-        copyText(shareUrl(d.token), 'Link kopyalandı: '+shareUrl(d.token));
+        const r=await fetch('/api/drive/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_ids:files||[],folder_ids:folders||[],target_folder_id:target})});
+        const d=await r.json(); if(!r.ok){ showToast(d.detail||'Taşınamadı.'); return; }
+        showToast(`Taşındı (${d.moved_folders} klasör, ${d.moved_files} dosya).`,'success');
+        clearSel(); await loadTree(); await loadList();
+      }catch{ showToast('Taşınamadı.'); }
+    }
+
+    /* ── Taşı modal (klasör seçici) ── */
+    function doMove(){ _moveTarget=null; renderMovePicker(); openModal('moveModal'); }
+    function renderMovePicker(){
+      const box=document.getElementById('movePicker');
+      let h=`<div class="picknode" data-id="" onclick="pickMove(null,this)"><i class="bi bi-hdd-stack-fill" style="color:var(--navy);"></i> Drive (Kök)</div>`;
+      function node(f,depth){
+        let s=`<div class="picknode" style="padding-left:${0.5+depth*0.9}rem;" data-id="${f.id}" onclick="pickMove(${f.id},this)"><i class="bi bi-folder-fill" style="color:var(--gold);"></i> ${esc(f.name)}</div>`;
+        _childrenOf(f.id).forEach(c=>s+=node(c,depth+1));
+        return s;
+      }
+      _childrenOf(null).forEach(f=>h+=node(f,0));
+      box.innerHTML=h;
+    }
+    function pickMove(id,el){ _moveTarget=id; document.querySelectorAll('#movePicker .picknode').forEach(n=>n.classList.remove('sel')); el.classList.add('sel'); }
+    async function confirmMove(){ closeModal('moveModal'); await moveTo(_moveTarget,[..._selF],[..._selD]); }
+
+    /* ── Link oluştur ── */
+    function slugify(s){ return (s||'').toLowerCase().replace(/[çğıöşü]/g,m=>({'ç':'c','ğ':'g','ı':'i','ö':'o','ş':'s','ü':'u'}[m])).replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,64); }
+    function slugPreview(){ const s=slugify(document.getElementById('linkSlug').value); document.getElementById('slugPrev').textContent=s?(location.origin+'/s/'+s):''; }
+    function openLinkModal(){
+      if(!_selF.size&&!_selD.size){ showToast('Önce dosya/klasör seçin.'); return; }
+      document.getElementById('linkSummary').textContent=`Paylaşılacak: ${_selD.size} klasör + ${_selF.size} dosya (klasörler tüm içeriğiyle).`;
+      ['linkName','linkSlug','linkPw','linkExp'].forEach(id=>document.getElementById(id).value=''); slugPreview();
+      openModal('linkModal');
+    }
+    async function createLink(){
+      const name=document.getElementById('linkName').value.trim();
+      if(!name){ showToast('Link adı girin.'); return; }
+      const body={ name, file_ids:[..._selF], folder_ids:[..._selD] };
+      const pw=document.getElementById('linkPw').value.trim(); if(pw) body.password=pw;
+      const expV=parseInt(document.getElementById('linkExp').value); if(expV>0) body.expires_days=expV;
+      const slug=document.getElementById('linkSlug').value.trim(); if(slug) body.custom_slug=slug;
+      const btn=document.getElementById('createLinkBtn'); btn.disabled=true;
+      try{
+        const r=await fetch('/api/drive/collections',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        const d=await r.json(); if(!r.ok){ showToast(d.detail||'Link oluşturulamadı.'); return; }
+        showToast('Link oluşturuldu.','success'); closeModal('linkModal'); clearSel(); loadLinks();
+        copyText(shareUrl(d.token),'Link kopyalandı: '+shareUrl(d.token));
       }catch{ showToast('Sunucuya bağlanılamadı.'); }
       finally{ btn.disabled=false; }
     }
+
+    /* ── Linkler listesi ── */
     async function loadLinks(){
-      const tb = document.getElementById('linksBody');
+      const tb=document.getElementById('linksBody');
       try{
-        const d = await (await fetch('/api/drive/collections')).json();
+        const d=await (await fetch('/api/drive/collections')).json();
         if(!d.length){ tb.innerHTML='<tr><td colspan="6" class="muted">Henüz link yok.</td></tr>'; return; }
-        tb.innerHTML = d.map(c=>{
-          const url = shareUrl(c.token);
-          const status = c.expired ? '<span class="badge2 b-exp">SÜRESİ DOLDU</span>'
-                       : (c.protected ? '<span class="badge2 b-lock">ŞİFRELİ</span>' : '<span class="badge2 b-open">AÇIK</span>');
-          return `<tr>
-            <td><b>${esc(c.name)}</b></td>
-            <td>${c.file_count}</td>
+        tb.innerHTML=d.map(c=>{
+          const url=shareUrl(c.token);
+          const st=c.expired?'<span class="badge2 b-exp">SÜRESİ DOLDU</span>':(c.protected?'<span class="badge2 b-lock">ŞİFRELİ</span>':'<span class="badge2 b-open">AÇIK</span>');
+          const cnt=(c.folder_count?`${c.folder_count} klasör · `:'')+`${c.file_count} dosya`;
+          return `<tr><td><b>${esc(c.name)}</b></td><td>${cnt}</td>
             <td><span class="link-url">${esc(url)}</span>
-                <button class="ico-btn ico-copy" title="Kopyala" onclick="copyText('${esc(url)}','Link kopyalandı.')"><i class="bi bi-clipboard"></i></button>
-                <a class="ico-btn ico-copy" title="Aç" href="${esc(url)}" target="_blank"><i class="bi bi-box-arrow-up-right"></i></a></td>
-            <td>${status}</td>
-            <td class="muted">${c.expires_at?esc(c.expires_at):'—'}</td>
-            <td><button class="ico-btn ico-del" title="Sil" onclick="delLink(${c.id})"><i class="bi bi-trash"></i></button></td>
-          </tr>`;
+              <button class="ico-btn ico-copy" title="Kopyala" onclick="copyText('${esc(url)}','Link kopyalandı.')"><i class="bi bi-clipboard"></i></button>
+              <a class="ico-btn ico-copy" title="Aç" href="${esc(url)}" target="_blank"><i class="bi bi-box-arrow-up-right"></i></a></td>
+            <td>${st}</td><td class="muted">${c.expires_at?esc(c.expires_at):'—'}</td>
+            <td><button class="ico-btn ico-del" title="Sil" onclick="delLink(${c.id})"><i class="bi bi-trash"></i></button></td></tr>`;
         }).join('');
       }catch{ tb.innerHTML='<tr><td colspan="6" class="muted">Linkler yüklenemedi.</td></tr>'; }
     }
     async function delLink(id){
       if(!confirm('Bu paylaşım linki silinsin mi? (Dosyalar silinmez, sadece link kapanır.)')) return;
-      const r = await fetch('/api/drive/collections/'+id,{method:'DELETE'});
-      if(r.ok){ showToast('Link silindi.','success'); loadLinks(); loadFiles(); }
-      else showToast('Silinemedi.');
+      const r=await fetch('/api/drive/collections/'+id,{method:'DELETE'});
+      if(r.ok){ showToast('Link silindi.','success'); loadLinks(); } else showToast('Silinemedi.');
     }
-    function copyText(t,msg){ navigator.clipboard.writeText(t).then(()=>showToast(msg||'Kopyalandı.','success')).catch(()=>showToast('Kopyalanamadı — elle seçin.')); }
+
+    /* ── Arama ── */
+    let _searchTmr=null;
+    function onSearch(){ clearTimeout(_searchTmr); _searchTmr=setTimeout(runSearch,250); }
+    async function runSearch(){
+      const q=document.getElementById('searchBox').value.trim();
+      if(q.length<2){ await loadList(); return; }
+      let d; try{ d=await (await fetch('/api/drive/search?q='+encodeURIComponent(q))).json(); }catch{ return; }
+      document.getElementById('crumb').innerHTML=`<span class="muted">Arama: "<b>${esc(q)}</b>" — ${(d.folders||[]).length+(d.files||[]).length} sonuç</span>`;
+      const rows=[];
+      (d.folders||[]).forEach(f=>rows.push(`<tr><td></td><td><i class="bi bi-folder-fill" style="color:var(--gold);"></i> <b style="cursor:pointer;" onclick="openFolder(${f.id})">${esc(f.name)}</b></td><td class="muted" colspan="3">📁 ${esc(f.path)}</td><td></td></tr>`));
+      (d.files||[]).forEach(f=>rows.push(`<tr><td></td><td><i class="bi bi-file-earmark" style="color:var(--navy);"></i> ${esc(f.name)}</td><td>${esc(f.size_human)}</td><td class="muted" colspan="2">📁 ${esc(f.path)} ${f.folder_id?`<a onclick="openFolder(${f.folder_id})" style="cursor:pointer;color:var(--navy);">→ git</a>`:`<a onclick="openFolder(null)" style="cursor:pointer;color:var(--navy);">→ git</a>`}</td><td><a class="ico-btn ico-copy" href="/api/drive/dl/${f.id}"><i class="bi bi-download"></i></a></td></tr>`));
+      document.getElementById('listBody').innerHTML=rows.length?rows.join(''):'<tr><td colspan="6" class="muted">Sonuç yok.</td></tr>';
+    }
+
+    /* ── Modal yardımcıları ── */
+    function openModal(id){ document.getElementById(id).classList.add('on'); }
+    function closeModal(id){ document.getElementById(id).classList.remove('on'); }
+    document.querySelectorAll('.modal-back').forEach(m=>m.addEventListener('click',e=>{ if(e.target===m) m.classList.remove('on'); }));
 
     document.getElementById('logoutBtn').addEventListener('click', async function(){
       this.disabled=true;
@@ -357,7 +531,7 @@
       catch{ showToast('Çıkış sırasında hata.'); this.disabled=false; }
     });
 
-    loadFiles(); loadLinks();
+    (async function init(){ await loadTree(); await loadList(); loadLinks(); })();
   </script>
 </body>
 </html>

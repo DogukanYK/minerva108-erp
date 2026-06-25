@@ -512,9 +512,24 @@ class SystemEvent(Base):
 
 # ─── Minerva Drive — dosya paylaşım (self-hosted) ────────────────────────────
 
+class DriveFolder(Base):
+    """Drive klasörü — hiyerarşik ağaç (adjacency list).  `parent_id` NULL = kök.
+    Dosyalar `drive_file.folder_id` ile bağlanır; silme uygulamada özyinelemeli
+    yapılır (alt klasör + dosya + disk)."""
+    __tablename__ = "drive_folder"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    name       = Column(String(255), nullable=False)
+    parent_id  = Column(Integer, ForeignKey("drive_folder.id", ondelete="CASCADE"),
+                        nullable=True, index=True)   # NULL = kök
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class DriveFile(Base):
     """Yüklenmiş bir dosya.  Fiziksel dosya diskte `stored_name` ile (rastgele);
-    `original_name` yalnızca gösterim için.  İçerik DB'de DEĞİL, diskte."""
+    `original_name` yalnızca gösterim için (artık SADECE dosya adı — yol klasör
+    ağacında).  İçerik DB'de DEĞİL, diskte."""
     __tablename__ = "drive_file"
 
     id            = Column(Integer, primary_key=True, autoincrement=True)
@@ -522,6 +537,8 @@ class DriveFile(Base):
     stored_name   = Column(String(80),  nullable=False, unique=True)   # diskteki rastgele ad
     size_bytes    = Column(Integer, nullable=False, default=0)
     content_type  = Column(String(120), nullable=True)
+    folder_id     = Column(Integer, ForeignKey("drive_folder.id", ondelete="SET NULL"),
+                          nullable=True, index=True)   # NULL = kök dizin
     uploaded_by   = Column(String(100), nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -547,6 +564,17 @@ class DriveCollectionFile(Base):
     id            = Column(Integer, primary_key=True, autoincrement=True)
     collection_id = Column(Integer, ForeignKey("drive_collection.id", ondelete="CASCADE"), nullable=False, index=True)
     file_id       = Column(Integer, ForeignKey("drive_file.id", ondelete="CASCADE"), nullable=False, index=True)
+    sort_order    = Column(Integer, default=0)
+
+
+class DriveCollectionFolder(Base):
+    """Hangi KLASÖR hangi koleksiyonda — klasör paylaşımı.  Paylaşım, bağlı
+    klasörün TÜM alt ağacını (canlı/dinamik) kapsar; karşı taraf gezinebilir."""
+    __tablename__ = "drive_collection_folder"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    collection_id = Column(Integer, ForeignKey("drive_collection.id", ondelete="CASCADE"), nullable=False, index=True)
+    folder_id     = Column(Integer, ForeignKey("drive_folder.id", ondelete="CASCADE"), nullable=False, index=True)
     sort_order    = Column(Integer, default=0)
 
 
@@ -693,6 +721,78 @@ class CrmTask(Base):
     reminder_sent       = Column(Boolean, default=False, nullable=False)
 
 
+class CrmSavedView(Base):
+    """Kullanıcı başına kaydedilmiş liste görünümü (filtre seti) — örn. 'Meta lead'lerim'.
+    criteria JSON: {q, source, owner} gibi liste filtreleri."""
+    __tablename__ = "crm_saved_view"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    entity     = Column(String(20), nullable=False)   # companies | contacts | deals
+    name       = Column(String(80), nullable=False)
+    criteria   = Column(Text, nullable=True)          # JSON
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CrmTag(Base):
+    """Etiket — firmalara/kişilere/fırsatlara takılır (çoka-çok)."""
+    __tablename__ = "crm_tag"
+
+    id    = Column(Integer, primary_key=True, index=True)
+    name  = Column(String(60), nullable=False, unique=True)
+    color = Column(String(20), nullable=True)
+
+
+class CrmEntityTag(Base):
+    """Etiket bağı — (entity, entity_id) → tag.  Tek tablo, tüm varlıklar."""
+    __tablename__ = "crm_entity_tag"
+
+    id        = Column(Integer, primary_key=True, index=True)
+    entity    = Column(String(20), nullable=False, index=True)   # company | contact | deal
+    entity_id = Column(Integer, nullable=False, index=True)
+    tag_id    = Column(Integer, ForeignKey("crm_tag.id", ondelete="CASCADE"), nullable=False, index=True)
+
+
+class CrmFieldDef(Base):
+    """Özel alan tanımı — entity bazında yapılandırılabilir ek alanlar."""
+    __tablename__ = "crm_field_def"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    entity     = Column(String(20), nullable=False, index=True)   # company | contact | deal
+    key        = Column(String(40), nullable=False)               # makine adı
+    label      = Column(String(80), nullable=False)               # gösterim
+    field_type = Column(String(20), nullable=False, default="text")  # text|number|date|select
+    options    = Column(Text, nullable=True)                      # select için JSON liste
+    sort_order = Column(Integer, default=0, nullable=False)
+    is_active  = Column(Boolean, default=True, nullable=False)
+
+
+class CrmFieldValue(Base):
+    """Özel alan değeri — (entity, entity_id, field) → değer."""
+    __tablename__ = "crm_field_value"
+
+    id        = Column(Integer, primary_key=True, index=True)
+    field_id  = Column(Integer, ForeignKey("crm_field_def.id", ondelete="CASCADE"), nullable=False, index=True)
+    entity    = Column(String(20), nullable=False, index=True)
+    entity_id = Column(Integer, nullable=False, index=True)
+    value     = Column(Text, nullable=True)
+
+
+class CrmAttachment(Base):
+    """Kayda eklenen dosya — fiziksel dosya Drive deposunda (stored_name)."""
+    __tablename__ = "crm_attachment"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    entity        = Column(String(20), nullable=False, index=True)   # company | contact | deal
+    entity_id     = Column(Integer, nullable=False, index=True)
+    original_name = Column(String(255), nullable=False)
+    stored_name   = Column(String(80), nullable=False)               # Drive diskindeki rastgele ad
+    size_bytes    = Column(Integer, nullable=False, default=0)
+    content_type  = Column(String(120), nullable=True)
+    uploaded_by   = Column(String(100), nullable=True)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+
 class CrmIntegrationState(Base):
     """Harici CRM entegrasyon durumu (şimdilik Kommo) — delta senkron imleci +
     son çalıştırma özeti.  Her sağlayıcı için tek satır (provider unique)."""
@@ -722,6 +822,51 @@ def log_system_event(event_type: str, detail: str = None) -> None:
             db.close()
     except Exception:
         pass
+
+
+def _backfill_drive_folders():
+    """original_name'inde '/' olan DriveFile'ları gerçek klasör ağacına yerleştir.
+
+    Eski "klasör yükleme" yolu (Serenida/MSDS/x.pdf) görüntü adına gömüyordu;
+    bunları `drive_folder` ağacına çevirir, `original_name`'i basename'e indirir.
+    İdempotent: dönüşüm sonrası adlarda '/' kalmaz → tekrar çağrı no-op."""
+    db = SessionLocal()
+    try:
+        pending = db.query(DriveFile).filter(DriveFile.original_name.like("%/%")).all()
+        if not pending:
+            return
+        cache = {}   # (parent_id, name) -> folder.id
+
+        def _get_or_create(name, parent_id, actor):
+            key = (parent_id, name)
+            if key in cache:
+                return cache[key]
+            q = db.query(DriveFolder).filter(DriveFolder.name == name)
+            q = q.filter(DriveFolder.parent_id.is_(None) if parent_id is None
+                         else DriveFolder.parent_id == parent_id)
+            f = q.first()
+            if not f:
+                f = DriveFolder(name=name[:255], parent_id=parent_id, created_by=actor)
+                db.add(f); db.flush()
+            cache[key] = f.id
+            return f.id
+
+        for rec in pending:
+            raw = (rec.original_name or "").replace("\\", "/")
+            parts = [p.strip() for p in raw.split("/")
+                     if p.strip() and p.strip() not in (".", "..")]
+            if len(parts) < 2:
+                rec.original_name = (parts[-1] if parts else "dosya")[:255]
+                continue
+            *folders, fname = parts
+            pid = None
+            for seg in folders:
+                pid = _get_or_create(seg, pid, rec.uploaded_by)
+            rec.folder_id = pid
+            rec.original_name = fname[:255]
+        db.commit()
+    finally:
+        db.close()
 
 
 def init_db():
@@ -808,8 +953,19 @@ def init_db():
             # CRM aktivite — harici kaynak referansı (Kommo mesaj olayları dedup)
             "ALTER TABLE crm_activity ADD COLUMN external_id VARCHAR(80)",
             "CREATE INDEX IF NOT EXISTS ix_crm_activity_extid ON crm_activity(external_id)",
+            # Minerva Drive — klasör ağacı.  drive_folder tablosu create_all ile
+            # gelir; drive_file'a folder_id eklenir (kök = NULL).
+            "ALTER TABLE drive_file ADD COLUMN folder_id INTEGER",
+            "CREATE INDEX IF NOT EXISTS ix_drive_file_folder ON drive_file(folder_id)",
         ):
             alter_safe(stmt)
+
+    # Eski Drive klasör-yüklemelerini (adında '/' olanlar) gerçek klasör ağacına
+    # çevir — idempotent ('/' kalmayınca no-op).
+    try:
+        _backfill_drive_folders()
+    except Exception:
+        pass
 
     # ── Varsayılan kullanıcı seed'i — sadece dev'de çalışır ─────────────────
     # Eskiden prod dahil her başlatmada "minerva123" şifreli 4 hesap oluşurdu;

@@ -36,7 +36,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, delivery as delivery_router
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router
 from core.domain import get_active_domain, domain_label
 
 
@@ -241,6 +241,7 @@ app.include_router(domain_router.router)
 app.include_router(drive_router.router)
 app.include_router(drive_router.share_router)
 app.include_router(crm_router.router)
+app.include_router(crm_c_router.router)
 app.include_router(kommo_router.router)
 app.include_router(kommo_router.public_router)
 app.include_router(delivery_router.router)

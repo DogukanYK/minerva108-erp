@@ -192,6 +192,15 @@
     .frow{ display:grid; grid-template-columns:1fr 1fr; gap:0.7rem 0.8rem; }
     .frow .full{ grid-column:1/-1; }
     .mb{ margin-bottom:0.7rem; }
+    /* Global arama sonuçları */
+    .sr-sec{ font-size:0.66rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--faint); padding:0.6rem 1.1rem 0.25rem; font-weight:700; }
+    .sr-item{ display:flex; align-items:center; gap:0.6rem; padding:0.5rem 1.1rem; cursor:pointer; }
+    .sr-item:hover{ background:var(--hover); }
+    .sr-item .t{ font-weight:600; font-size:0.9rem; }
+    .sr-item .s{ font-size:0.78rem; color:var(--muted); }
+    /* Rapor bar/tablo */
+    .rep-bar{ height:10px; background:var(--surface-2); border-radius:6px; overflow:hidden; }
+    .rep-fill{ height:100%; border-radius:6px; }
     /* Mobile bottom nav */
     .mobnav{ display:none; }
     @media (max-width:768px){
@@ -255,6 +264,7 @@
       <button class="nav-link-item" data-tab="contacts"><i class="bi bi-people nav-icon"></i>Kişiler</button>
       <button class="nav-link-item" data-tab="pipeline"><i class="bi bi-kanban nav-icon"></i>Pipeline</button>
       <button class="nav-link-item" data-tab="tasks"><i class="bi bi-check2-square nav-icon"></i>Görevler<span class="nav-badge" id="navTaskBadge" style="display:none;">0</span></button>
+      <button class="nav-link-item" data-tab="reports"><i class="bi bi-graph-up-arrow nav-icon"></i>Raporlar</button>
       {% if can('admin','view') %}
       <div class="nav-section-label" style="margin-top:0.8rem;">Sistem</div>
       <button class="nav-link-item" data-tab="integrations"><i class="bi bi-plug nav-icon"></i>Entegrasyonlar</button>
@@ -269,6 +279,7 @@
   <header class="topnav">
     <span class="topnav-title" id="topTitle">Pano</span>
     <div class="topnav-right">
+      <button type="button" class="theme-toggle" onclick="CRM.searchOpen()" title="Ara (firma/kişi/fırsat)" aria-label="Ara"><i class="bi bi-search"></i></button>
       <button type="button" class="btn-g btn-sm" id="installBtn" style="display:none;" title="Ana ekrana ekle"><i class="bi bi-phone"></i><span class="d-none d-md-inline"> Ana ekrana ekle</span></button>
       <button type="button" class="theme-toggle" onclick="toggleTheme()" title="Tema değiştir" aria-label="Tema değiştir"><i class="bi bi-moon-stars-fill"></i><i class="bi bi-sun-fill"></i></button>
       <div class="user-chip">
@@ -286,6 +297,7 @@
       <div id="view-contacts" style="display:none;"></div>
       <div id="view-pipeline" style="display:none;"></div>
       <div id="view-tasks" style="display:none;"></div>
+      <div id="view-reports" style="display:none;"></div>
       <div id="view-integrations" style="display:none;"></div>
     </div>
   </main>
@@ -296,6 +308,7 @@
     <button data-tab="contacts"><i class="bi bi-people"></i>Kişiler</button>
     <button data-tab="pipeline"><i class="bi bi-kanban"></i>Pipeline</button>
     <button data-tab="tasks"><i class="bi bi-check2-square"></i>Görevler<span class="nav-badge" id="navTaskBadgeM" style="display:none;">0</span></button>
+    <button data-tab="reports"><i class="bi bi-graph-up-arrow"></i>Rapor</button>
   </nav>
 
   <div class="scrim" id="scrim" onclick="closeDrawer()"></div>
@@ -316,6 +329,17 @@
         <button class="btn-g btn-o" onclick="closeModal()">Vazgeç</button>
         <button class="btn-g" id="mSave">Kaydet</button>
       </div>
+    </div>
+  </div>
+
+  <div class="modal-ov" id="searchOv" style="align-items:flex-start;">
+    <div class="modal-box" style="margin-top:7vh;width:560px;">
+      <div style="padding:0.9rem 1.1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:0.6rem;">
+        <i class="bi bi-search muted"></i>
+        <input class="ipt" id="searchInput" placeholder="Firma, kişi veya fırsat ara…" autocomplete="off" style="border:none;padding:0.3rem 0;flex:1;" />
+        <button class="ico-btn" onclick="CRM.searchClose()" title="Kapat">&times;</button>
+      </div>
+      <div id="searchResults" style="max-height:62vh;overflow-y:auto;padding:0.4rem 0;"></div>
     </div>
   </div>
 

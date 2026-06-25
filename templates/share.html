@@ -46,18 +46,42 @@
     <div class="body">
       {% if state == 'open' %}
         <p class="coll-name">{{ coll_name }}</p>
-        <p class="sub">{{ files|length }} dosya · indirmek için tıklayın</p>
-        {% for f in files %}
-          <a class="file-row" href="/s/{{ token }}/f/{{ f.id }}">
-            <span class="file-ico"><i class="bi bi-file-earmark"></i></span>
-            <span>
-              <div class="file-name">{{ f.name }}</div>
-              <div class="file-size">{{ f.size }}</div>
-            </span>
-            <i class="bi bi-download dl"></i>
-          </a>
-        {% endfor %}
-        {% if not files %}<p class="sub">Bu paylaşımda dosya yok.</p>{% endif %}
+        <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.9rem;">
+          <div id="scrumb" style="flex:1;min-width:160px;font-size:0.86rem;"></div>
+          <a class="btn" href="#" onclick="zipAll();return false;" style="padding:0.5rem 0.85rem;font-size:0.82rem;"><i class="bi bi-file-zip"></i> Tümünü ZIP indir</a>
+        </div>
+        <div id="sbody"><p class="sub">Yükleniyor…</p></div>
+        <script>
+          const TOKEN = "{{ token }}";
+          let _sf = null;
+          function sesc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+          async function sload(folder){
+            _sf = folder;
+            const body = document.getElementById('sbody');
+            let d; try{ d = await (await fetch('/s/'+TOKEN+'/browse'+(folder!=null?'?folder='+folder:''))).json(); }
+            catch{ body.innerHTML='<p class="sub">Yüklenemedi.</p>'; return; }
+            if(d.detail){ body.innerHTML='<p class="sub">'+sesc(d.detail)+'</p>'; return; }
+            let bc = `<a onclick="sload(null)" style="cursor:pointer;color:var(--navy);text-decoration:none;">${sesc(d.name||'Paylaşım')}</a>`;
+            (d.breadcrumb||[]).forEach(p=>{ bc += ` <span style="color:#cbd5e1;">/</span> <a onclick="sload(${p.id})" style="cursor:pointer;color:var(--navy);text-decoration:none;">${sesc(p.name)}</a>`; });
+            document.getElementById('scrumb').innerHTML = bc;
+            let h = '';
+            (d.folders||[]).forEach(f=>{
+              h += `<div class="file-row" style="cursor:pointer;" onclick="sload(${f.id})">
+                <span class="file-ico"><i class="bi bi-folder-fill" style="color:var(--gold);"></i></span>
+                <span><div class="file-name">${sesc(f.name)}</div><div class="file-size">${f.item_count} öğe</div></span>
+                <i class="bi bi-chevron-right dl"></i></div>`;
+            });
+            (d.files||[]).forEach(f=>{
+              h += `<a class="file-row" href="/s/${TOKEN}/f/${f.id}">
+                <span class="file-ico"><i class="bi bi-file-earmark"></i></span>
+                <span><div class="file-name">${sesc(f.name)}</div><div class="file-size">${sesc(f.size_human)}</div></span>
+                <i class="bi bi-download dl"></i></a>`;
+            });
+            body.innerHTML = h || '<p class="sub">Bu klasör boş.</p>';
+          }
+          function zipAll(){ window.location.href = '/s/'+TOKEN+'/zip'+(_sf!=null?'?folder='+_sf:''); }
+          sload(null);
+        </script>
 
       {% elif state == 'locked' %}
         <div class="state">

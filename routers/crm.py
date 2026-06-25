@@ -94,6 +94,13 @@ def _source_filter(query, model, source: Optional[str]):
     return query.filter(model.source == source)
 
 
+def _owner_filter(query, model, owner: Optional[int]):
+    """Sorumlu kişiye göre filtre (user id).  Boş → filtre yok."""
+    if owner:
+        return query.filter(model.owner_user_id == owner)
+    return query
+
+
 # ─── Pydantic şemaları ───────────────────────────────────────────────────────
 
 class CompanyIn(BaseModel):
@@ -191,6 +198,7 @@ def list_stages(db: Session = Depends(get_db), _: dict = Depends(require_permiss
 def list_companies(
     q: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
+    owner: Optional[int] = Query(None),
     include_inactive: bool = Query(False),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("crm", "view")),
@@ -199,6 +207,7 @@ def list_companies(
     if not include_inactive:
         query = query.filter(CrmCompany.is_active == True)  # noqa: E712
     query = _source_filter(query, CrmCompany, source)
+    query = _owner_filter(query, CrmCompany, owner)
     if q and q.strip():
         like = f"%{q.strip()}%"
         query = query.filter(or_(
@@ -305,12 +314,14 @@ def delete_company(cid: int, request: Request, db: Session = Depends(get_db),
 def list_contacts(
     q: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
+    owner: Optional[int] = Query(None),
     company_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("crm", "view")),
 ):
     query = db.query(CrmContact).filter(CrmContact.is_active == True)  # noqa: E712
     query = _source_filter(query, CrmContact, source)
+    query = _owner_filter(query, CrmContact, owner)
     if company_id:
         query = query.filter(CrmContact.company_id == company_id)
     if q and q.strip():
@@ -407,12 +418,14 @@ def _deal_names(db: Session):
 
 @router.get("/pipeline")
 def pipeline(source: Optional[str] = Query(None),
+             owner: Optional[int] = Query(None),
              db: Session = Depends(get_db),
              _: dict = Depends(require_permission("crm", "view"))):
     """Kanban verisi — aşamalar + her aşamadaki açık fırsatlar + aşama toplamları."""
     stages = (db.query(CrmStage).filter(CrmStage.is_active == True)  # noqa: E712
               .order_by(CrmStage.sort_order, CrmStage.id).all())
     dq = _source_filter(db.query(CrmDeal).filter(CrmDeal.status == "open"), CrmDeal, source)
+    dq = _owner_filter(dq, CrmDeal, owner)
     deals = dq.order_by(CrmDeal.sort_order, CrmDeal.created_at.desc()).all()
     companies, contacts, stage_names = _deal_names(db)
     by_stage, totals = {}, {}
@@ -435,6 +448,7 @@ def pipeline(source: Optional[str] = Query(None),
 def list_deals(
     status: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
+    owner: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("crm", "view")),
 ):
@@ -442,6 +456,7 @@ def list_deals(
     if status in ("open", "won", "lost"):
         query = query.filter(CrmDeal.status == status)
     query = _source_filter(query, CrmDeal, source)
+    query = _owner_filter(query, CrmDeal, owner)
     deals = query.order_by(CrmDeal.created_at.desc()).all()
     companies, contacts, stage_names = _deal_names(db)
     return [C.serialize_deal(d, company_name=companies.get(d.company_id, ""),
@@ -780,10 +795,11 @@ def dashboard(db: Session = Depends(get_db),
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def _export_rows(db: Session, entity: str, q, source, status):
+def _export_rows(db: Session, entity: str, q, source, status, owner=None):
     """Dışa aktarma için filtrelenmiş + serialize edilmiş satırlar."""
     if entity == "companies":
         query = _source_filter(db.query(CrmCompany).filter(CrmCompany.is_active == True), CrmCompany, source)  # noqa: E712
+        query = _owner_filter(query, CrmCompany, owner)
         if q and q.strip():
             like = f"%{q.strip()}%"
             query = query.filter(or_(CrmCompany.name.ilike(like), CrmCompany.email.ilike(like),
@@ -803,6 +819,7 @@ def _export_rows(db: Session, entity: str, q, source, status):
         return [C.serialize_company(c, contact_count=cc.get(c.id, 0), open_deal_count=dc.get(c.id, 0)) for c in companies]
     if entity == "contacts":
         query = _source_filter(db.query(CrmContact).filter(CrmContact.is_active == True), CrmContact, source)  # noqa: E712
+        query = _owner_filter(query, CrmContact, owner)
         if q and q.strip():
             like = f"%{q.strip()}%"
             query = query.filter(or_(CrmContact.full_name.ilike(like), CrmContact.email.ilike(like),
@@ -812,6 +829,7 @@ def _export_rows(db: Session, entity: str, q, source, status):
         return [C.serialize_contact(ct, company_name=names.get(ct.company_id, "")) for ct in contacts]
     if entity == "deals":
         query = _source_filter(db.query(CrmDeal), CrmDeal, source)
+        query = _owner_filter(query, CrmDeal, owner)
         if status in ("open", "won", "lost"):
             query = query.filter(CrmDeal.status == status)
         deals = query.order_by(CrmDeal.created_at.desc()).all()
@@ -825,8 +843,9 @@ def _export_rows(db: Session, entity: str, q, source, status):
 @router.get("/export")
 def crm_export(entity: str = Query(...), q: Optional[str] = Query(None),
                source: Optional[str] = Query(None), status: Optional[str] = Query(None),
+               owner: Optional[int] = Query(None),
                db: Session = Depends(get_db), _: dict = Depends(require_permission("crm", "view"))):
-    rows = _export_rows(db, entity, q, source, status)
+    rows = _export_rows(db, entity, q, source, status, owner)
     if rows is None:
         return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
     try:
