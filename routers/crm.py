@@ -22,11 +22,13 @@ Uçlar:
 from datetime import datetime, timedelta
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, Request, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Request, Query, UploadFile, File, Form
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
+
+from core import crm_export as CX
 
 from database import (
     get_db, User, TR_OFFSET,
@@ -87,7 +89,8 @@ def _source_filter(query, model, source: Optional[str]):
     if not source or source == "all":
         return query
     if source == "manual":
-        return query.filter(or_(model.source.is_(None), model.source == "manual"))
+        # "Elle" = Meta/Kommo dışı her şey (elle girilen + içe aktarılan + NULL)
+        return query.filter(or_(model.source.is_(None), model.source.notin_(["meta", "kommo"])))
     return query.filter(model.source == source)
 
 
@@ -770,3 +773,129 @@ def dashboard(db: Session = Depends(get_db),
         "my_tasks": [C.serialize_task(t, overdue=(t.due_at and t.due_at < now)) for t in my_today],
         "recent_activities": [C.serialize_activity(a) for a in recent],
     }
+
+
+# ─── İçe / Dışa Aktarma (Excel/CSV) ──────────────────────────────────────────
+
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _export_rows(db: Session, entity: str, q, source, status):
+    """Dışa aktarma için filtrelenmiş + serialize edilmiş satırlar."""
+    if entity == "companies":
+        query = _source_filter(db.query(CrmCompany).filter(CrmCompany.is_active == True), CrmCompany, source)  # noqa: E712
+        if q and q.strip():
+            like = f"%{q.strip()}%"
+            query = query.filter(or_(CrmCompany.name.ilike(like), CrmCompany.email.ilike(like),
+                                     CrmCompany.phone.ilike(like), CrmCompany.city.ilike(like)))
+        companies = query.order_by(CrmCompany.name).all()
+        ids = [c.id for c in companies]
+        cc, dc = {}, {}
+        if ids:
+            for cid, n in (db.query(CrmContact.company_id, func.count(CrmContact.id))
+                           .filter(CrmContact.company_id.in_(ids), CrmContact.is_active == True)  # noqa: E712
+                           .group_by(CrmContact.company_id).all()):
+                cc[cid] = n
+            for cid, n in (db.query(CrmDeal.company_id, func.count(CrmDeal.id))
+                           .filter(CrmDeal.company_id.in_(ids), CrmDeal.status == "open")
+                           .group_by(CrmDeal.company_id).all()):
+                dc[cid] = n
+        return [C.serialize_company(c, contact_count=cc.get(c.id, 0), open_deal_count=dc.get(c.id, 0)) for c in companies]
+    if entity == "contacts":
+        query = _source_filter(db.query(CrmContact).filter(CrmContact.is_active == True), CrmContact, source)  # noqa: E712
+        if q and q.strip():
+            like = f"%{q.strip()}%"
+            query = query.filter(or_(CrmContact.full_name.ilike(like), CrmContact.email.ilike(like),
+                                     CrmContact.phone.ilike(like), CrmContact.mobile.ilike(like)))
+        contacts = query.order_by(CrmContact.full_name).all()
+        names = {c.id: c.name for c in db.query(CrmCompany.id, CrmCompany.name).all()}
+        return [C.serialize_contact(ct, company_name=names.get(ct.company_id, "")) for ct in contacts]
+    if entity == "deals":
+        query = _source_filter(db.query(CrmDeal), CrmDeal, source)
+        if status in ("open", "won", "lost"):
+            query = query.filter(CrmDeal.status == status)
+        deals = query.order_by(CrmDeal.created_at.desc()).all()
+        companies, contacts, stage_names = _deal_names(db)
+        return [C.serialize_deal(d, company_name=companies.get(d.company_id, ""),
+                                 contact_name=contacts.get(d.contact_id, ""),
+                                 stage_name=stage_names.get(d.stage_id, "")) for d in deals]
+    return None
+
+
+@router.get("/export")
+def crm_export(entity: str = Query(...), q: Optional[str] = Query(None),
+               source: Optional[str] = Query(None), status: Optional[str] = Query(None),
+               db: Session = Depends(get_db), _: dict = Depends(require_permission("crm", "view"))):
+    rows = _export_rows(db, entity, q, source, status)
+    if rows is None:
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    try:
+        xlsx = CX.export_workbook(entity, rows)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+    from database import tr_now
+    fname = f"crm_{entity}_{tr_now().strftime('%Y%m%d')}.xlsx"
+    return Response(content=xlsx, media_type=_XLSX_MIME,
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/import/template")
+def crm_import_template(entity: str = Query(...),
+                        _: dict = Depends(require_permission("crm", "view"))):
+    try:
+        xlsx = CX.template_workbook(entity)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+    return Response(content=xlsx, media_type=_XLSX_MIME,
+                    headers={"Content-Disposition": f'attachment; filename="crm_{entity}_sablon.xlsx"'})
+
+
+@router.post("/import")
+def crm_import(request: Request, entity: str = Form(...), file: UploadFile = File(...),
+               db: Session = Depends(get_db),
+               current_user: dict = Depends(require_permission("crm", "create"))):
+    if entity not in ("companies", "contacts"):
+        return JSONResponse(status_code=400, content={"detail": "Yalnızca firma/kişi içe aktarılabilir."})
+    try:
+        content = file.file.read()
+        records = CX.parse_import(content, file.filename or "", entity)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+    except Exception:
+        return JSONResponse(status_code=400, content={"detail": "Dosya okunamadı. Excel (.xlsx) veya CSV gönderin."})
+    if not records:
+        return JSONResponse(status_code=400, content={"detail": "Geçerli satır bulunamadı (zorunlu ad sütunu boş?)."})
+
+    actor = _actor(current_user)
+    created = 0
+    if entity == "companies":
+        for rec in records:
+            db.add(CrmCompany(
+                name=rec["name"][:200], sector=rec.get("sector"), phone=rec.get("phone"),
+                email=rec.get("email"), city=rec.get("city"), country=rec.get("country"),
+                tax_office=rec.get("tax_office"), tax_no=rec.get("tax_no"),
+                address=rec.get("address"), notes=rec.get("notes"),
+                source="import", created_by=actor))
+            created += 1
+    else:  # contacts
+        existing = {(c.name or "").strip().lower(): c.id
+                    for c in db.query(CrmCompany).filter(CrmCompany.is_active == True).all()}  # noqa: E712
+        linked = 0
+        for rec in records:
+            cid = existing.get((rec.get("company") or "").strip().lower())
+            if cid:
+                linked += 1
+            db.add(CrmContact(
+                full_name=rec["full_name"][:150], company_id=cid, title=rec.get("title"),
+                phone=rec.get("phone"), mobile=rec.get("mobile"),
+                whatsapp_number=rec.get("whatsapp_number"), email=rec.get("email"),
+                notes=rec.get("notes"), source="import", created_by=actor))
+            created += 1
+    db.commit()
+    log_admin_event(db, request, actor=current_user, action="crm.import",
+                    target_type="crm_" + entity, target_name=entity,
+                    details={"created": created, "total": len(records)})
+    msg = f"{created} kayıt içe aktarıldı."
+    if entity == "contacts":
+        msg += f" ({linked} kişi firmaya eşlendi)"
+    return {"message": msg, "created": created, "total": len(records)}

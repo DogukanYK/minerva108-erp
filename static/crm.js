@@ -39,6 +39,51 @@
     const e = el(id);
     return e && e.value ? e.value : "";
   }
+  function inputVal(id) { const e = el(id); return e && e.value ? e.value.trim() : ""; }
+
+  // ── İçe/dışa aktarma (Excel) ─────────────────────────────────────────────
+  function ioButtons(entity) {
+    let h = `<button class="btn-g btn-o btn-sm" onclick="CRM.exportXlsx('${entity}')" title="Görünümü Excel'e aktar"><i class="bi bi-file-earmark-excel"></i> Dışa</button>`;
+    if (can("crm", "create") && (entity === "companies" || entity === "contacts"))
+      h += `<button class="btn-g btn-o btn-sm" onclick="CRM.importModal('${entity}')" title="Excel/CSV içe aktar"><i class="bi bi-upload"></i> İçe</button>`;
+    return h;
+  }
+  function exportXlsx(entity) {
+    const p = [];
+    if (entity === "companies") {
+      if (inputVal("coSearch")) p.push("q=" + encodeURIComponent(inputVal("coSearch")));
+      if (srcParam("coSource")) p.push("source=" + srcParam("coSource"));
+    } else if (entity === "contacts") {
+      if (inputVal("ctSearch")) p.push("q=" + encodeURIComponent(inputVal("ctSearch")));
+      if (srcParam("ctSource")) p.push("source=" + srcParam("ctSource"));
+    } else if (entity === "deals") {
+      if (state.pipeSource) p.push("source=" + encodeURIComponent(state.pipeSource));
+    }
+    window.location = "/api/crm/export?entity=" + entity + (p.length ? "&" + p.join("&") : "");
+  }
+  function importModal(entity) {
+    const label = entity === "companies" ? "Firma" : "Kişi";
+    openModal(label + " İçe Aktar (Excel / CSV)", `
+      <p class="muted" style="font-size:0.84rem;">Excel (.xlsx) veya CSV yükleyin. Başlık satırı tanınır (Firma/Ad Soyad, Telefon, E-posta…).
+        <a href="/api/crm/import/template?entity=${entity}" target="_blank"><b>Boş şablon indir</b></a>.</p>
+      <div class="mb"><input type="file" id="imp_file" class="ipt" accept=".xlsx,.csv"></div>
+      <p class="muted" style="font-size:0.78rem;">Her satır yeni bir kayıt olur (kaynak: "Elle/İçe aktarma"). Kişilerde "Firma" sütunu mevcut firmaya eşlenir.</p>
+    `, async function () {
+      const f = el("imp_file").files[0];
+      if (!f) { toast("Bir dosya seçin."); return; }
+      const fd = new FormData(); fd.append("entity", entity); fd.append("file", f);
+      const btn = el("mSave"); btn.disabled = true; const o = btn.textContent; btn.textContent = "İçe aktarılıyor…";
+      try {
+        const r = await fetch("/api/crm/import", { method: "POST", body: fd });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { toast(d.detail || "İçe aktarılamadı."); return; }
+        closeModal(); toast(d.message || "Tamam.", "success");
+        if (entity === "companies") { state._companies = null; if (state.tab === "companies") loadCompanies(); }
+        else if (state.tab === "contacts") loadContacts();
+      } catch (e) { toast("Yükleme hatası."); }
+      finally { btn.disabled = false; btn.textContent = o; }
+    });
+  }
 
   async function api(path, opts) {
     const r = await fetch("/api/crm" + path, opts || {});
@@ -152,6 +197,7 @@
         <div class="search"><i class="bi bi-search"></i><input class="ipt" id="coSearch" placeholder="Firma ara…"></div>
         ${sourceSelect("coSource")}
         ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.companyModal()"><i class="bi bi-plus-lg"></i> Yeni Firma</button>' : ""}
+        ${ioButtons("companies")}
       </div><div class="card2"><div class="card2-body" style="overflow-x:auto;"><div id="coList"></div></div></div>`;
       let tmr;
       el("coSearch").addEventListener("input", function () { clearTimeout(tmr); tmr = setTimeout(loadCompanies, 250); });
@@ -191,6 +237,7 @@
         <div class="search"><i class="bi bi-search"></i><input class="ipt" id="ctSearch" placeholder="Kişi ara…"></div>
         ${sourceSelect("ctSource")}
         ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.contactModal()"><i class="bi bi-plus-lg"></i> Yeni Kişi</button>' : ""}
+        ${ioButtons("contacts")}
       </div><div class="card2"><div class="card2-body" style="overflow-x:auto;"><div id="ctList"></div></div></div>`;
       let tmr;
       el("ctSearch").addEventListener("input", function () { clearTimeout(tmr); tmr = setTimeout(loadContacts, 250); });
@@ -226,6 +273,7 @@
     v.innerHTML = `<div class="toolbar"><h2 class="page-title" style="margin:0;flex:1;min-width:140px;">Satış Pipeline</h2>
       ${sourceSelect("pipeSource")}
       ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.dealModal()"><i class="bi bi-plus-lg"></i> Yeni Fırsat</button>' : ""}
+      ${ioButtons("deals")}
       </div><div id="kanban" class="kanban"><div class="empty">Yükleniyor…</div></div>`;
     const ps = el("pipeSource");
     if (ps) {
@@ -762,6 +810,7 @@
     delCompany, delContact, delDeal, delTask,
     toggleTask, closeDeal, addActivity, togglePin, delActivity,
     dragDeal, allowDrop, dropDeal,
+    exportXlsx, importModal,
   };
   window.closeDrawer = closeDrawer;
   window.closeModal = closeModal;
