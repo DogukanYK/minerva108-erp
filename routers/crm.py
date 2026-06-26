@@ -89,8 +89,9 @@ def _source_filter(query, model, source: Optional[str]):
     if not source or source == "all":
         return query
     if source == "manual":
-        # "Elle" = Meta/Kommo dışı her şey (elle girilen + içe aktarılan + NULL)
-        return query.filter(or_(model.source.is_(None), model.source.notin_(["meta", "kommo"])))
+        # "Elle" = bilinen kanal/Kommo dışı her şey (elle girilen + içe aktarılan + NULL)
+        return query.filter(or_(model.source.is_(None),
+                                model.source.notin_(["whatsapp", "instagram", "facebook", "meta", "kommo"])))
     return query.filter(model.source == source)
 
 

@@ -68,7 +68,8 @@ def fmt_iso(dt: Optional[datetime]) -> Optional[str]:
 # ─── Kaynak (source) etiketleri — Meta / Kommo / Elle ────────────────────────
 # Meta = Facebook/Instagram reklam lead'leri (Kommo'da 'fb…'/'ig…' etiketi).
 # Kommo = Kommo'dan gelen diğer kayıtlar.  Elle = CRM'de elle oluşturulan (NULL/manual).
-SOURCE_LABELS = {"meta": "Meta", "kommo": "Kommo", "manual": "Elle"}
+SOURCE_LABELS = {"whatsapp": "WhatsApp", "instagram": "Instagram", "facebook": "Facebook",
+                 "meta": "Meta", "kommo": "Kommo", "manual": "Elle"}
 
 
 def source_label(s) -> str:

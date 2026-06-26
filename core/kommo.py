@@ -111,16 +111,47 @@ def _cf(entity: dict, code: str) -> Optional[str]:
     return None
 
 
-# Meta (Facebook/Instagram) reklam lead'leri Kommo'da 'fb…'/'ig…' etiketiyle gelir.
-_META_TAG_RE = re.compile(r"^(fb|ig)", re.IGNORECASE)
+# Kaynak/kanal taksonomisi: whatsapp / instagram / facebook / kommo / manual.
+# Facebook/Instagram reklam lead'leri Kommo'da 'fb…'/'ig…' etiketiyle gelir.
+_CHANNELS = ("whatsapp", "instagram", "facebook")
 
 
 def _source_from_tags(entity: dict) -> str:
-    """Entity etiketlerine bakıp kaynağı belirle: 'meta' (fb/ig etiketi) yoksa 'kommo'."""
+    """Lead etiketlerinden kanal: 'fb…'→facebook, 'ig…'→instagram; yoksa 'kommo'."""
     for t in ((entity.get("_embedded") or {}).get("tags") or []):
-        if _META_TAG_RE.match((t.get("name") or "").strip()):
-            return "meta"
+        n = (t.get("name") or "").strip().lower()
+        if n.startswith("ig") or n.startswith("insta"):
+            return "instagram"
+        if n.startswith("fb") or n.startswith("face"):
+            return "facebook"
     return "kommo"
+
+
+def _origin_to_channel(origin) -> Optional[str]:
+    """Kommo sohbet mesajı origin'ini kanala çevir.  Bilinmeyen → None (dokunma)."""
+    o = (origin or "").strip().lower()
+    if not o:
+        return None
+    if "waba" in o or "whats" in o or o in ("wa", "wz"):
+        return "whatsapp"
+    if "insta" in o or o == "ig":
+        return "instagram"
+    if "face" in o or "messenger" in o or "fbmessenger" in o or o == "fb":
+        return "facebook"
+    return None
+
+
+def _apply_channel(db: Session, channel: Optional[str], deal_id, contact_id, company_id) -> None:
+    """Kanalı ilgili kayıtlara yaz — mevcut kaynak zaten bir kanal DEĞİLSE yükselt
+    (kanallar yapışkan; kommo/manual/NULL üzerine yazılır, kanal üzerine yazılmaz)."""
+    if channel not in _CHANNELS:
+        return
+    for model, oid in ((CrmDeal, deal_id), (CrmContact, contact_id), (CrmCompany, company_id)):
+        if not oid:
+            continue
+        row = db.query(model).filter(model.id == oid).first()
+        if row and (row.source not in _CHANNELS):
+            row.source = channel
 
 
 # ─── Aşama çözümü (Kommo status → CrmStage) ──────────────────────────────────
@@ -229,19 +260,14 @@ def upsert_lead(db: Session, kl: dict, status_names: dict) -> CrmDeal:
         if row:
             d.contact_id = row[0]
     src = _source_from_tags(kl)
-    d.source = src
-    # Meta YAYILIMI: 'fb…'/'ig…' etiketi Kommo'da yalnızca LEAD'de olur; bağlı
-    # kişi/firmada etiket yoktur.  Bu yüzden meta lead'in kişisini + firmasını da
-    # "meta" işaretle (yalnızca yükselt — meta'yı kommo'ya düşürme).
-    if src == "meta":
-        if d.contact_id:
-            ct = db.query(CrmContact).filter(CrmContact.id == d.contact_id).first()
-            if ct and ct.source != "meta":
-                ct.source = "meta"
-        if d.company_id:
-            co = db.query(CrmCompany).filter(CrmCompany.id == d.company_id).first()
-            if co and co.source != "meta":
-                co.source = "meta"
+    # Yalnızca kanal tespit edildiyse damgala — 'kommo' ise dokunma (sohbet
+    # origin'i daha sonra whatsapp/instagram/facebook'u kesin belirler).
+    if src in _CHANNELS:
+        d.source = src
+        # Etiket Kommo'da yalnızca LEAD'de; bağlı kişi/firmaya da yay (yükselt-only).
+        _apply_channel(db, src, d.id, d.contact_id, d.company_id)
+    elif not d.source:
+        d.source = "kommo"
     db.flush()
     return d
 
@@ -266,26 +292,31 @@ def _ingest_chat_event(db: Session, ev: dict) -> bool:
     eid = ev.get("id")
     if eid is None:
         return False
+    etype = ev.get("entity_type")
+    try:
+        ent_id = int(ev.get("entity_id")) if ev.get("entity_id") is not None else None
+    except (TypeError, ValueError):
+        ent_id = None
+    deal_id = contact_id = company_id = None
+    if etype == "lead" and ent_id:
+        row = db.query(CrmDeal.id, CrmDeal.contact_id, CrmDeal.company_id).filter(CrmDeal.kommo_id == ent_id).first()
+        if row:
+            deal_id, contact_id, company_id = row
+    elif etype == "contact" and ent_id:
+        row = db.query(CrmContact.id, CrmContact.company_id).filter(CrmContact.kommo_id == ent_id).first()
+        if row:
+            contact_id, company_id = row[0], row[1]
+    if not deal_id and not contact_id:
+        return False                       # ilişkilendirilemeyen mesajı atla
+    # origin → kanal: kaynağı güncelle (DEDUP'tan bağımsız; tam senkronda eski
+    # kayıtlar da yeniden sınıflanır — waba→whatsapp, instagram, facebook).
+    va = ev.get("value_after")
+    msg = (va[0].get("message") if (isinstance(va, list) and va and isinstance(va[0], dict)) else None) or {}
+    _apply_channel(db, _origin_to_channel(msg.get("origin")), deal_id, contact_id, company_id)
+    # aktivite — tekrar senkronda çift kayıt yok
     ext = f"kommo_evt_{eid}"
     if db.query(CrmActivity.id).filter(CrmActivity.external_id == ext).first():
         return False
-    etype = ev.get("entity_type")
-    ent_id = ev.get("entity_id")
-    deal_id = contact_id = None
-    try:
-        ent_id = int(ent_id) if ent_id is not None else None
-    except (TypeError, ValueError):
-        ent_id = None
-    if etype == "lead" and ent_id:
-        row = db.query(CrmDeal.id, CrmDeal.contact_id).filter(CrmDeal.kommo_id == ent_id).first()
-        if row:
-            deal_id, contact_id = row[0], row[1]
-    elif etype == "contact" and ent_id:
-        row = db.query(CrmContact.id).filter(CrmContact.kommo_id == ent_id).first()
-        if row:
-            contact_id = row[0]
-    if not deal_id and not contact_id:
-        return False                       # ilişkilendirilemeyen mesajı atla
     incoming = (ev.get("type") == "incoming_chat_message")
     ts = ev.get("created_at")
     try:
@@ -308,7 +339,7 @@ def _sync_chat_events(db: Session, client: httpx.Client, since_epoch: Optional[i
     if since_epoch:
         params["filter[created_at][from]"] = int(since_epoch)
     created, page = 0, 1
-    while page <= 20:                      # ~5000 olay tavanı (güvenlik)
+    while page <= 40:                      # ~10000 olay tavanı (kanal sınıflama kapsamı)
         params["page"] = page
         try:
             data = _get_page(client, "/events", params)

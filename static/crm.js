@@ -23,7 +23,7 @@
   function initials(name) { return (name || "?").trim().charAt(0).toUpperCase(); }
 
   // Kaynak rozeti + filtre — Meta / Kommo / Elle
-  const SOURCE_PILL = { meta: "pill-b", kommo: "pill-g", manual: "pill-gray" };
+  const SOURCE_PILL = { whatsapp: "pill-g", instagram: "pill-b", facebook: "pill-b", meta: "pill-b", kommo: "pill-gray", manual: "pill-gray" };
   function sourcePill(row) {
     const s = row.source || "manual";
     return `<span class="pill ${SOURCE_PILL[s] || "pill-gray"}">${esc(row.source_label || "Elle")}</span>`;
@@ -31,7 +31,9 @@
   function sourceSelect(id) {
     return `<select class="ipt" id="${id}" style="max-width:150px;" title="Kaynağa göre filtrele">
       <option value="">Tüm kaynaklar</option>
-      <option value="meta">Meta</option>
+      <option value="whatsapp">WhatsApp</option>
+      <option value="instagram">Instagram</option>
+      <option value="facebook">Facebook</option>
       <option value="kommo">Kommo</option>
       <option value="manual">Elle girilen</option></select>`;
   }

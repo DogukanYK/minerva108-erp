@@ -123,7 +123,7 @@ def test_meta_source_from_fb_tag(db_session, monkeypatch):
     monkeypatch.setattr(K, "_load_status_names", lambda c: {})
 
     K.run_sync(db_session)
-    assert db_session.query(CrmDeal).filter(CrmDeal.kommo_id == 7777).one().source == "meta"
+    assert db_session.query(CrmDeal).filter(CrmDeal.kommo_id == 7777).one().source == "facebook"
     assert db_session.query(CrmDeal).filter(CrmDeal.kommo_id == 7778).one().source == "kommo"
 
 
@@ -149,9 +149,26 @@ def test_meta_propagates_to_contact_and_company(db_session, monkeypatch):
     monkeypatch.setattr(K, "_sync_chat_events", lambda db, c, s: 0)
 
     K.run_sync(db_session)
-    assert db_session.query(CrmDeal).filter(CrmDeal.kommo_id == 7100).one().source == "meta"
-    assert db_session.query(CrmContact).filter(CrmContact.kommo_id == 8100).one().source == "meta"
-    assert db_session.query(CrmCompany).filter(CrmCompany.kommo_id == 9100).one().source == "meta"
+    assert db_session.query(CrmDeal).filter(CrmDeal.kommo_id == 7100).one().source == "facebook"
+    assert db_session.query(CrmContact).filter(CrmContact.kommo_id == 8100).one().source == "facebook"
+    assert db_session.query(CrmCompany).filter(CrmCompany.kommo_id == 9100).one().source == "facebook"
+
+
+def test_chat_origin_sets_whatsapp_channel(db_session):
+    # waba origin'li sohbet olayı → bağlı deal/kişi/firma kaynağı 'whatsapp'.
+    co = CrmCompany(name="WA Co", kommo_id=9200, source="kommo")
+    ct = CrmContact(full_name="WA Kişi", kommo_id=8200, company_id=None, source="kommo")
+    db_session.add_all([co, ct]); db_session.flush()
+    ct.company_id = co.id
+    d = CrmDeal(title="WA Lead", kommo_id=7200, contact_id=ct.id, company_id=co.id, source="kommo")
+    db_session.add(d); db_session.commit()
+    ev = {"id": 990010, "type": "incoming_chat_message", "entity_type": "lead", "entity_id": 7200,
+          "created_at": 1782200000, "value_after": [{"message": {"origin": "waba", "talk_id": 1}}]}
+    K._ingest_chat_event(db_session, ev)
+    db_session.commit()
+    assert db_session.query(CrmDeal).filter(CrmDeal.kommo_id == 7200).one().source == "whatsapp"
+    assert db_session.query(CrmContact).filter(CrmContact.kommo_id == 8200).one().source == "whatsapp"
+    assert db_session.query(CrmCompany).filter(CrmCompany.kommo_id == 9200).one().source == "whatsapp"
 
 
 def test_source_filter_companies(authed_client: TestClient, db_session):
