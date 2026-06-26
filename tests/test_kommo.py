@@ -127,6 +127,33 @@ def test_meta_source_from_fb_tag(db_session, monkeypatch):
     assert db_session.query(CrmDeal).filter(CrmDeal.kommo_id == 7778).one().source == "kommo"
 
 
+def test_meta_propagates_to_contact_and_company(db_session, monkeypatch):
+    # 'fb' etiketi Kommo'da yalnızca LEAD'de; bağlı kişi/firma da "meta" olmalı.
+    _setup_env(monkeypatch)
+    company = {"id": 9100, "name": "Meta Co"}
+    contact = {"id": 8100, "name": "Meta Kişi", "_embedded": {"companies": [{"id": 9100}]}}
+    lead = {"id": 7100, "name": "Meta Lead", "price": 0, "status_id": None,
+            "_embedded": {"tags": [{"name": "fb999"}], "contacts": [{"id": 8100}],
+                          "companies": [{"id": 9100}]}}
+
+    def fake(client, path, key, extra=None):
+        if key == "companies" and "companies" in path:
+            return iter([company])
+        if key == "contacts":
+            return iter([contact])
+        if key == "leads":
+            return iter([lead])
+        return iter([])
+    monkeypatch.setattr(K, "_iter_entities", fake)
+    monkeypatch.setattr(K, "_load_status_names", lambda c: {})
+    monkeypatch.setattr(K, "_sync_chat_events", lambda db, c, s: 0)
+
+    K.run_sync(db_session)
+    assert db_session.query(CrmDeal).filter(CrmDeal.kommo_id == 7100).one().source == "meta"
+    assert db_session.query(CrmContact).filter(CrmContact.kommo_id == 8100).one().source == "meta"
+    assert db_session.query(CrmCompany).filter(CrmCompany.kommo_id == 9100).one().source == "meta"
+
+
 def test_source_filter_companies(authed_client: TestClient, db_session):
     from database import CrmCompany
     db_session.add(CrmCompany(name="Meta Co", source="meta"))

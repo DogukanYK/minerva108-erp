@@ -228,7 +228,20 @@ def upsert_lead(db: Session, kl: dict, status_names: dict) -> CrmDeal:
         row = db.query(CrmContact.id).filter(CrmContact.kommo_id == int(cts[0]["id"])).first()
         if row:
             d.contact_id = row[0]
-    d.source = _source_from_tags(kl)
+    src = _source_from_tags(kl)
+    d.source = src
+    # Meta YAYILIMI: 'fb…'/'ig…' etiketi Kommo'da yalnızca LEAD'de olur; bağlı
+    # kişi/firmada etiket yoktur.  Bu yüzden meta lead'in kişisini + firmasını da
+    # "meta" işaretle (yalnızca yükselt — meta'yı kommo'ya düşürme).
+    if src == "meta":
+        if d.contact_id:
+            ct = db.query(CrmContact).filter(CrmContact.id == d.contact_id).first()
+            if ct and ct.source != "meta":
+                ct.source = "meta"
+        if d.company_id:
+            co = db.query(CrmCompany).filter(CrmCompany.id == d.company_id).first()
+            if co and co.source != "meta":
+                co.source = "meta"
     db.flush()
     return d
 
