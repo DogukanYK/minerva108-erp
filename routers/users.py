@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from database import get_db, User, to_tr
+from database import get_db, User, to_tr, AppSetting
 from core.limiter import limiter
 from core.audit import log_admin_event
 from core.password_strength import validate_password_strength
@@ -24,6 +24,10 @@ from core.permissions import (
     PERMISSION_CATEGORIES,
     _resolve_permissions,
     require_permission,
+    ROLE_KEYS,
+    _ROLE_LABELS,
+    get_role_labels,
+    invalidate_role_labels,
 )
 
 router = APIRouter(prefix="/api", tags=["users"])
@@ -329,3 +333,47 @@ def admin_audit_log_feed(
         }
         for r in rows
     ]
+
+
+# ─── Rol etiketleri (özelleştirilebilir görünen adlar) ───────────────────────
+
+class RoleLabelsUpdate(BaseModel):
+    labels: dict = Field(default_factory=dict)   # {role_key: "Görünen Ad"}
+
+
+@router.get("/admin/role-labels")
+def list_role_labels(db: Session = Depends(get_db),
+                     _: dict = Depends(require_permission("admin", "view"))):
+    """Tüm roller için varsayılan + güncel (özelleştirilmiş) görünen ad."""
+    cur = get_role_labels(db)
+    return {"roles": [{"key": k, "default": _ROLE_LABELS.get(k, k), "label": cur.get(k, k)}
+                      for k in ROLE_KEYS]}
+
+
+@router.put("/admin/role-labels")
+def update_role_labels(data: RoleLabelsUpdate, request: Request,
+                       db: Session = Depends(get_db),
+                       current_user: dict = Depends(require_permission("admin", "edit"))):
+    """Rol görünen adlarını güncelle.  Rol ANAHTARI (yetki) değişmez — yalnızca etiket."""
+    for key, val in (data.labels or {}).items():
+        if key not in ROLE_KEYS:
+            continue
+        label = (val or "").strip()[:60]
+        skey = f"role_label.{key}"
+        row = db.query(AppSetting).filter(AppSetting.key == skey).first()
+        if not label or label == _ROLE_LABELS.get(key):
+            if row:                       # boş ya da varsayılana eşit → override kaldır
+                db.delete(row)
+        elif row:
+            row.value = label
+        else:
+            db.add(AppSetting(key=skey, value=label))
+    db.commit()
+    invalidate_role_labels()
+    log_admin_event(db, request, current_user,
+                    action="role_labels.update",
+                    target_type="settings", target_name="Rol etiketleri",
+                    details={"labels": data.labels})
+    cur = get_role_labels(db)
+    return {"roles": [{"key": k, "default": _ROLE_LABELS.get(k, k), "label": cur.get(k, k)}
+                      for k in ROLE_KEYS]}

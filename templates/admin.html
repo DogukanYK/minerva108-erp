@@ -13,6 +13,7 @@
   <script>
     window.PERMS = {{ permissions | tojson }};
     window.DOMAIN = {{ domain | tojson }};
+    window.ROLE_LABELS = {{ role_labels | tojson }};   // özelleştirilebilir rol etiketleri
     window.can = function (category, action) {
       const cat = window.PERMS && window.PERMS[category];
       return !!(cat && cat[action]);
@@ -482,6 +483,10 @@
         <button class="btn-primary-gold" onclick="openAddModal()">
           <i class="bi bi-person-plus-fill"></i> Yeni Kullanıcı Ekle
         </button>
+        <button type="button" onclick="openRoleLabelsModal()"
+          style="display:inline-flex;align-items:center;gap:0.4rem;padding:0.6rem 1rem;background:#fff;color:#232E6E;border:1.5px solid #e5e7eb;border-radius:9px;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer;">
+          <i class="bi bi-tags"></i> Rol İsimleri
+        </button>
         <div class="search-box">
           <i class="bi bi-search"></i>
           <input type="text" id="searchInput" placeholder="Kullanıcı ara…" />
@@ -606,6 +611,32 @@
   <div id="toast-container"></div>
 
   <!-- ════ MODAL: YENİ KULLANICI EKLE ════ -->
+  <!-- Rol İsimleri modal -->
+  <div class="modal fade" id="roleLabelsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-tags"></i> Rol İsimlerini Düzenle</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:0.83rem;color:#6b7280;margin-bottom:0.9rem;">
+            Rollerin <b>görünen adlarını</b> buradan değiştirebilirsin. Rolün yetkileri
+            (anahtarı) değişmez — yalnızca ekranda görünen etiket güncellenir. Boş bırakırsan
+            varsayılana döner.
+          </p>
+          <div id="roleLabelsBody"><div style="color:#9ca3af;">Yükleniyor…</div></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">İptal</button>
+          <button type="button" class="btn-primary-gold" id="saveRoleLabelsBtn" onclick="saveRoleLabels()">
+            <i class="bi bi-check2"></i> Kaydet
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal fade" id="addUserModal" tabindex="-1" aria-labelledby="addUserModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
@@ -820,7 +851,8 @@
         'LabTech':    ['role-labtech',    '<i class="bi bi-eyedropper"></i>',        'Lab Teknisyeni'],
         'Staff':      ['role-staff',      '<i class="bi bi-person-fill"></i>',       'Personel'],
       };
-      const [cls, icon, label] = map[role] || ['role-staff', '<i class="bi bi-person-fill"></i>', role];
+      const [cls, icon, dflt] = map[role] || ['role-staff', '<i class="bi bi-person-fill"></i>', role];
+      const label = (window.ROLE_LABELS && window.ROLE_LABELS[role]) || dflt;
       return `<span class="role-badge ${cls}">${icon} ${label}</span>`;
     }
 
@@ -1684,8 +1716,58 @@
       catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
     });
 
+    /* ── Rol etiketleri (özelleştirilebilir görünen adlar) ── */
+    function applyRoleLabels() {
+      ['addRole', 'editRole'].forEach(function (id) {
+        var sel = document.getElementById(id);
+        if (!sel) return;
+        Array.prototype.forEach.call(sel.options, function (o) {
+          if (window.ROLE_LABELS && window.ROLE_LABELS[o.value]) o.textContent = window.ROLE_LABELS[o.value];
+        });
+      });
+    }
+    async function openRoleLabelsModal() {
+      var body = document.getElementById('roleLabelsBody');
+      body.innerHTML = '<div style="color:#9ca3af;">Yükleniyor…</div>';
+      new bootstrap.Modal(document.getElementById('roleLabelsModal')).show();
+      try {
+        var d = await (await fetch('/api/admin/role-labels')).json();
+        body.innerHTML = (d.roles || []).map(function (r) {
+          return '<div style="margin-bottom:0.75rem;">'
+            + '<label class="form-label-sm">' + escHtml(r.default)
+            + ' <span style="color:#9ca3af;font-weight:400;">(' + escHtml(r.key) + ')</span></label>'
+            + '<input type="text" class="form-control role-label-input" data-key="' + escHtml(r.key)
+            + '" value="' + escHtml(r.label) + '" maxlength="60" placeholder="' + escHtml(r.default) + '">'
+            + '</div>';
+        }).join('');
+      } catch (e) { body.innerHTML = '<div style="color:#b91c1c;">Yüklenemedi.</div>'; }
+    }
+    async function saveRoleLabels() {
+      var labels = {};
+      document.querySelectorAll('#roleLabelsBody .role-label-input').forEach(function (i) {
+        labels[i.dataset.key] = i.value.trim();
+      });
+      var btn = document.getElementById('saveRoleLabelsBtn'); btn.disabled = true;
+      try {
+        var r = await fetch('/api/admin/role-labels', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ labels: labels })
+        });
+        var d = await r.json();
+        if (!r.ok) { showToast(d.detail || 'Kaydedilemedi.'); return; }
+        window.ROLE_LABELS = window.ROLE_LABELS || {};
+        (d.roles || []).forEach(function (x) { window.ROLE_LABELS[x.key] = x.label; });
+        applyRoleLabels();
+        loadUsers();   // rozetleri yeni etiketle yeniden çiz
+        bootstrap.Modal.getInstance(document.getElementById('roleLabelsModal')).hide();
+        showToast('Rol isimleri güncellendi. (Üst bardaki etiket için sayfayı yenile.)', 'success');
+      } catch (e) { showToast('Sunucuya bağlanılamadı.'); }
+      finally { btn.disabled = false; }
+    }
+
     /* ── Init ── */
     loadUsers();
+    applyRoleLabels();
   </script>
 
 </body>

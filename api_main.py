@@ -33,7 +33,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from database import init_db, get_db, User, log_system_event
 from core.auth import decode_token
 from core.limiter import limiter
-from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions
+from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions, get_role_labels
 from core.scheduler import start_scheduler, stop_scheduler
 
 from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router
@@ -298,7 +298,8 @@ def _page_ctx(request: Request, payload: dict, user: User) -> dict:
         "username":     payload.get("username"),
         "full_name":    payload.get("full_name"),
         "role":         role,
-        "role_label":   _ROLE_LABELS.get(role, role),
+        "role_label":   get_role_labels().get(role, role),   # özelleştirilebilir etiket
+        "role_labels":  get_role_labels(),                   # tüm rol→etiket (templates: window.ROLE_LABELS)
         "user_id":      user.id,
         "permissions":  perms,    # full dict — useful for debug/advanced template logic
         "can":          _can,     # callable — primary template API

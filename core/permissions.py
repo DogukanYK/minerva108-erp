@@ -27,7 +27,47 @@ _ROLE_LABELS = {
     "Manager":    "Yönetici",
     "LabLead":    "Lab Sorumlusu",
     "LabTech":    "Lab Teknisyeni",
+    "Staff":      "Personel",
 }
+
+# Rollerin GÖRÜNEN ADLARI SuperAdmin tarafından özelleştirilebilir
+# (app_setting key='role_label.<rol>').  Rol ANAHTARI (yetkiyi belirleyen) asla
+# değişmez — yalnızca etiket.  Süreç-içi cache; güncellemede invalidate edilir.
+ROLE_KEYS = ["SuperAdmin", "Manager", "LabLead", "LabTech", "Staff"]
+_role_label_cache = None
+
+
+def get_role_labels(db=None) -> dict:
+    """Varsayılan + (varsa) özelleştirilmiş rol etiketleri.  db verilmezse
+    süreç-içi cache'ten döner (yoksa kısa bir oturum açıp doldurur)."""
+    global _role_label_cache
+    if db is None and _role_label_cache is not None:
+        return dict(_role_label_cache)
+    labels = dict(_ROLE_LABELS)
+    own = False
+    if db is None:
+        from database import SessionLocal
+        db = SessionLocal()
+        own = True
+    try:
+        from database import AppSetting
+        for s in db.query(AppSetting).filter(AppSetting.key.like("role_label.%")).all():
+            k = s.key.split(".", 1)[1]
+            if k in _ROLE_LABELS and (s.value or "").strip():
+                labels[k] = s.value.strip()
+    except Exception:
+        pass
+    finally:
+        if own:
+            db.close()
+    _role_label_cache = dict(labels)
+    return dict(labels)
+
+
+def invalidate_role_labels():
+    """Rol etiketi güncellendiğinde cache'i temizle (sonraki okuma DB'den)."""
+    global _role_label_cache
+    _role_label_cache = None
 
 _CAN_DELETE       = ["SuperAdmin", "LabLead"]
 _CAN_EDIT_RECIPES = ["SuperAdmin", "LabLead"]

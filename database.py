@@ -79,6 +79,17 @@ class User(Base):
     idle_timeout_minutes  = Column(Integer, nullable=True)
 
 
+class AppSetting(Base):
+    """Genel anahtar-değer ayar tablosu (SuperAdmin tarafından düzenlenir).
+    Örn. özelleştirilebilir rol etiketleri: key='role_label.SuperAdmin',
+    value='Patron'.  Tek satırlık ayarlar burada toplanır."""
+    __tablename__ = "app_setting"
+
+    key        = Column(String(80), primary_key=True)
+    value      = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Supplier(Base):
     __tablename__ = "suppliers"
 
