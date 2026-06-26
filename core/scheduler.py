@@ -163,6 +163,27 @@ def kommo_periodic_sync() -> None:
         db.close()
 
 
+def kommo_nightly_full_sync() -> None:
+    """
+    Gecelik job (03:00): Kommo yapılandırılmışsa TAM içe aktarma çalıştırır —
+    tüm firma/kişi/fırsatları baştan çekip kaynakları (Meta yayılımı dahil)
+    yeniden hesaplar.  15 dk'lık delta gün içi anlık tutar; bu gecelik tam çekim
+    "her şey yerinde mi" garantisi verir (kaçan kayıt / mantık değişikliği telafisi).
+    İdempotent (kommo_id upsert) — çift kayıt oluşmaz.
+    """
+    from core import kommo as K
+    if not K.is_configured():
+        return
+    db = SessionLocal()
+    try:
+        counts = K.run_sync(db, since_epoch=None)
+        logger.info("kommo_nightly_full_sync tamam: %s", counts)
+    except Exception:
+        logger.exception("kommo_nightly_full_sync failed")
+    finally:
+        db.close()
+
+
 def monthly_stock_snapshot() -> None:
     """
     Aylık job: her ayın 1'i 00:30'da bir önceki ayın stok durumunu
@@ -230,14 +251,22 @@ def start_scheduler() -> None:
         if _K.is_configured():
             scheduler.add_job(
                 kommo_periodic_sync,
-                CronTrigger(minute="*/15"),       # her 15 dk
+                CronTrigger(minute="*/15"),       # her 15 dk — delta (değişenler)
                 id="kommo_periodic_sync",
                 replace_existing=True,
                 max_instances=1,
                 coalesce=True,
             )
+            scheduler.add_job(
+                kommo_nightly_full_sync,
+                CronTrigger(hour=3, minute=0),    # her gece 03:00 — tam uzlaştırma
+                id="kommo_nightly_full_sync",
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+            )
     except Exception:
-        logger.exception("kommo_periodic_sync job kaydı atlandı")
+        logger.exception("kommo sync job kaydı atlandı")
 
     scheduler.add_job(
         monthly_stock_snapshot,
