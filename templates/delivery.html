@@ -8,6 +8,7 @@
     window.PERMS = {{ permissions | tojson }};
     window.DOMAIN = {{ domain | tojson }};
     window.CAN_DISPATCH = {{ 'true' if can('inventory','adjust') else 'false' }};
+    window.IS_SUPERADMIN = {{ 'true' if role == 'SuperAdmin' else 'false' }};
     window.can = function (category, action) {
       const cat = window.PERMS && window.PERMS[category];
       return !!(cat && cat[action]);
@@ -161,9 +162,10 @@
                 <i class="bi bi-camera-fill" style="font-size:1.15rem;"></i> Telefon Kamerasıyla Tara
               </button>
               <div id="scanBanner" style="display:none;margin-top:0.7rem;padding:0.7rem 0.9rem;border-radius:10px;font-size:0.92rem;font-weight:600;"></div>
-              <div style="margin-top:0.6rem;position:relative;">
-                <input type="text" id="manual" class="ipt" placeholder="Barkodsuz ürün? Ada göre ara…" autocomplete="off" />
-                <div id="matches" style="position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,0.1);z-index:20;max-height:240px;overflow-y:auto;display:none;"></div>
+              <div style="margin-top:0.6rem;">
+                <input type="text" id="manual" class="ipt" placeholder="Barkodsuz ürün? Ada göre ara… (Türkçe / İngilizce)" autocomplete="off" style="width:100%;" />
+                <!-- Sonuçlar INLINE (akışta) — kartın overflow:hidden'ı kırpmasın -->
+                <div id="matches" style="margin-top:0.35rem;background:#fff;border:1px solid #e5e7eb;border-radius:8px;max-height:280px;overflow-y:auto;display:none;"></div>
               </div>
               <div id="scanHint" class="muted" style="margin-top:0.5rem;">Hazır — okutmaya başla.</div>
             </div>
@@ -203,20 +205,52 @@
               </div>
               <div style="display:flex;gap:0.7rem;margin-bottom:0.7rem;">
                 <div style="flex:1;"><label class="lbl">Tür</label>
-                  <select id="rType" class="ipt"><option value="hediye">Hediye</option><option value="numune">Numune</option><option value="diger">Diğer</option></select></div>
+                  <select id="rType" class="ipt" onchange="onTypeChange()">
+                    <option value="hediye">Hediye</option>
+                    <option value="numune">Numune</option>
+                    <option value="proforma">Proforma Fatura</option>
+                    <option value="diger">Diğer</option>
+                  </select></div>
                 <div style="flex:1;"><label class="lbl">Yöntem</label>
                   <select id="rMethod" class="ipt"><option value="elden">Elden</option><option value="kargo">Kargo</option></select></div>
+              </div>
+              <div style="margin-bottom:0.7rem;">
+                <label class="lbl">Belge Dili <span style="color:#ef4444;">*</span></label>
+                <select id="rDocLang" class="ipt">
+                  <option value="">— Seçiniz —</option>
+                  <option value="TR">Türkçe</option>
+                  <option value="EN">İngilizce (English)</option>
+                </select>
+                <div style="font-size:0.72rem;color:#9ca3af;margin-top:0.2rem;">Belgede ürün adları bu dilde yazılır.</div>
+              </div>
+              <!-- Proforma alanları (yalnız Proforma Fatura) -->
+              <div id="proformaFields" style="display:none;border:1px solid #f0e3b8;background:#fffdf5;border-radius:10px;padding:0.7rem;margin-bottom:0.7rem;">
+                <div style="font-size:0.78rem;font-weight:700;color:#92750e;margin-bottom:0.5rem;"><i class="bi bi-receipt"></i> Proforma — müşteri & fiyat · SuperAdmin onayına gider</div>
+                <div style="margin-bottom:0.5rem;"><label class="lbl">Adres</label><input type="text" id="pAddress" class="ipt" placeholder="müşteri adresi"></div>
+                <div style="display:flex;gap:0.6rem;">
+                  <div style="flex:2;"><label class="lbl">Ülke</label><input type="text" id="pCountry" class="ipt" placeholder="ülke"></div>
+                  <div style="flex:1;"><label class="lbl">Para Birimi</label><select id="pCurrency" class="ipt"><option>USD</option><option>EUR</option><option>TRY</option></select></div>
+                </div>
+                <div style="font-size:0.72rem;color:#9ca3af;margin-top:0.4rem;">Her ürünün birim fiyatı ve ağırlığı (ml) aşağıdaki "Teslim Edilecekler" tablosundan girilir.</div>
               </div>
               <div style="margin-bottom:0.9rem;">
                 <label class="lbl">Not</label>
                 <input type="text" id="rNote" class="ipt" placeholder="opsiyonel">
               </div>
               <button type="button" id="completeBtn" class="btn-g" style="width:100%;" onclick="completeDelivery()">
-                <i class="bi bi-check2-circle"></i> Teslimatı Tamamla
+                <i class="bi bi-check2-circle"></i> <span id="completeBtnText">Teslimatı Tamamla</span>
               </button>
               <div id="result" style="margin-top:0.9rem;display:none;"></div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Onay bekleyen proformalar (yalnız SuperAdmin) -->
+      <div class="card2" id="pendingCard" style="display:none;border-color:#fde68a;">
+        <div class="card2-head" style="background:#fffbeb;"><i class="bi bi-hourglass-split"></i><h2>Onay Bekleyen Proformalar</h2></div>
+        <div class="card2-body" id="pendingBody">
+          <div class="muted" style="padding:0.6rem;">Yükleniyor…</div>
         </div>
       </div>
 
@@ -225,7 +259,7 @@
         <div class="card2-head"><i class="bi bi-clock-history"></i><h2>Son Teslimatlar</h2></div>
         <div class="card2-body" style="overflow-x:auto;">
           <table>
-            <thead><tr><th>Belge No</th><th>Alıcı</th><th>Tür</th><th>Yöntem</th><th>Kalem</th><th>Tarih</th><th></th></tr></thead>
+            <thead><tr><th>Belge No</th><th>Alıcı</th><th>Tür</th><th>Durum</th><th>Kalem</th><th>Tarih</th><th></th></tr></thead>
             <tbody id="histBody"><tr><td colspan="7" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
           </table>
         </div>
@@ -325,11 +359,20 @@
       }catch(e){}
     }
 
+    function isProforma(){ return document.getElementById('rType').value === 'proforma'; }
+    function onTypeChange(){
+      const pf=isProforma();
+      document.getElementById('proformaFields').style.display = pf?'block':'none';
+      const t=document.getElementById('completeBtnText'); if(t) t.textContent = pf?'Proformayı Onaya Gönder':'Teslimatı Tamamla';
+      renderCart();
+    }
+    function setCartField(id, field, val){ const row=_cart.find(c=>c.item_id===id); if(row){ row[field]=val; } }
+
     function addToCart(it){
       const id = it.id || it.item_id;
       let row = _cart.find(c => c.item_id === id);
       if(row){ row.qty += 1; }
-      else { _cart.push({ item_id:id, name:it.name, unit:it.unit||'', stock:Number(it.current_stock||0), qty:1 }); }
+      else { _cart.push({ item_id:id, name:it.name, name_tr:it.name_tr||'', unit:it.unit||'', stock:Number(it.current_stock||0), qty:1, unit_price:'', weight_ml:'' }); }
       renderCart(id);
       setHint(`Eklendi: ${it.name}`, false);
       focusScan();
@@ -345,10 +388,14 @@
     function renderCart(flashId){
       const b=document.getElementById('cartBody');
       if(!_cart.length){ b.innerHTML='<tr><td colspan="4" class="muted" style="padding:1rem;">Henüz ürün okutulmadı.</td></tr>'; return; }
+      const pf=isProforma();
       b.innerHTML=_cart.map(c=>{
         const short = c.qty > c.stock;
+        const pfRow = pf ? `<div style="display:flex;gap:0.4rem;margin-top:0.35rem;">
+            <input type="number" step="0.01" min="0" value="${c.unit_price}" placeholder="birim fiyat" oninput="setCartField(${c.item_id},'unit_price',this.value)" style="width:104px;padding:0.25rem 0.45rem;border:1px solid #e5e7eb;border-radius:6px;font-size:0.8rem;">
+            <input type="number" step="0.01" min="0" value="${c.weight_ml}" placeholder="ml" oninput="setCartField(${c.item_id},'weight_ml',this.value)" style="width:74px;padding:0.25rem 0.45rem;border:1px solid #e5e7eb;border-radius:6px;font-size:0.8rem;"></div>` : '';
         return `<tr class="${short?'row-short':''}" data-id="${c.item_id}">
-          <td><b>${esc(c.name)}</b>${short?' <span style="color:#b91c1c;font-size:0.75rem;">(stok yetersiz!)</span>':''}</td>
+          <td><b>${esc(c.name)}</b>${short?' <span style="color:#b91c1c;font-size:0.75rem;">(stok yetersiz!)</span>':''}${pfRow}</td>
           <td class="muted">${fmt(c.stock)} ${esc(c.unit)}</td>
           <td><div class="qty-cell">
             <button class="qbtn" onclick="changeQty(${c.item_id},-1)">−</button>
@@ -367,10 +414,11 @@
       const q=manual.value.trim().toLocaleLowerCase('tr');
       if(q.length<2){ matches.style.display='none'; return; }
       const hits=_items.filter(x=>(x.name||'').toLocaleLowerCase('tr').includes(q)
-                 || (x.barcode||'').toLowerCase().includes(q)).slice(0,12);
+                 || (x.name_tr||'').toLocaleLowerCase('tr').includes(q)
+                 || (x.barcode||'').toLowerCase().includes(q)).slice(0,15);
       if(!hits.length){ matches.innerHTML='<div class="match-row muted">Eşleşme yok</div>'; matches.style.display='block'; return; }
       matches.innerHTML=hits.map(x=>`<div class="match-row" onclick="addManual(${x.id})">
-        <span>${esc(x.name)}</span><span class="muted">${fmt(x.current_stock)} ${esc(x.unit||'')}</span></div>`).join('');
+        <span>${esc(x.name)}${x.name_tr?` <span class="muted" style="font-weight:400;">· ${esc(x.name_tr)}</span>`:''}</span><span class="muted">${fmt(x.current_stock)} ${esc(x.unit||'')}</span></div>`).join('');
       matches.style.display='block';
     });
     function addManual(id){
@@ -383,10 +431,18 @@
     async function completeDelivery(){
       if(!window.CAN_DISPATCH){ showToast('Teslimat çıkışı için yetkiniz yok.'); return; }
       const name=document.getElementById('rName').value.trim();
-      if(name.length<2){ showToast('Alıcı ad-soyad girin.'); return; }
-      if(!_cart.length){ showToast('En az bir ürün okutun.'); return; }
-      const short=_cart.find(c=>c.qty>c.stock);
-      if(short){ showToast(`"${short.name}" için stok yetersiz (${fmt(short.stock)}).`); return; }
+      if(name.length<2){ showToast('Alıcı / müşteri adı girin.'); return; }
+      if(!_cart.length){ showToast('En az bir ürün ekleyin.'); return; }
+      const docLang=document.getElementById('rDocLang').value;
+      if(!docLang){ showToast('Belge dilini seçin (Türkçe / İngilizce).'); return; }
+      const pf=isProforma();
+      if(!pf){
+        const short=_cart.find(c=>c.qty>c.stock);
+        if(short){ showToast(`"${short.name}" için stok yetersiz (${fmt(short.stock)}).`); return; }
+      } else {
+        const noPrice=_cart.find(c=>!(parseFloat(c.unit_price)>0));
+        if(noPrice){ showToast(`"${noPrice.name}" için birim fiyat girin.`); return; }
+      }
       const btn=document.getElementById('completeBtn'); btn.disabled=true; btn.innerHTML='<i class="bi bi-hourglass-split"></i> İşleniyor…';
       const payload={
         recipient_name:name,
@@ -395,27 +451,59 @@
         delivery_type:document.getElementById('rType').value,
         method:document.getElementById('rMethod').value,
         note:document.getElementById('rNote').value.trim(),
-        items:_cart.map(c=>({item_id:c.item_id, quantity:c.qty})),
+        doc_lang:docLang,
+        items:_cart.map(c=>({item_id:c.item_id, quantity:c.qty,
+                             unit_price: pf?(parseFloat(c.unit_price)||0):null,
+                             weight_ml:  pf?(parseFloat(c.weight_ml)||null):null})),
       };
+      if(pf){
+        payload.customer_address=document.getElementById('pAddress').value.trim();
+        payload.customer_country=document.getElementById('pCountry').value.trim();
+        payload.currency=document.getElementById('pCurrency').value;
+      }
       try{
         const r=await fetch('/api/delivery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
         const d=await r.json().catch(()=>({}));
-        if(!r.ok){ showToast(d.detail||'Teslimat oluşturulamadı.'); return; }
-        showResult(d);
-        showToast('Teslimat kaydedildi, stok düşüldü.','success');
+        if(!r.ok){ showToast(d.detail||'Oluşturulamadı.'); return; }
+        showResult(d, pf);
+        showToast(pf?'Proforma oluşturuldu — onaya gönderildi.':'Teslimat kaydedildi, stok düşüldü.','success');
         _cart=[]; renderCart();
-        ['rName','rOrg','rPhone','rNote'].forEach(id=>document.getElementById(id).value='');
-        await Promise.all([loadItems(), loadHistory()]);
+        ['rName','rOrg','rPhone','rNote','pAddress','pCountry'].forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
+        const jobs=[loadItems(), loadHistory()];
+        if(typeof loadPending==='function') jobs.push(loadPending());
+        await Promise.all(jobs);
       }catch{ showToast('Sunucuya bağlanılamadı.'); }
-      finally{ btn.disabled=false; btn.innerHTML='<i class="bi bi-check2-circle"></i> Teslimatı Tamamla'; focusScan(); }
+      finally{ btn.disabled=false; btn.innerHTML='<i class="bi bi-check2-circle"></i> <span id="completeBtnText">'+(isProforma()?'Proformayı Onaya Gönder':'Teslimatı Tamamla')+'</span>'; focusScan(); }
     }
-    function showResult(d){
+    function showResult(d, pf){
       const box=document.getElementById('result');
       box.style.display='block';
-      box.innerHTML=`<div class="res-ok">
-        <div style="font-weight:700;color:#15803d;margin-bottom:0.4rem;"><i class="bi bi-check-circle-fill"></i> Teslimat oluşturuldu — Belge No: ${esc(d.document_no)}</div>
-        <a href="/api/delivery/${d.id}/document?format=pdf" class="btn-o" target="_blank"><i class="bi bi-file-earmark-pdf"></i> Teslim Belgesini İndir (PDF)</a>
-      </div>`;
+      if(pf){
+        box.innerHTML=`<div class="res-ok" style="background:#fffbeb;border-color:#fde68a;">
+          <div style="font-weight:700;color:#92750e;margin-bottom:0.3rem;"><i class="bi bi-hourglass-split"></i> Proforma oluşturuldu — ${esc(d.document_no)}</div>
+          <div style="font-size:0.84rem;color:#6b7280;">SuperAdmin onayına gönderildi. Onaylanınca proforma faturası indirilebilir ve stok düşer.</div>
+        </div>`;
+      } else {
+        box.innerHTML=`<div class="res-ok">
+          <div style="font-weight:700;color:#15803d;margin-bottom:0.4rem;"><i class="bi bi-check-circle-fill"></i> Teslimat oluşturuldu — Belge No: ${esc(d.document_no)}</div>
+          <a href="/api/delivery/${d.id}/document?format=pdf" class="btn-o" target="_blank"><i class="bi bi-file-earmark-pdf"></i> Teslim Belgesini İndir (PDF)</a>
+        </div>`;
+      }
+    }
+
+    /* ── Durum rozeti + satır aksiyonu ── */
+    function statusBadge(x){
+      const map={completed:['#dcfce7','#15803d','Tamamlandı'],pending:['#fef9c3','#92750e','Onay Bekliyor'],
+                 approved:['#dcfce7','#15803d','Onaylandı'],rejected:['#fee2e2','#b91c1c','Reddedildi']};
+      const s=map[x.status]||map.completed;
+      return `<span style="background:${s[0]};color:${s[1]};padding:0.15rem 0.5rem;border-radius:999px;font-size:0.74rem;font-weight:700;white-space:nowrap;">${s[2]}</span>`;
+    }
+    function histAction(x){
+      if(x.delivery_type==='proforma'){
+        if(x.status==='approved') return `<a href="/api/delivery/${x.id}/proforma?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-receipt"></i> Proforma</a>`;
+        return '<span class="muted" style="font-size:0.8rem;">—</span>';
+      }
+      return `<a href="/api/delivery/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a>`;
     }
 
     /* ── Geçmiş ── */
@@ -429,12 +517,65 @@
         b.innerHTML=rows.map(x=>`<tr>
           <td><b>${esc(x.document_no)}</b></td>
           <td>${esc(x.recipient_name)}${x.recipient_org?` <span class="muted">· ${esc(x.recipient_org)}</span>`:''}</td>
-          <td>${esc(x.type_label)}</td><td>${esc(x.method_label)}</td>
+          <td>${esc(x.type_label)}</td>
+          <td>${statusBadge(x)}</td>
           <td>${x.item_count} kalem · ${fmt(x.total_qty)}</td>
           <td class="muted">${esc(x.date)}</td>
-          <td><a href="/api/delivery/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a></td>
+          <td>${histAction(x)}</td>
         </tr>`).join('');
       }catch{ b.innerHTML='<tr><td colspan="7" class="muted" style="padding:1rem;">Yüklenemedi.</td></tr>'; }
+    }
+
+    /* ── Onay bekleyen proformalar (SuperAdmin) ── */
+    async function loadPending(){
+      if(!window.IS_SUPERADMIN) return;
+      const card=document.getElementById('pendingCard'), body=document.getElementById('pendingBody');
+      try{
+        const r=await fetch('/api/delivery/pending');
+        if(!r.ok){ card.style.display='none'; return; }
+        const d=await r.json(); const rows=d.pending||[];
+        if(!rows.length){ card.style.display='none'; return; }
+        card.style.display='block';
+        body.innerHTML=rows.map(p=>{
+          const cur=esc(p.currency||'USD');
+          const total=(p.items||[]).reduce((s,i)=>s+((parseFloat(i.unit_price)||0)*(i.quantity||0)),0);
+          const lines=(p.items||[]).map(i=>`<div style="font-size:0.82rem;">• ${esc(i.item_name)} — ${fmt(i.quantity)} ${esc(i.unit||'')} × ${(parseFloat(i.unit_price)||0).toLocaleString('tr-TR',{minimumFractionDigits:2})} ${cur}${i.weight_ml?` · ${fmt(i.weight_ml)} ml`:''}</div>`).join('');
+          return `<div style="border:1px solid #f0e3b8;border-radius:10px;padding:0.8rem;margin-bottom:0.7rem;background:#fffdf5;">
+            <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;">
+              <div><b>${esc(p.document_no)}</b> · ${esc(p.recipient_org||p.recipient_name)} ${p.customer_country?`<span class="muted">· ${esc(p.customer_country)}</span>`:''}
+                <div class="muted" style="font-size:0.78rem;">Hazırlayan: ${esc(p.dispatched_by||'—')} · ${esc(p.date)} · Belge dili: ${esc(p.doc_lang)}</div></div>
+              <div style="font-weight:700;color:#92750e;">${total.toLocaleString('tr-TR',{minimumFractionDigits:2})} ${cur}</div>
+            </div>
+            <div style="margin:0.5rem 0;">${lines}</div>
+            <div style="display:flex;gap:0.5rem;">
+              <button class="btn-g" style="flex:0 0 auto;padding:0.4rem 0.9rem;" onclick="approveProforma(${p.id})"><i class="bi bi-check2-circle"></i> Onayla</button>
+              <button class="btn-o" style="flex:0 0 auto;padding:0.4rem 0.9rem;color:#b91c1c;border-color:#fca5a5;" onclick="rejectProforma(${p.id})"><i class="bi bi-x-circle"></i> Reddet</button>
+            </div>
+          </div>`;
+        }).join('');
+      }catch{ card.style.display='none'; }
+    }
+    async function approveProforma(id){
+      if(!confirm('Proformayı onaylıyor musunuz? Stok bu işlemde düşecek.')) return;
+      try{
+        const r=await fetch(`/api/delivery/${id}/approve`,{method:'POST',headers:{'X-Requested-With':'1'}});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok){ showToast(d.detail||'Onaylanamadı.'); return; }
+        showToast('Proforma onaylandı, stok düşüldü.','success');
+        await Promise.all([loadPending(), loadHistory(), loadItems()]);
+      }catch{ showToast('Sunucuya bağlanılamadı.'); }
+    }
+    async function rejectProforma(id){
+      const reason=prompt('Red sebebi (opsiyonel):');
+      if(reason===null) return;
+      try{
+        const r=await fetch(`/api/delivery/${id}/reject`,{method:'POST',
+          headers:{'Content-Type':'application/json','X-Requested-With':'1'},body:JSON.stringify({reason})});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok){ showToast(d.detail||'Reddedilemedi.'); return; }
+        showToast('Proforma reddedildi.','success');
+        await Promise.all([loadPending(), loadHistory()]);
+      }catch{ showToast('Sunucuya bağlanılamadı.'); }
     }
 
     document.getElementById('logoutBtn').addEventListener('click', async function(){
@@ -447,6 +588,7 @@
       if(!window.CAN_DISPATCH){ document.getElementById('completeBtn').disabled=true; }
       await loadItems();
       await loadHistory();
+      if(window.IS_SUPERADMIN) loadPending();
       focusScan();
     })();
   </script>

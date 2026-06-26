@@ -55,6 +55,7 @@ router = APIRouter(prefix="/api", tags=["inventory"])
 
 class ItemCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=150)
+    name_tr: Optional[str] = Field(None, max_length=150)   # Türkçe ad (belge dili + çift-dilli arama)
     category: Optional[str] = Field(None, max_length=50)
     unit: str = Field("adet", max_length=20)
     min_stock:      Optional[float] = 0.0
@@ -140,6 +141,7 @@ def list_items(
         {
             "id":              i.id,
             "name":            i.name,
+            "name_tr":         i.name_tr or "",
             "category":        i.category,
             "pkg_type":        i.pkg_type or "",                # Phase 10 — Ambalaj alt-tipi
             "unit":            i.unit,
@@ -210,6 +212,7 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db),
 
     item = Item(
         name=data.name,
+        name_tr=((data.name_tr or "").strip() or None),
         category=data.category,
         unit=data.unit,
         min_stock_level=data.min_stock  or 0.0,
@@ -227,6 +230,71 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db),
     db.commit()
     db.refresh(item)
     return {"id": item.id, "message": "Ürün başarıyla eklendi."}
+
+
+@router.post("/items/import-names")
+async def import_item_names(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("items", "import")),
+):
+    """Excel'den ürünlere Türkçe ad (name_tr) toplu yükle.
+
+    Esnek kolon: bir kolon SKU **veya** mevcut (İngilizce) ad ile eşleştirir,
+    diğer kolon Türkçe ad'dır.  Başlıkta 'türkçe'/'turkish' geçen → TR ad;
+    'sku' geçen → eşleştirici.  Başlık yoksa: 1. kolon eşleştirici, 2. kolon TR.
+    """
+    if not (file.filename or "").lower().endswith((".xlsx", ".xlsm")):
+        return JSONResponse(status_code=400, content={"detail": "Lütfen .xlsx dosyası yükleyin."})
+    data = await file.read()
+    try:
+        import openpyxl
+        from io import BytesIO
+        wb = openpyxl.load_workbook(BytesIO(data), data_only=True, read_only=True)
+        rows = [list(r) for r in wb[wb.sheetnames[0]].iter_rows(values_only=True)]
+    except Exception:
+        return JSONResponse(status_code=400, content={"detail": "Excel okunamadı."})
+    rows = [r for r in rows if r and any(c not in (None, "") for c in r)]
+    if not rows:
+        return JSONResponse(status_code=400, content={"detail": "Dosyada veri satırı yok."})
+
+    hdr = [str(c or "").strip().lower() for c in rows[0]]
+    tr_col = next((i for i, h in enumerate(hdr)
+                   if any(k in h for k in ("türkçe", "turkce", "turkish", "tr ad", "tr_ad"))), None)
+    id_col = next((i for i, h in enumerate(hdr) if any(k in h for k in ("sku", "kod", "code"))), None)
+    if id_col is None:
+        id_col = next((i for i, h in enumerate(hdr)
+                       if any(k in h for k in ("ingilizce", "english", "name", "product"))), None)
+    has_header = (tr_col is not None) or (id_col is not None)
+    if tr_col is None:
+        tr_col = 1
+    if id_col is None:
+        id_col = 0
+    if id_col == tr_col:
+        id_col, tr_col = 0, 1
+    body = rows[1:] if has_header else rows
+
+    from core.supplier_prices import normalize
+    by_sku, by_name = {}, {}
+    for it in db.query(Item).filter(Item.is_active == True).all():
+        if it.sku:
+            by_sku[it.sku.strip().lower()] = it
+        by_name.setdefault(normalize(it.name), it)
+
+    updated, unmatched = 0, []
+    for r in body:
+        ident = str(r[id_col]).strip() if (id_col < len(r) and r[id_col] is not None) else ""
+        tr = str(r[tr_col]).strip() if (tr_col < len(r) and r[tr_col] is not None) else ""
+        if not ident or not tr:
+            continue
+        it = by_sku.get(ident.lower()) or by_name.get(normalize(ident))
+        if not it:
+            unmatched.append(ident)
+            continue
+        it.name_tr = tr[:150]
+        updated += 1
+    db.commit()
+    return {"updated": updated, "unmatched": unmatched[:30], "unmatched_count": len(unmatched)}
 
 
 def _item_delete_blockers(db: Session, item_id: int) -> list[str]:
@@ -370,6 +438,7 @@ def update_item(
     }
 
     item.name            = data.name
+    item.name_tr         = ((data.name_tr or "").strip() or None)
     item.category        = data.category
     item.unit            = data.unit
     item.min_stock_level = data.min_stock  or 0.0

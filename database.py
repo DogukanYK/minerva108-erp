@@ -112,6 +112,7 @@ class Item(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(150), nullable=False)
+    name_tr = Column(String(150), nullable=True)   # Türkçe ad (name = İngilizce/birincil); belge dili + çift-dilli arama
     sku = Column(String(50), unique=True, index=True)
     category = Column(String(50))
     unit = Column(String(20), default="adet")
@@ -250,12 +251,21 @@ class Delivery(Base):
     recipient_name = Column(String(150), nullable=False)        # alıcı ad-soyad (sistemden girilir)
     recipient_org = Column(String(150), nullable=True)          # firma / kurum (opsiyonel)
     recipient_phone = Column(String(40), nullable=True)         # kargo için (opsiyonel)
-    delivery_type = Column(String(20), default="hediye")        # hediye / numune / diğer
+    delivery_type = Column(String(20), default="hediye")        # hediye / numune / diğer / proforma
     method = Column(String(20), default="elden")                # elden / kargo
     note = Column(Text, nullable=True)
-    dispatched_by = Column(String(80), nullable=True)           # teslim eden (audit)
+    dispatched_by = Column(String(80), nullable=True)           # teslim eden / hazırlayan (audit)
+    doc_lang = Column(String(8), default="TR")                  # belge dili: TR / EN (ürün adı dili)
     domain = Column(String(20), default="cosmetics", nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # ── Proforma fatura alanları (yalnız delivery_type='proforma') ──
+    customer_address = Column(Text, nullable=True)
+    customer_country = Column(String(100), nullable=True)
+    currency = Column(String(3), default="USD")                 # USD / EUR / TRY
+    status = Column(String(20), default="completed", index=True)  # completed | pending | approved | rejected
+    approved_by = Column(String(80), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    reject_reason = Column(Text, nullable=True)
 
     items = relationship("DeliveryItem", back_populates="delivery",
                          cascade="all, delete-orphan")
@@ -270,6 +280,8 @@ class DeliveryItem(Base):
     item_name = Column(String(150), nullable=False)   # snapshot (ürün adı sonradan değişse de belge sabit)
     quantity = Column(Float, nullable=False)
     unit = Column(String(20), nullable=True)
+    unit_price = Column(Float, nullable=True)         # proforma — birim fiyat (Delivery.currency)
+    weight_ml = Column(Float, nullable=True)          # proforma — ağırlık/hacim (ml)
 
     delivery = relationship("Delivery", back_populates="items")
     item = relationship("Item", foreign_keys=[item_id])
@@ -968,6 +980,19 @@ def init_db():
             # gelir; drive_file'a folder_id eklenir (kök = NULL).
             "ALTER TABLE drive_file ADD COLUMN folder_id INTEGER",
             "CREATE INDEX IF NOT EXISTS ix_drive_file_folder ON drive_file(folder_id)",
+            # Teslimat: çift-dilli ad + belge dili + proforma fatura alanları
+            "ALTER TABLE items       ADD COLUMN name_tr VARCHAR(150)",
+            "ALTER TABLE deliveries  ADD COLUMN doc_lang VARCHAR(8) DEFAULT 'TR'",
+            "ALTER TABLE deliveries  ADD COLUMN customer_address TEXT",
+            "ALTER TABLE deliveries  ADD COLUMN customer_country VARCHAR(100)",
+            "ALTER TABLE deliveries  ADD COLUMN currency VARCHAR(3) DEFAULT 'USD'",
+            "ALTER TABLE deliveries  ADD COLUMN status VARCHAR(20) DEFAULT 'completed'",
+            "ALTER TABLE deliveries  ADD COLUMN approved_by VARCHAR(80)",
+            "ALTER TABLE deliveries  ADD COLUMN approved_at TIMESTAMP",
+            "ALTER TABLE deliveries  ADD COLUMN reject_reason TEXT",
+            "CREATE INDEX IF NOT EXISTS ix_deliveries_status ON deliveries(status)",
+            "ALTER TABLE delivery_items ADD COLUMN unit_price DOUBLE PRECISION",
+            "ALTER TABLE delivery_items ADD COLUMN weight_ml DOUBLE PRECISION",
         ):
             alter_safe(stmt)
 

@@ -686,6 +686,10 @@
         <button class="btn-excel" data-bs-toggle="modal" data-bs-target="#importModal">
           <i class="bi bi-file-earmark-excel"></i> Excel'den İçe Aktar
         </button>
+        <button class="btn-excel" type="button" onclick="document.getElementById('nameTrInput').click()" title="Excel ile ürünlere Türkçe ad ekle (SKU/İngilizce ad → Türkçe ad)">
+          <i class="bi bi-translate"></i> Türkçe Ad İçe Aktar
+        </button>
+        <input type="file" id="nameTrInput" accept=".xlsx,.xlsm" style="display:none;" onchange="importNameTr(this)">
         {% endif %}
         {% if can('items', 'delete') %}
         <button class="btn-danger-soft" id="bulkDeleteBtn">
@@ -867,8 +871,12 @@
         <div class="modal-body">
           <form id="addItemForm" novalidate>
             <div class="mb-3">
-              <label class="form-label-sm">Ürün Adı *</label>
-              <input type="text" class="form-control" id="itemName" placeholder="Örn: Argan Yağı" required />
+              <label class="form-label-sm">Ürün Adı * <span style="color:#9ca3af;font-weight:400;">(İngilizce/birincil)</span></label>
+              <input type="text" class="form-control" id="itemName" placeholder="Örn: Argan Oil" required />
+            </div>
+            <div class="mb-3">
+              <label class="form-label-sm">Türkçe Ad <span style="color:#9ca3af;font-weight:400;">(belge dili + arama için)</span></label>
+              <input type="text" class="form-control" id="itemNameTr" placeholder="Örn: Argan Yağı" />
             </div>
             <div class="mb-3">
               <label class="form-label-sm">Kategori</label>
@@ -1742,6 +1750,7 @@
       editingItemId = id;
       document.getElementById('addItemModalLabel').textContent = 'Ürün Düzenle';
       document.getElementById('itemName').value      = item.name;
+      document.getElementById('itemNameTr').value    = item.name_tr || '';
       document.getElementById('itemCategory').value  = item.category || '';
       document.getElementById('itemUnit').value      = item.unit || 'adet';
       document.getElementById('itemMinStock').value  = item.min_stock_level ?? 0;
@@ -1848,6 +1857,7 @@
       this.textContent = 'Kaydediliyor…';
       const payload = {
         name,
+        name_tr:        (document.getElementById('itemNameTr')?.value || '').trim() || null,
         category:       document.getElementById('itemCategory').value  || null,
         unit:           document.getElementById('itemUnit').value,
         min_stock:      parseFloat(document.getElementById('itemMinStock').value)  || 0,
@@ -1877,6 +1887,24 @@
         this.textContent = 'Kaydet';
       }
     });
+
+    /* ── Türkçe ad toplu içe aktar (Excel: SKU/İngilizce ad → Türkçe ad) ── */
+    async function importNameTr(input) {
+      const f = input.files && input.files[0];
+      if (!f) return;
+      const fd = new FormData(); fd.append('file', f);
+      showToast('Türkçe adlar içe aktarılıyor…');
+      try {
+        const r = await fetch('/api/items/import-names', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (!r.ok) { showToast(d.detail || 'İçe aktarılamadı.'); return; }
+        let msg = `✓ ${d.updated} ürünün Türkçe adı güncellendi.`;
+        if (d.unmatched_count) msg += ` Eşleşmeyen ${d.unmatched_count}: ${(d.unmatched || []).slice(0, 8).join(', ')}${d.unmatched_count > 8 ? '…' : ''}.`;
+        showToast(msg, 'success');
+        loadItems();
+      } catch { showToast('Sunucuya bağlanılamadı.'); }
+      input.value = '';
+    }
 
     /* ── Phase 9 — Barcode scan wiring ─────────────────────────────────────
        Two entry points share scanner.js's openBarcodeScanner():

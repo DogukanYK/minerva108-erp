@@ -184,6 +184,33 @@ def notify(level: str, category: str, message: str, **context) -> None:
     _emit(level, category, message, **context)
 
 
+def notify_proforma_pending(document_no: str, recipient: str, preparer: str) -> None:
+    """Proforma oluşturuldu → SuperAdmin/Manager onayına düştü."""
+    _emit("info", "PROFORMA",
+          f"Proforma onay bekliyor: {document_no} ({recipient}) — hazırlayan {preparer}",
+          document_no=document_no, recipient=recipient, preparer=preparer)
+    _send_push("managers", {
+        "title": "🧾 Proforma Onayı Bekliyor",
+        "body": f"{document_no} · {recipient} · hazırlayan {preparer}",
+        "tag": f"proforma-{document_no}",
+        "url": "/delivery",
+        "requireInteraction": True,
+    })
+
+
+def notify_proforma_decision(document_no: str, decision: str, by: str) -> None:
+    """Proforma onaylandı / reddedildi → karar bildirimi (yönetim + denetim izi)."""
+    label = "onaylandı" if decision == "approved" else "reddedildi"
+    _emit("info", "PROFORMA", f"Proforma {label}: {document_no} — {by}",
+          document_no=document_no, decision=decision, by=by)
+    _send_push("managers", {
+        "title": "🧾 Proforma " + ("Onaylandı ✓" if decision == "approved" else "Reddedildi ✗"),
+        "body": f"{document_no} · {by}",
+        "tag": f"proforma-{document_no}",
+        "url": "/delivery",
+    })
+
+
 def notify_low_stock(
     item_name: str,
     current_stock: float,

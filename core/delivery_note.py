@@ -7,10 +7,35 @@ paylaşır (Türkçe-uyumlu font).
 """
 from html import escape
 from io import BytesIO
+from pathlib import Path
 
 
-TYPE_LABELS = {"hediye": "Hediye", "numune": "Numune", "diger": "Diğer", "diğer": "Diğer"}
+TYPE_LABELS = {"hediye": "Hediye", "numune": "Numune", "diger": "Diğer", "diğer": "Diğer",
+               "proforma": "Proforma Fatura"}
 METHOD_LABELS = {"elden": "Elden Teslim", "kargo": "Kargo"}
+
+# Antetli kağıt (logo + firma bilgisi).  Belgeler bunun üzerine bindirilir.
+LETTERHEAD = Path(__file__).resolve().parent.parent / "static" / "letterhead.pdf"
+
+
+def merge_letterhead(content: bytes) -> bytes:
+    """reportlab içeriğini antetli kağıdın üzerine bindir (pypdf).  Antetli yoksa
+    ya da hata olursa düz içeriği döndürür (belge yine üretilir)."""
+    try:
+        from pypdf import PdfReader, PdfWriter
+        if not LETTERHEAD.is_file():
+            return content
+        overlay = PdfReader(BytesIO(content))
+        writer = PdfWriter()
+        for pg in overlay.pages:
+            base = PdfReader(str(LETTERHEAD)).pages[0]   # her sayfaya taze antetli
+            base.merge_page(pg)                          # içerik antetlinin ÜSTÜNE
+            writer.add_page(base)
+        out = BytesIO()
+        writer.write(out)
+        return out.getvalue()
+    except Exception:
+        return content
 
 
 def _fmt(n) -> str:
@@ -89,7 +114,7 @@ def render_delivery_pdf(view: dict) -> bytes:
         return t
 
     # Başlık
-    story.append(Paragraph("Minerva 108 — Teslim Belgesi", st_h1))
+    story.append(Paragraph("TESLİM BELGESİ", st_h1))
     story.append(Paragraph(
         f"Belge No: {escape(str(view.get('document_no') or '—'))}  ·  "
         f"Tarih: {escape(str(view.get('date') or '—'))}", st_meta))
@@ -144,7 +169,7 @@ def render_delivery_pdf(view: dict) -> bytes:
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
-        leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=16 * mm,
+        leftMargin=20 * mm, rightMargin=20 * mm, topMargin=48 * mm, bottomMargin=30 * mm,
         title=f"Teslim Belgesi — {view.get('document_no') or ''}", author="Minerva 108 ERP")
     doc.build(story)
-    return buf.getvalue()
+    return merge_letterhead(buf.getvalue())   # antetli kağıt üzerine bindir
