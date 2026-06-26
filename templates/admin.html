@@ -842,6 +842,18 @@
       return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    /* Hata mesajını okunur metne çevir — FastAPI 422 'detail' bir NESNE DİZİSİ
+       döndürür; bunu düzeltmezsek "[object Object]" basılır. */
+    function errMsg(data) {
+      const d = data && data.detail;
+      if (typeof d === 'string') return d;
+      if (Array.isArray(d)) {
+        return d.map(e => (e && (e.msg || e.message)) || '').filter(Boolean).join(' · ');
+      }
+      if (d && typeof d === 'object') return d.msg || d.message || '';
+      return '';
+    }
+
     /* ── Role badge ── */
     function roleBadge(role) {
       const map = {
@@ -1017,7 +1029,7 @@
           body: JSON.stringify({ username, full_name, password, role }),
         });
         const data = await res.json();
-        if (!res.ok) { showToast(data.detail || 'Oluşturma başarısız.'); return; }
+        if (!res.ok) { showToast(errMsg(data) ||'Oluşturma başarısız.'); return; }
         showToast(`${full_name} başarıyla oluşturuldu.`, 'success');
         bootstrap.Modal.getInstance(document.getElementById('addUserModal')).hide();
         loadUsers();
@@ -1070,9 +1082,18 @@
         payload.role      = document.getElementById('editRole').value;
         payload.is_active = document.getElementById('editIsActive').checked;
       }
-      // Idle timeout — boşsa null gönder (sistem default'a düşsün)
+      // Idle timeout — boşsa null (sistem default'a düşsün); aksi halde 1–1440 dk (24 saat)
       const idleVal = document.getElementById('editIdleTimeout').value.trim();
-      payload.idle_timeout_minutes = idleVal === '' ? null : parseInt(idleVal, 10);
+      if (idleVal === '') {
+        payload.idle_timeout_minutes = null;
+      } else {
+        const n = parseInt(idleVal, 10);
+        if (isNaN(n) || n < 1 || n > 1440) {
+          showToast('İnaktiflik süresi 1 ile 1440 dakika (24 saat) arasında olmalı.');
+          return;
+        }
+        payload.idle_timeout_minutes = n;
+      }
 
       const btn = document.getElementById('editUserBtn');
       btn.disabled = true; btn.textContent = 'Kaydediliyor…';
@@ -1083,7 +1104,7 @@
           body: JSON.stringify(payload),
         });
         const data = await res.json();
-        if (!res.ok) { showToast(data.detail || 'Güncelleme başarısız.'); return; }
+        if (!res.ok) { showToast(errMsg(data) ||'Güncelleme başarısız.'); return; }
         showToast(data.message || 'Kullanıcı güncellendi.', 'success');
         bootstrap.Modal.getInstance(document.getElementById('editUserModal')).hide();
         loadUsers();
@@ -1130,7 +1151,7 @@
           body: JSON.stringify({ new_password: pw }),
         });
         const data = await res.json();
-        if (!res.ok) { showToast(data.detail || 'Şifre sıfırlama başarısız.'); return; }
+        if (!res.ok) { showToast(errMsg(data) ||'Şifre sıfırlama başarısız.'); return; }
         showToast(data.message || 'Şifre başarıyla sıfırlandı.', 'success');
         bootstrap.Modal.getInstance(document.getElementById('resetPasswordModal')).hide();
       } catch { showToast('Şifre sıfırlama sırasında hata oluştu.');
@@ -1325,7 +1346,7 @@
           body: JSON.stringify({ permissions: perms }),
         });
         const data = await res.json();
-        if (!res.ok) { showToast(data.detail || 'Kayıt başarısız.'); return; }
+        if (!res.ok) { showToast(errMsg(data) ||'Kayıt başarısız.'); return; }
         showToast(data.message || 'Yetkiler güncellendi.', 'success');
         _permModalInstance.hide();
       } catch {
@@ -1342,7 +1363,7 @@
       try {
         const res = await fetch(`/api/admin/users/${_permEditingUserId}/permissions/reset`, { method: 'POST' });
         const data = await res.json();
-        if (!res.ok) { showToast(data.detail || 'Sıfırlama başarısız.'); return; }
+        if (!res.ok) { showToast(errMsg(data) ||'Sıfırlama başarısız.'); return; }
         showToast(data.message, 'success');
         // Reload the matrix to show role-default state
         openPermissionsModal(_permEditingUserId);
@@ -1410,7 +1431,7 @@
         const res = await fetch(url, { method: 'POST', body: fd });
         const data = await res.json();
         if (!res.ok) {
-          showToast(data.detail || 'İçe aktarım başarısız.');
+          showToast(errMsg(data) ||'İçe aktarım başarısız.');
           renderImportError(data);
           return;
         }
@@ -1439,7 +1460,7 @@
           <div style="font-weight:700;color:#b91c1c;margin-bottom:4px;">
             <i class="bi bi-exclamation-triangle-fill"></i> İçe aktarım başarısız
           </div>
-          <div style="font-size:0.85rem;color:#7f1d1d;">${escHtml(data.detail || '—')}</div>
+          <div style="font-size:0.85rem;color:#7f1d1d;">${escHtml(errMsg(data) ||'—')}</div>
           ${data.detected_schema ? `<div style="margin-top:6px;font-size:0.78rem;color:#9ca3af;">Algılanan şema: <strong>${escHtml(data.detected_schema)}</strong></div>` : ''}
         </div>`;
     }
@@ -1610,7 +1631,7 @@
           const res = await fetch('/api/admin/backup', { method: 'POST' });
           const data = await res.json();
           if (!res.ok) {
-            setBackupStatus(data.detail || 'Yedek alınamadı.', 'err');
+            setBackupStatus(errMsg(data) ||'Yedek alınamadı.', 'err');
             return;
           }
           setBackupStatus(`Yedek alındı: <strong>${escHtml(data.filename)}</strong> (${escHtml(data.size_human)})`, 'ok');
@@ -1634,7 +1655,7 @@
           const res = await fetch('/api/admin/backup/upload', { method: 'POST', body: fd });
           const data = await res.json();
           if (!res.ok) {
-            setBackupStatus(data.detail || 'Yükleme başarısız.', 'err');
+            setBackupStatus(errMsg(data) ||'Yükleme başarısız.', 'err');
             return;
           }
           setBackupStatus(`Yüklendi: <strong>${escHtml(data.filename)}</strong> · Restore listede hazır.`, 'ok');
@@ -1659,7 +1680,7 @@
         try {
           const res = await fetch(`/api/admin/backup/${encodeURIComponent(filename)}`, { method: 'DELETE' });
           const data = await res.json();
-          if (!res.ok) { showToast(data.detail || 'Silinemedi.'); return; }
+          if (!res.ok) { showToast(errMsg(data) ||'Silinemedi.'); return; }
           showToast(data.message, 'success');
           loadBackupList();
         } catch { showToast('Bağlantı hatası.'); }
@@ -1689,7 +1710,7 @@
           const data = await res.json();
           if (!res.ok) {
             setBackupStatus(
-              `Restore başarısız: ${escHtml(data.detail || '')}` +
+              `Restore başarısız: ${escHtml(errMsg(data) ||'')}` +
               (data.safety_backup ? `<br>Safety backup: <strong>${escHtml(data.safety_backup)}</strong>` : ''),
               'err'
             );
