@@ -37,15 +37,16 @@
   /**
    * Toast göster.
    * @param {string} message  Görüntülenecek metin (her zaman text olarak).
-   * @param {'error'|'success'} [type='error']  Renk + ikon.
+   * @param {'error'|'success'|'info'} [type='error']  Renk + ikon.
    * @param {number} [duration=3500]  Otomatik kapanma süresi (ms).
+   * @returns {HTMLElement} Oluşturulan toast (erken kapatmak için .remove()).
    */
   window.showToast = function (message, type, duration) {
     type = type || 'error';
     duration = (typeof duration === 'number') ? duration : 3500;
 
     var container = ensureContainer();
-    var icon = (type === 'error') ? '✕' : '✓';
+    var icon = (type === 'error') ? '✕' : (type === 'info' ? '⏳' : '✓');
 
     // CSS sınıfları her template'te zaten tanımlı (.toast-msg, .toast-error,
     // .toast-success).  Onları kullan ki görsel tutarlı kalsın.
@@ -67,5 +68,7 @@
       el.style.opacity = '0';
       setTimeout(function () { el.remove(); }, 400);
     }, duration);
+
+    return el;
   };
 })();

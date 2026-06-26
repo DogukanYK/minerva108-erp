@@ -560,6 +560,7 @@
     }
     .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
     .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+    .toast-info    { background: #eff6ff; color: #1d4ed8; border-left: 4px solid #3b82f6; }
     @keyframes slideUp {
       from { opacity: 0; transform: translateY(10px); }
       to   { opacity: 1; transform: translateY(0); }
@@ -1893,16 +1894,17 @@
       const f = input.files && input.files[0];
       if (!f) return;
       const fd = new FormData(); fd.append('file', f);
-      showToast('Türkçe adlar içe aktarılıyor…');
+      const prog = showToast('Türkçe adlar içe aktarılıyor…', 'info', 60000);
       try {
         const r = await fetch('/api/items/import-names', { method: 'POST', body: fd });
         const d = await r.json();
+        if (prog) prog.remove();
         if (!r.ok) { showToast(d.detail || 'İçe aktarılamadı.'); return; }
         let msg = `✓ ${d.updated} ürünün Türkçe adı güncellendi.`;
         if (d.unmatched_count) msg += ` Eşleşmeyen ${d.unmatched_count}: ${(d.unmatched || []).slice(0, 8).join(', ')}${d.unmatched_count > 8 ? '…' : ''}.`;
         showToast(msg, 'success');
         loadItems();
-      } catch { showToast('Sunucuya bağlanılamadı.'); }
+      } catch { if (prog) prog.remove(); showToast('Sunucuya bağlanılamadı.'); }
       input.value = '';
     }
 
