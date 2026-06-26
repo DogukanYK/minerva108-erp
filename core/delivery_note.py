@@ -41,6 +41,56 @@ def merge_letterhead(content: bytes) -> bytes:
         return content
 
 
+# A4 nokta (pt) boyutu — pypdf/reportlab ile aynı.
+_A4_PT = (595.2755905511812, 841.8897637795277)
+
+
+def _count_pages(pdf_bytes: bytes) -> int:
+    try:
+        from pypdf import PdfReader
+        return len(PdfReader(BytesIO(pdf_bytes)).pages)
+    except Exception:
+        return 1
+
+
+def render_autofit(build_story, *, margins, doc_kwargs=None,
+                   min_scale=0.85, steps=(0.96, 0.92, 0.88, 0.85)) -> bytes:
+    """Tek-sayfa-öncelikli PDF üretir.
+
+    Politika (kullanıcı kararı): içerik bir sayfaya sığıyorsa tam boyda tek sayfa.
+    Taşıyorsa, **en fazla %15** küçülterek (min_scale=0.85) tek sayfaya sığdırmayı
+    dener — en küçük gereken küçültmeyi seçer (100%'e en yakın).  %15 küçültme de
+    yetmiyorsa gerçekten 2. sayfaya taşar (tam boyda, çok sayfa).  Böylece 2. sayfada
+    tek-satır 'öksüz' içerik oluşmaz: küçük taşmalar küçültmeyle yutulur.
+
+    build_story(scale) -> list[flowable];  margins=(left,right,top,bottom) pt.
+    """
+    from reportlab.platypus import SimpleDocTemplate
+    l, r, t, b = margins
+
+    def _build(scale: float) -> bytes:
+        buf = BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=_A4_PT,
+            leftMargin=l, rightMargin=r, topMargin=t, bottomMargin=b,
+            **(doc_kwargs or {}))
+        doc.build(build_story(scale))
+        return buf.getvalue()
+
+    full = _build(1.0)
+    if _count_pages(full) == 1:
+        return full
+    # Bir sayfayı aşıyor → %15 bütçesiyle (en az küçültme) sığdırmayı dene
+    for s in steps:
+        if s < min_scale:
+            break
+        cand = _build(s)
+        if _count_pages(cand) == 1:
+            return cand
+    # Gerçekten 2. sayfa gerekiyor → tam boyda, çok sayfalı
+    return full
+
+
 def _fmt(n) -> str:
     """Miktarı sade göster: 4.0 → '4', 1.5 → '1.5'."""
     try:
@@ -56,12 +106,21 @@ def delivery_doc_filename(document_no, ext: str = "pdf") -> str:
 
 
 def render_delivery_pdf(view: dict) -> bytes:
-    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    content = render_autofit(
+        lambda s: _delivery_story(view, s),
+        margins=(20 * mm, 20 * mm, 48 * mm, 30 * mm),
+        doc_kwargs={"title": f"Teslim Belgesi — {view.get('document_no') or ''}",
+                    "author": "Minerva 108 ERP"})
+    return merge_letterhead(content)   # antetli kağıt üzerine bindir (her sayfa)
+
+
+def _delivery_story(view: dict, s: float = 1.0):
+    """Teslim belgesi flowable listesi.  `s` = ölçek (1.0 = tam boy; <1 = küçült)."""
     from reportlab.lib.units import mm
     from reportlab.lib import colors
     from reportlab.lib.styles import ParagraphStyle
-    from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle)
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
     from core.monthly_report import _register_fonts
 
     font, font_b = _register_fonts()
@@ -69,23 +128,24 @@ def render_delivery_pdf(view: dict) -> bytes:
     LIGHT = colors.HexColor("#f5f0e8")
     GREY  = colors.HexColor("#e5e7eb")
 
-    st_h1    = ParagraphStyle("h1", fontName=font_b, fontSize=16, textColor=NAVY,
-                              spaceAfter=2, leading=19)
-    st_meta  = ParagraphStyle("meta", fontName=font, fontSize=8,
-                              textColor=colors.HexColor("#6b7280"), leading=11)
-    st_h2    = ParagraphStyle("h2", fontName=font_b, fontSize=11, textColor=NAVY,
-                              spaceBefore=13, spaceAfter=5, leading=14)
-    st_cell  = ParagraphStyle("cell", fontName=font, fontSize=8.5,
-                              textColor=colors.HexColor("#374151"), leading=11)
-    st_hcell = ParagraphStyle("hcell", fontName=font_b, fontSize=8.5,
-                              textColor=colors.white, leading=11)
-    st_note  = ParagraphStyle("note", fontName=font, fontSize=9,
-                              textColor=colors.HexColor("#374151"), leading=13)
-    st_sig   = ParagraphStyle("sig", fontName=font, fontSize=9,
-                              textColor=colors.HexColor("#374151"), leading=14)
-    st_sigb  = ParagraphStyle("sigb", fontName=font_b, fontSize=9.5, textColor=NAVY, leading=13)
+    st_h1    = ParagraphStyle("h1", fontName=font_b, fontSize=16 * s, textColor=NAVY,
+                              spaceAfter=2 * s, leading=19 * s)
+    st_meta  = ParagraphStyle("meta", fontName=font, fontSize=8 * s,
+                              textColor=colors.HexColor("#6b7280"), leading=11 * s)
+    st_h2    = ParagraphStyle("h2", fontName=font_b, fontSize=11 * s, textColor=NAVY,
+                              spaceBefore=13 * s, spaceAfter=5 * s, leading=14 * s)
+    st_cell  = ParagraphStyle("cell", fontName=font, fontSize=8.5 * s,
+                              textColor=colors.HexColor("#374151"), leading=11 * s)
+    st_hcell = ParagraphStyle("hcell", fontName=font_b, fontSize=8.5 * s,
+                              textColor=colors.white, leading=11 * s)
+    st_note  = ParagraphStyle("note", fontName=font, fontSize=9 * s,
+                              textColor=colors.HexColor("#374151"), leading=13 * s)
+    st_sig   = ParagraphStyle("sig", fontName=font, fontSize=9 * s,
+                              textColor=colors.HexColor("#374151"), leading=14 * s)
+    st_sigb  = ParagraphStyle("sigb", fontName=font_b, fontSize=9.5 * s, textColor=NAVY, leading=13 * s)
 
-    W = 174.0  # kullanılabilir içerik genişliği (mm)
+    pad = 3.5 * s
+    W = 174.0  # kullanılabilir içerik genişliği (mm) — yatay sabit, yalnız dikey küçülür
     story = []
 
     def _kv_table(rows, widths):
@@ -96,7 +156,7 @@ def render_delivery_pdf(view: dict) -> bytes:
             ("GRID", (0, 0), (-1, -1), 0.4, GREY),
             ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.white, LIGHT]),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 3.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+            ("TOPPADDING", (0, 0), (-1, -1), pad), ("BOTTOMPADDING", (0, 0), (-1, -1), pad),
             ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
         ]))
         return t
@@ -111,7 +171,7 @@ def render_delivery_pdf(view: dict) -> bytes:
             ("GRID", (0, 0), (-1, -1), 0.4, GREY),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ALIGN", (2, 0), (-1, -1), "CENTER"),
-            ("TOPPADDING", (0, 0), (-1, -1), 3.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+            ("TOPPADDING", (0, 0), (-1, -1), pad), ("BOTTOMPADDING", (0, 0), (-1, -1), pad),
             ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
         ]))
         return t
@@ -121,7 +181,7 @@ def render_delivery_pdf(view: dict) -> bytes:
     story.append(Paragraph(
         f"Belge No: {escape(str(view.get('document_no') or '—'))}  ·  "
         f"Tarih: {escape(str(view.get('date') or '—'))}", st_meta))
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 8 * s))
 
     # Teslimat künyesi
     story.append(Paragraph("Teslimat Bilgisi", st_h2))
@@ -148,13 +208,13 @@ def render_delivery_pdf(view: dict) -> bytes:
         story.append(Paragraph(escape(str(view["note"])), st_note))
 
     # İmza alanı — teslim eden + teslim alan
-    story.append(Spacer(1, 28))
+    story.append(Spacer(1, 28 * s))
     sig_left = [Paragraph("Teslim Eden", st_sigb),
                 Paragraph(escape(str(view.get("dispatched_by") or "—")), st_cell),
-                Spacer(1, 20), Paragraph("İmza: ____________________", st_sig)]
+                Spacer(1, 20 * s), Paragraph("İmza: ____________________", st_sig)]
     sig_right = [Paragraph("Teslim Alan", st_sigb),
                  Paragraph(escape(str(view.get("recipient_name") or "—")), st_cell),
-                 Spacer(1, 20), Paragraph("İmza: ____________________", st_sig)]
+                 Spacer(1, 20 * s), Paragraph("İmza: ____________________", st_sig)]
     sig = Table([[sig_left, sig_right]], colWidths=[W * 0.5 * mm, W * 0.5 * mm])
     sig.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -164,15 +224,8 @@ def render_delivery_pdf(view: dict) -> bytes:
     ]))
     story.append(sig)
 
-    story.append(Spacer(1, 16))
+    story.append(Spacer(1, 16 * s))
     story.append(Paragraph(
         "Bu belge Minerva 108 ERP teslimat kaydından üretilmiştir. "
         "Yukarıda belirtilen ürünler eksiksiz teslim alınmıştır.", st_meta))
-
-    buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=20 * mm, rightMargin=20 * mm, topMargin=48 * mm, bottomMargin=30 * mm,
-        title=f"Teslim Belgesi — {view.get('document_no') or ''}", author="Minerva 108 ERP")
-    doc.build(story)
-    return merge_letterhead(buf.getvalue())   # antetli kağıt üzerine bindir
+    return story
