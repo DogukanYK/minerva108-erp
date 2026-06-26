@@ -23,13 +23,16 @@ def merge_letterhead(content: bytes) -> bytes:
     ya da hata olursa düz içeriği döndürür (belge yine üretilir)."""
     try:
         from pypdf import PdfReader, PdfWriter
+        from reportlab.lib.pagesizes import A4
         if not LETTERHEAD.is_file():
             return content
+        a4w, a4h = A4
         overlay = PdfReader(BytesIO(content))
         writer = PdfWriter()
         for pg in overlay.pages:
             base = PdfReader(str(LETTERHEAD)).pages[0]   # her sayfaya taze antetli
-            base.merge_page(pg)                          # içerik antetlinin ÜSTÜNE
+            base.scale_to(a4w, a4h)                      # antetliyi A4'e normalize et (Letter→A4)
+            base.merge_page(pg)                          # A4 içerik antetlinin ÜSTÜNE
             writer.add_page(base)
         out = BytesIO()
         writer.write(out)

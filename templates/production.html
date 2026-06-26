@@ -265,6 +265,7 @@
     /* Print: sadece föy alanını göster */
     #foyPrintArea { display: none; }
     @media print {
+      @page { size: A4 portrait; margin: 12mm; }   /* içerik uzunluğundan bağımsız her zaman A4 */
       body * { visibility: hidden; }
       #foyPrintArea, #foyPrintArea * { visibility: visible; }
       #foyPrintArea { display: block; position: absolute; left: 0; top: 0; width: 100%; padding: 1rem; }
