@@ -388,6 +388,158 @@ def download_own_file(file_id: int, db: Session = Depends(get_db),
                         filename=D.safe_download_name(f.original_name))
 
 
+# ─── Önizleme (Quick Look) ───────────────────────────────────────────────────
+# İndirmeden önizleme.  GÜVENLİK: /dl bilerek octet-stream+attachment veriyor
+# (XSS guard).  Burada SADECE beyaz-listedeki güvenli türler inline sunulur:
+#   • foto/PDF  → /preview/raw  (nosniff + inline; tarayıcı kendi render eder)
+#   • xlsx/csv  → sunucuda parse → HTML değil, JSON satır (ham dosya gitmez)
+#   • metin/kod → sunucuda okunur → düz metin (istemci textContent ile basar)
+# HTML/SVG asla belge olarak sunulmaz; SVG istemcide <img> ile gösterilir.
+
+_PREVIEW_MAX_RAW   = 50 * 1024 * 1024   # foto/PDF inline tavanı (50 MB)
+_PREVIEW_MAX_TEXT  = 200 * 1024         # metin önizleme tavanı (200 KB)
+_PREVIEW_MAX_ROWS  = 100                # xlsx/csv satır tavanı
+_PREVIEW_MAX_COLS  = 30                 # xlsx/csv sütun tavanı
+
+_IMAGE_EXT = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"}
+_IMAGE_MIME = {
+    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
+    "webp": "image/webp", "bmp": "image/bmp", "svg": "image/svg+xml",
+}
+_SHEET_EXT = {"xlsx", "xlsm", "csv"}
+_TEXT_EXT  = {"txt", "md", "markdown", "log", "json", "csv", "xml", "yaml", "yml",
+              "ini", "cfg", "conf", "py", "js", "ts", "css", "html", "htm", "sql", "sh", "tsv"}
+
+
+def _ext_of(name: str) -> str:
+    return (name or "").rsplit(".", 1)[-1].lower() if "." in (name or "") else ""
+
+
+def _preview_mode(f) -> str:
+    """Dosyanın önizleme kipi: image | pdf | table | text | none."""
+    ext = _ext_of(f.original_name)
+    if ext in _IMAGE_EXT:
+        return "image"
+    if ext == "pdf" or (f.content_type or "") == "application/pdf":
+        return "pdf"
+    if ext in _SHEET_EXT and ext != "csv":   # csv hem tablo hem metin olabilir → tablo tercih
+        return "table"
+    if ext == "csv":
+        return "table"
+    if ext in _TEXT_EXT:
+        return "text"
+    return "none"
+
+
+def _read_xlsx_rows(path):
+    import openpyxl
+    wb = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
+    ws = wb[wb.sheetnames[0]]
+    rows, truncated = [], False
+    for i, r in enumerate(ws.iter_rows(values_only=True)):
+        if i >= _PREVIEW_MAX_ROWS:
+            truncated = True
+            break
+        cells = ["" if c is None else str(c) for c in r[:_PREVIEW_MAX_COLS]]
+        if len(r) > _PREVIEW_MAX_COLS:
+            truncated = True
+        rows.append(cells)
+    wb.close()
+    return rows, truncated
+
+
+def _read_csv_rows(path):
+    import csv
+    rows, truncated = [], False
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+        for i, row in enumerate(csv.reader(fh)):
+            if i >= _PREVIEW_MAX_ROWS:
+                truncated = True
+                break
+            if len(row) > _PREVIEW_MAX_COLS:
+                truncated = True
+            rows.append([str(c) for c in row[:_PREVIEW_MAX_COLS]])
+    return rows, truncated
+
+
+@router.get("/files/{file_id}/preview/meta")
+def preview_meta(file_id: int, db: Session = Depends(get_db),
+                 _: dict = Depends(get_current_user)):
+    """Önizleme meta verisi: kip + (metin/tablo için) içerik gömülü."""
+    f = db.query(DriveFile).filter(DriveFile.id == file_id).first()
+    if not f:
+        return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
+    base = {"id": f.id, "name": f.original_name, "size_human": D.humanize(f.size_bytes),
+            "size_bytes": int(f.size_bytes or 0), "content_type": f.content_type or "",
+            "download_url": f"/api/drive/dl/{f.id}"}
+    mode = _preview_mode(f)
+    try:
+        path = D.stored_path(f.stored_name)
+    except ValueError:
+        return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
+    if not path.is_file():
+        return JSONResponse(status_code=404, content={"detail": "Dosya diskte yok."})
+
+    if mode in ("image", "pdf"):
+        if int(f.size_bytes or 0) > _PREVIEW_MAX_RAW:
+            return {**base, "mode": "none", "reason": "Dosya önizleme için çok büyük."}
+        return {**base, "mode": mode, "raw_url": f"/api/drive/files/{f.id}/preview/raw"}
+
+    if mode == "table":
+        try:
+            ext = _ext_of(f.original_name)
+            rows, truncated = _read_csv_rows(path) if ext == "csv" else _read_xlsx_rows(path)
+            return {**base, "mode": "table", "rows": rows, "truncated": truncated}
+        except Exception:
+            return {**base, "mode": "none", "reason": "Tablo okunamadı."}
+
+    if mode == "text":
+        try:
+            data = path.read_bytes()[:_PREVIEW_MAX_TEXT + 1]
+            truncated = len(data) > _PREVIEW_MAX_TEXT
+            text = data[:_PREVIEW_MAX_TEXT].decode("utf-8", errors="replace")
+            return {**base, "mode": "text", "content": text, "truncated": truncated}
+        except Exception:
+            return {**base, "mode": "none", "reason": "Metin okunamadı."}
+
+    return {**base, "mode": "none", "reason": "Bu dosya türü için önizleme yok."}
+
+
+@router.get("/files/{file_id}/preview/raw")
+def preview_raw(file_id: int, db: Session = Depends(get_db),
+                _: dict = Depends(get_current_user)):
+    """Foto/PDF için GÜVENLİ inline bayt akışı (beyaz liste).  Diğer türler 415."""
+    f = db.query(DriveFile).filter(DriveFile.id == file_id).first()
+    if not f:
+        return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
+    mode = _preview_mode(f)
+    if mode not in ("image", "pdf"):
+        return JSONResponse(status_code=415, content={"detail": "Bu tür inline önizlenemez."})
+    if int(f.size_bytes or 0) > _PREVIEW_MAX_RAW:
+        return JSONResponse(status_code=413, content={"detail": "Dosya çok büyük."})
+    try:
+        path = D.stored_path(f.stored_name)
+    except ValueError:
+        return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
+    if not path.is_file():
+        return JSONResponse(status_code=404, content={"detail": "Dosya diskte yok."})
+    # nosniff: tarayıcı içeriği başka türmüş gibi yorumlamasın.  inline: indirme değil görüntüle.
+    if mode == "pdf":
+        media = "application/pdf"
+        # PDF tarayıcının yerel görüntüleyicisinde açılır; 'sandbox' viewer'ı bozabilir → koymuyoruz.
+        csp = "default-src 'none'; object-src 'self'; img-src 'self'; style-src 'unsafe-inline'"
+    else:
+        media = _IMAGE_MIME.get(_ext_of(f.original_name), "application/octet-stream")
+        # Foto <img> ile gösterilir; doğrudan gezinilirse (ör. kötücül SVG) 'sandbox' aktif içeriği keser.
+        csp = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": f'inline; filename="{D.safe_download_name(f.original_name)}"',
+        "Content-Security-Policy": csp,
+    }
+    return FileResponse(str(path), media_type=media, headers=headers)
+
+
 @router.post("/move")
 def move_items(data: MoveRequest, db: Session = Depends(get_db),
                _: dict = Depends(get_current_user)):

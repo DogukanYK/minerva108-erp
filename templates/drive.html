@@ -159,6 +159,22 @@
       .modal-card{ background:#fff; border-radius:14px; width:480px; max-width:94vw; max-height:88vh; overflow:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3); }
       .modal-h{ padding:0.95rem 1.25rem; border-bottom:1px solid #f0ece4; font-family:'Playfair Display',serif; font-weight:600; color:var(--navy); font-size:1.05rem; }
       .modal-b{ padding:1.1rem 1.25rem; } .modal-f{ padding:0.8rem 1.25rem; border-top:1px solid #f0ece4; display:flex; gap:0.5rem; justify-content:flex-end; }
+      /* ── Quick Look önizleme ── */
+      .ql-card{ background:#fff; border-radius:14px; width:1100px; max-width:96vw; height:88vh; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,0.35); overflow:hidden; }
+      .ql-head{ display:flex; align-items:center; gap:0.6rem; padding:0.6rem 0.9rem; border-bottom:1px solid #f0ece4; }
+      .ql-name{ font-weight:600; color:var(--navy); font-size:0.96rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+      .ql-meta{ color:#9ca3af; font-size:0.8rem; white-space:nowrap; }
+      .ql-body{ flex:1; overflow:auto; background:#f5f4f1; display:flex; flex-direction:column; }
+      .ql-body.center{ align-items:center; justify-content:center; }
+      .ql-body img{ max-width:100%; max-height:100%; object-fit:contain; }
+      .ql-body iframe{ width:100%; height:100%; border:0; background:#fff; flex:1; }
+      .ql-pre{ width:100%; margin:0; padding:1rem 1.25rem; font-family:ui-monospace,Menlo,monospace; font-size:0.82rem; line-height:1.5; color:#1f2937; white-space:pre-wrap; word-break:break-word; background:#fff; box-sizing:border-box; }
+      .ql-tablewrap{ width:100%; overflow:auto; background:#fff; }
+      .ql-table{ border-collapse:collapse; font-size:0.82rem; }
+      .ql-table td{ border:1px solid #e5e7eb; padding:4px 8px; white-space:nowrap; max-width:340px; overflow:hidden; text-overflow:ellipsis; }
+      .ql-table tr:first-child td{ background:#1f2d52; color:#fff; font-weight:600; position:sticky; top:0; }
+      .ql-note{ padding:0.5rem 1rem; color:#b45309; background:#fffbeb; font-size:0.8rem; border-top:1px solid #fde68a; }
+      .ql-empty{ color:#6b7280; text-align:center; padding:2rem; }
       .picknode{ padding:0.35rem 0.5rem; border-radius:6px; cursor:pointer; font-size:0.86rem; white-space:nowrap; }
       .picknode:hover{ background:var(--cream); } .picknode.sel{ background:rgba(184,150,90,0.22); color:var(--navy); font-weight:600; }
     </style>
@@ -189,6 +205,7 @@
 
           <div class="selbar" id="selbar">
             <b id="selCount">0 seçili</b>
+            <button class="btn-o" onclick="previewSelected()" title="Önizle (Boşluk)"><i class="bi bi-eye"></i> Önizle</button>
             <button class="btn-o" onclick="doMove()"><i class="bi bi-folder-symlink"></i> Taşı</button>
             <button class="btn-o" onclick="openLinkModal()"><i class="bi bi-link-45deg"></i> Link Oluştur</button>
             <button class="btn-o" style="color:#b91c1c;border-color:#fecaca;" onclick="doDeleteSelected()"><i class="bi bi-trash"></i> Sil</button>
@@ -263,6 +280,20 @@
     </div>
   </div>
 
+  <!-- Quick Look önizleme -->
+  <div class="modal-back" id="qlModal" onclick="if(event.target===this) closePreview()">
+    <div class="ql-card">
+      <div class="ql-head">
+        <i class="bi bi-eye" style="color:var(--navy);"></i>
+        <span class="ql-name" id="qlName"></span>
+        <span class="ql-meta" id="qlMeta"></span>
+        <a class="btn-o" id="qlDl" href="#" title="İndir" style="padding:0.35rem 0.7rem;"><i class="bi bi-download"></i></a>
+        <button class="btn-o" onclick="closePreview()" title="Kapat (Esc)" style="padding:0.35rem 0.7rem;"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="ql-body center" id="qlBody"></div>
+    </div>
+  </div>
+
   <div id="toast-container"></div>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
@@ -322,9 +353,10 @@
         const nm=esc(f.name).replace(/'/g,"&#39;");
         rows.push(`<tr class="dm-row" draggable="true" ondragstart="dragStart(event,'file',${f.id})">
           <td><input type="checkbox" class="chk" data-kind="file" value="${f.id}" onchange="onCheck()"></td>
-          <td><i class="bi bi-file-earmark" style="color:var(--navy);"></i> ${esc(f.name)}</td>
+          <td><i class="bi bi-file-earmark" style="color:var(--navy);"></i> <span style="cursor:pointer;" title="Önizle" onclick="openPreview(${f.id},'${nm}')">${esc(f.name)}</span></td>
           <td>${esc(f.size_human)}</td><td>${f.in_collections}</td><td class="muted">${esc(f.created_at)}</td>
-          <td><a class="ico-btn ico-copy" title="İndir" href="/api/drive/dl/${f.id}"><i class="bi bi-download"></i></a>
+          <td><button class="ico-btn ico-copy" title="Önizle (Boşluk)" onclick="openPreview(${f.id},'${nm}')"><i class="bi bi-eye"></i></button>
+              <a class="ico-btn ico-copy" title="İndir" href="/api/drive/dl/${f.id}"><i class="bi bi-download"></i></a>
               <button class="ico-btn ico-copy" title="Yeniden adlandır" onclick="renameItem('file',${f.id},'${nm}')"><i class="bi bi-pencil"></i></button>
               <button class="ico-btn ico-del" title="Sil" onclick="delFile(${f.id})"><i class="bi bi-trash"></i></button></td></tr>`);
       });
@@ -341,6 +373,8 @@
       const n=_selF.size+_selD.size;
       document.getElementById('selCount').textContent=`${n} seçili · ${_selD.size} klasör, ${_selF.size} dosya`;
       document.getElementById('selbar').classList.toggle('on',n>0);
+      // Tek dosya seçiliyse boşluk tuşu onu önizlesin
+      if(_selF.size===1 && _selD.size===0){ _activeFile={id:[..._selF][0],name:''}; }
     }
     function toggleAll(el){ document.querySelectorAll('#listBody .chk').forEach(c=>c.checked=el.checked); onCheck(); }
     function clearSel(){ _selF=new Set(); _selD=new Set(); document.querySelectorAll('#listBody .chk').forEach(c=>c.checked=false); const sa=document.getElementById('selAll'); if(sa)sa.checked=false; document.getElementById('selbar').classList.remove('on'); }
@@ -523,6 +557,81 @@
     /* ── Modal yardımcıları ── */
     function openModal(id){ document.getElementById(id).classList.add('on'); }
     function closeModal(id){ document.getElementById(id).classList.remove('on'); }
+
+    /* ── Quick Look önizleme ── */
+    let _activeFile=null;   // {id,name} — boşluk tuşu bunu önizler
+
+    function qlOpen(){ return document.getElementById('qlModal').classList.contains('on'); }
+
+    function previewSelected(){
+      if(_selF.size===1 && _selD.size===0){ openPreview([..._selF][0]); }
+      else showToast('Önizleme için tek bir dosya seçin.');
+    }
+
+    async function openPreview(id,name){
+      _activeFile={id:id,name:name||''};
+      document.getElementById('qlName').textContent=name||'';
+      document.getElementById('qlMeta').textContent='';
+      document.getElementById('qlDl').href='/api/drive/dl/'+id;
+      const body=document.getElementById('qlBody');
+      body.className='ql-body center'; body.innerHTML='<div class="ql-empty">Yükleniyor…</div>';
+      openModal('qlModal');
+      try{
+        const r=await fetch('/api/drive/files/'+id+'/preview/meta');
+        const d=await r.json();
+        if(!r.ok){ body.innerHTML='<div class="ql-empty">'+esc(d.detail||'Önizlenemedi.')+'</div>'; return; }
+        document.getElementById('qlName').textContent=d.name||name||'';
+        document.getElementById('qlMeta').textContent=d.size_human||'';
+        document.getElementById('qlDl').href=d.download_url||('/api/drive/dl/'+id);
+        renderPreview(d,body);
+      }catch{ body.innerHTML='<div class="ql-empty">Sunucuya bağlanılamadı.</div>'; }
+    }
+
+    function renderPreview(d,body){
+      if(d.mode==='image'){
+        body.className='ql-body center';
+        const img=document.createElement('img'); img.src=d.raw_url; img.alt=esc(d.name||'');
+        body.innerHTML=''; body.appendChild(img);
+      } else if(d.mode==='pdf'){
+        body.className='ql-body';
+        const f=document.createElement('iframe'); f.src=d.raw_url; f.title='PDF';
+        body.innerHTML=''; body.appendChild(f);
+      } else if(d.mode==='text'){
+        body.className='ql-body';
+        const pre=document.createElement('pre'); pre.className='ql-pre'; pre.textContent=d.content||'';
+        body.innerHTML=''; body.appendChild(pre);
+        if(d.truncated) body.appendChild(_qlNote('Önizleme ilk 200 KB ile sınırlı — tamamı için indirin.'));
+      } else if(d.mode==='table'){
+        body.className='ql-body'; body.innerHTML='';
+        body.appendChild(_qlTable(d.rows));
+        if(d.truncated) body.appendChild(_qlNote('Önizleme ilk 100 satır / 30 sütun ile sınırlı — tamamı için indirin.'));
+      } else {
+        body.className='ql-body center';
+        body.innerHTML='<div class="ql-empty">'+esc(d.reason||'Bu dosya türü için önizleme yok.')+
+          '<br><br><a class="btn-g" style="padding:0.5rem 0.9rem;" href="'+(d.download_url||'#')+'"><i class="bi bi-download"></i> İndir</a></div>';
+      }
+    }
+    function _qlNote(t){ const n=document.createElement('div'); n.className='ql-note'; n.textContent='… '+t; return n; }
+    function _qlTable(rows){
+      const wrap=document.createElement('div'); wrap.className='ql-tablewrap';
+      if(!rows||!rows.length){ wrap.innerHTML='<div class="ql-empty">Boş tablo.</div>'; return wrap; }
+      const t=document.createElement('table'); t.className='ql-table';
+      rows.forEach(r=>{ const tr=document.createElement('tr');
+        r.forEach(c=>{ const td=document.createElement('td'); td.textContent=String(c==null?'':c); td.title=td.textContent; tr.appendChild(td); });
+        t.appendChild(tr); });
+      wrap.appendChild(t); return wrap;
+    }
+    function closePreview(){ const b=document.getElementById('qlBody'); b.innerHTML=''; closeModal('qlModal'); }
+
+    document.addEventListener('keydown',e=>{
+      const tag=(e.target.tagName||'').toLowerCase();
+      const typing = tag==='input'||tag==='textarea'||e.target.isContentEditable;
+      if(e.key==='Escape' && qlOpen()){ closePreview(); return; }
+      if((e.code==='Space'||e.key===' ') && !typing){
+        if(qlOpen()){ e.preventDefault(); closePreview(); }
+        else if(_activeFile){ e.preventDefault(); openPreview(_activeFile.id,_activeFile.name); }
+      }
+    });
     document.querySelectorAll('.modal-back').forEach(m=>m.addEventListener('click',e=>{ if(e.target===m) m.classList.remove('on'); }));
 
     document.getElementById('logoutBtn').addEventListener('click', async function(){
