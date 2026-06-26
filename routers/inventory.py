@@ -259,42 +259,93 @@ async def import_item_names(
         return JSONResponse(status_code=400, content={"detail": "Dosyada veri satırı yok."})
 
     hdr = [str(c or "").strip().lower() for c in rows[0]]
-    tr_col = next((i for i, h in enumerate(hdr)
-                   if any(k in h for k in ("türkçe", "turkce", "turkish", "tr ad", "tr_ad"))), None)
-    id_col = next((i for i, h in enumerate(hdr) if any(k in h for k in ("sku", "kod", "code"))), None)
-    if id_col is None:
-        id_col = next((i for i, h in enumerate(hdr)
-                       if any(k in h for k in ("ingilizce", "english", "name", "product"))), None)
-    has_header = (tr_col is not None) or (id_col is not None)
+
+    def _find(keys):
+        return next((i for i, h in enumerate(hdr) if any(k in h for k in keys)), None)
+
+    bc_col   = _find(("barcode", "barkod", "ean"))
+    tr_col   = _find(("türkçe", "turkce", "turkish", "tr ad", "tr_ad"))
+    sku_col  = _find(("sku", "stok kod", "kod", "code"))
+    # Ürün-adı kolonu: önce açık 'product name/ürün adı', yoksa 'brand'/'barcode'
+    # OLMAYAN herhangi bir '...name' kolonu (ör. 'BRAND NAME' yanlışlıkla seçilmesin).
+    name_col = _find(("product name", "ürün ad", "urun ad", "product"))
+    if name_col is None:
+        name_col = next((i for i, h in enumerate(hdr)
+                         if "name" in h and "brand" not in h and "barcode" not in h), None)
+    qty_col  = _find(("nominal", "quantity", "hacim", "ağırlık", "agirlik", "miktar", "(ml)"))
+    has_header = any(c is not None for c in (bc_col, tr_col, sku_col, name_col))
+
+    # TR-ad kaynağı: açık 'türkçe' kolonu > (barkod varsa) ürün-adı kolonu > 2. kolon.
+    # Barkod-formatında (ör. fuar listeleri) "PRODUCT NAME" zaten Türkçe addır.
     if tr_col is None:
-        tr_col = 1
-    if id_col is None:
-        id_col = 0
-    if id_col == tr_col:
+        if bc_col is not None and name_col is not None and name_col != bc_col:
+            tr_col = name_col
+        else:
+            tr_col = 1
+    # Eşleştirici: barkod > sku > İngilizce ad.
+    if bc_col is not None:
+        match_mode, id_col = "barcode", bc_col
+    elif sku_col is not None:
+        match_mode, id_col = "ident", sku_col
+    elif name_col is not None and name_col != tr_col:
+        match_mode, id_col = "ident", name_col
+    else:
+        match_mode, id_col = "ident", 0
+    if match_mode == "ident" and id_col == tr_col:
         id_col, tr_col = 0, 1
     body = rows[1:] if has_header else rows
 
     from core.supplier_prices import normalize
-    by_sku, by_name = {}, {}
+
+    def _bc(v):
+        if v is None:
+            return ""
+        if isinstance(v, float) and v.is_integer():
+            return str(int(v))
+        return str(v).strip()
+
+    def _digits(s):
+        return "".join(ch for ch in str(s) if ch.isdigit())
+
+    by_sku, by_name, by_bc = {}, {}, {}
     for it in db.query(Item).filter(Item.is_active == True).all():
         if it.sku:
             by_sku[it.sku.strip().lower()] = it
         by_name.setdefault(normalize(it.name), it)
+        if it.barcode:
+            b = str(it.barcode).strip()
+            by_bc[b] = it
+            d = _digits(b)
+            if d:
+                by_bc.setdefault(d, it)
 
     updated, unmatched = 0, []
     for r in body:
-        ident = str(r[id_col]).strip() if (id_col < len(r) and r[id_col] is not None) else ""
         tr = str(r[tr_col]).strip() if (tr_col < len(r) and r[tr_col] is not None) else ""
-        if not ident or not tr:
+        if not tr:
             continue
-        it = by_sku.get(ident.lower()) or by_name.get(normalize(ident))
+        # Barkod formatında ölçü/hacmi ada ekle (aynı ürün adının ölçü varyantlarını ayırır)
+        if (match_mode == "barcode" and qty_col is not None
+                and qty_col < len(r) and r[qty_col] not in (None, "")):
+            size = " ".join(str(r[qty_col]).split())
+            if size and size.lower() not in tr.lower():
+                tr = f"{tr} {size}"
+        if match_mode == "barcode":
+            raw = _bc(r[id_col]) if id_col < len(r) else ""
+            it = (by_bc.get(raw) or by_bc.get(_digits(raw))) if raw else None
+            label = raw
+        else:
+            ident = str(r[id_col]).strip() if (id_col < len(r) and r[id_col] is not None) else ""
+            it = (by_sku.get(ident.lower()) or by_name.get(normalize(ident))) if ident else None
+            label = ident
         if not it:
-            unmatched.append(ident)
+            unmatched.append(label or tr)
             continue
         it.name_tr = tr[:150]
         updated += 1
     db.commit()
-    return {"updated": updated, "unmatched": unmatched[:30], "unmatched_count": len(unmatched)}
+    return {"updated": updated, "matched": updated, "match_mode": match_mode,
+            "unmatched": unmatched[:30], "unmatched_count": len(unmatched)}
 
 
 def _item_delete_blockers(db: Session, item_id: int) -> list[str]:
