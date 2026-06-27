@@ -277,15 +277,16 @@ def delivery_document(
     d = db.query(Delivery).filter(Delivery.id == delivery_id, Delivery.domain == domain).first()
     if not d:
         return JSONResponse(status_code=404, content={"detail": "Teslimat bulunamadı."})
-    from core.delivery_note import render_delivery_pdf, delivery_doc_filename
+    from core.delivery_note import render_delivery_pdf, delivery_doc_filename, content_disposition
     try:
         content = render_delivery_pdf(_view(d))
     except Exception:
         return JSONResponse(status_code=500, content={"detail": "Belge üretilemedi."})
+    fname = delivery_doc_filename(d.document_no, d.recipient_org or d.recipient_name)
     return StreamingResponse(
         io.BytesIO(content),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{delivery_doc_filename(d.document_no)}"'},
+        headers={"Content-Disposition": content_disposition(fname)},
     )
 
 
@@ -398,12 +399,14 @@ def proforma_document(
         return JSONResponse(status_code=403,
                             content={"detail": "Proforma yalnızca onaylandıktan sonra indirilebilir."})
     from core.proforma_invoice import render_proforma_pdf, proforma_filename
+    from core.delivery_note import content_disposition
     try:
         content = render_proforma_pdf(_view(d))
     except Exception:
         return JSONResponse(status_code=500, content={"detail": "Proforma üretilemedi."})
+    fname = proforma_filename(d.document_no, d.recipient_org or d.recipient_name)
     return StreamingResponse(
         io.BytesIO(content),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{proforma_filename(d.document_no)}"'},
+        headers={"Content-Disposition": content_disposition(fname)},
     )

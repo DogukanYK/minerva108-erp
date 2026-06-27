@@ -523,21 +523,16 @@ def preview_raw(file_id: int, db: Session = Depends(get_db),
         return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
     if not path.is_file():
         return JSONResponse(status_code=404, content={"detail": "Dosya diskte yok."})
-    # nosniff: tarayıcı içeriği başka türmüş gibi yorumlamasın.  inline: indirme değil görüntüle.
-    if mode == "pdf":
-        media = "application/pdf"
-        # PDF tarayıcının yerel görüntüleyicisinde açılır; 'sandbox' viewer'ı bozabilir → koymuyoruz.
-        csp = "default-src 'none'; object-src 'self'; img-src 'self'; style-src 'unsafe-inline'"
-    else:
-        media = _IMAGE_MIME.get(_ext_of(f.original_name), "application/octet-stream")
-        # Foto <img> ile gösterilir; doğrudan gezinilirse (ör. kötücül SVG) 'sandbox' aktif içeriği keser.
-        csp = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"
-    headers = {
-        "X-Content-Type-Options": "nosniff",
-        "Content-Disposition": f'inline; filename="{D.safe_download_name(f.original_name)}"',
-        "Content-Security-Policy": csp,
-    }
-    return FileResponse(str(path), media_type=media, headers=headers)
+    media = "application/pdf" if mode == "pdf" else \
+        _IMAGE_MIME.get(_ext_of(f.original_name), "application/octet-stream")
+    # Content-Disposition'u ASCII-GÜVENLİ kur (RFC 5987) — Türkçe adlar (Ü/ş/ğ/ı) header'ı
+    # bozup 500 vermesin.  inline: indirme değil görüntüle.
+    from urllib.parse import quote
+    nm = D.safe_download_name(f.original_name)
+    ascii_fb = (nm.encode("ascii", "ignore").decode().strip() or "preview")
+    cd = "inline; filename=\"%s\"; filename*=UTF-8''%s" % (ascii_fb, quote(nm))
+    # CSP + çerçeveleme (frame-ancestors 'self') + nosniff bu yol için SecurityHeadersMiddleware'de.
+    return FileResponse(str(path), media_type=media, headers={"Content-Disposition": cd})
 
 
 @router.post("/move")

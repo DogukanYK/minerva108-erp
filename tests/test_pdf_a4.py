@@ -86,3 +86,22 @@ def test_autofit_paginates_when_beyond_15pct():
     pdf = render_proforma_pdf(_proforma_view(120))
     assert _count_pages(pdf) >= 2
     assert _all_pages_a4(pdf)
+
+
+# ── Belge adı alıcıya göre + Türkçe adlar header'ı bozmasın ──
+
+def test_delivery_filename_includes_recipient():
+    from core.delivery_note import delivery_doc_filename
+    fn = delivery_doc_filename("TES-2026-00007", "Ayşe Yılmaz")
+    assert fn.startswith("teslim_belgesi_") and "TES-2026-00007" in fn and fn.endswith(".pdf")
+    assert "Ay" in fn                      # alıcı adı gömülü
+    # alıcı yoksa eski biçim
+    assert delivery_doc_filename("TES-1") == "teslim_belgesi_TES-1.pdf"
+
+
+def test_content_disposition_is_header_safe():
+    from core.delivery_note import content_disposition
+    cd = content_disposition("teslim_belgesi_Ayşe_Şğıİ_TES.pdf")
+    cd.encode("latin-1")                   # HTTP header'a kodlanabilmeli (yoksa 500)
+    assert cd.startswith("attachment") and "filename*=UTF-8''" in cd
+    assert content_disposition("x.pdf", inline=True).startswith("inline")

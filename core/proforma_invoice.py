@@ -9,12 +9,13 @@ teslimat oluşturulurken belge diline göre snapshot edilmiştir (DeliveryItem.i
 from html import escape
 from io import BytesIO
 
-from core.delivery_note import merge_letterhead, render_autofit
+from core.delivery_note import merge_letterhead, render_autofit, slug_part
 
 
-def proforma_filename(document_no, ext: str = "pdf") -> str:
+def proforma_filename(document_no, recipient=None, ext: str = "pdf") -> str:
     base = (document_no or "proforma").replace("/", "-").replace(" ", "_")
-    return f"{base}.{ext}"
+    who = slug_part(recipient)
+    return f"{base}{'_' + who if who else ''}.{ext}"
 
 
 def _money(v, cur) -> str:

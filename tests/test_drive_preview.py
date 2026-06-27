@@ -73,6 +73,18 @@ def test_preview_pdf_raw_inline(authed_client: TestClient):
     assert r.headers.get("x-content-type-options") == "nosniff"
 
 
+def test_preview_turkish_name_no_500_and_framable(authed_client: TestClient):
+    """Türkçe adlı PDF (Ü/ş/ğ/ı) header'ı bozup 500 vermemeli; aynı-origin iframe açılmalı."""
+    fid = _up(authed_client, "YÜZ BAKIM SERUMU Şğıİ.pdf", b"%PDF-1.4\n" + b"x" * 200, "application/pdf")
+    r = authed_client.get(f"/api/drive/files/{fid}/preview/raw")
+    assert r.status_code == 200
+    r.headers["content-disposition"].encode("latin-1")        # header ASCII/latin-1 güvenli
+    assert "filename*=UTF-8''" in r.headers["content-disposition"]
+    # SecurityHeadersMiddleware bu yol için çerçevelemeyi 'self'e açar
+    assert r.headers.get("x-frame-options") == "SAMEORIGIN"
+    assert "frame-ancestors 'self'" in (r.headers.get("content-security-policy") or "")
+
+
 def test_preview_unknown_type_is_none(authed_client: TestClient):
     fid = _up(authed_client, "arsiv.zip", b"PK\x03\x04zipdata", "application/zip")
     d = authed_client.get(f"/api/drive/files/{fid}/preview/meta").json()

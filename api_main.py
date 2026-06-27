@@ -76,6 +76,21 @@ from starlette.middleware.base import BaseHTTPMiddleware
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
+        path = request.url.path
+        # Drive önizleme HAM ucu (foto/PDF): aynı-origin iframe/img ile gösterilebilsin.
+        # YALNIZ bu yol için çerçeveleme 'self'e açılır; script yine bloklu
+        # (default-src 'none' → kötücül SVG bile script çalıştıramaz).  Gerisi kilitli.
+        preview_raw = path.startswith("/api/drive/files/") and path.endswith("/preview/raw")
+        if preview_raw:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; img-src 'self'; object-src 'self'; "
+                "style-src 'unsafe-inline'; frame-ancestors 'self'"
+            )
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            return response
         # Content-Security-Policy: çoğu XSS senaryosunu sıfırlar
         # 'unsafe-eval' YASAK — eval() veya new Function() ile saldırı yapılamaz
         # 'object-src none' — Flash/PDF/applet vektörlerini kapatır

@@ -5,6 +5,7 @@ Alıcı ad-soyadını sistemden giren kullanıcı belgeyi basar; teslim alan ki�
 yalnızca imzalar. core/qc_report.py + monthly_report._register_fonts desenini
 paylaşır (Türkçe-uyumlu font).
 """
+import re
 from html import escape
 from io import BytesIO
 from pathlib import Path
@@ -100,9 +101,31 @@ def _fmt(n) -> str:
         return str(n)
 
 
-def delivery_doc_filename(document_no, ext: str = "pdf") -> str:
+def slug_part(s, maxlen: int = 60) -> str:
+    """Dosya adına gömülecek serbest metin (alıcı adı) — yol/kontrol/tırnak temizlenir."""
+    s = re.sub(r'[\\/\r\n"]+', " ", str(s or "")).strip()
+    s = re.sub(r"\s+", "_", s)
+    return s[:maxlen].strip("_")
+
+
+def content_disposition(filename, inline: bool = False) -> str:
+    """ASCII-GÜVENLİ Content-Disposition (RFC 5987).
+
+    Türkçe adlar (Ü/ş/ğ/ı/İ) header'a doğrudan konunca latin-1 dışına çıkıp 500
+    veriyordu.  Burada ASCII fallback + `filename*` (UTF-8 yüzde-kodlu) üretilir;
+    modern tarayıcı tam Türkçe adı, eski tarayıcı ASCII'yi kullanır.
+    """
+    from urllib.parse import quote
+    disp = "inline" if inline else "attachment"
+    ascii_fb = (str(filename).encode("ascii", "ignore").decode().strip() or "belge")
+    return "%s; filename=\"%s\"; filename*=UTF-8''%s" % (disp, ascii_fb, quote(str(filename)))
+
+
+def delivery_doc_filename(document_no, recipient=None, ext: str = "pdf") -> str:
+    """Teslim belgesi dosya adı — alıcıya göre: teslim_belgesi_<Alıcı>_<BelgeNo>.pdf"""
     no = (str(document_no) or "teslim").replace("/", "-").replace(" ", "_")
-    return f"teslim_belgesi_{no}.{ext}"
+    who = slug_part(recipient)
+    return f"teslim_belgesi_{who + '_' if who else ''}{no}.{ext}"
 
 
 def render_delivery_pdf(view: dict) -> bytes:
