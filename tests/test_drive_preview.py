@@ -80,9 +80,11 @@ def test_preview_turkish_name_no_500_and_framable(authed_client: TestClient):
     assert r.status_code == 200
     r.headers["content-disposition"].encode("latin-1")        # header ASCII/latin-1 güvenli
     assert "filename*=UTF-8''" in r.headers["content-disposition"]
-    # SecurityHeadersMiddleware bu yol için çerçevelemeyi 'self'e açar
-    assert r.headers.get("x-frame-options") == "SAMEORIGIN"
+    # CSP çerçevelemeyi 'self'e açar (aynı-origin iframe)
     assert "frame-ancestors 'self'" in (r.headers.get("content-security-policy") or "")
+    # App bu yol için X-Frame-Options SET ETMEZ — yoksa önde nginx'in 'SAMEORIGIN'i ile
+    # ÇİFTLENİR ve Chrome iframe'i engeller.  Tek kaynak nginx olmalı.
+    assert r.headers.get("x-frame-options") is None
 
 
 def test_preview_unknown_type_is_none(authed_client: TestClient):

@@ -82,11 +82,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # (default-src 'none' → kötücül SVG bile script çalıştıramaz).  Gerisi kilitli.
         preview_raw = path.startswith("/api/drive/files/") and path.endswith("/preview/raw")
         if preview_raw:
+            # CSP frame-ancestors 'self' aynı-origin iframe'e izin verir; script yine
+            # bloklu (default-src 'none' → kötücül SVG çalışamaz).
+            # ÖNEMLİ: X-Frame-Options'ı BURADA SET ETME.  Önde nginx zaten 'SAMEORIGIN'
+            # ekliyor; app de eklerse başlık ÇİFTLENİR ve Chrome iframe'i "conflicting
+            # X-Frame-Options" diye engeller ("refused to connect").  Tek kaynak = nginx.
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; img-src 'self'; object-src 'self'; "
                 "style-src 'unsafe-inline'; frame-ancestors 'self'"
             )
-            response.headers["X-Frame-Options"] = "SAMEORIGIN"
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
