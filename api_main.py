@@ -228,9 +228,12 @@ def serve_service_worker():
 # Trusted Web Activity APK (PWABuilder ile üretilen Android uygulaması) verifies
 # its link to this origin and runs full-screen (no URL bar). Content = the APK
 # signing key's SHA-256 fingerprint + package name; updated once the APK is built.
+# Origin-aware: ims ve crm ayrı bağımsız uygulamalar → her alan adı yalnız kendi
+# APK'sının paket+parmak izini doğrular.
 @app.get("/.well-known/assetlinks.json", include_in_schema=False)
-def serve_assetlinks():
-    return FileResponse("static/assetlinks.json", media_type="application/json")
+def serve_assetlinks(request: Request):
+    fname = "assetlinks-crm.json" if _is_crm_host(request) else "assetlinks-ims.json"
+    return FileResponse(f"static/{fname}", media_type="application/json")
 
 
 @app.on_event("startup")
