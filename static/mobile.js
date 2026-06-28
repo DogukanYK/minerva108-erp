@@ -83,6 +83,9 @@
         || window.navigator.standalone === true;
   }
   if (isStandalone()) return;   // zaten uygulama olarak açık
+  // Native uygulama (Capacitor) içinde "Yükle" istemi gereksiz
+  if (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function'
+      && window.Capacitor.isNativePlatform()) return;
 
   var deferredPrompt = null;
   var btn = null;
