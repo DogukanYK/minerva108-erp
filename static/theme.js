@@ -1,24 +1,34 @@
 /* Minerva 108 — Theme controller
-   - Reads stored preference from localStorage('minerva-theme')
-   - Falls back to system (prefers-color-scheme)
-   - Applies BEFORE first paint to avoid flash
-   - Exposes window.toggleTheme() for the sidebar button
+   - MOBİL (dar ekran / uygulama): DAİMA açık tema. Koyu tema asla uygulanmaz,
+     kullanıcıya seçenek sunulmaz, toggle etkisizdir.
+   - Masaüstü: localStorage('minerva-theme') tercihi → yoksa sistem (prefers-color-scheme).
+   - <head> parse anında senkron çalışır (flash olmaması için).
+   - window.toggleTheme() kenar çubuğu düğmesi için.
 */
 (function () {
   const KEY = 'minerva-theme';
+  function apply(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+
+  // ── Mobil: her zaman açık tema ──────────────────────────────────────────
+  const isMobile = window.matchMedia &&
+    window.matchMedia('(max-width: 768px)').matches;
+  if (isMobile) {
+    apply('light');
+    window.toggleTheme = function () { apply('light'); }; // etkisiz — hep açık
+    return;
+  }
+
+  // ── Masaüstü: tercih / sistem ───────────────────────────────────────────
   function systemPref() {
     return (window.matchMedia &&
       window.matchMedia('(prefers-color-scheme: dark)').matches)
       ? 'dark' : 'light';
   }
-  function apply(theme) {
-    document.documentElement.setAttribute('data-theme', theme);
-  }
-  // Boot — synchronous, runs at <head> parse time
   const stored = localStorage.getItem(KEY);
   apply(stored || systemPref());
 
-  // React to system changes if user hasn't picked manually
   if (window.matchMedia) {
     window.matchMedia('(prefers-color-scheme: dark)')
       .addEventListener('change', e => {
@@ -26,7 +36,6 @@
       });
   }
 
-  // Public toggle
   window.toggleTheme = function () {
     const curr = document.documentElement.getAttribute('data-theme');
     const next = curr === 'dark' ? 'light' : 'dark';
