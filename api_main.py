@@ -223,6 +223,16 @@ def serve_service_worker():
     return FileResponse("static/sw.js", media_type="application/javascript")
 
 
+# ─── Android TWA — Digital Asset Links ──────────────────────────────────────
+# Served at the exact path Google requires (`/.well-known/assetlinks.json`) so a
+# Trusted Web Activity APK (PWABuilder ile üretilen Android uygulaması) verifies
+# its link to this origin and runs full-screen (no URL bar). Content = the APK
+# signing key's SHA-256 fingerprint + package name; updated once the APK is built.
+@app.get("/.well-known/assetlinks.json", include_in_schema=False)
+def serve_assetlinks():
+    return FileResponse("static/assetlinks.json", media_type="application/json")
+
+
 @app.on_event("startup")
 def startup_event():
     init_db()
