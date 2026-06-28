@@ -46,3 +46,7 @@ Thumbs.db
 
 # Kişisel müzakere belgeleri — repoya girmez (yerelde kalır)
 Minerva108_Calisma_Iliskisi_Revizyon_Dosyasi.*
+
+# yerel önizleme (otonom mobil cila oturumu)
+.claude/launch.json
+_preview.db*
