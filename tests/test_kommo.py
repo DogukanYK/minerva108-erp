@@ -210,6 +210,14 @@ def test_chat_event_unlinked_skipped(db_session):
     assert K._ingest_chat_event(db_session, ev) is False
 
 
+def test_upsert_skips_empty_response(db_session):
+    # Boş/id'siz yanıt (örn. webhook'ta silinmiş kayıt) → KeyError yerine None.
+    assert K.upsert_contact(db_session, {}) is None
+    assert K.upsert_company(db_session, {}) is None
+    assert K.upsert_lead(db_session, {}, {}) is None
+    assert K.upsert_contact(db_session, None) is None
+
+
 def test_webhook_id_parser():
     ids = K._entity_ids_from_webhook({
         "leads[add][0][id]": "1", "contacts[update][0][id]": "2",

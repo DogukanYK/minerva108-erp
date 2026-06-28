@@ -193,7 +193,9 @@ def _resolve_stage(db: Session, status_id: Optional[int], status_name: str):
 
 # ─── Upsert (kommo_id anahtarı ile idempotent) ───────────────────────────────
 
-def upsert_company(db: Session, kco: dict) -> CrmCompany:
+def upsert_company(db: Session, kco: dict):
+    if not kco or kco.get("id") is None:    # boş/id'siz yanıt → atla
+        return None
     kid = int(kco["id"])
     c = db.query(CrmCompany).filter(CrmCompany.kommo_id == kid).first()
     if not c:
@@ -207,7 +209,9 @@ def upsert_company(db: Session, kco: dict) -> CrmCompany:
     return c
 
 
-def upsert_contact(db: Session, kc: dict, company_map: Optional[dict] = None) -> CrmContact:
+def upsert_contact(db: Session, kc: dict, company_map: Optional[dict] = None):
+    if not kc or kc.get("id") is None:    # boş/id'siz yanıt (örn. silinmiş kayıt) → atla
+        return None
     kid = int(kc["id"])
     c = db.query(CrmContact).filter(CrmContact.kommo_id == kid).first()
     if not c:
@@ -220,8 +224,8 @@ def upsert_contact(db: Session, kc: dict, company_map: Optional[dict] = None) ->
     c.source = _source_from_tags(kc)
     # firma bağı — kommo company id → bizim company id
     emb = (kc.get("_embedded") or {}).get("companies") or []
-    if emb:
-        kco_id = int(emb[0].get("id"))
+    if emb and emb[0].get("id") is not None:
+        kco_id = int(emb[0]["id"])
         link = (company_map or {}).get(kco_id)
         if link is None:
             row = db.query(CrmCompany.id).filter(CrmCompany.kommo_id == kco_id).first()
@@ -232,7 +236,9 @@ def upsert_contact(db: Session, kc: dict, company_map: Optional[dict] = None) ->
     return c
 
 
-def upsert_lead(db: Session, kl: dict, status_names: dict) -> CrmDeal:
+def upsert_lead(db: Session, kl: dict, status_names: dict):
+    if not kl or kl.get("id") is None:    # boş/id'siz yanıt → atla
+        return None
     kid = int(kl["id"])
     d = db.query(CrmDeal).filter(CrmDeal.kommo_id == kid).first()
     if not d:
@@ -250,12 +256,12 @@ def upsert_lead(db: Session, kl: dict, status_names: dict) -> CrmDeal:
     # firma/kişi bağı
     emb = kl.get("_embedded") or {}
     cos = emb.get("companies") or []
-    if cos:
+    if cos and cos[0].get("id") is not None:
         row = db.query(CrmCompany.id).filter(CrmCompany.kommo_id == int(cos[0]["id"])).first()
         if row:
             d.company_id = row[0]
     cts = emb.get("contacts") or []
-    if cts:
+    if cts and cts[0].get("id") is not None:
         row = db.query(CrmContact.id).filter(CrmContact.kommo_id == int(cts[0]["id"])).first()
         if row:
             d.contact_id = row[0]
