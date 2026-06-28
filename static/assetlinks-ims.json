@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.minerva108.ims.twa",
+      "sha256_cert_fingerprints": ["A0:27:50:98:37:E3:66:DC:B6:27:CD:E9:46:DE:CF:98:8E:B8:2A:07:7C:0A:38:EC:CE:99:0D:2B:AD:88:32:C8"]
+    }
+  }
+]
