@@ -268,4 +268,9 @@
     -webkit-user-select: none;
     user-select: none;
   }
+  /* Dokunuş gecikmesini (300ms) kaldır + çift-dokunuş zoom yok → anında his */
+  a, button, .nav-link-item, .tab-btn, .pill, .btn-hamburger,
+  input[type="submit"], input[type="button"], [role="button"] {
+    touch-action: manipulation;
+  }
 }
