@@ -12,7 +12,7 @@
  * Bump CACHE_NAME any time you ship a breaking static-asset change so users
  * pick it up on next reload instead of being stuck on stale CSS/JS.
  */
-const CACHE_NAME = 'minerva108-v13';     // bumped — mobilde daima açık tema (theme.js); koyu tema mobilde kaldırıldı
+const CACHE_NAME = 'minerva108-v14';     // bumped — mobil native-his CSS (overscroll/long-press); status bar uyumu
 
 const PRECACHE = [
   '/static/dark.css',

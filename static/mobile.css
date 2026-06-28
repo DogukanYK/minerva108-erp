@@ -250,3 +250,22 @@
   * { -webkit-tap-highlight-color: transparent; }
   a, button, .nav-link-item, .tab-btn { -webkit-tap-highlight-color: rgba(217,190,133,0.18); }
 }
+
+/* ──────────────────────────────────────────────────────
+   NATIVE-APP HİSSİ (WebView / mobil)
+   Kenar esnemesi yok, UI kromu uzun-basışta seçilmez/menü çıkmaz.
+   Veri (tablo/metin/inputlar) seçilebilir kalır.
+────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  html, body {
+    overscroll-behavior: none;          /* kenar parıltısı / bounce yok */
+    -webkit-text-size-adjust: 100%;     /* otomatik metin büyütme yok */
+  }
+  .topnav, .sidebar, .btn-hamburger, .user-chip, .btn-logout,
+  .nav-link-item, .tab-btn, .pill, button,
+  .btn-primary-gold, .btn-danger-soft, .page-header, label {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
