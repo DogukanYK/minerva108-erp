@@ -150,3 +150,16 @@
     } else { render(); }
   })();
 })();
+
+
+/* ── Native (Capacitor) uygulama: açılış splash'ını içerik yüklenince gizle ──
+ * Uzak siteyi yükleyen WebView'de Capacitor bridge enjekte edilir; splash'ı
+ * sayfa hazır olunca kapatırız → beyaz/boş flaş yok, native startup hissi.
+ * (config'de launchAutoHide:true + 3sn emniyet süresi de var.) */
+(function () {
+  var Cap = window.Capacitor;
+  if (!Cap || !Cap.Plugins || !Cap.Plugins.SplashScreen) return;
+  function hide() { try { Cap.Plugins.SplashScreen.hide(); } catch (_e) {} }
+  if (document.readyState === 'complete') hide();
+  else window.addEventListener('load', function () { setTimeout(hide, 150); });
+})();
