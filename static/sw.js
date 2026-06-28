@@ -12,7 +12,7 @@
  * Bump CACHE_NAME any time you ship a breaking static-asset change so users
  * pick it up on next reload instead of being stuck on stale CSS/JS.
  */
-const CACHE_NAME = 'minerva108-v11';     // bumped — toast.js 'info' tipi (içe-aktarma ilerleme bildirimi) kullanıcılara ulaşsın
+const CACHE_NAME = 'minerva108-v12';     // bumped — CRM uygulamasına ayrı ikon (manifest-crm yeni icon-crm-* ikonlarını gösterir)
 
 const PRECACHE = [
   '/static/dark.css',
