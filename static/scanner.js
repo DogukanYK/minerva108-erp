@@ -167,12 +167,17 @@
       }
     };
     const onFrameErr = () => { /* per-frame "no QR found" — silent */ };
+    // Native Android WebView'in BarcodeDetector implementasyonu render sürecini
+    // çökertebiliyor (Capacitor uygulamasında kamera açılınca çökme). Native'de
+    // kapat → html5-qrcode kendi JS (ZXing) çözücüsünü kullanır, stabil.
+    const isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function'
+                        && window.Capacitor.isNativePlatform());
     const cfg = {
       fps: 10,
       qrbox: { width: 260, height: 160 },
       aspectRatio: 1.4,
-      // Help with poorly-lit shipping labels
-      experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+      // Help with poorly-lit shipping labels (tarayıcıda hızlı; WebView'de çökertir)
+      experimentalFeatures: { useBarCodeDetectorIfSupported: !isNative },
     };
 
     try {
