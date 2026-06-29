@@ -266,6 +266,15 @@
         </div>
       </div>
 
+      <!-- Bekleyen kargo sevkiyatları (Kargo modu) -->
+      <div class="card2" id="shipPanel" style="display:none;border-color:#bfdbfe;">
+        <div class="card2-head" style="background:#eff6ff;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
+          <div style="display:flex;align-items:center;gap:0.5rem;"><i class="bi bi-truck"></i><h2>Bekleyen Kargo Sevkiyatları</h2></div>
+          <a href="/api/delivery/shipments/packing-list?format=pdf" target="_blank" class="btn-o" style="padding:0.4rem 0.85rem;"><i class="bi bi-file-earmark-pdf"></i> Tüm Bekleyenler — Master Liste (PDF)</a>
+        </div>
+        <div class="card2-body" id="shipBody"><div class="muted" style="padding:0.6rem;">Yükleniyor…</div></div>
+      </div>
+
       <!-- Geçmiş -->
       <div class="card2">
         <div class="card2-head"><i class="bi bi-clock-history"></i><h2>Son Teslimatlar</h2></div>
@@ -287,6 +296,31 @@
 
     let _items = [];      // tüm ürünler (barkod çözümleme + manuel arama)
     let _cart = [];       // {item_id, name, unit, stock, qty}
+    let _mode = 'instant';// 'instant' = anında teslim · 'ship' = kargo sevkiyatı (stok takip no ile düşer)
+
+    function switchMode(m){
+      _mode = (m === 'ship') ? 'ship' : 'instant';
+      const ship = (_mode === 'ship');
+      document.getElementById('tabBtnInstant').classList.toggle('active', !ship);
+      document.getElementById('tabBtnShip').classList.toggle('active', ship);
+      // Form: kargo modunda Tür/Yöntem + proforma gizli, alıcı opsiyonel
+      document.getElementById('typeMethodRow').style.display = ship ? 'none' : 'flex';
+      document.getElementById('proformaFields').style.display = (!ship && isProforma()) ? 'block' : 'none';
+      document.getElementById('kargoHint').style.display = ship ? 'block' : 'none';
+      document.getElementById('rNameStar').style.display = ship ? 'none' : 'inline';
+      document.getElementById('rName').placeholder = ship ? 'opsiyonel — alıcı adı' : 'Teslim alan kişi';
+      // Alt paneller
+      const pc = document.getElementById('pendingCard'); if (ship && pc) pc.style.display = 'none';
+      document.getElementById('shipPanel').style.display = ship ? 'block' : 'none';
+      document.getElementById('pageSubtitle').textContent = ship
+        ? 'Kargo ile gönderilecekleri hazırla — stok düşmez. Takip numarası girip kargoladığında stoktan düşülür. Bekleyenlerin hazırlık/master PDF listesini al.'
+        : 'Ürünün barkodunu okut (her okutma stoktan 1 düşer), alıcıyı gir, imzalı teslim belgesini bas. Üretim/satış değil; stok çıkışıdır.';
+      const t = document.getElementById('completeBtnText');
+      if (t) t.textContent = ship ? 'Sevkiyatı Hazırla (stok düşmez)' : (isProforma() ? 'Proformayı Onaya Gönder' : 'Teslimatı Tamamla');
+      renderCart();
+      if (ship) loadShipPending();
+      else if (window.IS_SUPERADMIN) loadPending();
+    }
 
     async function loadItems(){
       // Teslimatta yalnızca BİTMİŞ ÜRÜNLER verilir — hammadde/ambalaj/etiket listelenmez.
@@ -400,7 +434,7 @@
     function renderCart(flashId){
       const b=document.getElementById('cartBody');
       if(!_cart.length){ b.innerHTML='<tr><td colspan="4" class="muted" style="padding:1rem;">Henüz ürün okutulmadı.</td></tr>'; return; }
-      const pf=isProforma();
+      const pf=(_mode!=='ship') && isProforma();
       b.innerHTML=_cart.map(c=>{
         const short = c.qty > c.stock;
         const pfRow = pf ? `<div style="display:flex;gap:0.4rem;margin-top:0.35rem;">
@@ -442,13 +476,16 @@
     /* ── Teslimatı tamamla ── */
     async function completeDelivery(){
       if(!window.CAN_DISPATCH){ showToast('Teslimat çıkışı için yetkiniz yok.'); return; }
+      const ship = (_mode === 'ship');
       const name=document.getElementById('rName').value.trim();
-      if(name.length<2){ showToast('Alıcı / müşteri adı girin.'); return; }
+      if(!ship && name.length<2){ showToast('Alıcı / müşteri adı girin.'); return; }
       if(!_cart.length){ showToast('En az bir ürün ekleyin.'); return; }
       const docLang=document.getElementById('rDocLang').value;
       if(!docLang){ showToast('Belge dilini seçin (Türkçe / İngilizce).'); return; }
-      const pf=isProforma();
-      if(!pf){
+      const pf = !ship && isProforma();
+      if(ship){
+        // Kargo: stok ŞİMDİ düşmez → yeterlilik kontrolü kargolama (takip no) anına ertelenir.
+      } else if(!pf){
         const short=_cart.find(c=>c.qty>c.stock);
         if(short){ showToast(`"${short.name}" için stok yetersiz (${fmt(short.stock)}).`); return; }
       } else {
@@ -460,8 +497,8 @@
         recipient_name:name,
         recipient_org:document.getElementById('rOrg').value.trim(),
         recipient_phone:document.getElementById('rPhone').value.trim(),
-        delivery_type:document.getElementById('rType').value,
-        method:document.getElementById('rMethod').value,
+        delivery_type: ship ? 'kargo' : document.getElementById('rType').value,
+        method: ship ? 'kargo' : document.getElementById('rMethod').value,
         note:document.getElementById('rNote').value.trim(),
         doc_lang:docLang,
         items:_cart.map(c=>({item_id:c.item_id, quantity:c.qty,
@@ -477,15 +514,78 @@
         const r=await fetch('/api/delivery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
         const d=await r.json().catch(()=>({}));
         if(!r.ok){ showToast(d.detail||'Oluşturulamadı.'); return; }
-        showResult(d, pf);
-        showToast(pf?'Proforma oluşturuldu — onaya gönderildi.':'Teslimat kaydedildi, stok düşüldü.','success');
+        if(ship){ showResultShip(d); showToast('Sevkiyat hazırlandı — stok henüz düşmedi.','success'); }
+        else { showResult(d, pf); showToast(pf?'Proforma oluşturuldu — onaya gönderildi.':'Teslimat kaydedildi, stok düşüldü.','success'); }
         _cart=[]; renderCart();
         ['rName','rOrg','rPhone','rNote','pAddress','pCountry'].forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
         const jobs=[loadItems(), loadHistory()];
-        if(typeof loadPending==='function') jobs.push(loadPending());
+        if(ship) jobs.push(loadShipPending());
+        else if(typeof loadPending==='function') jobs.push(loadPending());
         await Promise.all(jobs);
       }catch{ showToast('Sunucuya bağlanılamadı.'); }
-      finally{ btn.disabled=false; btn.innerHTML='<i class="bi bi-check2-circle"></i> <span id="completeBtnText">'+(isProforma()?'Proformayı Onaya Gönder':'Teslimatı Tamamla')+'</span>'; focusScan(); }
+      finally{ btn.disabled=false; btn.innerHTML='<i class="bi bi-check2-circle"></i> <span id="completeBtnText">'+(_mode==='ship'?'Sevkiyatı Hazırla (stok düşmez)':(isProforma()?'Proformayı Onaya Gönder':'Teslimatı Tamamla'))+'</span>'; focusScan(); }
+    }
+    function showResultShip(d){
+      const box=document.getElementById('result'); box.style.display='block';
+      box.innerHTML=`<div class="res-ok" style="background:#eff6ff;border-color:#bfdbfe;">
+        <div style="font-weight:700;color:#1d4ed8;margin-bottom:0.4rem;"><i class="bi bi-truck"></i> Sevkiyat hazırlandı — ${esc(d.document_no)} (stok düşmedi)</div>
+        <a href="/api/delivery/${d.id}/packing-list?format=pdf" class="btn-o" target="_blank"><i class="bi bi-file-earmark-pdf"></i> Hazırlık Listesi (PDF)</a>
+        <div style="font-size:0.82rem;color:#6b7280;margin-top:0.4rem;">Aşağıdaki "Bekleyen Kargo Sevkiyatları"ndan takip numarası girince stok düşer.</div>
+      </div>`;
+    }
+
+    /* ── Kargo: bekleyen sevkiyatlar + takip no atama + iptal ── */
+    async function loadShipPending(){
+      const body=document.getElementById('shipBody');
+      try{
+        const r=await fetch('/api/delivery/shipments');
+        if(!r.ok){ body.innerHTML='<div class="muted" style="padding:0.6rem;">Yüklenemedi.</div>'; return; }
+        const d=await r.json(); const rows=d.pending||[];
+        if(!rows.length){ body.innerHTML='<div class="muted" style="padding:0.6rem;">Bekleyen kargo sevkiyatı yok.</div>'; return; }
+        body.innerHTML=rows.map(p=>{
+          const who=esc((p.recipient_name||'').trim()||p.recipient_org||'— (alıcı belirtilmedi)');
+          const lines=(p.items||[]).map(i=>`<div style="font-size:0.82rem;">• ${esc(i.item_name)} — ${fmt(i.quantity)} ${esc(i.unit||'')}</div>`).join('');
+          const can=window.CAN_DISPATCH;
+          return `<div style="border:1px solid #bfdbfe;border-radius:10px;padding:0.8rem;margin-bottom:0.7rem;background:#f8fbff;">
+            <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;">
+              <div><b>${esc(p.document_no)}</b> · ${who}
+                <div class="muted" style="font-size:0.78rem;">Hazırlayan: ${esc(p.dispatched_by||'—')} · ${esc(p.date)} · ${(p.items||[]).length} kalem</div></div>
+            </div>
+            <div style="margin:0.5rem 0;">${lines}</div>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+              <a class="btn-o" style="padding:0.4rem 0.85rem;" target="_blank" href="/api/delivery/${p.id}/packing-list?format=pdf"><i class="bi bi-file-earmark-pdf"></i> Hazırlık PDF</a>
+              ${can?`<button class="btn-g" style="padding:0.4rem 0.9rem;" onclick="shipAssign(${p.id})"><i class="bi bi-upc-scan"></i> Takip No Gir & Kargola</button>
+              <button class="btn-o" style="padding:0.4rem 0.9rem;color:#b91c1c;border-color:#fca5a5;" onclick="shipCancel(${p.id})"><i class="bi bi-x-circle"></i> İptal</button>`:''}
+            </div>
+          </div>`;
+        }).join('');
+      }catch{ body.innerHTML='<div class="muted" style="padding:0.6rem;">Sunucuya bağlanılamadı.</div>'; }
+    }
+    async function shipAssign(id){
+      const tracking=prompt('Kargo takip numarası:'); if(tracking===null) return;
+      if(!tracking.trim()){ showToast('Takip numarası boş olamaz.'); return; }
+      const carrier=prompt('Taşıyıcı firma (opsiyonel — Yurtiçi / Aras / MNG …):','')||'';
+      try{
+        const r=await fetch(`/api/delivery/${id}/ship`,{method:'POST',
+          headers:{'Content-Type':'application/json','X-Requested-With':'1'},
+          body:JSON.stringify({tracking_no:tracking.trim(), carrier:carrier.trim()||null})});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok){ showToast(d.detail||'Kargolanamadı.'); return; }
+        showToast(`Kargolandı, stok düşüldü. Takip: ${d.tracking_no}`,'success');
+        await Promise.all([loadShipPending(), loadHistory(), loadItems()]);
+      }catch{ showToast('Sunucuya bağlanılamadı.'); }
+    }
+    async function shipCancel(id){
+      if(!confirm('Bu sevkiyat iptal edilsin mi? (Stok zaten düşmedi.)')) return;
+      const reason=prompt('İptal sebebi (opsiyonel):')||'';
+      try{
+        const r=await fetch(`/api/delivery/${id}/cancel`,{method:'POST',
+          headers:{'Content-Type':'application/json','X-Requested-With':'1'},body:JSON.stringify({reason})});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok){ showToast(d.detail||'İptal edilemedi.'); return; }
+        showToast('Sevkiyat iptal edildi.','success');
+        await Promise.all([loadShipPending(), loadHistory()]);
+      }catch{ showToast('Sunucuya bağlanılamadı.'); }
     }
     function showResult(d, pf){
       const box=document.getElementById('result');
@@ -506,7 +606,9 @@
     /* ── Durum rozeti + satır aksiyonu ── */
     function statusBadge(x){
       const map={completed:['#dcfce7','#15803d','Tamamlandı'],pending:['#fef9c3','#92750e','Onay Bekliyor'],
-                 approved:['#dcfce7','#15803d','Onaylandı'],rejected:['#fee2e2','#b91c1c','Reddedildi']};
+                 approved:['#dcfce7','#15803d','Onaylandı'],rejected:['#fee2e2','#b91c1c','Reddedildi'],
+                 preparing:['#dbeafe','#1d4ed8','Hazırlanıyor'],shipped:['#dcfce7','#15803d','Kargolandı'],
+                 canceled:['#f3f4f6','#6b7280','İptal']};
       const s=map[x.status]||map.completed;
       return `<span style="background:${s[0]};color:${s[1]};padding:0.15rem 0.5rem;border-radius:999px;font-size:0.74rem;font-weight:700;white-space:nowrap;">${s[2]}</span>`;
     }
@@ -514,6 +616,12 @@
       if(x.delivery_type==='proforma'){
         if(x.status==='approved') return `<a href="/api/delivery/${x.id}/proforma?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-receipt"></i> Proforma</a>`;
         return '<span class="muted" style="font-size:0.8rem;">—</span>';
+      }
+      if(x.delivery_type==='kargo'){
+        if(x.status==='canceled') return '<span class="muted" style="font-size:0.8rem;">—</span>';
+        const pl=`<a href="/api/delivery/${x.id}/packing-list?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-list-check"></i> Hazırlık</a>`;
+        const doc=(x.status==='shipped')?` <a href="/api/delivery/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a>`:'';
+        return pl+doc;
       }
       return `<a href="/api/delivery/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a>`;
     }
@@ -528,7 +636,7 @@
         if(!rows.length){ b.innerHTML='<tr><td colspan="7" class="muted" style="padding:1rem;">Henüz teslimat yok.</td></tr>'; return; }
         b.innerHTML=rows.map(x=>`<tr>
           <td><b>${esc(x.document_no)}</b></td>
-          <td>${esc(x.recipient_name)}${x.recipient_org?` <span class="muted">· ${esc(x.recipient_org)}</span>`:''}</td>
+          <td>${esc((x.recipient_name||'').trim()||'—')}${x.recipient_org?` <span class="muted">· ${esc(x.recipient_org)}</span>`:''}${x.tracking_no?` <span class="muted">· 📦 ${esc(x.tracking_no)}</span>`:''}</td>
           <td>${esc(x.type_label)}</td>
           <td>${statusBadge(x)}</td>
           <td>${x.item_count} kalem · ${fmt(x.total_qty)}</td>
