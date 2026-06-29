@@ -46,7 +46,9 @@ class LoginRequest(BaseModel):
 # ─── Endpoints ──────────────────────────────────────────────────────────────
 
 @router.post("/login")
-@limiter.limit("5/15minutes")    # IP-based — credential stuffing'i etkisiz kılar
+@limiter.limit("40/15minutes")   # IP-based; ortak ofis IP'si tüm ekibi paylaşır → 5 çok düşüktü
+                                 # (başarılı girişler de sayılır). Asıl brute-force koruması
+                                 # aşağıdaki per-HESAP kilidi (5 yanlış → 15dk).
 def login(request: Request, data: LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = (
         db.query(User)
