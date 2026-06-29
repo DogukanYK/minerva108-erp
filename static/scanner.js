@@ -135,6 +135,38 @@
    * @param {(text: string) => void} callback
    */
   window.openBarcodeScanner = async function (callback) {
+    // ── Native uygulama (Capacitor) → ML Kit native barkod tarayıcı ──────────
+    // WebView getUserMedia kamerası bazı cihazlarda izin verili olsa bile
+    // NotAllowedError/çökme yapıyor. Native'de telefonun gerçek barkod
+    // tarayıcısını açarız (OS kamera izniyle çalışır, stabil).
+    const _isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function'
+                         && window.Capacitor.isNativePlatform());
+    const _BS = _isNative && window.Capacitor.Plugins && window.Capacitor.Plugins.BarcodeScanner;
+    if (_BS) {
+      try {
+        let ready = true;
+        try {
+          const av = await _BS.isGoogleBarcodeScannerModuleAvailable();
+          if (av && av.available === false) {
+            ready = false;
+            _BS.installGoogleBarcodeScannerModule().catch(function () {});
+            alert('Barkod modülü ilk kez indiriliyor (birkaç saniye). İner inmez tekrar deneyin.');
+          }
+        } catch (_e) { /* availability sorgusu yoksa direkt dene */ }
+        if (ready) {
+          const res = await _BS.scan();
+          const codes = (res && res.barcodes) || [];
+          if (codes.length && typeof callback === 'function') {
+            callback(String(codes[0].rawValue || codes[0].displayValue || '').trim());
+          }
+        }
+      } catch (e) {
+        const msg = (e && e.message) ? e.message : String(e);
+        if (!/cancel/i.test(msg)) alert('Barkod taranamadı: ' + msg);
+      }
+      return;
+    }
+
     if (!('mediaDevices' in navigator) || typeof navigator.mediaDevices.getUserMedia !== 'function') {
       alert('Bu cihaz / tarayıcı kamera erişimini desteklemiyor.');
       return;

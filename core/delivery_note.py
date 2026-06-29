@@ -215,6 +215,10 @@ def _delivery_story(view: dict, s: float = 1.0):
         info.append(("Telefon", view["recipient_phone"]))
     info.append(("Teslimat Türü", view.get("type_label") or "—"))
     info.append(("Yöntem", view.get("method_label") or "—"))
+    if view.get("tracking_no"):
+        info.append(("Kargo Takip No", view["tracking_no"]))
+    if view.get("carrier"):
+        info.append(("Taşıyıcı", view["carrier"]))
     info.append(("Teslim Eden", view.get("dispatched_by") or "—"))
     story.append(_kv_table(info, [W * 0.32 * mm, W * 0.68 * mm]))
 

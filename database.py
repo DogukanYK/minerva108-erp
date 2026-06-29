@@ -262,10 +262,17 @@ class Delivery(Base):
     customer_address = Column(Text, nullable=True)
     customer_country = Column(String(100), nullable=True)
     currency = Column(String(3), default="USD")                 # USD / EUR / TRY
-    status = Column(String(20), default="completed", index=True)  # completed | pending | approved | rejected
+    status = Column(String(20), default="completed", index=True)  # completed | pending | approved | rejected | preparing | shipped | canceled
     approved_by = Column(String(80), nullable=True)
     approved_at = Column(DateTime, nullable=True)
     reject_reason = Column(Text, nullable=True)
+    # ── Kargo / Sevkiyat alanları (yalnız delivery_type='kargo') ──
+    # Kargo: create'te stok DÜŞMEZ (status='preparing'); takip no atanınca (ship)
+    # stok o an düşer (status='shipped'). reject_reason iptal gerekçesi olarak da kullanılır.
+    tracking_no = Column(String(100), nullable=True)            # kargo takip numarası (ship'i tetikler)
+    carrier = Column(String(80), nullable=True)                # taşıyıcı firma (Yurtiçi/Aras/MNG...)
+    shipped_at = Column(DateTime, nullable=True)               # kargolandığı (stok düştüğü) UTC damga
+    shipped_by = Column(String(80), nullable=True)             # takip no'yu girip kargolayan (audit)
 
     items = relationship("DeliveryItem", back_populates="delivery",
                          cascade="all, delete-orphan")
@@ -993,6 +1000,11 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS ix_deliveries_status ON deliveries(status)",
             "ALTER TABLE delivery_items ADD COLUMN unit_price DOUBLE PRECISION",
             "ALTER TABLE delivery_items ADD COLUMN weight_ml DOUBLE PRECISION",
+            # Kargo / Sevkiyat (ertelenmiş stok — takip no atanınca düşer)
+            "ALTER TABLE deliveries  ADD COLUMN tracking_no VARCHAR(100)",
+            "ALTER TABLE deliveries  ADD COLUMN carrier VARCHAR(80)",
+            "ALTER TABLE deliveries  ADD COLUMN shipped_at TIMESTAMP",
+            "ALTER TABLE deliveries  ADD COLUMN shipped_by VARCHAR(80)",
         ):
             alter_safe(stmt)
 

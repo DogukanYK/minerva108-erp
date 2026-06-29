@@ -147,8 +147,17 @@
 
   <main class="main-content">
     <div class="content-inner">
-      <h1 class="page-title">Teslimat — Hediye / Numune Çıkışı</h1>
-      <p class="page-subtitle">Ürünün barkodunu okut (market kasası gibi — her okutma stoktan 1 düşer), alıcıyı gir, imzalı teslim belgesini bas. Üretim/satış değil; stok çıkışıdır.</p>
+      <h1 class="page-title">Teslimat</h1>
+      <p class="page-subtitle" id="pageSubtitle">Ürünün barkodunu okut (market kasası gibi — her okutma stoktan 1 düşer), alıcıyı gir, imzalı teslim belgesini bas. Üretim/satış değil; stok çıkışıdır.</p>
+
+      <style>
+        .tabbtn{padding:0.6rem 1.15rem;border:1px solid #e5e7eb;background:#fff;border-radius:10px;font-family:'Jost',sans-serif;font-weight:700;font-size:0.95rem;color:#6b7280;cursor:pointer;display:inline-flex;align-items:center;gap:0.45rem;}
+        .tabbtn.active{background:var(--navy);color:#fff;border-color:var(--navy);}
+      </style>
+      <div style="display:flex;gap:0.5rem;margin:0.2rem 0 1.1rem;">
+        <button type="button" id="tabBtnInstant" class="tabbtn active" onclick="switchMode('instant')"><i class="bi bi-bag-check"></i> Anında Teslim</button>
+        <button type="button" id="tabBtnShip" class="tabbtn" onclick="switchMode('ship')"><i class="bi bi-truck"></i> Kargo / Sevkiyat</button>
+      </div>
 
       <div class="grid2">
         <!-- SOL: Okut + Sepet -->
@@ -195,15 +204,18 @@
           <div class="card2">
             <div class="card2-head"><i class="bi bi-person-vcard"></i><h2>Alıcı Bilgileri</h2></div>
             <div class="card2-body">
+              <div id="kargoHint" style="display:none;margin-bottom:0.7rem;padding:0.6rem 0.8rem;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;font-size:0.84rem;color:#1d4ed8;">
+                <i class="bi bi-info-circle-fill"></i> Kargo modu: ürünler <b>şimdi stoktan düşmez</b>. Takip numarası girip kargoladığınızda düşülür. Alıcı bilgisi <b>opsiyoneldir</b> (girmenizi öneririz — belge/etiket için).
+              </div>
               <div style="margin-bottom:0.7rem;">
-                <label class="lbl">Ad Soyad <span style="color:#ef4444;">*</span></label>
+                <label class="lbl">Ad Soyad <span id="rNameStar" style="color:#ef4444;">*</span></label>
                 <input type="text" id="rName" class="ipt" placeholder="Teslim alan kişi" />
               </div>
               <div style="display:flex;gap:0.7rem;margin-bottom:0.7rem;">
                 <div style="flex:1;"><label class="lbl">Firma / Kurum</label><input type="text" id="rOrg" class="ipt" placeholder="opsiyonel"></div>
                 <div style="flex:1;"><label class="lbl">Telefon</label><input type="text" id="rPhone" class="ipt" placeholder="kargo için"></div>
               </div>
-              <div style="display:flex;gap:0.7rem;margin-bottom:0.7rem;">
+              <div id="typeMethodRow" style="display:flex;gap:0.7rem;margin-bottom:0.7rem;">
                 <div style="flex:1;"><label class="lbl">Tür</label>
                   <select id="rType" class="ipt" onchange="onTypeChange()">
                     <option value="hediye">Hediye</option>
