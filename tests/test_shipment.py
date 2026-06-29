@@ -133,6 +133,18 @@ def test_pending_shipments_and_pdfs(authed_client: TestClient, db_session):
     assert r2.status_code == 200 and r2.content[:4] == b"%PDF"
 
 
+def test_delivery_document_blocked_until_shipped(authed_client: TestClient, db_session):
+    """Teslim belgesi ('eksiksiz teslim alınmıştır') hazırlanıyor kargo için üretilmez."""
+    it = _item(db_session, stock=10, barcode="869111100011")
+    did = _create_kargo(authed_client, it.id, 2, "Doc Test").json()["id"]
+    # preparing → 403
+    assert authed_client.get(f"/api/delivery/{did}/document").status_code == 403
+    authed_client.post(f"/api/delivery/{did}/ship", headers=_H, json={"tracking_no": "D1"})
+    # shipped → 200 (belge artık geçerli)
+    r = authed_client.get(f"/api/delivery/{did}/document")
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+
+
 def test_kargo_and_ship_require_adjust_permission(labtech_client: TestClient):
     # require_permission dependency → handler hiç çalışmadan 403 (id var olmasa da)
     assert labtech_client.post("/api/delivery/1/ship", headers=_H,
