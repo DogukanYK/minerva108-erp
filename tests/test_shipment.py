@@ -145,6 +145,50 @@ def test_delivery_document_blocked_until_shipped(authed_client: TestClient, db_s
     assert r.status_code == 200 and r.content[:4] == b"%PDF"
 
 
+def test_edit_preparing_shipment_replaces_items_no_stock(authed_client: TestClient, db_session):
+    a = _item(db_session, stock=10, barcode="869111100012")
+    b = _item(db_session, stock=8, barcode="869111100013")
+    did = _create_kargo(authed_client, a.id, 2, "Eski Ad").json()["id"]
+    r = authed_client.put(f"/api/delivery/{did}", headers=_H, json={
+        "recipient_name": "Yeni Ad", "items": [{"item_id": b.id, "quantity": 3}]})
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    # stok HİÇ değişmez (taslak — bağlı değil)
+    assert db_session.query(Item).get(a.id).current_stock == 10
+    assert db_session.query(Item).get(b.id).current_stock == 8
+    d = db_session.query(Delivery).get(did)
+    assert d.recipient_name == "Yeni Ad"
+    assert len(d.items) == 1 and d.items[0].item_id == b.id and d.items[0].quantity == 3
+
+
+def test_edit_shipped_carrier_only_keeps_stock(authed_client: TestClient, db_session):
+    it = _item(db_session, stock=10, barcode="869111100014")
+    did = _create_kargo(authed_client, it.id, 4, "Nazlı Kargın").json()["id"]
+    authed_client.post(f"/api/delivery/{did}/ship", headers=_H, json={"tracking_no": "ZZ9"})  # carrier yok
+    r = authed_client.put(f"/api/delivery/{did}", headers=_H, json={"carrier": "Yurtiçi"})
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    d = db_session.query(Delivery).get(did)
+    assert d.carrier == "Yurtiçi" and d.tracking_no == "ZZ9" and d.status == "shipped"
+    assert db_session.query(Item).get(it.id).current_stock == 6   # değişmedi (6 = 10-4)
+
+
+def test_edit_shipped_items_rejected(authed_client: TestClient, db_session):
+    it = _item(db_session, stock=10, barcode="869111100015")
+    did = _create_kargo(authed_client, it.id, 2, "X").json()["id"]
+    authed_client.post(f"/api/delivery/{did}/ship", headers=_H, json={"tracking_no": "T1"})
+    r = authed_client.put(f"/api/delivery/{did}", headers=_H,
+                          json={"items": [{"item_id": it.id, "quantity": 99}]})
+    assert r.status_code == 400   # kargolanmışın ürünleri değiştirilemez
+    db_session.expire_all()
+    assert db_session.query(Item).get(it.id).current_stock == 8   # 10-2, bozulmadı
+
+
+def test_edit_requires_adjust_permission(labtech_client: TestClient):
+    assert labtech_client.put("/api/delivery/1", headers=_H,
+                              json={"carrier": "Yurtiçi"}).status_code == 403
+
+
 def test_kargo_and_ship_require_adjust_permission(labtech_client: TestClient):
     # require_permission dependency → handler hiç çalışmadan 403 (id var olmasa da)
     assert labtech_client.post("/api/delivery/1/ship", headers=_H,

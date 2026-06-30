@@ -85,6 +85,16 @@ class CancelRequest(BaseModel):
     reason: Optional[str] = Field(None, max_length=2000)
 
 
+class DeliveryEditRequest(BaseModel):
+    recipient_name: Optional[str] = Field(None, max_length=150)
+    recipient_org: Optional[str] = Field(None, max_length=150)
+    recipient_phone: Optional[str] = Field(None, max_length=40)
+    note: Optional[str] = Field(None, max_length=2000)
+    carrier: Optional[str] = Field(None, max_length=80)
+    tracking_no: Optional[str] = Field(None, max_length=100)
+    items: Optional[List[DeliveryLine]] = None   # yalnız taslak (preparing) — yeniden snapshot
+
+
 @router.post("/delivery", status_code=201)
 def create_delivery(
     data: DeliveryCreate,
@@ -232,8 +242,8 @@ def _view(d) -> dict:
         "shipped_by": d.shipped_by,
         "dispatched_by": d.dispatched_by,
         "note": d.note,
-        "items": [{"item_name": i.item_name, "quantity": i.quantity, "unit": i.unit,
-                   "unit_price": i.unit_price, "weight_ml": i.weight_ml}
+        "items": [{"item_id": i.item_id, "item_name": i.item_name, "quantity": i.quantity,
+                   "unit": i.unit, "unit_price": i.unit_price, "weight_ml": i.weight_ml}
                   for i in d.items],
     }
 
@@ -331,6 +341,76 @@ def get_delivery(
     d = db.query(Delivery).filter(Delivery.id == delivery_id, Delivery.domain == domain).first()
     if not d:
         return JSONResponse(status_code=404, content={"detail": "Teslimat bulunamadı."})
+    return _view(d)
+
+
+@router.put("/delivery/{delivery_id}")
+def edit_delivery(
+    delivery_id: int,
+    data: DeliveryEditRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("inventory", "adjust")),
+    domain: str = Depends(active_domain),
+):
+    """Kargo sevkiyatı düzenle (STOK GÜVENLİ).
+
+    - status='preparing' (taslak): alıcı/not/taşıyıcı + ÜRÜNLER (yeniden snapshot).
+      Stok bağlı DEĞİL → hiç dokunulmaz.
+    - status='shipped': yalnız META (taşıyıcı, takip no, alıcı, not) düzeltilir; ÜRÜNLER
+      değiştirilemez (stok zaten düştü) → items gelirse 400.
+    - kargo değil / iptal → 400.
+    """
+    d = (db.query(Delivery)
+         .filter(Delivery.id == delivery_id, Delivery.domain == domain)
+         .with_for_update().first())
+    if not d:
+        return JSONResponse(status_code=404, content={"detail": "Sevkiyat bulunamadı."})
+    if d.delivery_type != "kargo":
+        return JSONResponse(status_code=400, content={"detail": "Yalnız kargo sevkiyatları düzenlenebilir."})
+    if d.status not in ("preparing", "shipped"):
+        return JSONResponse(status_code=400, content={"detail": "Bu sevkiyat düzenlenemez."})
+
+    # Ürünler yalnız taslakta değiştirilebilir (stok bağlı değil); kargolanmışta REDDET.
+    if data.items is not None:
+        if d.status != "preparing":
+            return JSONResponse(status_code=400,
+                                content={"detail": "Kargolanmış sevkiyatın ürünleri değiştirilemez (stok düştü)."})
+        if not data.items:
+            return JSONResponse(status_code=400, content={"detail": "En az bir ürün olmalı."})
+        qty_by_item: dict = {}
+        for ln in data.items:
+            qty_by_item[ln.item_id] = qty_by_item.get(ln.item_id, 0.0) + float(ln.quantity)
+        resolved = {}
+        for iid in qty_by_item:
+            it = db.query(Item).filter(Item.id == iid, Item.domain == domain).first()
+            if not it:
+                return JSONResponse(status_code=404, content={"detail": f"Ürün bulunamadı (id {iid})."})
+            resolved[iid] = it
+        for li in list(d.items):       # eski kalemleri sil (stok DÜŞMEMİŞTİ → geri alma yok)
+            db.delete(li)
+        db.flush()
+        for iid, qty in qty_by_item.items():
+            it = resolved[iid]
+            db.add(DeliveryItem(delivery_id=d.id, item_id=it.id,
+                                item_name=_doc_name(it, d.doc_lang or "TR"),
+                                quantity=qty, unit=it.unit or ""))
+
+    # Meta alanları (her iki durumda da stok-güvenli)
+    if data.recipient_name is not None:
+        d.recipient_name = data.recipient_name.strip()
+    if data.recipient_org is not None:
+        d.recipient_org = data.recipient_org.strip() or None
+    if data.recipient_phone is not None:
+        d.recipient_phone = data.recipient_phone.strip() or None
+    if data.note is not None:
+        d.note = data.note.strip() or None
+    if data.carrier is not None:
+        d.carrier = data.carrier.strip() or None
+    if data.tracking_no is not None and data.tracking_no.strip():
+        d.tracking_no = data.tracking_no.strip()
+
+    db.commit()
+    db.refresh(d)
     return _view(d)
 
 
