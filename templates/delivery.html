@@ -288,6 +288,31 @@
     </div>
   </main>
 
+  <!-- Kargola: takip no + taşıyıcı (tek-tık takip için taşıyıcı normalize edilir) -->
+  <div id="trackModal" onclick="if(event.target===this) closeTrack()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:14px;width:430px;max-width:94vw;padding:1.15rem 1.3rem;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+      <div style="font-weight:700;color:var(--navy);font-size:1.05rem;margin-bottom:0.85rem;"><i class="bi bi-truck"></i> Kargola — Takip No Gir</div>
+      <label class="lbl">Taşıyıcı Firma</label>
+      <select id="trkCarrier" class="ipt" style="width:100%;margin-bottom:0.7rem;">
+        <option value="Yurtiçi">Yurtiçi Kargo</option>
+        <option value="Aras">Aras Kargo</option>
+        <option value="MNG">MNG Kargo</option>
+        <option value="PTT">PTT Kargo</option>
+        <option value="Sürat">Sürat Kargo</option>
+        <option value="DHL">DHL</option>
+        <option value="UPS">UPS</option>
+        <option value="FedEx">FedEx</option>
+        <option value="">Diğer / Belirtme</option>
+      </select>
+      <label class="lbl">Kargo Takip Numarası <span style="color:#ef4444;">*</span></label>
+      <input type="text" id="trkNo" class="ipt" placeholder="takip numarası" style="width:100%;margin-bottom:0.95rem;" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();submitTrack();}">
+      <div style="display:flex;gap:0.5rem;justify-content:flex-end;">
+        <button class="btn-o" onclick="closeTrack()">Vazgeç</button>
+        <button class="btn-g" id="trkBtn" onclick="submitTrack()"><i class="bi bi-check2"></i> Kargola (stok düş)</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast-container"></div>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
@@ -561,19 +586,47 @@
         }).join('');
       }catch{ body.innerHTML='<div class="muted" style="padding:0.6rem;">Sunucuya bağlanılamadı.</div>'; }
     }
-    async function shipAssign(id){
-      const tracking=prompt('Kargo takip numarası:'); if(tracking===null) return;
-      if(!tracking.trim()){ showToast('Takip numarası boş olamaz.'); return; }
-      const carrier=prompt('Taşıyıcı firma (opsiyonel — Yurtiçi / Aras / MNG …):','')||'';
+    /* Taşıyıcı adına göre tek-tık takip URL'si (bilinmiyorsa Google ile yine tek tık). */
+    function trackingUrl(carrier, tracking){
+      const t=encodeURIComponent(String(tracking||'').trim());
+      const c=String(carrier||'').toLocaleLowerCase('tr');
+      const has=(...ks)=>ks.some(k=>c.includes(k));
+      if(has('yurtiç','yurtic')) return 'https://www.yurticikargo.com/tr/online-servisler/gonderi-sorgula?code='+t;
+      if(has('aras'))            return 'https://www.araskargo.com.tr/tr/cargo-tracking?code='+t;
+      if(has('mng'))             return 'https://www.mngkargo.com.tr/track?shippingNumber='+t;
+      if(has('ptt'))             return 'https://gonderitakip.ptt.gov.tr/Track/Verify?q='+t;
+      if(has('sürat','surat'))   return 'https://www.suratkargo.com.tr/KargoTakip/?kargotakipno='+t;
+      if(has('dhl'))             return 'https://www.dhl.com/tr-tr/home/tracking/tracking-express.html?submit=1&tracking-id='+t;
+      if(has('ups'))             return 'https://www.ups.com/track?loc=tr_TR&tracknum='+t;
+      if(has('fedex'))           return 'https://www.fedex.com/fedextrack/?trknbr='+t;
+      return 'https://www.google.com/search?q='+encodeURIComponent(((carrier||'kargo')+' takip '+tracking).trim());
+    }
+
+    let _trkId=null;
+    function shipAssign(id){
+      _trkId=id;
+      document.getElementById('trkNo').value='';
+      document.getElementById('trackModal').style.display='flex';
+      setTimeout(()=>{ try{ document.getElementById('trkNo').focus(); }catch(e){} }, 50);
+    }
+    function closeTrack(){ document.getElementById('trackModal').style.display='none'; _trkId=null; }
+    async function submitTrack(){
+      if(_trkId===null) return;
+      const t=document.getElementById('trkNo').value.trim();
+      if(!t){ showToast('Takip numarası girin.'); return; }
+      const c=document.getElementById('trkCarrier').value;
+      const btn=document.getElementById('trkBtn'); btn.disabled=true;
       try{
-        const r=await fetch(`/api/delivery/${id}/ship`,{method:'POST',
+        const r=await fetch(`/api/delivery/${_trkId}/ship`,{method:'POST',
           headers:{'Content-Type':'application/json','X-Requested-With':'1'},
-          body:JSON.stringify({tracking_no:tracking.trim(), carrier:carrier.trim()||null})});
+          body:JSON.stringify({tracking_no:t, carrier:c||null})});
         const d=await r.json().catch(()=>({}));
         if(!r.ok){ showToast(d.detail||'Kargolanamadı.'); return; }
         showToast(`Kargolandı, stok düşüldü. Takip: ${d.tracking_no}`,'success');
+        closeTrack();
         await Promise.all([loadShipPending(), loadHistory(), loadItems()]);
       }catch{ showToast('Sunucuya bağlanılamadı.'); }
+      finally{ btn.disabled=false; }
     }
     async function shipCancel(id){
       if(!confirm('Bu sevkiyat iptal edilsin mi? (Stok zaten düşmedi.)')) return;
@@ -620,8 +673,10 @@
       if(x.delivery_type==='kargo'){
         if(x.status==='canceled') return '<span class="muted" style="font-size:0.8rem;">—</span>';
         const pl=`<a href="/api/delivery/${x.id}/packing-list?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-list-check"></i> Hazırlık</a>`;
-        const doc=(x.status==='shipped')?` <a href="/api/delivery/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a>`:'';
-        return pl+doc;
+        if(x.status!=='shipped') return pl;
+        const trk=x.tracking_no?` <a href="${trackingUrl(x.carrier,x.tracking_no)}" class="btn-g" target="_blank" rel="noopener" title="Kargo takibi (${esc(x.carrier||'kargo')})" style="padding:0.3rem 0.6rem;"><i class="bi bi-geo-alt-fill"></i> Takip</a>`:'';
+        const doc=` <a href="/api/delivery/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a>`;
+        return pl+trk+doc;
       }
       return `<a href="/api/delivery/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a>`;
     }
