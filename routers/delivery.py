@@ -6,6 +6,7 @@ Stok `Item.current_stock`'tan düşülür, her kalem için immutable Transaction
 yazılır. Üretim/satış değil — üretmediğimiz için stoktan çıkış. Belge no: TES-YYYY-<id>.
 """
 import io
+import json
 from datetime import datetime
 from typing import List, Optional
 
@@ -85,6 +86,12 @@ class CancelRequest(BaseModel):
     reason: Optional[str] = Field(None, max_length=2000)
 
 
+class TrackingLeg(BaseModel):
+    label: Optional[str] = Field(None, max_length=60)        # Yerel (TR) / Global / Varış
+    carrier: Optional[str] = Field(None, max_length=80)
+    tracking_no: str = Field(..., min_length=1, max_length=100)
+
+
 class DeliveryEditRequest(BaseModel):
     recipient_name: Optional[str] = Field(None, max_length=150)
     recipient_org: Optional[str] = Field(None, max_length=150)
@@ -92,7 +99,27 @@ class DeliveryEditRequest(BaseModel):
     note: Optional[str] = Field(None, max_length=2000)
     carrier: Optional[str] = Field(None, max_length=80)
     tracking_no: Optional[str] = Field(None, max_length=100)
+    tracking_legs: Optional[List[TrackingLeg]] = Field(None, max_length=10)  # çok-bacaklı takip
     items: Optional[List[DeliveryLine]] = None   # yalnız taslak (preparing) — yeniden snapshot
+
+
+def _legs_of(d) -> list:
+    """tracking_legs JSON → liste; boşsa tracking_no'dan tek bacak sentezle (geriye uyum)."""
+    raw = getattr(d, "tracking_legs", None)
+    if raw:
+        try:
+            legs = json.loads(raw)
+            if isinstance(legs, list):
+                out = [{"label": (l.get("label") or ""), "carrier": (l.get("carrier") or ""),
+                        "tracking_no": (l.get("tracking_no") or "")}
+                       for l in legs if isinstance(l, dict) and (l.get("tracking_no") or "").strip()]
+                if out:
+                    return out
+        except Exception:
+            pass
+    if d.tracking_no:
+        return [{"label": "", "carrier": d.carrier or "", "tracking_no": d.tracking_no}]
+    return []
 
 
 @router.post("/delivery", status_code=201)
@@ -238,6 +265,7 @@ def _view(d) -> dict:
         "reject_reason": d.reject_reason,
         "tracking_no": d.tracking_no,
         "carrier": d.carrier,
+        "tracking_legs": _legs_of(d),
         "shipped_at": to_tr(d.shipped_at).strftime("%d.%m.%Y %H:%M") if d.shipped_at else None,
         "shipped_by": d.shipped_by,
         "dispatched_by": d.dispatched_by,
@@ -269,6 +297,7 @@ def list_deliveries(
         "total_qty": round(sum(i.quantity for i in d.items), 4),
         "tracking_no": d.tracking_no,
         "carrier": d.carrier,
+        "tracking_legs": _legs_of(d),
         "dispatched_by": d.dispatched_by,
         "date": to_tr(d.created_at).strftime("%d.%m.%Y %H:%M") if d.created_at else "",
     } for d in rows]
@@ -352,27 +381,29 @@ def edit_delivery(
     current_user: dict = Depends(require_permission("inventory", "adjust")),
     domain: str = Depends(active_domain),
 ):
-    """Kargo sevkiyatı düzenle (STOK GÜVENLİ).
+    """Teslimat/sevkiyat düzenle (STOK GÜVENLİ — stoğa asla dokunmaz).
 
-    - status='preparing' (taslak): alıcı/not/taşıyıcı + ÜRÜNLER (yeniden snapshot).
-      Stok bağlı DEĞİL → hiç dokunulmaz.
-    - status='shipped': yalnız META (taşıyıcı, takip no, alıcı, not) düzeltilir; ÜRÜNLER
-      değiştirilemez (stok zaten düştü) → items gelirse 400.
-    - kargo değil / iptal → 400.
+    - kargo 'preparing' (taslak): alıcı/not + ÜRÜNLER (yeniden snapshot, stok bağlı değil).
+    - kargo 'shipped' + tamamlanmış hediye/numune/diğer: yalnız META — kargo takip
+      bacakları (tracking_legs), taşıyıcı, alıcı, not. ÜRÜNLER değiştirilemez (stok düştü).
+    - proforma / iptal / onay-bekleyen → 400.
+
+    NOT: Her teslimata (hediye/numune dahil) kargo takip no eklenebilir; yurtdışı için
+    çok-bacaklı (yerel TR → global → varış) tracking_legs desteklenir.
     """
     d = (db.query(Delivery)
          .filter(Delivery.id == delivery_id, Delivery.domain == domain)
          .with_for_update().first())
     if not d:
-        return JSONResponse(status_code=404, content={"detail": "Sevkiyat bulunamadı."})
-    if d.delivery_type != "kargo":
-        return JSONResponse(status_code=400, content={"detail": "Yalnız kargo sevkiyatları düzenlenebilir."})
-    if d.status not in ("preparing", "shipped"):
-        return JSONResponse(status_code=400, content={"detail": "Bu sevkiyat düzenlenemez."})
+        return JSONResponse(status_code=404, content={"detail": "Teslimat bulunamadı."})
+    editable = ((d.delivery_type == "kargo" and d.status in ("preparing", "shipped"))
+                or (d.delivery_type in ("hediye", "numune", "diger") and d.status == "completed"))
+    if not editable:
+        return JSONResponse(status_code=400, content={"detail": "Bu teslimat düzenlenemez."})
 
-    # Ürünler yalnız taslakta değiştirilebilir (stok bağlı değil); kargolanmışta REDDET.
+    # Ürünler yalnız KARGO TASLAĞINDA değiştirilebilir (stok bağlı değil); diğerlerinde REDDET.
     if data.items is not None:
-        if d.status != "preparing":
+        if not (d.delivery_type == "kargo" and d.status == "preparing"):
             return JSONResponse(status_code=400,
                                 content={"detail": "Kargolanmış sevkiyatın ürünleri değiştirilemez (stok düştü)."})
         if not data.items:
@@ -408,6 +439,24 @@ def edit_delivery(
         d.carrier = data.carrier.strip() or None
     if data.tracking_no is not None and data.tracking_no.strip():
         d.tracking_no = data.tracking_no.strip()
+
+    # Çok-bacaklı takip (authoritative): bacaklar verilirse primary = ilk bacak (tek-tık Takip).
+    if data.tracking_legs is not None:
+        legs = []
+        for lg in data.tracking_legs:
+            tn = (lg.tracking_no or "").strip()
+            if not tn:
+                continue
+            legs.append({"label": (lg.label or "").strip(),
+                         "carrier": (lg.carrier or "").strip(),
+                         "tracking_no": tn})
+        d.tracking_legs = json.dumps(legs, ensure_ascii=False) if legs else None
+        if legs:
+            d.tracking_no = legs[0]["tracking_no"]
+            d.carrier = legs[0]["carrier"] or None
+        else:
+            d.tracking_no = None
+            d.carrier = None
 
     db.commit()
     db.refresh(d)
@@ -629,7 +678,10 @@ def ship_delivery(
         ))
     d.status = "shipped"
     d.tracking_no = tracking
-    d.carrier = (body.carrier or "").strip() or None
+    carrier = (body.carrier or "").strip() or None
+    d.carrier = carrier
+    d.tracking_legs = json.dumps([{"label": "Yerel (TR)", "carrier": carrier or "",
+                                   "tracking_no": tracking}], ensure_ascii=False)
     d.shipped_at = datetime.utcnow()
     d.shipped_by = actor
     db.commit()

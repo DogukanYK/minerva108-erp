@@ -269,10 +269,13 @@ class Delivery(Base):
     # ── Kargo / Sevkiyat alanları (yalnız delivery_type='kargo') ──
     # Kargo: create'te stok DÜŞMEZ (status='preparing'); takip no atanınca (ship)
     # stok o an düşer (status='shipped'). reject_reason iptal gerekçesi olarak da kullanılır.
-    tracking_no = Column(String(100), nullable=True)            # kargo takip numarası (ship'i tetikler)
-    carrier = Column(String(80), nullable=True)                # taşıyıcı firma (Yurtiçi/Aras/MNG...)
+    tracking_no = Column(String(100), nullable=True)            # PRIMARY (yerel) takip no — ship'i tetikler
+    carrier = Column(String(80), nullable=True)                # primary taşıyıcı (Yurtiçi/Aras/MNG...)
     shipped_at = Column(DateTime, nullable=True)               # kargolandığı (stok düştüğü) UTC damga
     shipped_by = Column(String(80), nullable=True)             # takip no'yu girip kargolayan (audit)
+    # Çok-bacaklı takip (yurtdışı: yerel TR → global → varış yereli). JSON liste:
+    # [{"label": "Yerel (TR)", "carrier": "Yurtiçi", "tracking_no": "..."}]
+    tracking_legs = Column(Text, nullable=True)
 
     items = relationship("DeliveryItem", back_populates="delivery",
                          cascade="all, delete-orphan")
@@ -1005,6 +1008,7 @@ def init_db():
             "ALTER TABLE deliveries  ADD COLUMN carrier VARCHAR(80)",
             "ALTER TABLE deliveries  ADD COLUMN shipped_at TIMESTAMP",
             "ALTER TABLE deliveries  ADD COLUMN shipped_by VARCHAR(80)",
+            "ALTER TABLE deliveries  ADD COLUMN tracking_legs TEXT",
         ):
             alter_safe(stmt)
 

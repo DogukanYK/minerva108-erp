@@ -184,6 +184,43 @@ def test_edit_shipped_items_rejected(authed_client: TestClient, db_session):
     assert db_session.query(Item).get(it.id).current_stock == 8   # 10-2, bozulmadı
 
 
+def test_tracking_on_completed_gift_no_stock_change(authed_client: TestClient, db_session):
+    """Tamamlanmış HEDİYE'ye kargo takip eklenebilir; stok DEĞİŞMEZ (meta-only)."""
+    it = _item(db_session, stock=10, barcode="869111100016")
+    # anında hediye (stok hemen düşer: 10-2=8)
+    r0 = authed_client.post("/api/delivery", headers=_H, json={
+        "recipient_name": "ALISHIR AZERBAYCAN", "delivery_type": "hediye", "doc_lang": "TR",
+        "items": [{"item_id": it.id, "quantity": 2}]})
+    did = r0.json()["id"]
+    db_session.expire_all()
+    assert db_session.query(Item).get(it.id).current_stock == 8
+    # tamamlanmış hediyeye çok-bacaklı takip ekle
+    r = authed_client.put(f"/api/delivery/{did}", headers=_H, json={"tracking_legs": [
+        {"label": "Yerel (TR)", "carrier": "Yurtiçi", "tracking_no": "TR-111"},
+        {"label": "Global", "carrier": "DHL", "tracking_no": "DHL-999"}]})
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert len(v["tracking_legs"]) == 2
+    assert v["tracking_no"] == "TR-111" and v["carrier"] == "Yurtiçi"   # primary = ilk bacak
+    db_session.expire_all()
+    assert db_session.query(Item).get(it.id).current_stock == 8        # STOK DEĞİŞMEDİ
+
+
+def test_tracking_legs_roundtrip_and_blank_filtered(authed_client: TestClient, db_session):
+    it = _item(db_session, stock=10, barcode="869111100017")
+    did = _create_kargo(authed_client, it.id, 1, "Y").json()["id"]
+    authed_client.post(f"/api/delivery/{did}/ship", headers=_H, json={"tracking_no": "L1", "carrier": "Aras"})
+    # ship sonrası tek bacak (Yerel) sentezlenmiş olmalı
+    v0 = authed_client.get(f"/api/delivery/{did}").json()
+    assert len(v0["tracking_legs"]) == 1 and v0["tracking_legs"][0]["tracking_no"] == "L1"
+    # 3 bacak yaz; boş takip-no'lu bacak elenir
+    r = authed_client.put(f"/api/delivery/{did}", headers=_H, json={"tracking_legs": [
+        {"carrier": "Aras", "tracking_no": "L1"}, {"carrier": "DHL", "tracking_no": "G2"},
+        {"carrier": "X", "tracking_no": "   "}]})
+    assert r.status_code == 200
+    assert len(r.json()["tracking_legs"]) == 2   # boş olan elendi
+
+
 def test_edit_requires_adjust_permission(labtech_client: TestClient):
     assert labtech_client.put("/api/delivery/1", headers=_H,
                               json={"carrier": "Yurtiçi"}).status_code == 403

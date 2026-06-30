@@ -317,6 +317,22 @@
     </div>
   </div>
 
+  <!-- Çok-bacaklı kargo takibi (yerel TR → global → varış) -->
+  <datalist id="legStages"><option value="Yerel (TR)"><option value="Global"><option value="Varış (yerel)"></datalist>
+  <datalist id="legCarriers"><option value="Yurtiçi"><option value="Aras"><option value="MNG"><option value="PTT"><option value="Sürat"><option value="DHL"><option value="UPS"><option value="FedEx"></datalist>
+  <div id="legsModal" onclick="if(event.target===this) closeLegs()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:14px;width:620px;max-width:95vw;max-height:88vh;overflow:auto;padding:1.15rem 1.3rem;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+      <div style="font-weight:700;color:var(--navy);font-size:1.05rem;margin-bottom:0.3rem;"><i class="bi bi-signpost-split"></i> <span id="legsTitle">Kargo Takibi</span></div>
+      <div style="font-size:0.8rem;color:#6b7280;margin-bottom:0.85rem;">Yurtdışı gönderiler birden çok kargodan geçer: <b>Yerel (TR) → Global → Varış</b>. Her bacağa taşıyıcı + takip no gir; <i class="bi bi-geo-alt-fill"></i> ile tek tıkla takip et.</div>
+      <div id="legsList"></div>
+      <button class="btn-o" onclick="legAdd()" style="padding:0.4rem 0.8rem;margin-top:0.2rem;"><i class="bi bi-plus-lg"></i> Kargo Bacağı Ekle</button>
+      <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1rem;">
+        <button class="btn-o" onclick="closeLegs()">Vazgeç</button>
+        <button class="btn-g" id="legsBtn" onclick="saveLegs()"><i class="bi bi-check2"></i> Kaydet</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast-container"></div>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
@@ -696,6 +712,59 @@
       const t=document.getElementById('completeBtnText'); if(t) t.textContent='Sevkiyatı Hazırla (stok düşmez)';
       const b=document.getElementById('editBanner'); if(b) b.style.display='none';
     }
+
+    /* ── Çok-bacaklı kargo takibi (yerel TR → global → varış) ── */
+    let _legsId=null, _legs=[];
+    const _legIpt='padding:0.4rem 0.55rem;border:1px solid #e5e7eb;border-radius:8px;font-size:0.85rem;';
+    async function openLegs(id){
+      try{
+        const r=await fetch(`/api/delivery/${id}`); const v=await r.json();
+        if(!r.ok){ showToast(v.detail||'Yüklenemedi.'); return; }
+        _legsId=id;
+        _legs=(v.tracking_legs||[]).map(l=>({label:l.label||'', carrier:l.carrier||'', tracking_no:l.tracking_no||''}));
+        if(!_legs.length) _legs=[{label:'Yerel (TR)', carrier:'', tracking_no:''}];
+        document.getElementById('legsTitle').textContent='Kargo Takibi — '+(v.document_no||'');
+        renderLegs();
+        document.getElementById('legsModal').style.display='flex';
+      }catch{ showToast('Sunucuya bağlanılamadı.'); }
+    }
+    function renderLegs(){
+      const box=document.getElementById('legsList');
+      box.innerHTML=_legs.map((lg,i)=>{
+        const open=(lg.tracking_no||'').trim()
+          ? `<a href="${trackingUrl(lg.carrier,lg.tracking_no)}" target="_blank" rel="noopener" title="Takip et" class="btn-g" style="padding:0.35rem 0.55rem;"><i class="bi bi-geo-alt-fill"></i></a>`
+          : `<span class="btn-o" style="padding:0.35rem 0.55rem;opacity:0.4;cursor:default;"><i class="bi bi-geo-alt"></i></span>`;
+        return `<div style="display:flex;gap:0.4rem;align-items:center;margin-bottom:0.5rem;flex-wrap:wrap;">
+          <span style="font-weight:700;color:#9ca3af;width:18px;">${i+1}</span>
+          <input list="legStages" value="${esc(lg.label)}" oninput="legSet(${i},'label',this.value)" placeholder="Aşama" style="width:120px;${_legIpt}">
+          <input list="legCarriers" value="${esc(lg.carrier)}" oninput="legSet(${i},'carrier',this.value)" placeholder="Taşıyıcı" style="width:120px;${_legIpt}">
+          <input value="${esc(lg.tracking_no)}" oninput="legSet(${i},'tracking_no',this.value)" placeholder="takip no" style="flex:1;min-width:130px;${_legIpt}">
+          ${open}
+          <button class="btn-o" onclick="legRemove(${i})" title="Bacağı sil" style="padding:0.35rem 0.55rem;color:#b91c1c;border-color:#fca5a5;"><i class="bi bi-x-lg"></i></button>
+        </div>`;
+      }).join('');
+    }
+    function legSet(i,f,v){ if(_legs[i]) _legs[i][f]=v; }   // re-render YOK (odak kaçmasın)
+    function legAdd(){ _legs.push({label:'', carrier:'', tracking_no:''}); renderLegs(); }
+    function legRemove(i){ _legs.splice(i,1); if(!_legs.length) _legs=[{label:'',carrier:'',tracking_no:''}]; renderLegs(); }
+    function closeLegs(){ document.getElementById('legsModal').style.display='none'; _legsId=null; _legs=[]; }
+    async function saveLegs(){
+      if(_legsId===null) return;
+      const legs=_legs.filter(l=>(l.tracking_no||'').trim())
+        .map(l=>({label:(l.label||'').trim(), carrier:(l.carrier||'').trim(), tracking_no:l.tracking_no.trim()}));
+      const btn=document.getElementById('legsBtn'); btn.disabled=true;
+      try{
+        const r=await fetch(`/api/delivery/${_legsId}`,{method:'PUT',
+          headers:{'Content-Type':'application/json','X-Requested-With':'1'},
+          body:JSON.stringify({tracking_legs:legs})});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok){ showToast(d.detail||'Kaydedilemedi.'); return; }
+        showToast('Kargo takibi kaydedildi.','success');
+        closeLegs();
+        await loadHistory();
+      }catch{ showToast('Sunucuya bağlanılamadı.'); }
+      finally{ btn.disabled=false; }
+    }
     async function shipCancel(id){
       if(!confirm('Bu sevkiyat iptal edilsin mi? (Stok zaten düşmedi.)')) return;
       const reason=prompt('İptal sebebi (opsiyonel):')||'';
@@ -738,17 +807,23 @@
         if(x.status==='approved') return `<a href="/api/delivery/${x.id}/proforma?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-receipt"></i> Proforma</a>`;
         return '<span class="muted" style="font-size:0.8rem;">—</span>';
       }
+      const legs=x.tracking_legs||[];
+      // Primary (1-tık) takip — ilk bacak; >1 bacak varsa rozet
+      const trk=legs.length?` <a href="${trackingUrl(legs[0].carrier,legs[0].tracking_no)}" class="btn-g" target="_blank" rel="noopener" title="Kargo takibi" style="padding:0.3rem 0.6rem;"><i class="bi bi-geo-alt-fill"></i> Takip${legs.length>1?` (${legs.length})`:''}</a>`:'';
+      // Kargo bacaklarını yönet (her teslimat için — hediye/numune dahil)
+      const legsBtn=window.CAN_DISPATCH?` <button class="btn-o" onclick="openLegs(${x.id})" title="Kargo takip no ekle / düzenle" style="padding:0.3rem 0.55rem;"><i class="bi bi-truck"></i></button>`:'';
+
       if(x.delivery_type==='kargo'){
         if(x.status==='canceled') return '<span class="muted" style="font-size:0.8rem;">—</span>';
         const pl=`<a href="/api/delivery/${x.id}/packing-list?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-list-check"></i> Hazırlık</a>`;
         if(x.status!=='shipped') return pl;
-        const a=s=>String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-        const trk=x.tracking_no?` <a href="${trackingUrl(x.carrier,x.tracking_no)}" class="btn-g" target="_blank" rel="noopener" title="Kargo takibi (${esc(x.carrier||'kargo')})" style="padding:0.3rem 0.6rem;"><i class="bi bi-geo-alt-fill"></i> Takip</a>`:'';
-        const ed=window.CAN_DISPATCH?` <button class="btn-o" onclick="editTracking(${x.id},'${a(x.carrier)}','${a(x.tracking_no)}')" title="Taşıyıcı / takip düzelt" style="padding:0.3rem 0.55rem;"><i class="bi bi-pencil"></i></button>`:'';
         const doc=` <a href="/api/delivery/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a>`;
-        return pl+trk+ed+doc;
+        return pl+trk+legsBtn+doc;
       }
-      return `<a href="/api/delivery/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a>`;
+      // hediye / numune / diğer (tamamlanmış): belge + kargo takibi eklenebilir
+      const doc=`<a href="/api/delivery/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a>`;
+      const ed=(x.status==='completed')?legsBtn:'';
+      return doc+trk+ed;
     }
 
     /* ── Geçmiş ── */
