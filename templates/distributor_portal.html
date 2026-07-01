@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="/static/theme.js"></script>
+  <script>
+    window.PERMS = {{ permissions | tojson }};
+    window.DOMAIN = {{ domain | tojson }};
+    window.can = function (c, a) { var x = window.PERMS && window.PERMS[c]; return !!(x && x[a]); };
+  </script>
+  <title>Minerva 108 — Sipariş Portalı</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <link rel="manifest" href="/static/manifest.json" />
+  <meta name="theme-color" content="#232E6E" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Sipariş" />
+  <link rel="apple-touch-icon" href="/static/images/icon-192.png" />
+  <script>
+    if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {}); });
+  </script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    :root { --navy: #232E6E; --navy-dark: #1A2456; --gold: #C9AC6F; --gold2: #D9BE85; --cream: #f6f2ea; --ok: #15803d; --bad: #b91c1c; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { margin: 0; font-family: 'Jost', sans-serif; background: var(--cream); color: #1f2937; padding-bottom: 90px; }
+
+    header.hdr { background: linear-gradient(135deg, var(--navy) 0%, var(--navy-dark) 100%); color: #fff; padding: 0.85rem 1rem; position: sticky; top: 0; z-index: 40;
+      padding-top: max(0.85rem, env(safe-area-inset-top)); }
+    .hdr-top { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+    .hdr-brand { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+    .hdr-brand img { width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0; }
+    .hdr-brand .t1 { font-weight: 600; font-size: 1rem; line-height: 1.1; }
+    .hdr-brand .t2 { font-size: 0.72rem; color: var(--gold2); letter-spacing: 0.14em; text-transform: uppercase; }
+    .hdr-logout { background: rgba(255,255,255,0.16); border: none; color: #fff; border-radius: 8px; padding: 0.45rem 0.7rem; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
+    .dom-pills { display: flex; gap: 0.4rem; margin-top: 0.7rem; }
+    .dom-pill { flex: 1; text-align: center; padding: 0.4rem; border-radius: 8px; font-size: 0.82rem; font-weight: 600; background: rgba(255,255,255,0.10); color: rgba(255,255,255,0.75); cursor: pointer; border: none; }
+    .dom-pill.on { background: var(--gold); color: var(--navy-dark); }
+
+    .tabs { display: flex; background: #fff; border-bottom: 1px solid #e9e3d6; position: sticky; top: 0; z-index: 30; }
+    .tab { flex: 1; text-align: center; padding: 0.85rem; font-weight: 600; font-size: 0.9rem; color: #6b7280; cursor: pointer; border-bottom: 3px solid transparent; }
+    .tab.on { color: var(--navy); border-bottom-color: var(--gold); }
+
+    .wrap { max-width: 720px; margin: 0 auto; padding: 1rem; }
+    .search { width: 100%; border: 1.5px solid #e5e7eb; border-radius: 10px; padding: 0.7rem 0.9rem; font-size: 16px; font-family: inherit; margin-bottom: 0.9rem; }
+    .search:focus { border-color: var(--navy); outline: none; }
+
+    .prod { background: #fff; border: 1px solid #ece6d8; border-radius: 13px; padding: 0.85rem; margin-bottom: 0.7rem; display: flex; align-items: center; gap: 0.75rem; }
+    .prod-info { flex: 1; min-width: 0; }
+    .prod-name { font-weight: 600; font-size: 0.95rem; }
+    .prod-meta { font-size: 0.78rem; color: #9ca3af; margin-top: 1px; }
+    .prod-price { font-weight: 700; color: var(--navy); font-size: 0.95rem; margin-top: 3px; }
+    .avail { font-size: 0.72rem; font-weight: 600; padding: 0.1rem 0.45rem; border-radius: 5px; }
+    .avail.yes { background: #e8f7ee; color: var(--ok); }
+    .avail.no  { background: #f3f4f6; color: #9ca3af; }
+    .stepper { display: flex; align-items: center; gap: 0; flex-shrink: 0; }
+    .stepper button { width: 34px; height: 34px; border: 1px solid #dcd5c6; background: #fff; color: var(--navy); font-size: 1.1rem; cursor: pointer; }
+    .stepper button:first-child { border-radius: 8px 0 0 8px; }
+    .stepper button:last-child { border-radius: 0 8px 8px 0; }
+    .stepper input { width: 46px; height: 34px; text-align: center; border: 1px solid #dcd5c6; border-left: none; border-right: none; font-size: 0.95rem; font-family: inherit; }
+
+    .cartbar { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid #e9e3d6; padding: 0.7rem 1rem; padding-bottom: max(0.7rem, env(safe-area-inset-bottom)); display: none; align-items: center; justify-content: space-between; gap: 0.75rem; z-index: 50; box-shadow: 0 -4px 16px rgba(0,0,0,0.06); }
+    .cartbar.show { display: flex; }
+    .cart-sum { font-size: 0.82rem; color: #6b7280; }
+    .cart-sum b { color: var(--navy); font-size: 1.05rem; }
+    .btn-order { background: var(--navy); color: #fff; border: none; border-radius: 10px; padding: 0.75rem 1.3rem; font-weight: 700; font-size: 0.95rem; cursor: pointer; display: inline-flex; align-items: center; gap: 0.4rem; }
+    .btn-order:disabled { opacity: 0.5; }
+
+    .order { background: #fff; border: 1px solid #ece6d8; border-radius: 13px; padding: 0.9rem; margin-bottom: 0.7rem; }
+    .order-h { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+    .order-no { font-weight: 700; color: var(--navy); }
+    .order-tot { font-weight: 700; }
+    .pill { font-size: 0.74rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 6px; }
+    .pill.PENDING { background: #fff7e6; color: #b45309; }
+    .pill.CONFIRMED { background: #e8f7ee; color: var(--ok); }
+    .pill.REJECTED { background: #fef2f2; color: var(--bad); }
+    .order-meta { font-size: 0.78rem; color: #9ca3af; margin-top: 4px; }
+    .empty { text-align: center; color: #9ca3af; padding: 3rem 1rem; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <header class="hdr">
+    <div class="hdr-top">
+      <div class="hdr-brand">
+        <img src="/static/images/logo_monogram.png" alt="M" />
+        <div style="min-width:0;"><div class="t1" id="coName">Minerva 108</div><div class="t2">Sipariş Portalı</div></div>
+      </div>
+      <button class="hdr-logout" onclick="logout()"><i class="bi bi-box-arrow-right"></i> Çıkış</button>
+    </div>
+    <div class="dom-pills">
+      <button class="dom-pill" data-dom="cosmetics" onclick="switchDomain('cosmetics')">Kozmetik</button>
+      <button class="dom-pill" data-dom="supplement" onclick="switchDomain('supplement')">Food Supplement</button>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <div class="tab on" data-tab="catalog" onclick="showTab('catalog')">Katalog</div>
+    <div class="tab" data-tab="orders" onclick="showTab('orders')">Siparişlerim</div>
+  </div>
+
+  <!-- Katalog -->
+  <div class="wrap" id="tab-catalog">
+    <input class="search" id="search" placeholder="Ürün ara…" oninput="renderCatalog()" />
+    <div id="catalogList"><div class="empty">Yükleniyor…</div></div>
+  </div>
+
+  <!-- Siparişlerim -->
+  <div class="wrap hidden" id="tab-orders">
+    <div id="ordersList"><div class="empty">Yükleniyor…</div></div>
+  </div>
+
+  <div class="cartbar" id="cartbar">
+    <div class="cart-sum"><span id="cartCount">0</span> ürün · <b id="cartTotal">—</b></div>
+    <button class="btn-order" id="btnOrder" onclick="submitOrder()"><i class="bi bi-bag-check"></i> Sipariş Ver</button>
+  </div>
+
+  <script src="/static/fetch-guard.js" defer></script>
+  <script src="/static/toast.js" defer></script>
+  <script src="/static/idle-watch.js" defer></script>
+  <script src="/static/portal.js" defer></script>
+</body>
+</html>

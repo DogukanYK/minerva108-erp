@@ -680,6 +680,7 @@
       <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
       <a href="/drive" class="nav-link-item"><i class="bi bi-folder-fill nav-icon"></i>Dosya Paylaşım</a>
       {% if can('crm','view') %}<a href="/crm" class="nav-link-item"><i class="bi bi-people-fill nav-icon"></i>CRM</a>{% endif %}
+      {% if can('distributors','view') %}<a href="/distributors" class="nav-link-item"><i class="bi bi-shop nav-icon"></i>Distribütörler</a>{% endif %}
       {% if can('b2b', 'view') %}
       <a href="/quotations" class="nav-link-item active"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
       {% endif %}
@@ -1565,27 +1566,41 @@
     }
 
     function renderSavedQuoteRow(q) {
-      const isConfirmed = q.status === 'CONFIRMED';
-      const statusPill = isConfirmed
-        ? `<span class="quote-status-pill quote-status-confirmed"><i class="bi bi-lock-fill"></i> Onaylandı</span>`
-        : `<span class="quote-status-pill quote-status-draft"><i class="bi bi-pencil-square"></i> Taslak</span>`;
+      const st = q.status;
+      const isConfirmed = st === 'CONFIRMED';
+      const isPending   = st === 'PENDING';
+      const isRejected  = st === 'REJECTED';
+      const isDraft     = st === 'DRAFT';
+      let statusPill;
+      if (isConfirmed) statusPill = `<span class="quote-status-pill quote-status-confirmed"><i class="bi bi-lock-fill"></i> Onaylandı</span>`;
+      else if (isPending) statusPill = `<span class="quote-status-pill" style="background:#fff7e6;color:#b45309;"><i class="bi bi-hourglass-split"></i> Onay Bekliyor</span>`;
+      else if (isRejected) statusPill = `<span class="quote-status-pill" style="background:#fef2f2;color:#b91c1c;"><i class="bi bi-x-circle"></i> Reddedildi</span>`;
+      else statusPill = `<span class="quote-status-pill quote-status-draft"><i class="bi bi-pencil-square"></i> Taslak</span>`;
 
       const total = fmtMoney(q.total_amount, q.currency);
 
-      const customerLine = q.customer_country
-        ? `<div style="font-weight:600;">${escHtml(q.customer_name)}</div><div style="font-size:0.74rem;color:#9ca3af;">${escHtml(q.customer_country)}</div>`
-        : `<div style="font-weight:600;">${escHtml(q.customer_name)}</div>`;
+      const distLine = q.distributor_id
+        ? `<div style="font-size:0.7rem;color:#7c3aed;font-weight:600;margin-top:2px;"><i class="bi bi-shop"></i> Distribütör${q.distributor_name ? ': ' + escHtml(q.distributor_name) : ''}</div>`
+        : '';
+      const customerLine = `<div style="font-weight:600;">${escHtml(q.customer_name)}</div>`
+        + (q.customer_country ? `<div style="font-size:0.74rem;color:#9ca3af;">${escHtml(q.customer_country)}</div>` : '')
+        + distLine;
 
-      // Action buttons
+      const canConfirm = window.can('b2b', 'confirm');
       const viewBtn = `<button class="btn-row-action btn-row-view" onclick="viewQuote(${q.id})" title="Yapılandırıcıya yükle">
                          <i class="bi bi-eye"></i> Görüntüle
                        </button>`;
-      const confirmBtn = !isConfirmed
+      const confirmBtn = (canConfirm && (isDraft || isPending))
         ? `<button class="btn-row-action btn-row-confirm" onclick="confirmQuote(${q.id}, '${escHtml(q.quote_number)}')" title="Stoktan düş ve onayla">
              <i class="bi bi-check-circle-fill"></i> Onayla &amp; Düş
            </button>`
         : '';
-      const deleteBtn = !isConfirmed
+      const rejectBtn = (canConfirm && isPending)
+        ? `<button class="btn-row-action btn-row-delete" onclick="rejectQuote(${q.id}, '${escHtml(q.quote_number)}')" title="Siparişi reddet">
+             <i class="bi bi-x-circle"></i> Reddet
+           </button>`
+        : '';
+      const deleteBtn = isDraft
         ? `<button class="btn-row-action btn-row-delete" onclick="deleteQuote(${q.id}, '${escHtml(q.quote_number)}')" title="Taslağı sil">
              <i class="bi bi-trash3"></i>
            </button>`
@@ -1603,13 +1618,30 @@
             <div style="font-size:0.78rem;color:#374151;">${escHtml(q.created_at)}</div>
             <div style="font-size:0.74rem;color:#9ca3af;">${escHtml(q.created_by)}</div>
             ${q.confirmed_at ? `<div style="font-size:0.7rem;color:#15803d;margin-top:2px;">✓ ${escHtml(q.confirmed_at)} · ${escHtml(q.confirmed_by || '—')}</div>` : ''}
+            ${q.rejected_at ? `<div style="font-size:0.7rem;color:#b91c1c;margin-top:2px;">✗ ${escHtml(q.rejected_at)}${q.reject_reason ? ' · ' + escHtml(q.reject_reason) : ''}</div>` : ''}
           </td>
           <td style="text-align:right;">
             <div class="saved-quotes-actions" style="justify-content:flex-end;">
-              ${viewBtn}${confirmBtn}${deleteBtn}
+              ${viewBtn}${confirmBtn}${rejectBtn}${deleteBtn}
             </div>
           </td>
         </tr>`;
+    }
+
+    /* ── Distribütör siparişini reddet (PENDING → REJECTED) ── */
+    async function rejectQuote(quoteId, quoteNumber) {
+      const reason = prompt(`#${quoteNumber} siparişini reddet. İsterseniz sebep yazın:`, '');
+      if (reason === null) return;  // iptal
+      try {
+        const res = await fetch(`/api/quotations/${quoteId}/reject`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: reason || null }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showToast(data.detail || 'Reddedilemedi.'); return; }
+        showToast(data.message || 'Sipariş reddedildi.', 'success');
+        loadSavedQuotes();
+      } catch (_e) { showToast('Reddedilemedi.'); }
     }
 
     /* ── View / load a quote into the builder ── */

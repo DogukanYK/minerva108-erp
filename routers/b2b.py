@@ -161,6 +161,12 @@ def _serialize_quotation_summary(q: Quotation) -> dict:
         "confirmed_at":     to_tr(q.confirmed_at).strftime("%d.%m.%Y %H:%M") if q.confirmed_at else None,
         "confirmed_by":     q.confirmed_by,
         "item_count":       len(q.items),
+        # Distribütör sipariş portalı — distributor_id set ise sipariş distribütörden geldi
+        "distributor_id":   q.distributor_id,
+        "distributor_name": (q.distributor.company_name if q.distributor_id and q.distributor else None),
+        "rejected_at":      to_tr(q.rejected_at).strftime("%d.%m.%Y %H:%M") if q.rejected_at else None,
+        "rejected_by":      q.rejected_by,
+        "reject_reason":    q.reject_reason,
     }
 
 
@@ -308,7 +314,8 @@ def confirm_quotation(
     quote = db.query(Quotation).filter(Quotation.id == quote_id).first()
     if not quote:
         return JSONResponse(status_code=404, content={"detail": "Teklif bulunamadı."})
-    if quote.status != "DRAFT":
+    # DRAFT (iç teklif) veya PENDING (distribütör siparişi) onaylanabilir → CONFIRMED.
+    if quote.status not in ("DRAFT", "PENDING"):
         return JSONResponse(status_code=400, content={
             "detail": f"Bu teklif zaten {quote.status} durumunda — tekrar onaylanamaz."
         })
@@ -381,6 +388,35 @@ def confirm_quotation(
     except Exception:
         db.rollback()
         return JSONResponse(status_code=500, content={"detail": "Onay sırasında hata oluştu — değişiklikler geri alındı."})
+
+
+class RejectRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+@router.post("/quotations/{quote_id}/reject")
+def reject_quotation(
+    quote_id: int,
+    data: RejectRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("b2b", "confirm")),
+):
+    """Bekleyen bir distribütör siparişini reddet (PENDING → REJECTED). Stok değişmez."""
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
+    quote = db.query(Quotation).filter(Quotation.id == quote_id).first()
+    if not quote:
+        return JSONResponse(status_code=404, content={"detail": "Sipariş bulunamadı."})
+    if quote.status != "PENDING":
+        return JSONResponse(status_code=400, content={
+            "detail": "Yalnız bekleyen (distribütör) siparişleri reddedilebilir."
+        })
+    from datetime import datetime as _dt
+    quote.status        = "REJECTED"
+    quote.rejected_at   = _dt.utcnow()
+    quote.rejected_by   = actor
+    quote.reject_reason = (data.reason or "").strip() or None
+    db.commit()
+    return {"message": f"Sipariş #{quote.quote_number} reddedildi.", "quote_number": quote.quote_number}
 
 
 @router.delete("/quotations/{quote_id}")

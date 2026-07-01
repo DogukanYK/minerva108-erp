@@ -36,7 +36,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions, get_role_labels
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router
 from core.domain import get_active_domain, domain_label
 
 
@@ -277,6 +277,8 @@ app.include_router(crm_c_router.router)
 app.include_router(kommo_router.router)
 app.include_router(kommo_router.public_router)
 app.include_router(delivery_router.router)
+app.include_router(distributors_router.router)
+app.include_router(portal_router.router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────
@@ -347,12 +349,16 @@ def login_page(request: Request):
     token = request.cookies.get("access_token")
     if token and decode_token(token):
         return RedirectResponse(url="/", status_code=302)
-    # crm.minerva108.com'da CRM markası göster (aynı login, host'a göre etiket)
-    is_crm = _is_crm_host(request)
+    # Host'a göre marka: crm.* → CRM, siparis.* → Sipariş Portalı (aynı login sayfası)
+    is_crm  = _is_crm_host(request)
+    is_dist = _is_distributor_host(request)
     return templates.TemplateResponse("login.html", {
         "request": request,
         "is_crm": is_crm,
-        "brand_tagline": "CRM Sistemi" if is_crm else "ERP Sistemi",
+        "is_distributor": is_dist,
+        "brand_tagline": (
+            "Sipariş Portalı" if is_dist else "CRM Sistemi" if is_crm else "ERP Sistemi"
+        ),
     })
 
 
@@ -361,6 +367,13 @@ def _is_crm_host(request: Request) -> bool:
     Aynı app/process iki subdomain'i sunar; kök (/) host'a göre yönlenir."""
     host = (request.headers.get("host", "") or "").split(":")[0].lower()
     return host.startswith("crm.")
+
+
+def _is_distributor_host(request: Request) -> bool:
+    """İstek siparis.minerva108.com (siparis.* herhangi bir host) için mi geldi?
+    Distribütör sipariş portalı — kök (/) buraya gelirse /portal'a yönlenir."""
+    host = (request.headers.get("host", "") or "").split(":")[0].lower()
+    return host.startswith("siparis.")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -373,6 +386,8 @@ def root(request: Request, db: Session = Depends(get_db)):
     app, iki panel.  Auth cookie SSO ile paylaşıldığından oturum ortaktır."""
     if _is_crm_host(request):
         return RedirectResponse(url="/crm", status_code=302)
+    if _is_distributor_host(request):
+        return RedirectResponse(url="/portal", status_code=302)
     payload = _get_user_context(request)
     if not payload: return RedirectResponse(url="/login", status_code=302)
     user = _resolve_active_user(payload, db)
@@ -557,6 +572,28 @@ def crm_page(request: Request, db: Session = Depends(get_db)):
         # Yetkisiz: CRM host'unda /login'e, IMS host'unda anasayfaya yolla
         return RedirectResponse(url="/login" if _is_crm_host(request) else "/", status_code=302)
     return templates.TemplateResponse("crm.html", _page_ctx(request, payload, user))
+
+
+@app.get("/distributors", response_class=HTMLResponse)
+def distributors_page(request: Request, db: Session = Depends(get_db)):
+    """Distribütör hesap + fiyat listesi yönetimi (personel)."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "distributors", "view"):
+        return RedirectResponse(url="/", status_code=302)
+    return templates.TemplateResponse("distributors.html", _page_ctx(request, payload, user))
+
+
+@app.get("/portal", response_class=HTMLResponse)
+def portal_page(request: Request, db: Session = Depends(get_db)):
+    """Distribütör sipariş portalı — siparis.minerva108.com ana sayfası buraya yönlenir."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "portal", "view"):
+        return RedirectResponse(url="/login" if _is_distributor_host(request) else "/", status_code=302)
+    return templates.TemplateResponse("distributor_portal.html", _page_ctx(request, payload, user))
 
 
 @app.get("/s/{token}", response_class=HTMLResponse)

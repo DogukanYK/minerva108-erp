@@ -402,6 +402,7 @@
       <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
       <a href="/drive" class="nav-link-item"><i class="bi bi-folder-fill nav-icon"></i>Dosya Paylaşım</a>
       {% if can('crm','view') %}<a href="/crm" class="nav-link-item"><i class="bi bi-people-fill nav-icon"></i>CRM</a>{% endif %}
+      {% if can('distributors','view') %}<a href="/distributors" class="nav-link-item"><i class="bi bi-shop nav-icon"></i>Distribütörler</a>{% endif %}
       {% if can('b2b', 'view') %}
       <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
       {% endif %}

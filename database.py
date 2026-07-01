@@ -7,7 +7,7 @@
 import os
 from sqlalchemy import (
     create_engine, Column, Integer, BigInteger, String, Float,
-    Boolean, Text, DateTime, ForeignKey, text
+    Boolean, Text, DateTime, ForeignKey, UniqueConstraint, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime, timedelta
@@ -351,19 +351,29 @@ class Quotation(Base):
     notes      = Column(Text,    nullable=True)
     valid_days = Column(Integer, default=30)
 
-    # Lifecycle audit
-    status       = Column(String(20),  nullable=False, default="DRAFT", index=True)  # DRAFT / CONFIRMED
+    # Lifecycle audit — DRAFT / CONFIRMED (iç); PENDING / REJECTED (distribütör siparişi)
+    status       = Column(String(20),  nullable=False, default="DRAFT", index=True)
     domain       = Column(String(20),  nullable=False, default="cosmetics", index=True)  # Faz 3
     created_at   = Column(DateTime,    default=datetime.utcnow)
     created_by   = Column(String(50),  nullable=True)
     confirmed_at = Column(DateTime,    nullable=True)
     confirmed_by = Column(String(50),  nullable=True)
 
+    # Distribütör sipariş portalı: distributor_id set ise sipariş distribütörden
+    # geldi (PENDING doğar → onay CONFIRMED / red REJECTED).  Müşteri alanları
+    # distribütör profilinden snapshot'lanır.
+    distributor_id = Column(Integer, ForeignKey("distributors.id"), nullable=True, index=True)
+    submitted_at   = Column(DateTime,   nullable=True)   # distribütör sipariş gönderim anı
+    rejected_at    = Column(DateTime,   nullable=True)
+    rejected_by    = Column(String(50), nullable=True)
+    reject_reason  = Column(Text,       nullable=True)
+
     items = relationship(
         "QuotationItem",
         back_populates="quotation",
         cascade="all, delete-orphan",
     )
+    distributor = relationship("Distributor", foreign_keys=[distributor_id])
 
 
 class QuotationItem(Base):
@@ -382,6 +392,47 @@ class QuotationItem(Base):
 
     quotation = relationship("Quotation", back_populates="items")
     item      = relationship("Item",      foreign_keys=[item_id])
+
+
+# ─── Distribütör Sipariş Portalı ─────────────────────────────────────────────
+
+class Distributor(Base):
+    """Distribütör hesabı — role='Distributor' bir User'a 1:1 bağlı B2B profili.
+    Portal siparişlerinin müşteri (proforma) snapshot'ı buradan alınır."""
+    __tablename__ = "distributors"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    user_id      = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    company_name = Column(String(150), nullable=False)
+    contact_name = Column(String(150), nullable=True)
+    email        = Column(String(150), nullable=True)
+    phone        = Column(String(50),  nullable=True)
+    address      = Column(Text,        nullable=True)
+    country      = Column(String(100), nullable=True)
+    vat          = Column(String(50),  nullable=True)
+    currency     = Column(String(3),   nullable=False, default="TRY")  # anlaşılan para birimi
+    is_active    = Column(Boolean,     default=True)
+    created_at   = Column(DateTime,    default=datetime.utcnow)
+
+    user   = relationship("User", foreign_keys=[user_id])
+    prices = relationship("DistributorPrice", back_populates="distributor", cascade="all, delete-orphan")
+
+
+class DistributorPrice(Base):
+    """Distribütör × ürün → anlaşılan birim fiyat (distributor.currency cinsinden).
+    Bu tablo aynı zamanda distribütörün KATALOĞU: satır yoksa ürün sipariş edilemez."""
+    __tablename__ = "distributor_prices"
+    __table_args__ = (UniqueConstraint("distributor_id", "item_id", name="uq_distprice_dist_item"),)
+
+    id             = Column(Integer, primary_key=True, index=True)
+    distributor_id = Column(Integer, ForeignKey("distributors.id"), nullable=False, index=True)
+    item_id        = Column(Integer, ForeignKey("items.id"),        nullable=False, index=True)
+    unit_price     = Column(Float,   nullable=False)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    updated_at     = Column(DateTime, default=datetime.utcnow)
+
+    distributor = relationship("Distributor", back_populates="prices")
+    item        = relationship("Item", foreign_keys=[item_id])
 
 
 class ProductionHistory(Base):
@@ -1009,6 +1060,14 @@ def init_db():
             "ALTER TABLE deliveries  ADD COLUMN shipped_at TIMESTAMP",
             "ALTER TABLE deliveries  ADD COLUMN shipped_by VARCHAR(80)",
             "ALTER TABLE deliveries  ADD COLUMN tracking_legs TEXT",
+            # Distribütör sipariş portalı — distributors / distributor_prices tabloları
+            # create_all ile gelir; quotations'a distribütör + red alanları eklenir.
+            "ALTER TABLE quotations ADD COLUMN distributor_id INTEGER REFERENCES distributors(id)",
+            "ALTER TABLE quotations ADD COLUMN submitted_at TIMESTAMP",
+            "ALTER TABLE quotations ADD COLUMN rejected_at TIMESTAMP",
+            "ALTER TABLE quotations ADD COLUMN rejected_by VARCHAR(50)",
+            "ALTER TABLE quotations ADD COLUMN reject_reason TEXT",
+            "CREATE INDEX IF NOT EXISTS ix_quotations_distributor ON quotations(distributor_id)",
         ):
             alter_safe(stmt)
 

@@ -395,6 +395,7 @@
       <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
       <a href="/drive" class="nav-link-item"><i class="bi bi-folder-fill nav-icon"></i>Dosya Paylaşım</a>
       {% if can('crm','view') %}<a href="/crm" class="nav-link-item"><i class="bi bi-people-fill nav-icon"></i>CRM</a>{% endif %}
+      {% if can('distributors','view') %}<a href="/distributors" class="nav-link-item"><i class="bi bi-shop nav-icon"></i>Distribütörler</a>{% endif %}
       {% if can('b2b', 'view') %}
       <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
       {% endif %}
@@ -1181,13 +1182,15 @@
       crm:        { tr: 'CRM',         icon: 'bi-people-fill' },
       reports:    { tr: 'Raporlar',    icon: 'bi-bar-chart-line' },
       admin:      { tr: 'Sistem',      icon: 'bi-shield-lock' },
+      portal:       { tr: 'Sipariş Portalı', icon: 'bi-bag' },
+      distributors: { tr: 'Distribütörler',  icon: 'bi-shop' },
     };
     const _ACTION_LABELS = {
       view: 'Görüntüle', create: 'Oluştur', edit: 'Düzenle', delete: 'Sil',
       import: 'İçe Aktar', receive: 'Mal Kabul', adjust: 'Stok Düzelt',
       approve: 'Onayla', confirm: 'Onayla', manage_users: 'Kullanıcı Yönetimi',
       import_excel: 'Excel Aktarımı', view_audit: 'Denetim Görünümü',
-      backup: 'Yedek Yönetimi',
+      backup: 'Yedek Yönetimi', order: 'Sipariş Ver', prices: 'Fiyat Yönetimi',
     };
 
     async function ensurePermSchema() {
@@ -1254,6 +1257,7 @@
         'import', 'receive', 'adjust',
         'approve', 'confirm',
         'manage_users', 'import_excel', 'view_audit', 'backup',
+        'order', 'prices',
       ];
       // Eksik kalanları da göster (yeni action eklendi ama actionOrder güncel
       // değilse en azından kaybolmasınlar)

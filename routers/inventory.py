@@ -117,7 +117,7 @@ class StockAdjustRequest(BaseModel):
 @router.get("/items")
 def list_items(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("items", "view")),
     domain: str = Depends(active_domain),
 ):
     items = (db.query(Item)

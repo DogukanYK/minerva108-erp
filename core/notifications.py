@@ -242,6 +242,20 @@ def notify_low_stock(
     })
 
 
+def notify_new_distributor_order(order_no: str, company_name: str, total: float, currency: str) -> None:
+    """Distribütör portaldan yeni sipariş verdi → yöneticilere onay bildirimi."""
+    _emit("info", "DISTRIBUTOR-ORDER",
+          f"Yeni distribütör siparişi: {order_no} · {company_name} · {total} {currency}",
+          order_no=order_no, company=company_name, total=total, currency=currency)
+    _send_push("managers", {
+        "title": "📦 Yeni Distribütör Siparişi",
+        "body":  f"{order_no} · {company_name} · {total} {currency}",
+        "tag":   f"dist-order-{order_no}",
+        "url":   "/quotations",
+        "requireInteraction": True,
+    })
+
+
 def notify_expiry_summary(lots: Iterable[dict]) -> None:
     """
     Daily roll-up. `lots` is a list of {lot_number, item_name, expiry_date,

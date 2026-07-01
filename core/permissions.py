@@ -23,17 +23,18 @@ from core.auth import get_current_user
 # ─── Role helpers ───────────────────────────────────────────────────────────
 
 _ROLE_LABELS = {
-    "SuperAdmin": "Süper Yönetici",
-    "Manager":    "Yönetici",
-    "LabLead":    "Lab Sorumlusu",
-    "LabTech":    "Lab Teknisyeni",
-    "Staff":      "Personel",
+    "SuperAdmin":  "Süper Yönetici",
+    "Manager":     "Yönetici",
+    "LabLead":     "Lab Sorumlusu",
+    "LabTech":     "Lab Teknisyeni",
+    "Staff":       "Personel",
+    "Distributor": "Distribütör",
 }
 
 # Rollerin GÖRÜNEN ADLARI SuperAdmin tarafından özelleştirilebilir
 # (app_setting key='role_label.<rol>').  Rol ANAHTARI (yetkiyi belirleyen) asla
 # değişmez — yalnızca etiket.  Süreç-içi cache; güncellemede invalidate edilir.
-ROLE_KEYS = ["SuperAdmin", "Manager", "LabLead", "LabTech", "Staff"]
+ROLE_KEYS = ["SuperAdmin", "Manager", "LabLead", "LabTech", "Staff", "Distributor"]
 _role_label_cache = None
 
 
@@ -74,7 +75,7 @@ _CAN_EDIT_RECIPES = ["SuperAdmin", "LabLead"]
 _SUPERADMIN_ONLY  = ["SuperAdmin"]
 _FINANCE_ROLES    = ["SuperAdmin", "Manager"]   # Costs / margins / quotations / currency rates
 
-_VALID_ROLES = {"SuperAdmin", "Manager", "LabLead", "LabTech", "Staff"}
+_VALID_ROLES = {"SuperAdmin", "Manager", "LabLead", "LabTech", "Staff", "Distributor"}
 
 
 def _can_see_finance(payload_or_role) -> bool:
@@ -98,6 +99,9 @@ PERMISSION_CATEGORIES = {
     "crm":        ["view", "create", "edit", "delete"],   # Müşteri İlişkileri (cross-cutting)
     "reports":    ["view"],
     "admin":      ["view", "create", "edit", "delete", "import_excel", "view_audit", "backup"],
+    # Distribütör sipariş portalı
+    "portal":        ["view", "order"],                   # distribütör tarafı (self-servis sipariş)
+    "distributors":  ["view", "create", "edit", "prices"],  # personel tarafı (hesap + fiyat yönetimi)
 }
 
 # Default permission set per role — used when a user's `permissions` JSON is null.
@@ -116,6 +120,8 @@ _DEFAULT_PERMISSIONS = {
         "crm":        {"view": False, "create": False, "edit": False, "delete": False},
         "reports":    {"view": True},
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": True, "backup": False},
+        "portal":        {"view": False, "order": False},
+        "distributors":  {"view": True,  "create": True,  "edit": True,  "prices": True},
     },
     "LabLead": {
         "items":      {"view": True,  "create": True,  "edit": True,  "delete": True,  "import": True},
@@ -153,6 +159,21 @@ _DEFAULT_PERMISSIONS = {
         "crm":        {"view": False, "create": False, "edit": False, "delete": False},
         "reports":    {"view": True},
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
+    },
+    "Distributor": {
+        # Dışa dönük distribütör — YALNIZ sipariş portalı, ERP'ye hiçbir erişim yok.
+        "items":        {"view": False, "create": False, "edit": False, "delete": False, "import": False},
+        "recipes":      {"view": False, "create": False, "edit": False, "delete": False},
+        "inventory":    {"view": False, "receive": False, "adjust": False, "delete": False},
+        "production":   {"view": False, "create": False},
+        "qc":           {"view": False, "approve": False},
+        "finance":      {"view": False},
+        "b2b":          {"view": False, "create": False, "confirm": False},
+        "crm":          {"view": False, "create": False, "edit": False, "delete": False},
+        "reports":      {"view": False},
+        "admin":        {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
+        "portal":       {"view": True,  "order": True},
+        "distributors": {"view": False, "create": False, "edit": False, "prices": False},
     },
 }
 
