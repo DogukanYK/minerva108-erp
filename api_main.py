@@ -392,6 +392,9 @@ def root(request: Request, db: Session = Depends(get_db)):
     if not payload: return RedirectResponse(url="/login", status_code=302)
     user = _resolve_active_user(payload, db)
     if not user: return RedirectResponse(url="/login", status_code=302)
+    # Distribütör (yalnız portal yetkisi, ERP erişimi yok) her host'ta portala yönlenir
+    if _user_can(user, "portal", "view") and not _user_can(user, "reports", "view"):
+        return RedirectResponse(url="/portal", status_code=302)
     return templates.TemplateResponse("index.html", _page_ctx(request, payload, user))
 
 
