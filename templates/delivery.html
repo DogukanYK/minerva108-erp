@@ -109,6 +109,7 @@
       <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
       <a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>
       <a href="/delivery" class="nav-link-item active"><i class="bi bi-box-arrow-up nav-icon"></i>Teslimat</a>
+      <a href="/returns" class="nav-link-item"><i class="bi bi-arrow-return-left nav-icon"></i>İadeler</a>
       <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
       <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
       <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
@@ -813,18 +814,20 @@
       const trk=legs.length?` <a href="${trackingUrl(legs[0].carrier,legs[0].tracking_no)}" class="btn-g" target="_blank" rel="noopener" title="Kargo takibi" style="padding:0.3rem 0.6rem;"><i class="bi bi-geo-alt-fill"></i> Takip${legs.length>1?` (${legs.length})`:''}</a>`:'';
       // Kargo bacaklarını yönet (her teslimat için — hediye/numune dahil)
       const legsBtn=window.CAN_DISPATCH?` <button class="btn-o" onclick="openLegs(${x.id})" title="Kargo takip no ekle / düzenle" style="padding:0.3rem 0.55rem;"><i class="bi bi-truck"></i></button>`:'';
+      // İade Al — yalnız stoğu düşmüş teslimatlar (İadeler sayfasına önyüklemeli)
+      const ret=(window.CAN_DISPATCH && ['completed','approved','shipped'].includes(x.status))?` <a href="/returns?delivery=${x.id}" class="btn-o" title="Geri gelen ürünleri stoğa al" style="padding:0.3rem 0.6rem;"><i class="bi bi-arrow-return-left"></i> İade Al</a>`:'';
 
       if(x.delivery_type==='kargo'){
         if(x.status==='canceled') return '<span class="muted" style="font-size:0.8rem;">—</span>';
         const pl=`<a href="/api/delivery/${x.id}/packing-list?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-list-check"></i> Hazırlık</a>`;
         if(x.status!=='shipped') return pl;
         const doc=` <a href="/api/delivery/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a>`;
-        return pl+trk+legsBtn+doc;
+        return pl+trk+legsBtn+doc+ret;
       }
-      // hediye / numune / diğer (tamamlanmış): belge + kargo takibi eklenebilir
+      // hediye / numune / diğer (tamamlanmış): belge + kargo takibi + iade
       const doc=`<a href="/api/delivery/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a>`;
       const ed=(x.status==='completed')?legsBtn:'';
-      return doc+trk+ed;
+      return doc+trk+ed+ret;
     }
 
     /* ── Geçmiş ── */

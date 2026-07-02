@@ -198,6 +198,22 @@ def notify_proforma_pending(document_no: str, recipient: str, preparer: str) -> 
     })
 
 
+def notify_return_created(document_no: str, source: str,
+                          restocked_count: int, damaged_count: int, actor: str) -> None:
+    """Ürün iadesi alındı — sağlamlar stoğa döndü, hasarlılar fire izi olarak kaydedildi."""
+    _emit("info", "IADE",
+          f"İade alındı: {document_no} ← {source} — {restocked_count} kalem stoğa, "
+          f"{damaged_count} kalem hasarlı/fire (alan: {actor})",
+          document_no=document_no, source=source,
+          restocked=restocked_count, damaged=damaged_count, actor=actor)
+    _send_push("managers", {
+        "title": "↩️ Ürün İadesi Alındı",
+        "body": f"{document_no} ← {source} · {restocked_count} stoğa, {damaged_count} fire",
+        "tag": f"return-{document_no}",
+        "url": "/returns",
+    })
+
+
 def notify_proforma_decision(document_no: str, decision: str, by: str) -> None:
     """Proforma onaylandı / reddedildi → karar bildirimi (yönetim + denetim izi)."""
     label = "onaylandı" if decision == "approved" else "reddedildi"

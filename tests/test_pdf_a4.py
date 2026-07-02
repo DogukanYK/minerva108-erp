@@ -99,6 +99,21 @@ def test_delivery_filename_includes_recipient():
     assert delivery_doc_filename("TES-1") == "teslim_belgesi_TES-1.pdf"
 
 
+def test_return_note_is_a4_on_letterhead():
+    from core.return_note import render_return_pdf
+    view = {
+        "document_no": "RET-2026-00001", "date": "30.06.2026 10:00",
+        "delivery_document_no": "TES-2026-00006", "channel_label": "Toplantı dönüşü",
+        "returned_by": "Burak Salan", "received_by": "dogukan", "reason": "dağıtılmadı",
+        "restocked_qty": 3, "damaged_qty": 1,
+        "items": [{"item_name": "Argan Yağı 100ml", "quantity": 3, "unit": "adet",
+                   "condition_label": "Sağlam", "restocked": True},
+                  {"item_name": "Lavanta Kremi", "quantity": 1, "unit": "adet",
+                   "condition_label": "Açılmış", "restocked": False}],
+    }
+    assert _all_pages_a4(render_return_pdf(view))
+
+
 def test_content_disposition_is_header_safe():
     from core.delivery_note import content_disposition
     cd = content_disposition("teslim_belgesi_Ayşe_Şğıİ_TES.pdf")

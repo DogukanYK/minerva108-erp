@@ -297,6 +297,52 @@ class DeliveryItem(Base):
     item = relationship("Item", foreign_keys=[item_id])
 
 
+class ProductReturn(Base):
+    """Ürün iadesi — çıkışı yapılmış (stoktan düşülmüş) ürünün geri alınması.
+
+    İki tür: teslimata bağlı (delivery_id dolu — kısmi iade, aşırı-iade SUM guard'lı)
+    ve serbest iade (delivery_id NULL — ör. online satış platformu iadesi).
+    SAĞLAM kalemler stoğa geri eklenir (Transaction Input, notes='İade (RET-…) …');
+    HASARLI/AÇILMIŞ kalemler stoğa GİRMEZ — fire izi ProductReturnItem.condition'da.
+    Tablo adı 'returns' DEĞİL (PostgreSQL anahtar kelimesi) → product_returns.
+    """
+    __tablename__ = "product_returns"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_no = Column(String(40), unique=True, index=True)      # RET-2026-00001
+    delivery_id = Column(Integer, ForeignKey("deliveries.id"), nullable=True, index=True)  # NULL = serbest iade
+    delivery_document_no = Column(String(40), nullable=True)       # snapshot (TES/KRG-…)
+    channel = Column(String(30), default="teslimat")               # teslimat | online | toplanti | diger
+    reason = Column(Text, nullable=True)                           # iade gerekçesi
+    returned_by = Column(String(150), nullable=True)               # iade eden (müşteri / platform)
+    received_by = Column(String(80), nullable=True)                # teslim alan personel (audit)
+    doc_lang = Column(String(8), default="TR")                     # belge dili (ürün adı snapshot dili)
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    items = relationship("ProductReturnItem", back_populates="ret",
+                         cascade="all, delete-orphan")
+    delivery = relationship("Delivery", foreign_keys=[delivery_id])
+
+
+class ProductReturnItem(Base):
+    __tablename__ = "product_return_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    return_id = Column(Integer, ForeignKey("product_returns.id"), nullable=False, index=True)
+    delivery_item_id = Column(Integer, ForeignKey("delivery_items.id"), nullable=True, index=True)  # aşırı-iade SUM anahtarı
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=True)   # ürün silinse de belge okunur
+    item_name = Column(String(150), nullable=False)                    # snapshot
+    quantity = Column(Float, nullable=False)
+    unit = Column(String(20), nullable=True)
+    condition = Column(String(20), nullable=False, default="saglam")   # saglam | hasarli | acilmis
+    restocked = Column(Boolean, nullable=False, default=False)         # stok geri eklendi mi (yalnız saglam)
+    note = Column(Text, nullable=True)
+
+    ret = relationship("ProductReturn", back_populates="items")
+    item = relationship("Item", foreign_keys=[item_id])
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
 

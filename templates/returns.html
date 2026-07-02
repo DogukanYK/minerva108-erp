@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="/static/theme.js"></script>
+  <script>
+    window.PERMS = {{ permissions | tojson }};
+    window.DOMAIN = {{ domain | tojson }};
+    window.CAN_ADJUST = {{ 'true' if can('inventory','adjust') else 'false' }};
+    window.can = function (category, action) {
+      const cat = window.PERMS && window.PERMS[category];
+      return !!(cat && cat[action]);
+    };
+  </script>
+  <title>Minerva108 ERP — İadeler</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <link rel="manifest" href="/static/manifest.json" />
+  <meta name="theme-color" content="#232E6E" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/dark.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    :root{ --navy:#232E6E; --gold:#C9AC6F; --gold2:#D9BE85; --cream:#f5f0e8; --white:#fff; --sidebar-width:240px; --navbar-height:64px; }
+    *,*::before,*::after{ box-sizing:border-box; }
+    body{ margin:0; font-family:'Jost',sans-serif; background:var(--cream); color:#1f2937; }
+    .sidebar{ position:fixed; top:0; left:0; width:var(--sidebar-width); height:100vh; background:var(--navy); display:flex; flex-direction:column; z-index:100; }
+    .sidebar-brand{ padding:1.4rem 1.25rem 1.2rem; border-bottom:1px solid rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; }
+    .sidebar-brand-logo{ width:100%; max-width:168px; height:auto; opacity:0.96; }
+    .sidebar-nav{ flex:1; padding:1.25rem 0.75rem; overflow-y:auto; }
+    .nav-section-label{ font-size:0.65rem; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:rgba(255,255,255,0.3); padding:0.5rem 0.75rem 0.4rem; margin-top:0.5rem; }
+    .nav-link-item{ display:flex; align-items:center; gap:0.75rem; padding:0.6rem 0.85rem; border-radius:8px; color:rgba(255,255,255,0.65); font-size:0.88rem; font-weight:500; text-decoration:none; transition:background .15s,color .15s; margin-bottom:2px; }
+    .nav-link-item:hover{ background:rgba(255,255,255,0.07); color:var(--white); }
+    .nav-link-item.active{ background:rgba(184,150,90,0.18); color:var(--gold2); }
+    .nav-link-item.active .nav-icon{ color:var(--gold); }
+    .nav-icon{ font-size:1rem; width:18px; text-align:center; flex-shrink:0; }
+    .sidebar-footer{ padding:1rem 1.5rem; border-top:1px solid rgba(255,255,255,0.08); }
+    .sidebar-footer-text{ font-size:0.7rem; color:rgba(255,255,255,0.25); text-align:center; }
+    .topnav{ position:fixed; top:0; left:var(--sidebar-width); right:0; height:var(--navbar-height); background:var(--white); border-bottom:1px solid #f0ece4; display:flex; align-items:center; justify-content:space-between; padding:0 1.75rem; z-index:90; box-shadow:0 1px 8px rgba(0,0,0,0.05); }
+    .topnav-title{ font-family:'Playfair Display',serif; font-size:1.15rem; font-weight:600; color:var(--navy); }
+    .topnav-right{ display:flex; align-items:center; gap:1rem; }
+    .user-chip{ display:flex; align-items:center; gap:0.5rem; background:var(--cream); border-radius:20px; padding:0.35rem 0.9rem 0.35rem 0.5rem; }
+    .user-avatar{ width:28px; height:28px; background:var(--navy); color:var(--gold2); border-radius:50%; font-size:0.7rem; font-weight:700; display:flex; align-items:center; justify-content:center; font-family:'Playfair Display',serif; }
+    .user-name{ font-size:0.85rem; font-weight:500; color:#374151; }
+    .btn-logout{ display:flex; align-items:center; gap:0.4rem; padding:0.42rem 1rem; border:1.5px solid #e5e7eb; border-radius:8px; background:var(--white); color:#6b7280; font-family:'Jost',sans-serif; font-size:0.82rem; font-weight:500; cursor:pointer; }
+    .btn-logout:hover{ border-color:#ef4444; color:#ef4444; background:#fff5f5; }
+    .main-content{ margin-left:var(--sidebar-width); padding-top:var(--navbar-height); min-height:100vh; }
+    .content-inner{ padding:2rem 2rem 3rem; }
+    .page-title{ font-family:'Playfair Display',serif; font-size:1.6rem; font-weight:700; color:var(--navy); margin:0 0 0.25rem; }
+    .page-subtitle{ font-size:0.88rem; color:#6b7280; margin:0 0 1.5rem; }
+    .card2{ background:var(--white); border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.05),0 4px 16px rgba(44,44,115,0.06); margin-bottom:1.4rem; overflow:hidden; }
+    .card2-head{ display:flex; align-items:center; gap:0.6rem; padding:1rem 1.25rem; border-bottom:1px solid #f0ece4; }
+    .card2-head i{ color:var(--gold); font-size:1.05rem; }
+    .card2-head h2{ font-family:'Playfair Display',serif; font-size:1.02rem; font-weight:600; color:var(--navy); margin:0; }
+    .card2-body{ padding:1.1rem 1.25rem; }
+    table{ width:100%; border-collapse:collapse; font-size:0.86rem; }
+    th{ text-align:left; padding:0.55rem 0.7rem; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.05em; color:#9ca3af; border-bottom:2px solid #f0ece4; }
+    td{ padding:0.6rem 0.7rem; border-bottom:1px solid #f3f0ea; vertical-align:middle; }
+    .muted{ color:#9ca3af; font-size:0.85rem; }
+    .lbl{ display:block; font-size:0.7rem; font-weight:700; text-transform:uppercase; color:#6b7280; margin-bottom:0.25rem; letter-spacing:0.03em; }
+    .ipt{ width:100%; padding:0.55rem 0.75rem; border:1.5px solid #e5e7eb; border-radius:8px; font-family:inherit; font-size:0.9rem; }
+    .ipt:focus{ outline:none; border-color:var(--navy); }
+    .btn-g{ display:inline-flex; align-items:center; justify-content:center; gap:0.45rem; padding:0.7rem 1.2rem; background:var(--navy); color:#fff; border:none; border-radius:9px; font-family:'Jost',sans-serif; font-size:0.95rem; font-weight:600; cursor:pointer; }
+    .btn-g:hover{ background:#23236b; } .btn-g:disabled{ opacity:0.5; cursor:not-allowed; }
+    .btn-o{ display:inline-flex; align-items:center; gap:0.4rem; padding:0.5rem 1rem; background:#fff; color:var(--navy); border:1.5px solid #e5e7eb; border-radius:8px; font-size:0.86rem; font-weight:600; cursor:pointer; text-decoration:none; }
+    .btn-o:hover{ border-color:var(--navy); }
+    .ico-del{ background:none; border:none; cursor:pointer; color:#9ca3af; font-size:1rem; } .ico-del:hover{ color:#ef4444; }
+    .res-ok{ background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:1rem 1.25rem; }
+    .match-row{ padding:0.45rem 0.6rem; border-bottom:1px solid #f3f0ea; cursor:pointer; display:flex; justify-content:space-between; gap:0.5rem; }
+    .match-row:hover{ background:var(--cream); }
+    #toast-container{ position:fixed; bottom:1.5rem; right:1.5rem; z-index:9999; display:flex; flex-direction:column; gap:0.6rem; }
+    .toast-msg{ min-width:270px; max-width:380px; padding:0.8rem 1rem; border-radius:10px; font-size:0.88rem; font-weight:500; box-shadow:0 4px 20px rgba(0,0,0,0.12); display:flex; align-items:center; gap:0.6rem; }
+    .toast-error{ background:#fff1f1; color:#b91c1c; border-left:4px solid #ef4444; }
+    .toast-success{ background:#f0fdf4; color:#15803d; border-left:4px solid #22c55e; }
+    .toast-info{ background:#eff6ff; color:#1d4ed8; border-left:4px solid #3b82f6; }
+    .tabbtn{ padding:0.6rem 1.15rem; border:1px solid #e5e7eb; background:#fff; border-radius:10px; font-family:'Jost',sans-serif; font-weight:700; font-size:0.95rem; color:#6b7280; cursor:pointer; display:inline-flex; align-items:center; gap:0.45rem; }
+    .tabbtn.active{ background:var(--navy); color:#fff; border-color:var(--navy); }
+    .cond-sel{ padding:0.35rem 0.5rem; border:1.5px solid #e5e7eb; border-radius:7px; font-size:0.82rem; font-family:inherit; }
+    .qty-ipt{ width:86px; padding:0.35rem 0.5rem; border:1.5px solid #e5e7eb; border-radius:7px; font-size:0.86rem; }
+    .badge-ok{ background:#dcfce7; color:#15803d; padding:0.15rem 0.5rem; border-radius:999px; font-size:0.74rem; font-weight:700; white-space:nowrap; }
+    .badge-fire{ background:#fef3c7; color:#b45309; padding:0.15rem 0.5rem; border-radius:999px; font-size:0.74rem; font-weight:700; white-space:nowrap; }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+  <script src="/static/toast.js" defer></script>
+  <script src="/static/idle-watch.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <img src="/static/images/logo_sidebar.png" alt="Minerva 108 Vegan Cosmetics" class="sidebar-brand-logo" />
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      <a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>
+      <a href="/suppliers" class="nav-link-item"><i class="bi bi-truck nav-icon"></i>Tedarikçiler</a>
+      <a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>
+      <a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
+      <a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
+      <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
+      <a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>
+      <a href="/delivery" class="nav-link-item"><i class="bi bi-box-arrow-up nav-icon"></i>Teslimat</a>
+      <a href="/returns" class="nav-link-item active"><i class="bi bi-arrow-return-left nav-icon"></i>İadeler</a>
+      <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
+      <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+      <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
+      <a href="/drive" class="nav-link-item"><i class="bi bi-folder-fill nav-icon"></i>Dosya Paylaşım</a>
+      {% if can('crm','view') %}<a href="/crm" class="nav-link-item"><i class="bi bi-people-fill nav-icon"></i>CRM</a>{% endif %}
+      {% if can('distributors','view') %}<a href="/distributors" class="nav-link-item"><i class="bi bi-shop nav-icon"></i>Distribütörler</a>{% endif %}
+      {% if can('b2b', 'view') %}
+      <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
+      {% endif %}
+      {% if can('admin', 'view') %}
+      <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>
+      <a href="/admin" class="nav-link-item"><i class="bi bi-shield-lock nav-icon"></i>Yönetim Paneli</a>
+      {% if role == 'SuperAdmin' %}<a href="/system" class="nav-link-item"><i class="bi bi-activity nav-icon"></i>Sistem Durumu</a>{% endif %}
+      {% endif %}
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sidebar-footer-row">
+        <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir" title="Tema değiştir">
+          <i class="bi bi-moon-stars-fill"></i><i class="bi bi-sun-fill"></i>
+        </button>
+        <p class="sidebar-footer-text" style="margin:0;">v2.0.0 &nbsp;·&nbsp; 2026</p>
+        <p class="sidebar-footer-text" style="margin:0.35rem 0 0;font-style:italic;">Geliştirici: Doğukan Yalçınkaya</p>
+      </div>
+    </div>
+  </aside>
+
+  <header class="topnav">
+    <span class="topnav-title">İadeler</span>
+    <div class="topnav-right">
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+      <button class="btn-logout" id="logoutBtn"><i class="bi bi-box-arrow-right"></i>Çıkış Yap</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <div class="content-inner">
+      <h1 class="page-title">Ürün İadeleri</h1>
+      <p class="page-subtitle">Çıkışı yapılmış (stoktan düşülmüş) ürünler geri geldiğinde buradan iade al. <b>Sağlam</b> ürünler stoğa geri eklenir; <b>hasarlı/açılmış</b> ürünler stoğa girmez, fire olarak kaydedilir.</p>
+
+      <div style="display:flex;gap:0.5rem;margin:0.2rem 0 1.1rem;">
+        <button type="button" id="tabLinked" class="tabbtn active" onclick="switchRMode('linked')"><i class="bi bi-file-earmark-text"></i> Belgeden İade</button>
+        <button type="button" id="tabFree" class="tabbtn" onclick="switchRMode('free')"><i class="bi bi-arrow-return-left"></i> Serbest İade</button>
+      </div>
+
+      <!-- ── MOD A: Belgeden İade ── -->
+      <div id="paneLinked">
+        <div class="card2">
+          <div class="card2-head"><i class="bi bi-search"></i><h2>Teslimat Belgesi Seç</h2></div>
+          <div class="card2-body">
+            <input type="text" id="delSearch" class="ipt" placeholder="Belge no / alıcı / firma ara… (yalnız stoğu düşmüş teslimatlar)" autocomplete="off" />
+            <div id="delMatches" style="margin-top:0.4rem;background:#fff;border:1px solid #e5e7eb;border-radius:8px;max-height:300px;overflow-y:auto;display:none;"></div>
+            <div id="delPicked" style="display:none;margin-top:0.7rem;padding:0.7rem 0.9rem;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;font-size:0.9rem;">
+              <b id="delPickedNo"></b> <span id="delPickedWho" class="muted"></span>
+              <a onclick="clearPicked()" style="cursor:pointer;color:#b91c1c;font-weight:600;float:right;">Değiştir</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="card2" id="remCard" style="display:none;">
+          <div class="card2-head"><i class="bi bi-list-check"></i><h2>Geri Gelen Kalemler</h2></div>
+          <div class="card2-body" style="overflow-x:auto;">
+            <table>
+              <thead><tr><th>Ürün</th><th>Teslim</th><th>İade Edilmiş</th><th>Kalan</th><th style="width:110px;">Geri Gelen</th><th style="width:130px;">Durum</th></tr></thead>
+              <tbody id="remBody"></tbody>
+            </table>
+            <div style="font-size:0.76rem;color:#9ca3af;margin-top:0.5rem;">Yalnız geri gelen kalemlere miktar gir; 0 bırakılanlar iadeye dahil edilmez.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── MOD B: Serbest İade ── -->
+      <div id="paneFree" style="display:none;">
+        <div class="card2">
+          <div class="card2-head"><i class="bi bi-box-seam"></i><h2>Ürün Ekle</h2></div>
+          <div class="card2-body">
+            <input type="text" id="itemSearch" class="ipt" placeholder="Ürün ara… (Türkçe / İngilizce ad)" autocomplete="off" />
+            <div id="itemMatches" style="margin-top:0.4rem;background:#fff;border:1px solid #e5e7eb;border-radius:8px;max-height:280px;overflow-y:auto;display:none;"></div>
+            <div style="margin-top:0.8rem;overflow-x:auto;">
+              <table>
+                <thead><tr><th>Ürün</th><th style="width:110px;">Miktar</th><th style="width:130px;">Durum</th><th></th></tr></thead>
+                <tbody id="freeBody"><tr><td colspan="4" class="muted" style="padding:1rem;">Henüz ürün eklenmedi.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Ortak: iade bilgisi + gönder ── -->
+      <div class="card2">
+        <div class="card2-head"><i class="bi bi-info-circle"></i><h2>İade Bilgisi</h2></div>
+        <div class="card2-body">
+          <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.7rem;">
+            <div style="flex:1;min-width:170px;">
+              <label class="lbl">Kanal</label>
+              <select id="rChannel" class="ipt">
+                <option value="teslimat">Teslimat dönüşü</option>
+                <option value="toplanti">Toplantı dönüşü</option>
+                <option value="online">Online satış iadesi</option>
+                <option value="diger">Diğer</option>
+              </select>
+            </div>
+            <div style="flex:1;min-width:170px;">
+              <label class="lbl">İade Eden <span class="muted" style="text-transform:none;font-weight:400;">(kişi / platform — opsiyonel)</span></label>
+              <input type="text" id="rBy" class="ipt" placeholder="ör. Trendyol / Ayşe Yılmaz" />
+            </div>
+          </div>
+          <div style="margin-bottom:0.9rem;">
+            <label class="lbl">Gerekçe / Not</label>
+            <input type="text" id="rReason" class="ipt" placeholder="opsiyonel" />
+          </div>
+          <button type="button" id="submitBtn" class="btn-g" style="width:100%;" onclick="submitReturn()">
+            <i class="bi bi-arrow-return-left"></i> İadeyi Al (sağlamlar stoğa döner)
+          </button>
+          <div id="result" style="margin-top:0.9rem;display:none;"></div>
+        </div>
+      </div>
+
+      <!-- ── Geçmiş ── -->
+      <div class="card2">
+        <div class="card2-head"><i class="bi bi-clock-history"></i><h2>Son İadeler</h2></div>
+        <div class="card2-body" style="overflow-x:auto;">
+          <table>
+            <thead><tr><th>Belge No</th><th>Kaynak</th><th>Kanal</th><th>Stoğa / Fire</th><th>Alan</th><th>Tarih</th><th></th></tr></thead>
+            <tbody id="histBody"><tr><td colspan="7" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast-container"></div>
+  <script>
+    function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    function fmt(n){ const f=Number(n||0); return f===Math.round(f)?String(Math.round(f)):f.toLocaleString('tr-TR',{maximumFractionDigits:2}); }
+    const COND_OPTS = '<option value="saglam">Sağlam</option><option value="hasarli">Hasarlı</option><option value="acilmis">Açılmış</option>';
+
+    let _mode='linked';              // linked | free
+    let _deliveries=[];              // iade edilebilir teslimatlar
+    let _picked=null;                // seçili teslimat {delivery_id, document_no, recipient, items:[...remaining]}
+    let _rem=[];                     // remaining satırları (+ qty/condition state)
+    let _items=[];                   // ürünler (serbest iade araması)
+    let _free=[];                    // serbest iade sepeti {item_id,name,unit,qty,condition}
+
+    function switchRMode(m){
+      _mode=(m==='free')?'free':'linked';
+      document.getElementById('tabLinked').classList.toggle('active', _mode==='linked');
+      document.getElementById('tabFree').classList.toggle('active', _mode==='free');
+      document.getElementById('paneLinked').style.display=(_mode==='linked')?'block':'none';
+      document.getElementById('paneFree').style.display=(_mode==='free')?'block':'none';
+      const ch=document.getElementById('rChannel');
+      if(_mode==='free' && ch.value==='teslimat') ch.value='online';
+      if(_mode==='linked' && ch.value==='online') ch.value='teslimat';
+    }
+
+    /* ── Mod A: teslimat seçimi ── */
+    async function loadDeliveries(){
+      try{
+        const r=await fetch('/api/delivery?limit=200');
+        const d=await r.json();
+        _deliveries=(d.deliveries||[]).filter(x=>['completed','approved','shipped'].includes(x.status));
+      }catch{ _deliveries=[]; }
+    }
+    const delSearch=document.getElementById('delSearch'), delMatches=document.getElementById('delMatches');
+    delSearch.addEventListener('input', ()=>{
+      const q=delSearch.value.trim().toLocaleLowerCase('tr');
+      if(q.length<2){ delMatches.style.display='none'; return; }
+      const hits=_deliveries.filter(x=>
+        (x.document_no||'').toLocaleLowerCase('tr').includes(q)
+        || (x.recipient_name||'').toLocaleLowerCase('tr').includes(q)
+        || (x.recipient_org||'').toLocaleLowerCase('tr').includes(q)).slice(0,15);
+      if(!hits.length){ delMatches.innerHTML='<div class="match-row muted">Eşleşme yok</div>'; delMatches.style.display='block'; return; }
+      delMatches.innerHTML=hits.map(x=>`<div class="match-row" onclick="pickDelivery(${x.id})">
+        <span><b>${esc(x.document_no)}</b> · ${esc((x.recipient_name||'').trim()||x.recipient_org||'—')}</span>
+        <span class="muted">${esc(x.type_label)} · ${esc(x.date)}</span></div>`).join('');
+      delMatches.style.display='block';
+    });
+    document.addEventListener('click', e=>{
+      if(!delMatches.contains(e.target) && e.target!==delSearch) delMatches.style.display='none';
+      const im=document.getElementById('itemMatches'), isr=document.getElementById('itemSearch');
+      if(im && !im.contains(e.target) && e.target!==isr) im.style.display='none';
+    });
+
+    async function pickDelivery(id){
+      delMatches.style.display='none'; delSearch.value='';
+      try{
+        const r=await fetch(`/api/returns/delivery/${id}/remaining`);
+        const d=await r.json();
+        if(!r.ok){ showToast(d.detail||'Yüklenemedi.'); return; }
+        _picked=d;
+        _rem=(d.items||[]).map(x=>({...x, qty:'', condition:'saglam'}));
+        document.getElementById('delPickedNo').textContent=d.document_no||'';
+        document.getElementById('delPickedWho').textContent=' · '+(d.recipient||'—');
+        document.getElementById('delPicked').style.display='block';
+        document.getElementById('remCard').style.display='block';
+        renderRemaining();
+      }catch{ showToast('Sunucuya bağlanılamadı.'); }
+    }
+    function clearPicked(){
+      _picked=null; _rem=[];
+      document.getElementById('delPicked').style.display='none';
+      document.getElementById('remCard').style.display='none';
+    }
+    function renderRemaining(){
+      const b=document.getElementById('remBody');
+      if(!_rem.length){ b.innerHTML='<tr><td colspan="6" class="muted" style="padding:1rem;">Kalem yok.</td></tr>'; return; }
+      b.innerHTML=_rem.map((x,i)=>{
+        const done=x.remaining<=0;
+        return `<tr style="${done?'opacity:0.45;':''}">
+          <td><b>${esc(x.item_name)}</b></td>
+          <td>${fmt(x.delivered)} ${esc(x.unit)}</td>
+          <td>${fmt(x.returned)}</td>
+          <td><b>${fmt(x.remaining)}</b></td>
+          <td>${done?'<span class="muted">tamamı iade edildi</span>':`<input type="number" class="qty-ipt" min="0" max="${x.remaining}" step="any" value="${x.qty}" placeholder="0" oninput="setRem(${i},'qty',this.value)">`}</td>
+          <td>${done?'—':`<select class="cond-sel" onchange="setRem(${i},'condition',this.value)">${COND_OPTS}</select>`}</td>
+        </tr>`;
+      }).join('');
+    }
+    function setRem(i,f,v){ if(_rem[i]) _rem[i][f]=v; }
+
+    /* ── Mod B: serbest iade ── */
+    async function loadItems(){
+      try{
+        const r=await fetch('/api/items');
+        const d=await r.json();
+        _items=(Array.isArray(d)?d:(d.items||[])).filter(x=>(x.category||'')==='Bitmiş Ürün');
+      }catch{ _items=[]; }
+    }
+    const itemSearch=document.getElementById('itemSearch'), itemMatches=document.getElementById('itemMatches');
+    itemSearch.addEventListener('input', ()=>{
+      const q=itemSearch.value.trim().toLocaleLowerCase('tr');
+      if(q.length<2){ itemMatches.style.display='none'; return; }
+      const hits=_items.filter(x=>(x.name||'').toLocaleLowerCase('tr').includes(q)
+                || (x.name_tr||'').toLocaleLowerCase('tr').includes(q)
+                || (x.barcode||'').toLowerCase().includes(q)).slice(0,15);
+      if(!hits.length){ itemMatches.innerHTML='<div class="match-row muted">Eşleşme yok</div>'; itemMatches.style.display='block'; return; }
+      itemMatches.innerHTML=hits.map(x=>`<div class="match-row" onclick="addFree(${x.id})">
+        <span>${esc(x.name)}${x.name_tr?` <span class="muted">· ${esc(x.name_tr)}</span>`:''}</span>
+        <span class="muted">stok ${fmt(x.current_stock)} ${esc(x.unit||'')}</span></div>`).join('');
+      itemMatches.style.display='block';
+    });
+    function addFree(id){
+      itemSearch.value=''; itemMatches.style.display='none';
+      const it=_items.find(x=>x.id===id); if(!it) return;
+      let row=_free.find(f=>f.item_id===id);
+      if(row){ row.qty=(parseFloat(row.qty)||0)+1; }
+      else _free.push({item_id:id, name:it.name, unit:it.unit||'', qty:1, condition:'saglam'});
+      renderFree();
+    }
+    function renderFree(){
+      const b=document.getElementById('freeBody');
+      if(!_free.length){ b.innerHTML='<tr><td colspan="4" class="muted" style="padding:1rem;">Henüz ürün eklenmedi.</td></tr>'; return; }
+      b.innerHTML=_free.map((f,i)=>`<tr>
+        <td><b>${esc(f.name)}</b></td>
+        <td><input type="number" class="qty-ipt" min="0" step="any" value="${f.qty}" oninput="setFree(${i},'qty',this.value)"></td>
+        <td><select class="cond-sel" onchange="setFree(${i},'condition',this.value)">${COND_OPTS.replace(`value="${f.condition}"`,`value="${f.condition}" selected`)}</select></td>
+        <td><button class="ico-del" onclick="rmFree(${i})" title="Çıkar"><i class="bi bi-x-lg"></i></button></td>
+      </tr>`).join('');
+    }
+    function setFree(i,f,v){ if(_free[i]) _free[i][f]=v; }
+    function rmFree(i){ _free.splice(i,1); renderFree(); }
+
+    /* ── Gönder ── */
+    async function submitReturn(){
+      if(!window.CAN_ADJUST){ showToast('İade almak için yetkiniz yok.'); return; }
+      const payload={
+        channel:document.getElementById('rChannel').value,
+        returned_by:document.getElementById('rBy').value.trim(),
+        reason:document.getElementById('rReason').value.trim(),
+        doc_lang:'TR', items:[],
+      };
+      if(_mode==='linked'){
+        if(!_picked){ showToast('Önce bir teslimat belgesi seçin.'); return; }
+        payload.delivery_id=_picked.delivery_id;
+        for(const x of _rem){
+          const q=parseFloat(x.qty)||0;
+          if(q<=0) continue;
+          if(q>x.remaining+1e-9){ showToast(`"${x.item_name}" için en fazla ${fmt(x.remaining)} iade edilebilir.`); return; }
+          payload.items.push({delivery_item_id:x.delivery_item_id, quantity:q, condition:x.condition||'saglam'});
+        }
+        if(!payload.items.length){ showToast('En az bir kaleme geri gelen miktar girin.'); return; }
+      } else {
+        for(const f of _free){
+          const q=parseFloat(f.qty)||0;
+          if(q<=0) continue;
+          payload.items.push({item_id:f.item_id, quantity:q, condition:f.condition||'saglam'});
+        }
+        if(!payload.items.length){ showToast('En az bir ürün ekleyin (miktar > 0).'); return; }
+      }
+      const btn=document.getElementById('submitBtn'); btn.disabled=true; btn.innerHTML='<i class="bi bi-hourglass-split"></i> İşleniyor…';
+      try{
+        const r=await fetch('/api/returns',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok){ showToast(d.detail||'İade alınamadı.'); return; }
+        const box=document.getElementById('result'); box.style.display='block';
+        box.innerHTML=`<div class="res-ok">
+          <div style="font-weight:700;color:#15803d;margin-bottom:0.4rem;"><i class="bi bi-check-circle-fill"></i> İade alındı — ${esc(d.document_no)} · ${d.restocked_items} kalem stoğa döndü${d.damaged_items?`, ${d.damaged_items} kalem fire`:''}</div>
+          <a href="/api/returns/${d.id}/document?format=pdf" class="btn-o" target="_blank"><i class="bi bi-file-earmark-pdf"></i> İade Belgesini İndir (PDF)</a>
+        </div>`;
+        showToast('İade alındı — sağlam kalemler stoğa eklendi.','success');
+        _free=[]; renderFree();
+        if(_picked){ pickDelivery(_picked.delivery_id); }   // kalanları tazele
+        ['rBy','rReason'].forEach(id=>{ document.getElementById(id).value=''; });
+        await Promise.all([loadHistory(), loadDeliveries(), loadItems()]);
+      }catch{ showToast('Sunucuya bağlanılamadı.'); }
+      finally{ btn.disabled=false; btn.innerHTML='<i class="bi bi-arrow-return-left"></i> İadeyi Al (sağlamlar stoğa döner)'; }
+    }
+
+    /* ── Geçmiş ── */
+    async function loadHistory(){
+      const b=document.getElementById('histBody');
+      try{
+        const r=await fetch('/api/returns');
+        const d=await r.json();
+        const rows=d.returns||[];
+        if(!rows.length){ b.innerHTML='<tr><td colspan="7" class="muted" style="padding:1rem;">Henüz iade yok.</td></tr>'; return; }
+        b.innerHTML=rows.map(x=>`<tr>
+          <td><b>${esc(x.document_no)}</b></td>
+          <td>${x.delivery_document_no?esc(x.delivery_document_no):'<span class="muted">serbest</span>'}${x.returned_by?` <span class="muted">· ${esc(x.returned_by)}</span>`:''}</td>
+          <td>${esc(x.channel_label)}</td>
+          <td><span class="badge-ok">+${fmt(x.restocked_qty)}</span>${x.damaged_qty?` <span class="badge-fire">fire ${fmt(x.damaged_qty)}</span>`:''}</td>
+          <td class="muted">${esc(x.received_by||'—')}</td>
+          <td class="muted">${esc(x.date)}</td>
+          <td><a href="/api/returns/${x.id}/document?format=pdf" class="btn-o" target="_blank" style="padding:0.3rem 0.6rem;"><i class="bi bi-file-earmark-pdf"></i> Belge</a></td>
+        </tr>`).join('');
+      }catch{ b.innerHTML='<tr><td colspan="7" class="muted" style="padding:1rem;">Yüklenemedi.</td></tr>'; }
+    }
+
+    document.getElementById('logoutBtn').addEventListener('click', async function(){
+      try{ await fetch('/api/logout',{method:'POST',headers:{'X-Requested-With':'1'}}); }catch(e){}
+      window.location.href='/login';
+    });
+
+    (async function init(){
+      if(!window.CAN_ADJUST){ document.getElementById('submitBtn').disabled=true; }
+      await Promise.all([loadDeliveries(), loadItems(), loadHistory()]);
+      // ?delivery=ID → Belgeden İade modunu önyükle
+      const p=new URLSearchParams(location.search);
+      const did=parseInt(p.get('delivery'));
+      if(did){ switchRMode('linked'); pickDelivery(did); }
+    })();
+  </script>
+</body>
+</html>
