@@ -66,7 +66,7 @@ def _full_scale_pages(view) -> int:
     from core.delivery_note import _A4_PT, _count_pages
     buf = BytesIO()
     SimpleDocTemplate(buf, pagesize=_A4_PT, leftMargin=20 * mm, rightMargin=20 * mm,
-                      topMargin=48 * mm, bottomMargin=30 * mm).build(_proforma_story(view, 1.0))
+                      topMargin=48 * mm, bottomMargin=40 * mm).build(_proforma_story(view, 1.0))
     return _count_pages(buf.getvalue())
 
 

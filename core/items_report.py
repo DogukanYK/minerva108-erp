@@ -88,7 +88,7 @@ def _items_story(view: dict, s: float = 1.0):
                 for i, r in enumerate(rows)]
         story.append(_grid(st, ["#", "Hammadde", "Tedarikçi", "Lot / Parti",
                                 "Miktar", "SKT", "Giriş"],
-                           body, pct(4, 28, 20, 16, 13, 9.5, 9.5), s))
+                           body, pct(7, 26, 19, 15, 13, 10, 10), s))
         return story
 
     if tab == "bitmis_urun":
@@ -97,7 +97,7 @@ def _items_story(view: dict, s: float = 1.0):
         from reportlab.platypus import Table, TableStyle
         st_bold = ParagraphStyle("cellb", parent=st["cell"], fontName=st["font_b"])
         headers = ["#", "Ürün", "Türkçe Ad", "Birim", "Stok", "Min"] + (["Maliyet"] if fin else [])
-        widths = pct(5, 32, 25, 8, 10, 8, 12) if fin else pct(5, 36, 29, 9, 11, 10)
+        widths = pct(7, 31, 24, 8, 10, 8, 12) if fin else pct(7, 35, 28, 9, 11, 10)
         head = [Paragraph(escape(h), st["hcell"]) for h in headers]
         table_rows = [head]
         n = 0
@@ -117,7 +117,7 @@ def _items_story(view: dict, s: float = 1.0):
                      _fmt(r.get("min") if r.get("min") is not None else "—")]
             if fin:
                 cp = r.get("cost")
-                cells.append(f"{float(cp):,.2f}" if cp not in (None, "") else "—")
+                cells.append(f"{float(cp):,.2f}" if (cp not in (None, "") and float(cp) != 0) else "—")
             table_rows.append([Paragraph(escape(str(c)), cell_style) for c in cells])
         t = Table(table_rows, colWidths=widths, repeatRows=1)
         t.setStyle(TableStyle([
@@ -136,7 +136,7 @@ def _items_story(view: dict, s: float = 1.0):
     if tab == "ambalaj":
         headers = ["#", "Ürün", "Alt-Tip", "Dil", "Birim", "Stok", "Min", "Tedarikçi"] \
                   + (["Maliyet"] if fin else [])
-        widths = pct(4, 28, 10, 6, 8, 10, 8, 14, 12) if fin else pct(4, 33, 11, 7, 9, 11, 9, 16)
+        widths = pct(7, 26, 10, 6, 8, 10, 8, 13, 12) if fin else pct(7, 31, 11, 7, 9, 10, 9, 16)
         body = []
         for i, r in enumerate(rows):
             cells = [i + 1, r.get("name") or "—", r.get("pkg_label") or "—",
@@ -145,11 +145,11 @@ def _items_story(view: dict, s: float = 1.0):
                      r.get("supplier") or "—"]
             if fin:
                 cp = r.get("cost")
-                cells.append(f"{float(cp):,.2f}" if cp not in (None, "") else "—")
+                cells.append(f"{float(cp):,.2f}" if (cp not in (None, "") and float(cp) != 0) else "—")
             body.append(cells)
     else:
         headers = ["#", "Ürün", "Birim", "Stok", "Min", "Tedarikçi"] + (["Maliyet"] if fin else [])
-        widths = pct(4, 36, 8, 10, 8, 22, 12) if fin else pct(4, 42, 9, 11, 9, 25)
+        widths = pct(7, 34, 8, 10, 8, 21, 12) if fin else pct(7, 40, 9, 11, 9, 24)
         body = []
         for i, r in enumerate(rows):
             cells = [i + 1, r.get("name") or "—", r.get("unit") or "",
@@ -157,7 +157,7 @@ def _items_story(view: dict, s: float = 1.0):
                      r.get("supplier") or "—"]
             if fin:
                 cp = r.get("cost")
-                cells.append(f"{float(cp):,.2f}" if cp not in (None, "") else "—")
+                cells.append(f"{float(cp):,.2f}" if (cp not in (None, "") and float(cp) != 0) else "—")
             body.append(cells)
     story.append(_grid(st, headers, body, widths, s))
     return story
@@ -167,6 +167,6 @@ def render_items_pdf(view: dict) -> bytes:
     from reportlab.lib.units import mm
     content = render_autofit(
         lambda s: _items_story(view, s),
-        margins=(20 * mm, 20 * mm, 48 * mm, 30 * mm),
+        margins=(20 * mm, 20 * mm, 48 * mm, 40 * mm),
         doc_kwargs={"title": _title(view), "author": "Minerva 108"})
     return merge_letterhead(content)

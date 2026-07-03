@@ -128,7 +128,7 @@ def render_packing_list_pdf(view: dict) -> bytes:
     from reportlab.lib.units import mm
     content = render_autofit(
         lambda s: _packing_story(view, s),
-        margins=(20 * mm, 20 * mm, 48 * mm, 30 * mm),
+        margins=(20 * mm, 20 * mm, 48 * mm, 40 * mm),
         doc_kwargs={"title": f"Kargo Hazırlık — {view.get('document_no') or ''}", "author": "Minerva 108"})
     return merge_letterhead(content)
 
@@ -186,6 +186,6 @@ def render_master_packing_pdf(views) -> bytes:
     from reportlab.lib.units import mm
     content = render_autofit(
         lambda s: _master_story(list(views), s),
-        margins=(20 * mm, 20 * mm, 48 * mm, 30 * mm),
+        margins=(20 * mm, 20 * mm, 48 * mm, 40 * mm),
         doc_kwargs={"title": "Kargo Bekleyenler — Master Liste", "author": "Minerva 108"})
     return merge_letterhead(content)

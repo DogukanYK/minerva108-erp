@@ -132,7 +132,7 @@ def render_delivery_pdf(view: dict) -> bytes:
     from reportlab.lib.units import mm
     content = render_autofit(
         lambda s: _delivery_story(view, s),
-        margins=(20 * mm, 20 * mm, 48 * mm, 30 * mm),
+        margins=(20 * mm, 20 * mm, 48 * mm, 40 * mm),
         doc_kwargs={"title": f"Teslim Belgesi — {view.get('document_no') or ''}",
                     "author": "Minerva 108 ERP"})
     return merge_letterhead(content)   # antetli kağıt üzerine bindir (her sayfa)
