@@ -99,6 +99,20 @@ def test_delivery_filename_includes_recipient():
     assert delivery_doc_filename("TES-1") == "teslim_belgesi_TES-1.pdf"
 
 
+def test_items_report_multipage_is_a4():
+    """250 satırlık ürün listesi → çok sayfa, hepsi antetli A4."""
+    from core.items_report import render_items_pdf
+    from core.delivery_note import _count_pages
+    view = {"tab": "hammadde", "tab_label": "Hammadde", "pkg_label": None, "q": None,
+            "finance": True, "date": "02.07.2026 21:00",
+            "rows": [{"name": f"Hammadde {i:03d} Ççğışöü", "unit": "kg", "stock": i,
+                      "min": 5, "supplier": "Tedarikçi A", "cost": 12.5}
+                     for i in range(250)]}
+    pdf = render_items_pdf(view)
+    assert _count_pages(pdf) >= 2
+    assert _all_pages_a4(pdf)
+
+
 def test_return_note_is_a4_on_letterhead():
     from core.return_note import render_return_pdf
     view = {

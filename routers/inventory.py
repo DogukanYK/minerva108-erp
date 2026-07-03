@@ -166,6 +166,136 @@ def list_items(
     ]
 
 
+_PRINT_PKG_LABELS = {"şişe": "Şişe", "kavanoz": "Kavanoz", "pompa": "Pompa",
+                     "kapak": "Kapak", "etiket": "Etiket"}
+
+
+@router.get("/items/print")
+def print_items(
+    tab: str = "hammadde",
+    pkg: Optional[str] = None,       # ambalaj alt-tipi; '__none__' = pkg_type boş
+    q: Optional[str] = None,         # arama (name/category/pkg_type/barcode)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("items", "view")),
+    domain: str = Depends(active_domain),
+):
+    """Aktif sekme + filtreyle antetli A4 ürün listesi PDF'i (Ürünler → Yazdır).
+
+    Sekme filtreleri items.html TABS ile birebir; Maliyet kolonu yalnız finans
+    yetkisi olan rollerde PDF'e girer (sunucu tarafı gate — sızma yolu yok).
+    """
+    import io as _io
+    from datetime import datetime as _dt
+    from core.items_report import (render_items_pdf, items_filename, tr_key, TAB_LABELS)
+    from core.delivery_note import content_disposition
+    from database import tr_now
+
+    tab = (tab or "hammadde").lower()
+    if tab not in ("hammadde", "ambalaj", "bitmis_urun", "numune"):
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz sekme."})
+    qn = (q or "").strip().casefold() or None
+
+    finance_ok = _can_see_finance(current_user)
+    rows = []
+    pkg_label = None
+
+    if tab == "numune":
+        recs = (db.query(Inventory)
+                .options(joinedload(Inventory.item), joinedload(Inventory.supplier))
+                .filter(Inventory.is_sample == True, Inventory.domain == domain)  # noqa: E712
+                .order_by(Inventory.id.desc()).all())
+        for r in recs:
+            item_name = r.item.name if r.item else "—"
+            supplier = r.supplier.name if r.supplier else "—"
+            if qn and not any(qn in str(v or "").casefold()
+                              for v in (item_name, supplier, r.lot_number)):
+                continue
+            rows.append({
+                "item_name": item_name, "supplier": supplier, "lot": r.lot_number,
+                "qty_unit": f"{round(float(r.quantity or 0), 4):g} {(r.item.unit if r.item else '') or ''}".strip(),
+                "expiry": r.expiry_date or "—",
+                "received": to_tr(r.created_at).strftime("%d.%m.%Y") if r.created_at else "—",
+            })
+        rows.sort(key=lambda x: tr_key(x["item_name"]))
+    else:
+        items = (db.query(Item)
+                 .filter(Item.is_active == True, Item.domain == domain).all())  # noqa: E712
+        # Sekme filtresi — items.html TABS ile birebir
+        if tab == "hammadde":
+            items = [i for i in items if i.category not in ("Ambalaj", "Bitmiş Ürün")]
+        elif tab == "ambalaj":
+            items = [i for i in items if i.category == "Ambalaj"]
+            if pkg == "__none__":
+                items = [i for i in items if not (i.pkg_type or "").strip()]
+                pkg_label = "Tipi yok"
+            elif pkg:
+                items = [i for i in items if (i.pkg_type or "").lower() == pkg.lower()]
+                pkg_label = _PRINT_PKG_LABELS.get(pkg.lower(), pkg)
+        else:
+            items = [i for i in items if i.category == "Bitmiş Ürün"]
+        # Arama — items.html JS aramasıyla birebir (name/category/pkg_type/barcode + name_tr)
+        if qn:
+            items = [i for i in items if any(
+                qn in str(v or "").casefold()
+                for v in (i.name, i.name_tr, i.category, i.pkg_type, i.barcode))]
+
+        suppliers = {s.id: s.name for s in db.query(Supplier)
+                     .filter(Supplier.is_active == True).all()}  # noqa: E712
+
+        def flat_row(i):
+            return {"name": i.name, "unit": i.unit or "", "stock": i.current_stock,
+                    "min": i.min_stock_level,
+                    "supplier": suppliers.get(i.supplier_id) if i.supplier_id else None,
+                    "cost": (i.cost_price if finance_ok else None),
+                    "pkg_label": _PRINT_PKG_LABELS.get((i.pkg_type or "").lower(),
+                                                       (i.pkg_type or "").strip() or None),
+                    "language": i.language or None}
+
+        if tab == "bitmis_urun":
+            # Hiyerarşi — items.html renderTable ile birebir: parents → varyasyonları → standalone
+            def fin_row(i, kind):
+                return {"kind": kind,
+                        "name": (i.variation_name or i.name) if kind == "variation" else i.name,
+                        "name_tr": i.name_tr or None, "unit": i.unit or "",
+                        "stock": i.current_stock, "min": i.min_stock_level,
+                        "cost": (i.cost_price if finance_ok else None)}
+            by_parent = {}
+            for i in items:
+                if i.parent_id:
+                    by_parent.setdefault(i.parent_id, []).append(i)
+            parents = [i for i in items if not i.parent_id and i.id in by_parent]
+            standalones = [i for i in items if not i.parent_id and i.id not in by_parent]
+            parents.sort(key=lambda i: tr_key(i.name))
+            standalones.sort(key=lambda i: tr_key(i.name))
+            for p in parents:
+                rows.append(fin_row(p, "parent"))
+                kids = sorted(by_parent[p.id], key=lambda i: tr_key(i.variation_name or i.name))
+                rows.extend(fin_row(k, "variation") for k in kids)
+            # Ana ürünü listede olmayan (orphan) varyasyonlar — düz satır
+            parent_ids = {p.id for p in parents}
+            orphans = [i for i in items if i.parent_id and i.parent_id not in parent_ids]
+            for o in sorted(orphans, key=lambda i: tr_key(i.name)):
+                rows.append(fin_row(o, "standalone"))
+            rows.extend(fin_row(i, "standalone") for i in standalones)
+        else:
+            items.sort(key=lambda i: tr_key(i.name))
+            rows = [flat_row(i) for i in items]
+
+    view = {"tab": tab, "tab_label": TAB_LABELS[tab], "pkg_label": pkg_label,
+            "q": (q or "").strip() or None, "finance": finance_ok,
+            "date": tr_now().strftime("%d.%m.%Y %H:%M"), "rows": rows}
+    try:
+        content = render_items_pdf(view)
+    except Exception:
+        return JSONResponse(status_code=500, content={"detail": "Liste üretilemedi."})
+    fname = items_filename(tab, pkg_label, (q or "").strip() or None)
+    return StreamingResponse(
+        _io.BytesIO(content),
+        media_type="application/pdf",
+        headers={"Content-Disposition": content_disposition(fname, inline=True)},
+    )
+
+
 def _validate_variation(
     db: Session,
     parent_id: Optional[int],

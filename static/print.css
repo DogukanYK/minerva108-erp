@@ -1,0 +1,95 @@
+/* ═══════════════════════════════════════════════════════════════
+   Minerva 108 — Global Print Stylesheet  (static/print.css)
+   Tüm şablonlara dark.css'in hemen ALTINA eklenir:
+     <link rel="stylesheet" href="/static/print.css" media="print" />
+
+   Cascade sözleşmesi:
+     dark.css → print.css → sayfa-içi <style> blokları
+   • dark.css'i eşit özgüllükte yener (daha geç kaynak).
+   • production.html / quotations.html'in kendi @media print kuralları
+     bu dosyadan SONRA geldiği için eşitlikte ONLAR kazanır (@page dahil)
+     — föy ve invoice çıktıları regresyona uğramaz.
+
+   İlke: yalnız uygulama kromunu gizle + içerik akışını serbest bırak;
+   tabloların görsel stiline (renk/kenarlık/td) DOKUNMA.
+   Koyu tema esas olarak static/theme.js'in beforeprint kancasıyla
+   (yazdırma anında data-theme=light) çözülür; buradaki değişken
+   geri-çevirmesi JS engelliyse devreye giren yedektir.
+   ═══════════════════════════════════════════════════════════════ */
+@media print {
+
+  /* ── Sayfa kurulumu ─────────────────────────────────────────── */
+  @page { size: A4 portrait; margin: 12mm; }
+
+  html, body {
+    background: #fff !important;
+    overflow: visible !important;   /* body.modal-open overflow:hidden → içerik kesilmesin */
+    height: auto !important;
+  }
+
+  /* ── Uygulama kromu ─────────────────────────────────────────── */
+  .sidebar, .topnav, #toast-container,
+  .toolbar, .search-box, .tab-nav-wrapper,
+  .table-footer, .action-bar,
+  .col-filter-btn, .col-filter-menu { display: none !important; }
+
+  /* ── Modal / overlay katmanları (açıkken bile basılmaz) ───────
+     Bootstrap: .modal(.show) + .modal-backdrop · drive: .modal-back
+     crm: .modal-ov · delivery inline-style #trackModal/#legsModal →
+     div[id$="Modal"] yakalar (!important inline display:flex'i yener).
+     NOT: production #foyPrintArea modal DIŞINDA ayrı bir div —
+     bu kurallardan etkilenmez. Gelecekte print-İÇERİKLİ bir modal
+     eklenecekse id'si "Modal" ile bitmemeli.                       */
+  .modal, .modal-backdrop, .modal-back, .modal-ov,
+  div[id$="Modal"], div[id$="Overlay"] { display: none !important; }
+
+  /* ── Ana içerik: sidebar/topnav boşluklarını kapat ────────────── */
+  .main-content {
+    margin-left: 0 !important;
+    margin-top: 0 !important;
+    padding: 0 !important;
+    width: auto !important;
+    max-width: 100% !important;
+  }
+  .content-inner { padding: 0 !important; }
+
+  /* ── Tablolar: kaydırma kapları açılır, başlık her sayfada ───── */
+  .table-responsive, .table-card,
+  .card2, .card2-body { overflow: visible !important; box-shadow: none !important; }
+  table  { width: 100% !important; }
+  thead  { display: table-header-group; }
+  tfoot  { display: table-footer-group; }
+  tr     { page-break-inside: avoid; }
+
+  /* ── Aksiyon butonları (toolbar + satır içi 'İşlemler') ───────
+     Sütun boş kalır — kabul edilen davranış. quotations invoice-doc
+     içinde buton yok; kendi print bloğu aksiyonları zaten gizliyor. */
+  button, .btn-icon, .btn-o, .btn-g, .btn-excel,
+  .btn-primary-gold, .btn-danger-soft, .ico-btn, .qbtn,
+  .btn-logout, .tabbtn { display: none !important; }
+
+  /* ── Linkler kağıtta sade ────────────────────────────────────── */
+  a { text-decoration: none !important; color: inherit !important; }
+
+  /* ═════════ KOYU TEMA → BASKIDA AÇIK TEMA (yedek katman) ═══════
+     Esas çözüm theme.js beforeprint kancası. JS çalışmazsa bu blok
+     dark.css'in var() tüketen kurallarını (çoğunluk) düzeltir.      */
+  :root[data-theme="dark"] {
+    --navy:        #232E6E;
+    --navy-dark:   #1B2456;
+    --gold:        #C9AC6F;
+    --gold2:       #D9BE85;
+    --cream:       #ffffff;
+    --white:       #ffffff;
+    --surface-2:   #f7f6f2;
+    --border:      #e5e7eb;
+    --border-soft: #f0ece4;
+    --text:        #1f2937;
+    --text-muted:  #6b7280;
+    --text-faint:  #9ca3af;
+  }
+  :root[data-theme="dark"] body {
+    background: #fff !important;
+    color: #1f2937 !important;
+  }
+}
