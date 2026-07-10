@@ -346,10 +346,23 @@ def _page_ctx(request: Request, payload: dict, user: User) -> dict:
 # ─── Page Routes ─────────────────────────────────────────────────────────────
 
 @app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request):
+def login_page(request: Request, db: Session = Depends(get_db)):
+    # Zaten girişli + AKTİF + bu host'un sayfasına erişimi olan kullanıcı → uygulamaya
+    # yönlt.  Aksi halde (pasif/silinmiş cookie ya da yanlış host — ör. ims'e girişli
+    # personel siparis'e gelince) login'i GÖSTER; yoksa "/" ↔ "/login" arası sonsuz
+    # redirect döngüsü (ERR_TOO_MANY_REDIRECTS) oluşur.
     token = request.cookies.get("access_token")
-    if token and decode_token(token):
-        return RedirectResponse(url="/", status_code=302)
+    if token:
+        payload = decode_token(token)
+        if payload:
+            user = _resolve_active_user(payload, db)
+            if user:
+                blocked = (
+                    (_is_crm_host(request) and not _user_can(user, "crm", "view")) or
+                    (_is_distributor_host(request) and not _user_can(user, "portal", "view"))
+                )
+                if not blocked:
+                    return RedirectResponse(url="/", status_code=302)
     # Host'a göre marka: crm.* → CRM, siparis.* → Sipariş Portalı (aynı login sayfası)
     is_crm  = _is_crm_host(request)
     is_dist = _is_distributor_host(request)
