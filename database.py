@@ -799,6 +799,8 @@ class CrmDeal(Base):
     sort_order        = Column(Integer, default=0)          # Kanban'da aşama-içi sıralama
     source            = Column(String(50), nullable=True)   # manual / kommo / import …
     kommo_id          = Column(BigInteger, nullable=True, index=True)   # Kommo aynası — upsert anahtarı
+    stage_changed_at  = Column(DateTime, nullable=True, default=datetime.utcnow)  # aşamaya giriş anı (yaş rozeti)
+    is_active         = Column(Boolean, default=True, nullable=False)   # soft-delete (arşiv)
     created_at        = Column(DateTime, default=datetime.utcnow)
     created_by        = Column(String(100), nullable=True)
     won_at            = Column(DateTime, nullable=True)
@@ -921,6 +923,18 @@ class CrmAttachment(Base):
     content_type  = Column(String(120), nullable=True)
     uploaded_by   = Column(String(100), nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow)
+
+
+class CrmWaTemplate(Base):
+    """WhatsApp mesaj şablonu — tıkla-konuş linkine hazır metin ekler.
+    {ad} yer tutucusu kişinin ilk adıyla değiştirilir.  Ekip genelinde paylaşımlı."""
+    __tablename__ = "crm_wa_template"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    name       = Column(String(100), nullable=False)
+    body       = Column(String(1000), nullable=False)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class CrmIntegrationState(Base):
@@ -1114,6 +1128,12 @@ def init_db():
             "ALTER TABLE quotations ADD COLUMN rejected_by VARCHAR(50)",
             "ALTER TABLE quotations ADD COLUMN reject_reason TEXT",
             "CREATE INDEX IF NOT EXISTS ix_quotations_distributor ON quotations(distributor_id)",
+            # CRM yükseltme — aşama yaşı + fırsat soft-delete (crm_wa_template
+            # tablosu create_all ile gelir).  UPDATE'ler NULL-korumalı → idempotent.
+            "ALTER TABLE crm_deal ADD COLUMN stage_changed_at TIMESTAMP",
+            "UPDATE crm_deal SET stage_changed_at = created_at WHERE stage_changed_at IS NULL",
+            "ALTER TABLE crm_deal ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE",
+            "UPDATE crm_deal SET is_active = TRUE WHERE is_active IS NULL",
         ):
             alter_safe(stmt)
 
