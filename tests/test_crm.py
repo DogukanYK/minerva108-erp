@@ -213,6 +213,43 @@ def test_deal_close_endpoint(authed_client: TestClient):
     assert r.status_code == 200 and r.json()["status"] == "lost"
 
 
+def test_task_assign_push_fires(authed_client: TestClient, db_session, monkeypatch):
+    # Başkasına atanan görev → anında push; kendine atama → push YOK.
+    import routers.crm as crm_router
+    from database import User
+    calls = []
+    monkeypatch.setattr(crm_router, "notify_crm_task_assigned",
+                        lambda uid, title, due, assigner: calls.append((uid, title, assigner)))
+    other = db_session.query(User).filter(User.username == "isik").first()
+    me = db_session.query(User).filter(User.username == "dogukan").first()
+    authed_client.post("/api/crm/tasks",
+                       json={"title": "Ara beni", "assigned_to_user_id": other.id}, headers=_H)
+    assert len(calls) == 1 and calls[0][0] == other.id and calls[0][1] == "Ara beni"
+    authed_client.post("/api/crm/tasks",
+                       json={"title": "Kendime not", "assigned_to_user_id": me.id}, headers=_H)
+    assert len(calls) == 1   # kendine atama push üretmedi
+
+
+def test_task_reassign_push(authed_client: TestClient, db_session, monkeypatch):
+    # PUT'ta atanan DEĞİŞİRSE push; aynı kalırsa yok.
+    import routers.crm as crm_router
+    from database import User
+    calls = []
+    monkeypatch.setattr(crm_router, "notify_crm_task_assigned",
+                        lambda *a: calls.append(a))
+    other = db_session.query(User).filter(User.username == "isik").first()
+    me = db_session.query(User).filter(User.username == "dogukan").first()
+    t = authed_client.post("/api/crm/tasks",
+                           json={"title": "Devir", "assigned_to_user_id": me.id}, headers=_H).json()
+    assert calls == []
+    authed_client.put(f"/api/crm/tasks/{t['id']}",
+                      json={"title": "Devir", "assigned_to_user_id": other.id}, headers=_H)
+    assert len(calls) == 1 and calls[0][0] == other.id
+    authed_client.put(f"/api/crm/tasks/{t['id']}",
+                      json={"title": "Devir", "assigned_to_user_id": other.id}, headers=_H)
+    assert len(calls) == 1   # atanan değişmedi → tekrar push yok
+
+
 # ─── Pano ─────────────────────────────────────────────────────────────────────
 
 def test_move_deal_stamps_and_logs(authed_client: TestClient):

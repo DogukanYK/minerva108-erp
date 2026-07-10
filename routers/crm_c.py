@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from database import (
     get_db, User, AdminAuditLog,
     CrmCompany, CrmContact, CrmDeal, CrmSavedView,
-    CrmTag, CrmEntityTag, CrmFieldDef, CrmFieldValue, CrmAttachment, to_tr,
+    CrmTag, CrmEntityTag, CrmFieldDef, CrmFieldValue, CrmAttachment, CrmWaTemplate, to_tr,
 )
 from core.permissions import require_permission
 from core.audit import log_admin_event
@@ -204,6 +204,46 @@ def set_entity_tags(entity: str, eid: int, data: TagSet, db: Session = Depends(g
             db.add(CrmEntityTag(entity=entity, entity_id=eid, tag_id=tid))
     db.commit()
     return _entity_tags(db, entity, eid)
+
+
+# ─── WhatsApp mesaj şablonları ───────────────────────────────────────────────
+# Tıkla-konuş (wa.me) linkine hazır metin ekler; {ad} → kişinin ilk adı.
+# Listeleme crm.view (herkes kullanır); yönetim crm.edit.
+
+class WaTemplateIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    body: str = Field(..., min_length=1, max_length=1000)
+
+
+@router.get("/wa-templates")
+def list_wa_templates(db: Session = Depends(get_db),
+                      _: dict = Depends(require_permission("crm", "view"))):
+    return [{"id": t.id, "name": t.name, "body": t.body}
+            for t in db.query(CrmWaTemplate).order_by(CrmWaTemplate.name).all()]
+
+
+@router.post("/wa-templates", status_code=201)
+def create_wa_template(data: WaTemplateIn, request: Request, db: Session = Depends(get_db),
+                       current_user: dict = Depends(require_permission("crm", "edit"))):
+    t = CrmWaTemplate(name=data.name.strip()[:100], body=data.body.strip()[:1000],
+                      created_by=_actor(current_user))
+    db.add(t); db.commit(); db.refresh(t)
+    log_admin_event(db, request, actor=current_user, action="crm.wa_template.create",
+                    target_type="crm_wa_template", target_id=t.id, target_name=t.name)
+    return {"id": t.id, "name": t.name, "body": t.body}
+
+
+@router.delete("/wa-templates/{tid}")
+def delete_wa_template(tid: int, request: Request, db: Session = Depends(get_db),
+                       current_user: dict = Depends(require_permission("crm", "edit"))):
+    t = db.query(CrmWaTemplate).filter(CrmWaTemplate.id == tid).first()
+    if not t:
+        return JSONResponse(status_code=404, content={"detail": "Şablon bulunamadı."})
+    name = t.name
+    db.delete(t); db.commit()
+    log_admin_event(db, request, actor=current_user, action="crm.wa_template.delete",
+                    target_type="crm_wa_template", target_id=tid, target_name=name)
+    return {"message": "Şablon silindi."}
 
 
 # ─── Özel alanlar (C3) ───────────────────────────────────────────────────────

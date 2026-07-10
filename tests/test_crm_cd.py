@@ -133,6 +133,26 @@ def test_bulk_assign(authed_client: TestClient):
     assert any(c["id"] == a["id"] for c in rows)
 
 
+# ─── WhatsApp şablonları ─────────────────────────────────────────────────────
+
+def test_wa_templates_crud(authed_client: TestClient):
+    r = authed_client.post("/api/crm/wa-templates",
+                           json={"name": "Tanışma", "body": "Merhaba {ad}, Minerva 108'den yazıyorum."},
+                           headers=_H)
+    assert r.status_code == 201, r.text
+    tid = r.json()["id"]
+    rows = authed_client.get("/api/crm/wa-templates").json()
+    assert any(t["id"] == tid and "{ad}" in t["body"] for t in rows)
+    assert authed_client.delete(f"/api/crm/wa-templates/{tid}", headers=_H).status_code == 200
+    assert authed_client.get("/api/crm/wa-templates").json() == []
+
+
+def test_wa_templates_rbac(labtech_client: TestClient):
+    assert labtech_client.get("/api/crm/wa-templates").status_code == 403
+    assert labtech_client.post("/api/crm/wa-templates",
+                               json={"name": "X", "body": "Y"}, headers=_H).status_code == 403
+
+
 # ─── Geçmiş (C4) ─────────────────────────────────────────────────────────────
 
 def test_history(authed_client: TestClient):

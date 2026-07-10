@@ -380,3 +380,20 @@ def notify_crm_reminder(user_id: int, count: int, sample_titles: Iterable[str]) 
         "url":   "/crm",
         "requireInteraction": False,
     })
+
+
+def notify_crm_task_assigned(user_id: int, task_title: str, due_label, assigner: str) -> None:
+    """CRM görev ataması — atanan kişiye ANINDA push (günlük taramayı beklemez).
+    BackgroundTasks'ten İLKEL argümanlarla çağır (ORM nesnesi geçirme — üstteki
+    tasarım notu).  Kendi kendine atamada çağıran taraf zaten atlamalı."""
+    _emit("info", "CRM-ASSIGN",
+          f"Kullanıcı#{user_id}: '{task_title}' görevi atandı ({assigner})",
+          user_id=user_id)
+    _send_push_to_users([user_id], {
+        "title": "📋 Yeni CRM Görevi",
+        "body":  f"{assigner} sana görev atadı: {task_title}"
+                 + (f" · Son tarih: {due_label}" if due_label else ""),
+        "tag":   f"crm-task-assign-{user_id}",
+        "url":   "/crm",
+        "requireInteraction": False,
+    })

@@ -22,7 +22,7 @@ Uçlar:
 from datetime import datetime, timedelta
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, Request, Query, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Query, UploadFile, File, Form
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -37,6 +37,7 @@ from database import (
 )
 from core.permissions import require_permission, _has_permission
 from core.audit import log_admin_event
+from core.notifications import notify_crm_task_assigned
 from core import crm as C
 
 router = APIRouter(prefix="/api/crm", tags=["crm"])
@@ -903,9 +904,10 @@ def list_tasks(
 
 
 @router.post("/tasks", status_code=201)
-def create_task(data: TaskIn, db: Session = Depends(get_db),
+def create_task(data: TaskIn, background: BackgroundTasks, db: Session = Depends(get_db),
                 current_user: dict = Depends(require_permission("crm", "create"))):
-    assignee = data.assigned_to_user_id or int(current_user.get("sub", 0)) or None
+    actor_id = int(current_user.get("sub", 0)) or None
+    assignee = data.assigned_to_user_id or actor_id
     t = CrmTask(
         title=data.title.strip(), notes=data.notes,
         due_at=C.parse_tr_to_utc(data.due_at),
@@ -914,15 +916,20 @@ def create_task(data: TaskIn, db: Session = Depends(get_db),
         created_by=_actor(current_user),
     )
     db.add(t); db.commit(); db.refresh(t)
+    if assignee and assignee != actor_id:   # kendine atamada push yok
+        background.add_task(notify_crm_task_assigned, assignee, t.title,
+                            C.fmt_dt(t.due_at), _actor(current_user))
     return C.serialize_task(t)
 
 
 @router.put("/tasks/{tid}")
-def update_task(tid: int, data: TaskIn, db: Session = Depends(get_db),
-                _: dict = Depends(require_permission("crm", "edit"))):
+def update_task(tid: int, data: TaskIn, background: BackgroundTasks,
+                db: Session = Depends(get_db),
+                current_user: dict = Depends(require_permission("crm", "edit"))):
     t = db.query(CrmTask).filter(CrmTask.id == tid).first()
     if not t:
         return JSONResponse(status_code=404, content={"detail": "Görev bulunamadı."})
+    old_assignee = t.assigned_to_user_id
     t.title = data.title.strip(); t.notes = data.notes
     t.due_at = C.parse_tr_to_utc(data.due_at)
     t.company_id = data.company_id; t.contact_id = data.contact_id; t.deal_id = data.deal_id
@@ -930,6 +937,11 @@ def update_task(tid: int, data: TaskIn, db: Session = Depends(get_db),
     t.assigned_to_name = _user_name(db, data.assigned_to_user_id)
     t.reminder_sent = False   # vade değişmiş olabilir → yeniden hatırlat
     db.commit(); db.refresh(t)
+    actor_id = int(current_user.get("sub", 0)) or None
+    if (t.assigned_to_user_id and t.assigned_to_user_id != old_assignee
+            and t.assigned_to_user_id != actor_id):   # yeni atanan ≠ eski ≠ kendisi
+        background.add_task(notify_crm_task_assigned, t.assigned_to_user_id, t.title,
+                            C.fmt_dt(t.due_at), _actor(current_user))
     return C.serialize_task(t)
 
 

@@ -318,6 +318,7 @@
     <button data-tab="pipeline"><i class="bi bi-kanban"></i>Pipeline</button>
     <button data-tab="tasks"><i class="bi bi-check2-square"></i>Görevler<span class="nav-badge" id="navTaskBadgeM" style="display:none;">0</span></button>
     <button data-tab="reports"><i class="bi bi-graph-up-arrow"></i>Rapor</button>
+    {% if can('admin','view') %}<button data-tab="integrations"><i class="bi bi-plug"></i>Entegr.</button>{% endif %}
   </nav>
 
   <div class="scrim" id="scrim" onclick="closeDrawer()"></div>

@@ -430,10 +430,11 @@
       html += '</div></div>';
       html += '<div class="card2"><div class="card2-head"><i class="bi bi-tags"></i><h2>Etiketler</h2></div><div class="card2-body" id="tagMgmt"></div></div>';
       html += '<div class="card2"><div class="card2-head"><i class="bi bi-input-cursor-text"></i><h2>Özel Alanlar</h2></div><div class="card2-body" id="fieldMgmt"></div></div>';
+      html += '<div class="card2"><div class="card2-head"><i class="bi bi-whatsapp"></i><h2>WhatsApp Şablonları</h2></div><div class="card2-body" id="waTplMgmt"></div></div>';
       v.innerHTML = html;
       const imp = el("kommoImport"); if (imp) imp.addEventListener("click", () => kommoRun("import", imp));
       const syn = el("kommoSync"); if (syn) syn.addEventListener("click", () => kommoRun("sync", syn));
-      loadTagMgmt(); loadFieldMgmt();
+      loadTagMgmt(); loadFieldMgmt(); loadWaTplMgmt();
     } catch (e) { v.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
   }
 
@@ -484,6 +485,50 @@
   async function delFieldMgmt(id) {
     if (!confirm("Alan silinsin mi? (Tüm değerleri silinir)")) return;
     try { await api("/fields/" + id, { method: "DELETE" }); loadFieldMgmt(); } catch (e) { toast(e.message); }
+  }
+
+  async function loadWaTplMgmt() {
+    const box = el("waTplMgmt"); if (!box) return;
+    try {
+      const tpls = await api("/wa-templates");
+      state.waTemplates = tpls;
+      let h = '<p class="muted" style="font-size:0.8rem;">Tıkla-konuş (wa.me) mesajına hazır metin ekler; kayıt kartındaki <b>Şablon</b> düğmesinden kullanılır. <code>{ad}</code> → kişinin ilk adı.</p>';
+      h += '<div style="display:flex;gap:0.4rem;margin-bottom:0.8rem;flex-wrap:wrap;">' +
+        '<input class="ipt" id="waTplName" placeholder="Şablon adı" style="max-width:180px;">' +
+        '<input class="ipt" id="waTplBody" placeholder="Merhaba {ad}, Minerva 108\'den yazıyorum…" style="flex:1;min-width:220px;">' +
+        '<button class="btn-g btn-sm" onclick="CRM.addWaTpl()"><i class="bi bi-plus"></i> Ekle</button></div>';
+      h += tpls.length ? tpls.map((t) =>
+        `<div class="row-sep" style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem;padding:0.35rem 0;font-size:0.85rem;">
+          <div><b>${esc(t.name)}</b><div class="muted" style="font-size:0.76rem;">${esc(t.body)}</div></div>
+          <button class="ico-btn del" onclick="CRM.delWaTpl(${t.id})"><i class="bi bi-trash"></i></button>
+        </div>`).join("") : '<div class="muted">Henüz şablon yok.</div>';
+      box.innerHTML = h;
+    } catch (e) { box.innerHTML = '<div class="muted">' + esc(e.message) + "</div>"; }
+  }
+  async function addWaTpl() {
+    const nm = inputVal("waTplName"), body = inputVal("waTplBody");
+    if (!nm || !body) { toast("Ad ve mesaj metni girin."); return; }
+    try { await api("/wa-templates", jbody({ name: nm, body: body })); loadWaTplMgmt(); }
+    catch (e) { toast(e.message); }
+  }
+  async function delWaTpl(id) {
+    if (!confirm("Şablon silinsin mi?")) return;
+    try { await api("/wa-templates/" + id, { method: "DELETE" }); loadWaTplMgmt(); } catch (e) { toast(e.message); }
+  }
+
+  // Şablonla WhatsApp mesajı — drawer'daki kayda hazır metinle tıkla-konuş
+  async function waTplModal() {
+    const dr = state.drawer; if (!dr || !dr.data) return;
+    const ent = dr.data.company || dr.data.contact || dr.data.deal;
+    if (!ent.wa_link) { toast("Bu kayıtta WhatsApp numarası yok."); return; }
+    if (!state.waTemplates) { try { state.waTemplates = await api("/wa-templates"); } catch (e) { state.waTemplates = []; } }
+    if (!state.waTemplates.length) { toast("Şablon yok — Entegrasyonlar sekmesinden ekleyin."); return; }
+    const first = ((ent.full_name || ent.name || "").trim().split(/\s+/)[0]) || "";
+    openModal("Şablonla WhatsApp Mesajı", state.waTemplates.map((t) => {
+      const text = t.body.split("{ad}").join(first);
+      return `<a class="row-sep" style="display:block;padding:0.5rem 0.2rem;text-decoration:none;color:inherit;" href="${esc(ent.wa_link + "?text=" + encodeURIComponent(text))}" target="_blank" onclick="CRM.closeModal()">
+        <b style="color:var(--heading);">${esc(t.name)}</b><div class="muted" style="font-size:0.78rem;">${esc(text)}</div></a>`;
+    }).join(""), function () { closeModal(); });
   }
 
   async function kommoRun(which, btn) {
@@ -558,7 +603,8 @@
   // Kaydedilmiş görünümler
   function viewsSelect(entity) {
     return `<select class="ipt" id="${entity}_view" style="max-width:150px;" onchange="CRM.applyView('${entity}')" title="Kaydedilmiş görünüm"><option value="">Görünüm…</option></select>
-      <button class="btn-g btn-o btn-sm" onclick="CRM.saveView('${entity}')" title="Bu filtreyi görünüm olarak kaydet"><i class="bi bi-bookmark-plus"></i></button>`;
+      <button class="btn-g btn-o btn-sm" onclick="CRM.saveView('${entity}')" title="Bu filtreyi görünüm olarak kaydet"><i class="bi bi-bookmark-plus"></i></button>
+      <button class="btn-g btn-o btn-sm" onclick="CRM.manageViews('${entity}')" title="Görünümleri yönet"><i class="bi bi-gear"></i></button>`;
   }
   async function loadViews(entity) {
     const sel = el(entity + "_view"); if (!sel) return;
@@ -567,22 +613,24 @@
       const vs = await api("/views?entity=" + entity);
       state._views[entity] = vs;
       sel.innerHTML = '<option value="">Görünüm…</option>' +
-        vs.map((v) => `<option value="${v.id}">${esc(v.name)}</option>`).join("") +
-        '<option value="__del">— Sil…</option>';
+        vs.map((v) => `<option value="${v.id}">${esc(v.name)}</option>`).join("");
     } catch (e) { /* sessiz */ }
   }
-  function _critIds(entity) { return entity === "companies" ? ["coSource", "coOwner", "coTag"] : ["ctSource", "ctOwner", "ctTag"]; }
+  async function manageViews(entity) {
+    const vs = (state._views && state._views[entity]) || [];
+    if (!vs.length) { toast("Kayıtlı görünüm yok."); return; }
+    openModal("Görünümleri Yönet", vs.map((v) =>
+      `<div class="row-sep" style="display:flex;justify-content:space-between;align-items:center;padding:0.45rem 0;">
+        <span>${esc(v.name)}</span>
+        <button class="ico-btn del" onclick="CRM.delView('${entity}',${v.id})" title="Sil"><i class="bi bi-trash"></i></button>
+      </div>`).join(""), function () { closeModal(); });
+  }
+  async function delView(entity, vid) {
+    try { await api("/views/" + vid, { method: "DELETE" }); toast("Silindi.", "success"); closeModal(); loadViews(entity); }
+    catch (e) { toast(e.message); }
+  }
   function applyView(entity) {
     const sel = el(entity + "_view"); const vid = sel.value;
-    if (vid === "__del") {
-      const vs = (state._views[entity] || []).filter((x) => x.id);
-      if (!vs.length) { sel.value = ""; return; }
-      const id = vs[0].id; // basitlik: ilkini sil seçeneği yerine prompt
-      const name = prompt("Silinecek görünüm adı:", vs[0].name);
-      const v = vs.find((x) => x.name === name);
-      if (v) api("/views/" + v.id, { method: "DELETE" }).then(() => { toast("Silindi.", "success"); loadViews(entity); });
-      sel.value = ""; return;
-    }
     const v = (state._views[entity] || []).find((x) => String(x.id) === vid);
     if (!v) return;
     const c = v.criteria || {};
@@ -620,21 +668,34 @@
   }
   async function bulkRun(entity, action) {
     const ids = Array.from(bulkSel[entity]); if (!ids.length) return;
-    let value = null;
-    if (action === "assign") {
-      const opts = state.users.map((u, i) => `${i + 1}) ${u.full_name}`).join("\n");
-      const pick = prompt("Sorumlu seç (numara):\n" + opts); if (!pick) return;
-      const u = state.users[parseInt(pick, 10) - 1]; if (!u) return; value = String(u.id);
-    } else if (action === "source") {
-      value = prompt("Kaynak (meta / kommo / manual):", "manual"); if (!value) return;
-    } else if (action === "tag") {
-      const opts = (state.tags || []).map((t, i) => `${i + 1}) ${t.name}`).join("\n");
-      if (!opts) { toast("Önce etiket oluşturun (Entegrasyonlar)."); return; }
-      const pick = prompt("Etiket seç (numara):\n" + opts); if (!pick) return;
-      const t = state.tags[parseInt(pick, 10) - 1]; if (!t) return; value = String(t.id);
-    } else if (action === "delete") {
+    if (action === "delete") {
       if (!confirm(ids.length + " kayıt arşivlensin mi?")) return;
+      return bulkExec(entity, "delete", null, ids);
     }
+    let title, control;
+    if (action === "assign") {
+      title = "Sorumlu Ata";
+      control = `<select class="ipt" id="blk_val">${userOptions()}</select>`;
+    } else if (action === "source") {
+      title = "Kaynak Değiştir";
+      control = `<select class="ipt" id="blk_val">
+        <option value="manual">Elle</option><option value="referral">Referans</option>
+        <option value="import">İçe aktarma</option><option value="kommo">Kommo</option></select>`;
+    } else if (action === "tag") {
+      if (!(state.tags || []).length) { toast("Önce etiket oluşturun (Entegrasyonlar)."); return; }
+      title = "Etiket Ekle";
+      control = `<select class="ipt" id="blk_val">${state.tags.map((t) =>
+        `<option value="${t.id}">${esc(t.name)}</option>`).join("")}</select>`;
+    } else return;
+    openModal(`${title} (${ids.length} kayıt)`, `<div class="mb"><label class="fld">${title}</label>${control}</div>`,
+      async function () {
+        const value = fval("blk_val");
+        if (action === "assign" && !value) { toast("Bir kullanıcı seçin."); return; }
+        closeModal();
+        bulkExec(entity, action, value || null, ids);
+      });
+  }
+  async function bulkExec(entity, action, value, ids) {
     try {
       const r = await api("/bulk", jbody({ entity: entity, ids: ids, action: action, value: value }));
       toast(r.message || "Tamam.", "success");
@@ -747,7 +808,10 @@
     let html = "";
     // Üst aksiyonlar
     html += '<div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">';
-    if (e.wa_link) html += `<a class="btn-g btn-sm" style="background:#25d366;" href="${esc(e.wa_link)}" target="_blank"><i class="bi bi-whatsapp"></i> WhatsApp</a>`;
+    if (e.wa_link) {
+      html += `<a class="btn-g btn-sm" style="background:#25d366;" href="${esc(e.wa_link)}" target="_blank"><i class="bi bi-whatsapp"></i> WhatsApp</a>`;
+      html += `<button class="btn-g btn-sm btn-o" onclick="CRM.waTplModal()" title="Hazır şablonla mesaj gönder"><i class="bi bi-chat-text"></i> Şablon</button>`;
+    }
     if (e.kommo_url) html += `<a class="btn-g btn-sm btn-o" href="${esc(e.kommo_url)}" target="_blank" title="Sohbeti/kaydı Kommo'da aç — orada görüp cevaplayabilirsin"><i class="bi bi-chat-dots"></i> Kommo'da Aç</a>`;
     if (can("crm", "edit")) {
       const editFn = kind === "company" ? "companyModal" : kind === "contact" ? "contactModal" : "dealModal";
@@ -1277,10 +1341,18 @@
       try { await fetch("/api/logout", { method: "POST" }); window.location.href = "/login"; }
       catch (e) { toast("Çıkış hatası."); this.disabled = false; }
     });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); closeDrawer(); searchClose(); } });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { closeModal(); closeDrawer(); searchClose(); }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); searchOpen(); }
+    });
     el("mSave").addEventListener("click", function () { if (_modalSave) _modalSave(); });
     const si = el("searchInput");
-    if (si) si.addEventListener("input", function () { clearTimeout(_searchTmr); _searchTmr = setTimeout(searchRun, 250); });
+    if (si) {
+      si.addEventListener("input", function () { clearTimeout(_searchTmr); _searchTmr = setTimeout(searchRun, 250); });
+      si.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") { const first = document.querySelector("#searchResults .sr-item"); if (first) first.click(); }
+      });
+    }
     const sov = el("searchOv");
     if (sov) sov.addEventListener("click", function (e) { if (e.target === sov) searchClose(); });
     setupInstall();
@@ -1307,7 +1379,8 @@
     searchOpen, searchClose, searchGo,
     tagPicker, addTag, saveFields, uploadAttachment, delAttachment,
     addTagMgmt, delTagMgmt, addFieldMgmt, delFieldMgmt,
-    applyView, saveView, bulkToggle, bulkAll, bulkRun,
+    addWaTpl, delWaTpl, waTplModal,
+    applyView, saveView, manageViews, delView, bulkToggle, bulkAll, bulkRun,
     closeModal,
   };
   window.closeDrawer = closeDrawer;
