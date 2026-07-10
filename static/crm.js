@@ -37,6 +37,7 @@
       <option value="instagram">Instagram</option>
       <option value="facebook">Facebook</option>
       <option value="kommo">Kommo</option>
+      <option value="import">İçe aktarma</option>
       <option value="manual">Elle girilen</option></select>`;
   }
   function srcParam(id) {
@@ -71,7 +72,7 @@
       <p class="muted" style="font-size:0.84rem;">Excel (.xlsx) veya CSV yükleyin. Başlık satırı tanınır (Firma/Ad Soyad, Telefon, E-posta…).
         <a href="/api/crm/import/template?entity=${entity}" target="_blank"><b>Boş şablon indir</b></a>.</p>
       <div class="mb"><input type="file" id="imp_file" class="ipt" accept=".xlsx,.csv"></div>
-      <p class="muted" style="font-size:0.78rem;">Her satır yeni bir kayıt olur (kaynak: "Elle/İçe aktarma"). Kişilerde "Firma" sütunu mevcut firmaya eşlenir.</p>
+      <p class="muted" style="font-size:0.78rem;">Eşleşen kayıt <b>güncellenir</b> (firma: vergi no/ad · kişi: e-posta/telefon), eşleşmeyen yeni oluşturulur — aynı dosyayı tekrar yüklemek mükerrer üretmez. Kişilerde "Firma" sütunu mevcut firmaya eşlenir.</p>
     `, async function () {
       const f = el("imp_file").files[0];
       if (!f) { toast("Bir dosya seçin."); return; }
@@ -1026,11 +1027,36 @@
   function fval(id) { const e = el(id); return e ? e.value.trim() : ""; }
   function fnum(id) { const v = fval(id); return v === "" ? null : parseInt(v, 10); }
 
+  // ── Mükerrer kontrolü (engellemeyen uyarı — oluşturma formları) ────────────
+  async function dupeCheck(entity, ids) {
+    const box = el("dupeWarn"); if (!box) return;
+    const name = inputVal(ids.name), phone = inputVal(ids.phone), email = inputVal(ids.email);
+    if (!name && !phone && !email) { box.innerHTML = ""; return; }
+    const p = [];
+    if (name) p.push("name=" + encodeURIComponent(name));
+    if (phone) p.push("phone=" + encodeURIComponent(phone));
+    if (email) p.push("email=" + encodeURIComponent(email));
+    try {
+      const rows = await api("/dedupe?entity=" + entity + "&" + p.join("&"));
+      if (!rows.length) { box.innerHTML = ""; return; }
+      const kind = entity === "companies" ? "company" : "contact";
+      box.innerHTML = '<div class="dupe-warn"><i class="bi bi-exclamation-triangle"></i> Benzer kayıt bulundu: ' +
+        rows.map((r) => `<a href="#" onclick="CRM.closeModal();CRM.searchGo('${kind}',${r.id});return false;">${esc(r.label)}</a>`).join(", ") +
+        " — yine de kaydedebilirsiniz.</div>";
+    } catch (e) { /* sessiz — uyarı engel değil */ }
+  }
+  function attachDupeCheck(entity, ids) {
+    Object.keys(ids).forEach((k) => {
+      const e = el(ids[k]); if (e) e.addEventListener("blur", () => dupeCheck(entity, ids));
+    });
+  }
+
   // Firma modalı
   async function companyModal(id) {
     let c = {};
     if (id) { try { const d = await api("/companies/" + id); c = d.company; } catch (e) { toast(e.message); return; } }
     openModal(id ? "Firmayı Düzenle" : "Yeni Firma", `
+      <div id="dupeWarn"></div>
       <div class="mb"><label class="fld">Firma adı *</label><input class="ipt" id="f_name" value="${esc(c.name)}"></div>
       <div class="frow">
         <div><label class="fld">Sektör</label><input class="ipt" id="f_sector" value="${esc(c.sector)}"></div>
@@ -1053,6 +1079,7 @@
         if (state.drawer && state.drawer.kind === "company") refreshDrawer(); else loadCompanies();
       } catch (e) { toast(e.message); }
     });
+    if (!id) attachDupeCheck("companies", { name: "f_name", phone: "f_phone", email: "f_email" });
   }
 
   // Kişi modalı
@@ -1062,6 +1089,7 @@
     if (id) { try { const d = await api("/contacts/" + id); c = d.contact; } catch (e) { toast(e.message); return; } }
     if (companyId && !id) c.company_id = companyId;
     openModal(id ? "Kişiyi Düzenle" : "Yeni Kişi", `
+      <div id="dupeWarn"></div>
       <div class="mb"><label class="fld">Ad Soyad *</label><input class="ipt" id="k_name" value="${esc(c.full_name)}"></div>
       <div class="frow">
         <div class="full"><label class="fld">Firma</label><select class="ipt" id="k_company">${companyOptions(c.company_id)}</select></div>
@@ -1088,6 +1116,7 @@
         if (state.drawer) refreshDrawer(); if (state.tab === "contacts") loadContacts();
       } catch (e) { toast(e.message); }
     });
+    if (!id) attachDupeCheck("contacts", { name: "k_name", phone: "k_mobile", email: "k_email" });
   }
 
   // Fırsat modalı
@@ -1243,6 +1272,7 @@
     tagPicker, addTag, saveFields, uploadAttachment, delAttachment,
     addTagMgmt, delTagMgmt, addFieldMgmt, delFieldMgmt,
     applyView, saveView, bulkToggle, bulkAll, bulkRun,
+    closeModal,
   };
   window.closeDrawer = closeDrawer;
   window.closeModal = closeModal;

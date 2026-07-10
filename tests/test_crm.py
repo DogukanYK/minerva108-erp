@@ -99,6 +99,33 @@ def test_contact_linked_to_company(authed_client: TestClient):
     assert any(x["id"] == ct["id"] for x in d["contacts"])
 
 
+def test_dedupe_endpoint(authed_client: TestClient):
+    _company(authed_client, name="Minerva Kozmetik", phone="+90 212 555 44 33", email="info@minerva.com")
+    # kısmi ad (fold) eşleşmesi
+    r = authed_client.get("/api/crm/dedupe?entity=companies&name=minerva").json()
+    assert any(x["match"] == "name" for x in r)
+    # telefon format farkı eşleşir (son 10 hane)
+    r2 = authed_client.get("/api/crm/dedupe?entity=companies&phone=02125554433").json()
+    assert any(x["match"] == "phone" for x in r2)
+    # eşleşmeyen → boş
+    assert authed_client.get("/api/crm/dedupe?entity=companies&name=zzz").json() == []
+
+
+def test_dedupe_requires_crm_view(labtech_client: TestClient):
+    assert labtech_client.get("/api/crm/dedupe?entity=companies&name=a").status_code == 403
+
+
+def test_source_filter_import_excluded_from_manual(authed_client: TestClient, db_session):
+    from database import CrmCompany
+    db_session.add(CrmCompany(name="İthal Co", source="import"))
+    db_session.add(CrmCompany(name="Referans Co", source="referral"))
+    db_session.commit()
+    manual = [c["name"] for c in authed_client.get("/api/crm/companies?source=manual").json()]
+    assert "Referans Co" in manual and "İthal Co" not in manual
+    imported = [c["name"] for c in authed_client.get("/api/crm/companies?source=import").json()]
+    assert imported == ["İthal Co"]
+
+
 def test_update_contact_without_source_preserves_it(authed_client: TestClient):
     # PUT gövdesinde source yoksa mevcut sınıflama (örn. referral/whatsapp) silinmez.
     ct = _contact(authed_client, name="Kaynaklı Kişi", source="referral")

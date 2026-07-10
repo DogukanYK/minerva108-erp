@@ -103,9 +103,10 @@ def _source_filter(query, model, source: Optional[str]):
     if not source or source == "all":
         return query
     if source == "manual":
-        # "Elle" = bilinen kanal/Kommo dışı her şey (elle girilen + içe aktarılan + NULL)
+        # "Elle" = kanal/Kommo/içe-aktarma dışı her şey (elle girilen + referans + NULL).
+        # 'import' artık kendi filtresine sahip — Elle kovasından çıkarıldı.
         return query.filter(or_(model.source.is_(None),
-                                model.source.notin_(["whatsapp", "instagram", "facebook", "meta", "kommo"])))
+                                model.source.notin_(["whatsapp", "instagram", "facebook", "meta", "kommo", "import"])))
     return query.filter(model.source == source)
 
 
@@ -198,6 +199,59 @@ class TaskIn(BaseModel):
 
 
 # ─── Yardımcı uçlar ──────────────────────────────────────────────────────────
+
+def _phones_match(a, b) -> bool:
+    """Son 10 haneye göre telefon eşleşmesi — format farklarına dayanıklı."""
+    da, db_ = C.normalize_phone(a), C.normalize_phone(b)
+    return len(da) >= 7 and len(db_) >= 7 and da[-10:] == db_[-10:]
+
+
+@router.get("/dedupe")
+def crm_dedupe(entity: str = Query(...), name: Optional[str] = Query(None),
+               phone: Optional[str] = Query(None), email: Optional[str] = Query(None),
+               db: Session = Depends(get_db),
+               _: dict = Depends(require_permission("crm", "view"))):
+    """Olası mükerrer kayıtlar — oluşturma formundaki engellemeyen uyarı için.
+    Ad: Türkçe-katlanmış alt-dize (≥3 harf); telefon: son 10 hane; e-posta: birebir.
+    En çok 5 sonuç."""
+    if entity not in ("companies", "contacts"):
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    fname = CX.fold(name or "")
+    femail = (email or "").strip().lower()
+    out = []
+    if entity == "companies":
+        rows = db.query(CrmCompany).filter(CrmCompany.is_active == True).all()  # noqa: E712
+        for c in rows:
+            cf = CX.fold(c.name or "")
+            if fname and len(fname) >= 3 and cf and (fname in cf or cf in fname):
+                match = "name"
+            elif femail and (c.email or "").strip().lower() == femail:
+                match = "email"
+            elif phone and _phones_match(phone, c.phone):
+                match = "phone"
+            else:
+                continue
+            out.append({"id": c.id, "label": c.name, "sub": c.city or c.phone or "", "match": match})
+            if len(out) >= 5:
+                break
+    else:
+        rows = db.query(CrmContact).filter(CrmContact.is_active == True).all()  # noqa: E712
+        for c in rows:
+            cf = CX.fold(c.full_name or "")
+            if fname and len(fname) >= 3 and cf and (fname in cf or cf in fname):
+                match = "name"
+            elif femail and (c.email or "").strip().lower() == femail:
+                match = "email"
+            elif phone and any(_phones_match(phone, p) for p in (c.phone, c.mobile, c.whatsapp_number)):
+                match = "phone"
+            else:
+                continue
+            out.append({"id": c.id, "label": c.full_name,
+                        "sub": c.email or c.mobile or c.phone or "", "match": match})
+            if len(out) >= 5:
+                break
+    return out
+
 
 @router.get("/users")
 def list_users(db: Session = Depends(get_db), _: dict = Depends(require_permission("crm", "view"))):
@@ -962,35 +1016,83 @@ def crm_import(request: Request, entity: str = Form(...), file: UploadFile = Fil
         return JSONResponse(status_code=400, content={"detail": "Geçerli satır bulunamadı (zorunlu ad sütunu boş?)."})
 
     actor = _actor(current_user)
-    created = 0
+    created = updated = linked = 0
     if entity == "companies":
+        # Eşleştir-güncelle (upsert): önce vergi no, sonra Türkçe-katlanmış ad.
+        # Eşleşende YALNIZCA sayfada gelen alanlar güncellenir; source/created_by korunur.
+        existing = db.query(CrmCompany).filter(CrmCompany.is_active == True).all()  # noqa: E712
+        by_tax = {c.tax_no.strip(): c for c in existing if c.tax_no and c.tax_no.strip()}
+        by_name = {CX.fold(c.name): c for c in existing if c.name}
+        updatable = ("sector", "phone", "email", "city", "country",
+                     "tax_office", "tax_no", "address", "notes")
         for rec in records:
-            db.add(CrmCompany(
-                name=rec["name"][:200], sector=rec.get("sector"), phone=rec.get("phone"),
-                email=rec.get("email"), city=rec.get("city"), country=rec.get("country"),
-                tax_office=rec.get("tax_office"), tax_no=rec.get("tax_no"),
-                address=rec.get("address"), notes=rec.get("notes"),
-                source="import", created_by=actor))
-            created += 1
-    else:  # contacts
-        existing = {(c.name or "").strip().lower(): c.id
-                    for c in db.query(CrmCompany).filter(CrmCompany.is_active == True).all()}  # noqa: E712
-        linked = 0
+            match = by_tax.get((rec.get("tax_no") or "").strip()) or by_name.get(CX.fold(rec["name"]))
+            if match:
+                for f in updatable:
+                    if f in rec:
+                        setattr(match, f, rec[f])
+                updated += 1
+            else:
+                c = CrmCompany(
+                    name=rec["name"][:200], sector=rec.get("sector"), phone=rec.get("phone"),
+                    email=rec.get("email"), city=rec.get("city"), country=rec.get("country"),
+                    tax_office=rec.get("tax_office"), tax_no=rec.get("tax_no"),
+                    address=rec.get("address"), notes=rec.get("notes"),
+                    source="import", created_by=actor)
+                db.add(c)
+                by_name[CX.fold(c.name)] = c            # aynı dosyadaki tekrarlar da eşleşsin
+                if c.tax_no and c.tax_no.strip():
+                    by_tax[c.tax_no.strip()] = c
+                created += 1
+    else:  # contacts — eşleşme: önce e-posta, sonra normalize telefon (son 10 hane)
+        companies = {(c.name or "").strip().lower(): c.id
+                     for c in db.query(CrmCompany).filter(CrmCompany.is_active == True).all()}  # noqa: E712
+        existing = db.query(CrmContact).filter(CrmContact.is_active == True).all()  # noqa: E712
+        by_email, by_phone = {}, {}
+
+        def _index_contact(ct):
+            if ct.email and ct.email.strip():
+                by_email[ct.email.strip().lower()] = ct
+            for p in (ct.phone, ct.mobile, ct.whatsapp_number):
+                digits = C.normalize_phone(p)
+                if len(digits) >= 7:
+                    by_phone[digits[-10:]] = ct
+
+        for ct in existing:
+            _index_contact(ct)
+        updatable = ("title", "phone", "mobile", "whatsapp_number", "email", "notes")
         for rec in records:
-            cid = existing.get((rec.get("company") or "").strip().lower())
+            cid = companies.get((rec.get("company") or "").strip().lower())
             if cid:
                 linked += 1
-            db.add(CrmContact(
-                full_name=rec["full_name"][:150], company_id=cid, title=rec.get("title"),
-                phone=rec.get("phone"), mobile=rec.get("mobile"),
-                whatsapp_number=rec.get("whatsapp_number"), email=rec.get("email"),
-                notes=rec.get("notes"), source="import", created_by=actor))
-            created += 1
+            match = by_email.get((rec.get("email") or "").strip().lower())
+            if not match:
+                for p in (rec.get("phone"), rec.get("mobile"), rec.get("whatsapp_number")):
+                    digits = C.normalize_phone(p)
+                    if len(digits) >= 7 and digits[-10:] in by_phone:
+                        match = by_phone[digits[-10:]]
+                        break
+            if match:
+                for f in updatable:
+                    if f in rec:
+                        setattr(match, f, rec[f])
+                if cid:
+                    match.company_id = cid
+                updated += 1
+            else:
+                ct = CrmContact(
+                    full_name=rec["full_name"][:150], company_id=cid, title=rec.get("title"),
+                    phone=rec.get("phone"), mobile=rec.get("mobile"),
+                    whatsapp_number=rec.get("whatsapp_number"), email=rec.get("email"),
+                    notes=rec.get("notes"), source="import", created_by=actor)
+                db.add(ct)
+                _index_contact(ct)
+                created += 1
     db.commit()
     log_admin_event(db, request, actor=current_user, action="crm.import",
                     target_type="crm_" + entity, target_name=entity,
-                    details={"created": created, "total": len(records)})
-    msg = f"{created} kayıt içe aktarıldı."
+                    details={"created": created, "updated": updated, "total": len(records)})
+    msg = f"{created} yeni kayıt, {updated} güncellendi."
     if entity == "contacts":
         msg += f" ({linked} kişi firmaya eşlendi)"
-    return {"message": msg, "created": created, "total": len(records)}
+    return {"message": msg, "created": created, "updated": updated, "total": len(records)}

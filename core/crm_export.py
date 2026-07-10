@@ -55,6 +55,10 @@ def _fold(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", s)
 
 
+# Dışarıya açık ad — import upsert + mükerrer kontrolü ad eşleştirmesinde kullanır.
+fold = _fold
+
+
 IMPORT_FIELDS: Dict[str, List[Tuple[str, List[str]]]] = {
     "companies": [
         ("name", ["firma", "firmaadi", "firmaadı", "ad", "unvan", "company", "companyname", "name"]),
