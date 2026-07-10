@@ -194,6 +194,9 @@ def _resolve_stage(db: Session, status_id: Optional[int], status_name: str):
 # ─── Upsert (kommo_id anahtarı ile idempotent) ───────────────────────────────
 
 def upsert_company(db: Session, kco: dict):
+    """Kaynak kanal-yapışkan: etiketten kanal çıkarsa damgala; 'kommo' yalnızca
+    boş kaynağı doldurur — daha önce sohbet origin'iyle sınıflanmış whatsapp/
+    instagram/facebook değerini delta sync geriletmez (upsert_lead ile aynı kural)."""
     if not kco or kco.get("id") is None:    # boş/id'siz yanıt → atla
         return None
     kid = int(kco["id"])
@@ -204,12 +207,19 @@ def upsert_company(db: Session, kco: dict):
     c.name = (kco.get("name") or f"Kommo #{kid}")[:200]
     c.phone = c.phone or _cf(kco, "PHONE")
     c.email = c.email or _cf(kco, "EMAIL")
-    c.source = _source_from_tags(kco)
+    src = _source_from_tags(kco)
+    if src in _CHANNELS:          # kanal tespit edildi → damgala (kanallar yapışkan)
+        c.source = src
+    elif not c.source:            # yalnızca boşsa 'kommo' ile doldur
+        c.source = "kommo"
     db.flush()
     return c
 
 
 def upsert_contact(db: Session, kc: dict, company_map: Optional[dict] = None):
+    """Ad Kommo-wins (ayna kimliği); telefon/e-posta existing-wins — ekibin CRM'de
+    yaptığı yerel düzeltmeler sync'te ezilmez (upsert_company ile tutarlı).
+    Kaynak kanal-yapışkan (bkz. upsert_company)."""
     if not kc or kc.get("id") is None:    # boş/id'siz yanıt (örn. silinmiş kayıt) → atla
         return None
     kid = int(kc["id"])
@@ -218,10 +228,14 @@ def upsert_contact(db: Session, kc: dict, company_map: Optional[dict] = None):
         c = CrmContact(kommo_id=kid, source="kommo", created_by="Kommo")
         db.add(c)
     c.full_name = (kc.get("name") or f"Kommo #{kid}")[:150]
-    c.phone = _cf(kc, "PHONE") or c.phone
-    c.email = _cf(kc, "EMAIL") or c.email
+    c.phone = c.phone or _cf(kc, "PHONE")
+    c.email = c.email or _cf(kc, "EMAIL")
     c.whatsapp_number = c.whatsapp_number or _cf(kc, "PHONE")
-    c.source = _source_from_tags(kc)
+    src = _source_from_tags(kc)
+    if src in _CHANNELS:          # kanal tespit edildi → damgala (kanallar yapışkan)
+        c.source = src
+    elif not c.source:            # yalnızca boşsa 'kommo' ile doldur
+        c.source = "kommo"
     # firma bağı — kommo company id → bizim company id
     emb = (kc.get("_embedded") or {}).get("companies") or []
     if emb and emb[0].get("id") is not None:

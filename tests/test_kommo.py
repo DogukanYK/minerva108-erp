@@ -226,3 +226,66 @@ def test_webhook_id_parser():
     assert ids["leads"] == {1, 4}
     assert ids["contacts"] == {2}
     assert ids["del_companies"] == {3}
+
+
+# ─── Kanal yapışkanlığı + yerel düzenleme koruması (delta sync) ───────────────
+
+def test_delta_sync_preserves_channel_source(db_session, monkeypatch):
+    # Sohbet origin'iyle 'whatsapp' sınıflanmış firma/kişi/fırsat, etiketsiz
+    # delta sync'te 'kommo'ya GERİLEMEMELİ (eski sohbet olayları yeniden çekilmez).
+    _setup_env(monkeypatch)
+    monkeypatch.setattr(K, "_iter_entities", _fake_iter)
+    monkeypatch.setattr(K, "_load_status_names", lambda client: {})
+    monkeypatch.setattr(K, "_sync_chat_events", lambda db, client, since: 0)
+
+    K.run_sync(db_session)
+    co = db_session.query(CrmCompany).filter(CrmCompany.kommo_id == 9001).one()
+    ct = db_session.query(CrmContact).filter(CrmContact.kommo_id == 8001).one()
+    dl = db_session.query(CrmDeal).filter(CrmDeal.kommo_id == 7001).one()
+    co.source = ct.source = dl.source = "whatsapp"   # sohbet origin sınıflaması
+    db_session.commit()
+
+    K.run_sync(db_session, since_epoch=1782200000)   # delta — etiketsiz entity'ler
+    assert db_session.query(CrmCompany).filter(CrmCompany.kommo_id == 9001).one().source == "whatsapp"
+    assert db_session.query(CrmContact).filter(CrmContact.kommo_id == 8001).one().source == "whatsapp"
+    assert db_session.query(CrmDeal).filter(CrmDeal.kommo_id == 7001).one().source == "whatsapp"
+
+
+def test_contact_local_edits_survive_sync(db_session, monkeypatch):
+    # CRM'de düzeltilen telefon/e-posta sync'te ezilmez; ad Kommo-wins kalır.
+    _setup_env(monkeypatch)
+    monkeypatch.setattr(K, "_iter_entities", _fake_iter)
+    monkeypatch.setattr(K, "_load_status_names", lambda client: {})
+    monkeypatch.setattr(K, "_sync_chat_events", lambda db, client, since: 0)
+
+    db_session.add(CrmContact(kommo_id=8001, full_name="Eski Ad",
+                              phone="+90 555 999 88 77", email="local@x.com",
+                              source="kommo", created_by="Kommo"))
+    db_session.commit()
+
+    K.run_sync(db_session)
+    ct = db_session.query(CrmContact).filter(CrmContact.kommo_id == 8001).one()
+    assert ct.phone == "+90 555 999 88 77"       # yerel düzeltme korunur
+    assert ct.email == "local@x.com"
+    assert ct.full_name == "Kommo Kişi"          # ad ayna kimliği — Kommo-wins
+
+
+def test_company_channel_tag_stamps_source(db_session, monkeypatch):
+    # Firma etiketi kanal veriyorsa damgalanır; sonraki etiketsiz sync geriletmez.
+    _setup_env(monkeypatch)
+    tagged = {"id": 9300, "name": "FB Co", "_embedded": {"tags": [{"name": "fb-kampanya"}]}}
+    plain = {"id": 9300, "name": "FB Co"}
+    monkeypatch.setattr(K, "_load_status_names", lambda client: {})
+    monkeypatch.setattr(K, "_sync_chat_events", lambda db, client, since: 0)
+
+    monkeypatch.setattr(K, "_iter_entities",
+                        lambda client, path, key, extra=None:
+                        iter([tagged]) if key == "companies" else iter([]))
+    K.run_sync(db_session)
+    assert db_session.query(CrmCompany).filter(CrmCompany.kommo_id == 9300).one().source == "facebook"
+
+    monkeypatch.setattr(K, "_iter_entities",
+                        lambda client, path, key, extra=None:
+                        iter([plain]) if key == "companies" else iter([]))
+    K.run_sync(db_session)
+    assert db_session.query(CrmCompany).filter(CrmCompany.kommo_id == 9300).one().source == "facebook"
