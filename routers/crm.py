@@ -32,7 +32,8 @@ from core import crm_export as CX
 
 from database import (
     get_db, User, TR_OFFSET,
-    CrmCompany, CrmContact, CrmStage, CrmDeal, CrmActivity, CrmTask, CrmEntityTag, Quotation,
+    CrmCompany, CrmContact, CrmStage, CrmDeal, CrmActivity, CrmTask,
+    CrmEntityTag, CrmTag, Quotation,
 )
 from core.permissions import require_permission, _has_permission
 from core.audit import log_admin_event
@@ -81,6 +82,19 @@ def _wa_summary(db: Session, *, contact_id=None, deal_id=None) -> dict:
     cnt = q.count()
     last = q.order_by(CrmActivity.created_at.desc()).first() if cnt else None
     return {"count": cnt, "last": C.fmt_dt(last.created_at) if last else None}
+
+
+def _log_stage_change(db: Session, deal, old_stage_id, new_stage_id, actor_name: str,
+                      note: Optional[str] = None) -> None:
+    """Aşama değişikliğini zaman çizelgesine yaz + stage_changed_at damgala.
+    type='stage' kullanıcı tarafından OLUŞTURULAMAZ (create_activity bilinmeyen
+    tipi 'note'a çevirir) — yalnızca sunucu içi.  Commit ÇAĞIRANA aittir."""
+    deal.stage_changed_at = _now()
+    if note is None:
+        names = {s.id: s.name for s in db.query(CrmStage.id, CrmStage.name).all()}
+        note = f"Aşama: {names.get(old_stage_id, '—')} → {names.get(new_stage_id, '—')}"
+    db.add(CrmActivity(type="stage", subject="Aşama değişikliği", body=note,
+                       deal_id=deal.id, author_name=actor_name))
 
 
 def _source_filter(query, model, source: Optional[str]):
@@ -448,13 +462,23 @@ def pipeline(source: Optional[str] = Query(None),
     dq = _tag_filter(db, dq, CrmDeal, "deal", tag)
     deals = dq.order_by(CrmDeal.sort_order, CrmDeal.created_at.desc()).all()
     companies, contacts, stage_names = _deal_names(db)
+    # Kart etiketleri — tek sorguyla toplu (N+1 yok)
+    tag_map = {}
+    deal_ids = [d.id for d in deals]
+    if deal_ids:
+        for eid, name, color in (db.query(CrmEntityTag.entity_id, CrmTag.name, CrmTag.color)
+                                 .join(CrmTag, CrmTag.id == CrmEntityTag.tag_id)
+                                 .filter(CrmEntityTag.entity == "deal",
+                                         CrmEntityTag.entity_id.in_(deal_ids)).all()):
+            tag_map.setdefault(eid, []).append({"name": name, "color": color or "#6b7280"})
     by_stage, totals = {}, {}
     for s in stages:
         by_stage[s.id] = []; totals[s.id] = 0.0
     for d in deals:
         row = C.serialize_deal(d, company_name=companies.get(d.company_id, ""),
                                contact_name=contacts.get(d.contact_id, ""),
-                               stage_name=stage_names.get(d.stage_id, ""))
+                               stage_name=stage_names.get(d.stage_id, ""),
+                               tags=tag_map.get(d.id))
         by_stage.setdefault(d.stage_id, []).append(row)
         totals[d.stage_id] = totals.get(d.stage_id, 0.0) + (d.value or 0.0)
     return {
@@ -500,6 +524,7 @@ def create_deal(data: DealIn, request: Request, db: Session = Depends(get_db),
         expected_close_at=C.parse_tr_to_utc(data.expected_close_at),
         owner_user_id=data.owner_user_id, owner_name=_user_name(db, data.owner_user_id),
         quotation_id=data.quotation_id, source="manual", created_by=_actor(current_user),
+        stage_changed_at=_now(),
     )
     db.add(d); db.commit(); db.refresh(d)
     log_admin_event(db, request, actor=current_user, action="crm.deal.create",
@@ -539,8 +564,10 @@ def update_deal(did: int, data: DealIn, request: Request, db: Session = Depends(
     if not d:
         return JSONResponse(status_code=404, content={"detail": "Fırsat bulunamadı."})
     d.title = data.title.strip(); d.company_id = data.company_id; d.contact_id = data.contact_id
-    if data.stage_id:
+    if data.stage_id and data.stage_id != d.stage_id:
+        old_stage = d.stage_id
         d.stage_id = data.stage_id
+        _log_stage_change(db, d, old_stage, d.stage_id, _actor(current_user))
     d.value = data.value or 0.0; d.currency = (data.currency or "TRY")[:3]
     d.probability = data.probability or 0
     d.expected_close_at = C.parse_tr_to_utc(data.expected_close_at)
@@ -556,25 +583,45 @@ def update_deal(did: int, data: DealIn, request: Request, db: Session = Depends(
 
 
 @router.post("/deals/{did}/move")
-def move_deal(did: int, data: DealMove, db: Session = Depends(get_db),
-              _: dict = Depends(require_permission("crm", "edit"))):
+def move_deal(did: int, data: DealMove, request: Request, db: Session = Depends(get_db),
+              current_user: dict = Depends(require_permission("crm", "edit"))):
     """Kanban sürükle-bırak — aşama + sıra güncelle.  Hedef aşama kazanıldı/
-    kaybedildi ise fırsatın durumunu da otomatik kapatır."""
+    kaybedildi ise fırsatın durumunu da otomatik kapatır.  sort_order hedef
+    sütundaki EKLEME İNDEKSİ olarak yorumlanır; sütun kompakt (0..n) yeniden
+    numaralanır — sürükle-bırak sırası artık kalıcı."""
     d = db.query(CrmDeal).filter(CrmDeal.id == did).first()
     if not d:
         return JSONResponse(status_code=404, content={"detail": "Fırsat bulunamadı."})
     stage = db.query(CrmStage).filter(CrmStage.id == data.stage_id).first()
     if not stage:
         return JSONResponse(status_code=400, content={"detail": "Geçersiz aşama."})
+    old_stage_id = d.stage_id
     d.stage_id = stage.id
-    d.sort_order = data.sort_order or 0
     if stage.is_won:
         d.status = "won"; d.won_at = d.won_at or _now(); d.closed_at = _now()
     elif stage.is_lost:
         d.status = "lost"; d.closed_at = _now()
     else:
         d.status = "open"; d.won_at = None; d.closed_at = None
+    # Sütun-içi kalıcı sıra: hedef aşamanın açık fırsatlarını indekse göre diz
+    if d.status == "open":
+        siblings = (db.query(CrmDeal)
+                    .filter(CrmDeal.stage_id == stage.id, CrmDeal.status == "open",
+                            CrmDeal.is_active == True, CrmDeal.id != d.id)  # noqa: E712
+                    .order_by(CrmDeal.sort_order, CrmDeal.created_at.desc()).all())
+        idx = max(0, min(data.sort_order or 0, len(siblings)))
+        siblings.insert(idx, d)
+        for i, row in enumerate(siblings):
+            row.sort_order = i
+    else:
+        d.sort_order = data.sort_order or 0
+    if old_stage_id != stage.id:
+        _log_stage_change(db, d, old_stage_id, stage.id, _actor(current_user))
     db.commit()
+    if old_stage_id != stage.id:
+        log_admin_event(db, request, actor=current_user, action="crm.deal.move",
+                        target_type="crm_deal", target_id=d.id, target_name=d.title,
+                        details={"from_stage": old_stage_id, "to_stage": stage.id})
     return {"message": "Taşındı.", "status": d.status}
 
 
@@ -585,16 +632,20 @@ def close_deal(did: int, data: DealClose, request: Request, db: Session = Depend
     if not d:
         return JSONResponse(status_code=404, content={"detail": "Fırsat bulunamadı."})
     now = _now()
+    old_stage = d.stage_id
     if data.result == "won":
         d.status = "won"; d.won_at = now; d.closed_at = now; d.probability = 100
         won = db.query(CrmStage).filter(CrmStage.is_won == True).order_by(CrmStage.sort_order).first()  # noqa: E712
         if won:
             d.stage_id = won.id
+        _log_stage_change(db, d, old_stage, d.stage_id, _actor(current_user), note="Kazanıldı 🎉")
     else:
         d.status = "lost"; d.closed_at = now; d.lost_reason = data.lost_reason
         lost = db.query(CrmStage).filter(CrmStage.is_lost == True).order_by(CrmStage.sort_order).first()  # noqa: E712
         if lost:
             d.stage_id = lost.id
+        _log_stage_change(db, d, old_stage, d.stage_id, _actor(current_user),
+                          note="Kaybedildi" + (f": {data.lost_reason}" if data.lost_reason else ""))
     db.commit()
     log_admin_event(db, request, actor=current_user, action=f"crm.deal.{data.result}",
                     target_type="crm_deal", target_id=d.id, target_name=d.title)

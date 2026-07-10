@@ -262,7 +262,10 @@ def upsert_lead(db: Session, kl: dict, status_names: dict):
     d.value = float(kl.get("price") or 0)
     sid = kl.get("status_id")
     sid = int(sid) if sid is not None else None
+    prev_stage = d.stage_id
     d.stage_id, d.status = _resolve_stage(db, sid, status_names.get(sid, ""))
+    if d.stage_id != prev_stage:
+        d.stage_changed_at = datetime.utcnow()   # Kanban yaş rozeti Kommo taşımasında da doğru
     if d.status == "won" and not d.won_at:
         d.won_at = datetime.utcnow(); d.closed_at = datetime.utcnow()
     elif d.status == "lost" and not d.closed_at:

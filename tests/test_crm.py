@@ -188,6 +188,78 @@ def test_deal_close_endpoint(authed_client: TestClient):
 
 # ─── Pano ─────────────────────────────────────────────────────────────────────
 
+def test_move_deal_stamps_and_logs(authed_client: TestClient):
+    # Aşama taşıma: zaman çizelgesine 'stage' aktivitesi + audit (Geçmiş) kaydı düşer.
+    stages = authed_client.get("/api/crm/stages").json()
+    d = _deal(authed_client, title="Taşınan")
+    target = next(s for s in stages if s["id"] != d["stage_id"] and not s["is_won"] and not s["is_lost"])
+    r = authed_client.post(f"/api/crm/deals/{d['id']}/move",
+                           json={"stage_id": target["id"], "sort_order": 0}, headers=_H)
+    assert r.status_code == 200
+    acts = authed_client.get(f"/api/crm/activities?deal_id={d['id']}").json()
+    stage_acts = [a for a in acts if a["type"] == "stage"]
+    assert stage_acts and "Aşama:" in stage_acts[0]["body"] and target["name"] in stage_acts[0]["body"]
+    hist = authed_client.get(f"/api/crm/deal/{d['id']}/history").json()
+    assert "crm.deal.move" in [h["action"] for h in hist]
+    # days_in_stage taşımayla sıfırlanır
+    detail = authed_client.get(f"/api/crm/deals/{d['id']}").json()
+    assert detail["deal"]["days_in_stage"] == 0
+
+
+def test_move_deal_reindexes_target_stage(authed_client: TestClient):
+    # sort_order = ekleme indeksi; hedef sütun kompakt 0..n numaralanır (kalıcı sıra).
+    a = _deal(authed_client, title="Sıra A")
+    b = _deal(authed_client, title="Sıra B")
+    c = _deal(authed_client, title="Sıra C")
+    d = _deal(authed_client, title="Sıra D")
+    stage_id = a["stage_id"]
+    r = authed_client.post(f"/api/crm/deals/{d['id']}/move",
+                           json={"stage_id": stage_id, "sort_order": 1}, headers=_H)
+    assert r.status_code == 200
+    pipe = authed_client.get("/api/crm/pipeline").json()
+    col = pipe["deals_by_stage"][str(stage_id)] if str(stage_id) in pipe["deals_by_stage"] else pipe["deals_by_stage"][stage_id]
+    titles = [x["title"] for x in col]
+    # başlangıç sırası (hepsi sort 0 → created_at desc): C, B, A; D indeks 1'e girer
+    assert titles == ["Sıra C", "Sıra D", "Sıra B", "Sıra A"]
+    assert [x["sort_order"] for x in col] == [0, 1, 2, 3]
+
+
+def test_close_deal_writes_stage_activity(authed_client: TestClient):
+    d = _deal(authed_client, title="Kapatılan")
+    authed_client.post(f"/api/crm/deals/{d['id']}/close",
+                       json={"result": "lost", "lost_reason": "Bütçe yok"}, headers=_H)
+    acts = authed_client.get(f"/api/crm/activities?deal_id={d['id']}").json()
+    stage_acts = [a for a in acts if a["type"] == "stage"]
+    assert stage_acts and "Kaybedildi: Bütçe yok" in stage_acts[0]["body"]
+
+
+def test_stage_type_not_user_creatable(authed_client: TestClient):
+    # 'stage' tipi yalnızca sunucu içi — kullanıcı POST'u 'note'a düşer.
+    c = _company(authed_client, name="Stage Guard")
+    r = authed_client.post("/api/crm/activities",
+                           json={"type": "stage", "body": "sahte", "company_id": c["id"]}, headers=_H)
+    assert r.status_code == 201 and r.json()["type"] == "note"
+
+
+def test_pipeline_days_in_stage_and_tags(authed_client: TestClient):
+    d = _deal(authed_client, title="Etiketli Fırsat")
+    t = authed_client.post("/api/crm/tags", json={"name": "Sıcak", "color": "#ef4444"}, headers=_H).json()
+    authed_client.put(f"/api/crm/deal/{d['id']}/tags", json={"tag_ids": [t["id"]]}, headers=_H)
+    pipe = authed_client.get("/api/crm/pipeline").json()
+    row = next(x for rows in pipe["deals_by_stage"].values() for x in rows if x["id"] == d["id"])
+    assert row["days_in_stage"] == 0
+    assert [tg["name"] for tg in row["tags"]] == ["Sıcak"]
+
+
+def test_pipeline_owner_filter(authed_client: TestClient):
+    me = next(u["id"] for u in authed_client.get("/api/crm/users").json() if u["username"] == "dogukan")
+    mine = _deal(authed_client, title="Benim Fırsat", owner_user_id=me)
+    other = _deal(authed_client, title="Sahipsiz Fırsat")
+    pipe = authed_client.get(f"/api/crm/pipeline?owner={me}").json()
+    ids = [x["id"] for rows in pipe["deals_by_stage"].values() for x in rows]
+    assert mine["id"] in ids and other["id"] not in ids
+
+
 def test_deal_soft_delete_hides_from_lists(authed_client: TestClient, db_session):
     d = _deal(authed_client, title="Arşivlik", value=750)
     r = authed_client.delete(f"/api/crm/deals/{d['id']}", headers=_H)

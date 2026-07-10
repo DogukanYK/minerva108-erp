@@ -303,6 +303,7 @@
     const v = el("view-pipeline");
     v.innerHTML = `<div class="toolbar"><h2 class="page-title" style="margin:0;flex:1;min-width:140px;">Satış Pipeline</h2>
       ${sourceSelect("pipeSource")}
+      ${ownerSelect("pipeOwner")}
       ${tagSelect("pipeTag")}
       ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.dealModal()"><i class="bi bi-plus-lg"></i> Yeni Fırsat</button>' : ""}
       ${ioButtons("deals")}
@@ -312,6 +313,11 @@
       ps.value = state.pipeSource || "";
       ps.addEventListener("change", () => { state.pipeSource = ps.value; renderPipeline(); });
     }
+    const po = el("pipeOwner");
+    if (po) {
+      po.value = state.pipeOwner || "";
+      po.addEventListener("change", () => { state.pipeOwner = po.value; renderPipeline(); });
+    }
     const pt = el("pipeTag");
     if (pt) {
       pt.value = state.pipeTag || "";
@@ -320,6 +326,7 @@
     try {
       const pp = [];
       if (state.pipeSource) pp.push("source=" + encodeURIComponent(state.pipeSource));
+      if (state.pipeOwner) pp.push("owner=" + encodeURIComponent(state.pipeOwner));
       if (state.pipeTag) pp.push("tag=" + encodeURIComponent(state.pipeTag));
       const d = await api("/pipeline" + (pp.length ? "?" + pp.join("&") : ""));
       const editable = can("crm", "edit");
@@ -336,12 +343,19 @@
     } catch (e) { el("kanban").innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; }
   }
   function dealCard(d, editable) {
+    const stale = (d.days_in_stage || 0) > 14;
+    const tags = (d.tags || []).map((t) =>
+      `<span class="pill" style="background:${esc(t.color)}22;color:${esc(t.color)};border:1px solid ${esc(t.color)}55;">${esc(t.name)}</span>`).join("");
     return `<div class="kcard" ${editable ? 'draggable="true" ondragstart="CRM.dragDeal(event,' + d.id + ')"' : ""} onclick="CRM.openDeal(${d.id})">
       <div class="t">${esc(d.title)}</div>
       <div class="sub">${esc(d.company_name || d.contact_name || "—")}</div>
-      <div style="margin:0.3rem 0;">${sourcePill(d)}</div>
+      <div style="margin:0.3rem 0;display:flex;gap:0.3rem;flex-wrap:wrap;align-items:center;">${sourcePill(d)}${tags}</div>
       <div class="v">${money(d.value, d.currency)}${d.probability ? ' · %' + d.probability : ""}</div>
-      ${d.expected_close_label ? '<div class="sub" style="margin-top:0.2rem;"><i class="bi bi-calendar3"></i> ' + esc(d.expected_close_label) + "</div>" : ""}
+      <div class="sub" style="margin-top:0.25rem;display:flex;align-items:center;gap:0.45rem;">
+        ${d.owner_name ? '<span class="kavatar" title="Sorumlu: ' + esc(d.owner_name) + '">' + esc(initials(d.owner_name)) + "</span>" : ""}
+        ${d.expected_close_label ? '<span><i class="bi bi-calendar3"></i> ' + esc(d.expected_close_label) + "</span>" : ""}
+        <span class="kage${stale ? " stale" : ""}" title="Bu aşamada geçirilen gün${stale ? " — bayatlıyor" : ""}">${d.days_in_stage || 0} g</span>
+      </div>
     </div>`;
   }
 
@@ -668,8 +682,8 @@
   }
 
   // ── Zaman çizelgesi öğesi (paylaşımlı) ─────────────────────────────────────
-  const TYPE_ICON = { note: "sticky", call: "telephone", meeting: "people", email: "envelope", whatsapp: "whatsapp" };
-  const TYPE_LABEL = { note: "Not", call: "Arama", meeting: "Toplantı", email: "E-posta", whatsapp: "WhatsApp" };
+  const TYPE_ICON = { note: "sticky", call: "telephone", meeting: "people", email: "envelope", whatsapp: "whatsapp", stage: "arrow-right-circle" };
+  const TYPE_LABEL = { note: "Not", call: "Arama", meeting: "Toplantı", email: "E-posta", whatsapp: "WhatsApp", stage: "Aşama" };
   function tlItem(a) {
     return `<li class="tl-item"><span class="tl-dot"><i class="bi bi-${TYPE_ICON[a.type] || "sticky"}"></i></span>
       <div class="tl-meta">${a.is_pinned ? '<i class="bi bi-pin-angle-fill tl-pin"></i> ' : ""}${esc(TYPE_LABEL[a.type] || a.type)} · ${esc(a.author_name)} · ${esc(a.created_at)}
@@ -971,7 +985,19 @@
     document.querySelectorAll(".kcol").forEach((c) => c.classList.remove("dragover"));
     if (!_dragId) return;
     const id = _dragId; _dragId = null;
-    try { await api("/deals/" + id + "/move", jbody({ stage_id: stageId, sort_order: 0 })); renderPipeline(); }
+    // Bırakma Y konumundan sütun-içi ekleme indeksi (kart orta noktasına göre) —
+    // sunucu bu indeksi kalıcı sort_order'a çevirir (sütun 0..n yeniden numaralanır)
+    let idx = 0;
+    const body = ev.currentTarget ? ev.currentTarget.querySelector(".kcol-body") : null;
+    if (body) {
+      const cards = Array.from(body.querySelectorAll(".kcard"));
+      idx = cards.length;
+      for (let i = 0; i < cards.length; i++) {
+        const r = cards[i].getBoundingClientRect();
+        if (ev.clientY < r.top + r.height / 2) { idx = i; break; }
+      }
+    }
+    try { await api("/deals/" + id + "/move", jbody({ stage_id: stageId, sort_order: idx })); renderPipeline(); }
     catch (e) { toast(e.message); }
   }
 

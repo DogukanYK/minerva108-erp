@@ -142,7 +142,9 @@ def serialize_contact(c, *, company_name: str = "") -> dict:
     }
 
 
-def serialize_deal(d, *, company_name: str = "", contact_name: str = "", stage_name: str = "") -> dict:
+def serialize_deal(d, *, company_name: str = "", contact_name: str = "", stage_name: str = "",
+                   tags=None) -> dict:
+    entered = d.stage_changed_at or d.created_at
     return {
         "id": d.id, "title": d.title,
         "company_id": d.company_id, "company_name": company_name,
@@ -150,6 +152,8 @@ def serialize_deal(d, *, company_name: str = "", contact_name: str = "", stage_n
         "stage_id": d.stage_id, "stage_name": stage_name,
         "value": d.value or 0.0, "currency": d.currency or "TRY",
         "probability": d.probability or 0,
+        "days_in_stage": max(0, (datetime.utcnow() - entered).days) if entered else 0,
+        "tags": tags or [],
         "expected_close_at": fmt_iso(d.expected_close_at),
         "expected_close_label": fmt_date(d.expected_close_at),
         "status": d.status, "lost_reason": d.lost_reason or "",
