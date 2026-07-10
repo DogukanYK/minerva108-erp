@@ -307,6 +307,7 @@
       ${ownerSelect("pipeOwner")}
       ${tagSelect("pipeTag")}
       ${can("crm", "create") ? '<button class="btn-g" onclick="CRM.dealModal()"><i class="bi bi-plus-lg"></i> Yeni Fırsat</button>' : ""}
+      ${can("crm", "create") ? '<button class="btn-g btn-o" onclick="CRM.fromQuotationModal()" title="Mevcut B2B teklifinden fırsat oluştur"><i class="bi bi-file-earmark-text"></i> Tekliften</button>' : ""}
       ${ioButtons("deals")}
       </div><div id="kanban" class="kanban"><div class="empty">Yükleniyor…</div></div>`;
     const ps = el("pipeSource");
@@ -788,6 +789,11 @@
         kv("Durum", '<span class="pill ' + (dl.status === "won" ? "pill-g" : dl.status === "lost" ? "pill-o" : "pill-b") + '">' + (dl.status === "won" ? "Kazanıldı" : dl.status === "lost" ? "Kaybedildi" : "Açık") + "</span>") +
         kv("Kaynak", esc(dl.source_label)) +
         kv("Sorumlu", esc(dl.owner_name)) + (dl.lost_reason ? kv("Kayıp Nedeni", esc(dl.lost_reason)) : "");
+      if (d.quotation) {
+        const q = d.quotation;
+        const qPill = q.status === "CONFIRMED" ? "pill-g" : q.status === "REJECTED" ? "pill-o" : "pill-b";
+        html += kv("Bağlı Teklif", `<b>${esc(q.quote_number)}</b> · ${esc(q.customer_name)} · ${money(q.total_amount, q.currency)} <span class="pill ${qPill}">${esc(q.status)}</span>`);
+      }
     }
     html += '<div id="dwTags" style="margin-top:1.1rem;"></div><div id="dwFields"></div>';
     el("dwBody").innerHTML = html;
@@ -1024,6 +1030,14 @@
   async function ensureCompanies() {
     if (!state._companies) { try { state._companies = await api("/companies"); } catch (e) { state._companies = []; } }
   }
+  async function ensureQuotes() {
+    // crm.edit yoksa 403 → sessizce boş (teklif alanı gösterilmez)
+    if (!state._quotes) { try { state._quotes = await api("/quotations-lookup"); } catch (e) { state._quotes = []; } }
+  }
+  function quoteOptions(sel) {
+    return '<option value="">— Teklif bağla (opsiyonel) —</option>' + (state._quotes || []).map((q) =>
+      `<option value="${q.id}" ${sel == q.id ? "selected" : ""}>${esc(q.label)}</option>`).join("");
+  }
   function fval(id) { const e = el(id); return e ? e.value.trim() : ""; }
   function fnum(id) { const v = fval(id); return v === "" ? null : parseInt(v, 10); }
 
@@ -1121,7 +1135,7 @@
 
   // Fırsat modalı
   async function dealModal(id, companyId) {
-    await ensureCompanies();
+    await ensureCompanies(); await ensureQuotes();
     let c = { currency: "TRY", probability: 0 };
     if (id) { try { const d = await api("/deals/" + id); c = d.deal; } catch (e) { toast(e.message); return; } }
     if (companyId && !id) c.company_id = companyId;
@@ -1137,15 +1151,37 @@
           <option ${c.currency === "EUR" ? "selected" : ""}>EUR</option></select></div>
         <div><label class="fld">Olasılık %</label><input class="ipt" id="d_prob" type="number" min="0" max="100" value="${c.probability || 0}"></div>
         <div><label class="fld">Beklenen Kapanış</label><input class="ipt" id="d_close" type="datetime-local" value="${esc(c.expected_close_at)}"></div>
+        ${(state._quotes || []).length ? `<div class="full"><label class="fld">Bağlı Teklif (B2B)</label><select class="ipt" id="d_quote">${quoteOptions(c.quotation_id)}</select></div>` : ""}
       </div>`, async function () {
       const title = fval("d_title"); if (!title) { toast("Başlık gerekli."); return; }
-      const payload = { title: title, company_id: fnum("d_company"), stage_id: fnum("d_stage"), owner_user_id: fnum("d_owner"), value: parseFloat(fval("d_value")) || 0, currency: fval("d_cur") || "TRY", probability: parseInt(fval("d_prob"), 10) || 0, expected_close_at: fval("d_close") || null };
+      const payload = { title: title, company_id: fnum("d_company"), stage_id: fnum("d_stage"), owner_user_id: fnum("d_owner"), value: parseFloat(fval("d_value")) || 0, currency: fval("d_cur") || "TRY", probability: parseInt(fval("d_prob"), 10) || 0, expected_close_at: fval("d_close") || null, quotation_id: el("d_quote") ? fnum("d_quote") : (c.quotation_id || null) };
       try {
         await api(id ? "/deals/" + id : "/deals", jbody(payload, id ? "PUT" : "POST"));
         closeModal(); toast("Kaydedildi.", "success");
         if (state.drawer && state.drawer.kind === "deal") refreshDrawer(); else if (state.tab === "pipeline") renderPipeline();
       } catch (e) { toast(e.message); }
     });
+  }
+
+  // Tekliften fırsat oluştur
+  async function fromQuotationModal() {
+    state._quotes = null; await ensureQuotes();   // taze liste (yeni teklifler görünür)
+    if (!(state._quotes || []).length) { toast("Kayıtlı teklif yok — önce IMS'te bir teklif oluşturun."); return; }
+    openModal("Tekliften Fırsat Oluştur", `
+      <p class="muted" style="font-size:0.84rem;">Teklifin müşterisi mevcut firmaya eşlenir (yoksa oluşturulur), kişi e-posta/telefonla bağlanır; fırsat değeri teklif toplamıdır.</p>
+      <div class="mb"><label class="fld">Teklif</label><select class="ipt" id="fq_quote">${quoteOptions()}</select></div>`,
+      async function () {
+        const qid = fnum("fq_quote"); if (!qid) { toast("Bir teklif seçin."); return; }
+        try {
+          const r = await fetch("/api/crm/deals/from-quotation/" + qid, { method: "POST" });
+          const d = await r.json().catch(() => ({}));
+          if (r.status === 409 && d.deal_id) { closeModal(); toast(d.detail); openDeal(d.deal_id); return; }
+          if (!r.ok) { toast(d.detail || "Oluşturulamadı."); return; }
+          closeModal(); toast("Fırsat oluşturuldu.", "success"); state._companies = null;
+          if (state.tab === "pipeline") renderPipeline();
+          openDeal(d.id);
+        } catch (e) { toast("İşlem hatası."); }
+      });
   }
 
   // Görev modalı
@@ -1263,7 +1299,7 @@
   window.CRM = {
     go: switchTab,
     openCompany, openContact, openDeal, dwSwitch,
-    companyModal, contactModal, dealModal, taskModal,
+    companyModal, contactModal, dealModal, taskModal, fromQuotationModal,
     delCompany, delContact, delDeal, delTask,
     toggleTask, closeDeal, addActivity, togglePin, delActivity,
     dragDeal, allowDrop, dropDeal,

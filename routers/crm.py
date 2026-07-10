@@ -589,6 +589,97 @@ def create_deal(data: DealIn, request: Request, db: Session = Depends(get_db),
                             stage_name=stage_names.get(d.stage_id, ""))
 
 
+def _quotation_brief(q) -> dict:
+    """Teklifin CRM'e açık MİNİMAL özeti.  Maliyet/marj alanları BİLEREK yok —
+    CRM kullanıcısında b2b.view olmayabilir; toplam tutar deal.value zaten
+    görünür olduğundan yeni bir hassasiyet sınıfı açmaz."""
+    return {
+        "id": q.id, "quote_number": q.quote_number, "customer_name": q.customer_name,
+        "status": q.status, "total_amount": q.total_amount or 0.0,
+        "currency": q.currency or "TRY", "created_at": C.fmt_dt(q.created_at),
+    }
+
+
+@router.get("/quotations-lookup")
+def quotations_lookup(db: Session = Depends(get_db),
+                      _: dict = Depends(require_permission("crm", "edit"))):
+    """Fırsata teklif bağlamak için son 50 teklif.  CRM cross-cutting olduğundan
+    BİLEREK domain filtresi yok (Kozmetik + Supplement birlikte)."""
+    rows = db.query(Quotation).order_by(Quotation.id.desc()).limit(50).all()
+    out = []
+    for q in rows:
+        b = _quotation_brief(q)
+        b["label"] = f"{q.quote_number} · {q.customer_name} · {(q.total_amount or 0):,.0f} {q.currency or 'TRY'}"
+        out.append(b)
+    return out
+
+
+@router.post("/deals/from-quotation/{qid}", status_code=201)
+def deal_from_quotation(qid: int, request: Request, db: Session = Depends(get_db),
+                        current_user: dict = Depends(require_permission("crm", "create"))):
+    """Mevcut B2B teklifinden tek tıkla fırsat: firma bul-ya-da-oluştur (Türkçe-
+    katlanmış ad), kişiyi e-posta/telefonla bağla, değer = teklif toplamı.
+    Aynı teklife bağlı aktif fırsat varsa 409 + deal_id döner."""
+    q = db.query(Quotation).filter(Quotation.id == qid).first()
+    if not q:
+        return JSONResponse(status_code=404, content={"detail": "Teklif bulunamadı."})
+    existing = (db.query(CrmDeal)
+                .filter(CrmDeal.quotation_id == qid, CrmDeal.is_active == True).first())  # noqa: E712
+    if existing:
+        return JSONResponse(status_code=409, content={
+            "detail": "Bu teklife bağlı bir fırsat zaten var.", "deal_id": existing.id})
+    actor = _actor(current_user)
+    uid = int(current_user.get("sub", 0)) or None
+    # Firma: katlanmış ada göre bul-ya-da-oluştur
+    company = None
+    fname = CX.fold(q.customer_name or "")
+    if fname:
+        for c in db.query(CrmCompany).filter(CrmCompany.is_active == True).all():  # noqa: E712
+            if CX.fold(c.name) == fname:
+                company = c
+                break
+    if not company:
+        company = CrmCompany(name=(q.customer_name or f"Teklif {q.quote_number}")[:200],
+                             phone=q.customer_phone, email=q.customer_email,
+                             address=q.customer_address, country=q.customer_country,
+                             source="manual", created_by=actor)
+        db.add(company); db.flush()
+    # Kişi: e-posta/telefon eşleşirse bağla; yoksa customer_contact'tan oluştur
+    contact = None
+    femail = (q.customer_email or "").strip().lower()
+    if femail:
+        contact = (db.query(CrmContact)
+                   .filter(CrmContact.is_active == True,  # noqa: E712
+                           func.lower(CrmContact.email) == femail).first())
+    if not contact and q.customer_phone:
+        for c in db.query(CrmContact).filter(CrmContact.is_active == True).all():  # noqa: E712
+            if any(_phones_match(q.customer_phone, p) for p in (c.phone, c.mobile, c.whatsapp_number)):
+                contact = c
+                break
+    if not contact and (q.customer_contact or "").strip():
+        contact = CrmContact(full_name=q.customer_contact.strip()[:150], company_id=company.id,
+                             phone=q.customer_phone, email=q.customer_email,
+                             source="manual", created_by=actor)
+        db.add(contact); db.flush()
+    first = (db.query(CrmStage).filter(CrmStage.is_active == True)  # noqa: E712
+             .order_by(CrmStage.sort_order, CrmStage.id).first())
+    d = CrmDeal(title=f"Teklif {q.quote_number} — {q.customer_name}"[:200],
+                company_id=company.id, contact_id=contact.id if contact else None,
+                stage_id=first.id if first else None,
+                value=q.total_amount or 0.0, currency=(q.currency or "TRY")[:3],
+                quotation_id=q.id, source="manual", created_by=actor,
+                owner_user_id=uid, owner_name=_user_name(db, uid),
+                stage_changed_at=_now())
+    db.add(d); db.commit(); db.refresh(d)
+    log_admin_event(db, request, actor=current_user, action="crm.deal.create",
+                    target_type="crm_deal", target_id=d.id, target_name=d.title,
+                    details={"quotation_id": qid})
+    companies, contacts, stage_names = _deal_names(db)
+    return C.serialize_deal(d, company_name=companies.get(d.company_id, ""),
+                            contact_name=contacts.get(d.contact_id, ""),
+                            stage_name=stage_names.get(d.stage_id, ""))
+
+
 @router.get("/deals/{did}")
 def deal_detail(did: int, db: Session = Depends(get_db),
                 _: dict = Depends(require_permission("crm", "view"))):
@@ -600,11 +691,17 @@ def deal_detail(did: int, db: Session = Depends(get_db),
                   .order_by(CrmActivity.is_pinned.desc(), CrmActivity.created_at.desc()).limit(100).all())
     tasks = (db.query(CrmTask).filter(CrmTask.deal_id == did)
              .order_by(CrmTask.status, CrmTask.due_at).all())
+    quotation = None
+    if d.quotation_id:
+        q = db.query(Quotation).filter(Quotation.id == d.quotation_id).first()
+        if q:
+            quotation = _quotation_brief(q)
     now = _now()
     return {
         "deal": C.serialize_deal(d, company_name=companies.get(d.company_id, ""),
                                  contact_name=contacts.get(d.contact_id, ""),
                                  stage_name=stage_names.get(d.stage_id, "")),
+        "quotation": quotation,
         "activities": [C.serialize_activity(a) for a in activities],
         "tasks": [C.serialize_task(t, overdue=(t.status == "open" and t.due_at and t.due_at < now)) for t in tasks],
         "wa": _wa_summary(db, deal_id=did),
