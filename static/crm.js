@@ -23,7 +23,9 @@
   function initials(name) { return (name || "?").trim().charAt(0).toUpperCase(); }
 
   // Kaynak rozeti + filtre — Meta / Kommo / Elle
-  const SOURCE_PILL = { whatsapp: "pill-g", instagram: "pill-b", facebook: "pill-b", meta: "pill-b", kommo: "pill-gray", manual: "pill-gray" };
+  const SOURCE_PILL = { whatsapp: "pill-g", instagram: "pill-b", facebook: "pill-b", meta: "pill-b", kommo: "pill-gray", manual: "pill-gray", import: "pill-gray", referral: "pill-gray" };
+  // Kanal/Kommo kaynakları sistemce belirlenir — edit formunda kilitli gösterilir
+  const LOCKED_SOURCES = ["whatsapp", "instagram", "facebook", "meta", "kommo"];
   function sourcePill(row) {
     const s = row.source || "manual";
     return `<span class="pill ${SOURCE_PILL[s] || "pill-gray"}">${esc(row.source_label || "Elle")}</span>`;
@@ -1042,12 +1044,18 @@
         <div><label class="fld">Mobil</label><input class="ipt" id="k_mobile" value="${esc(c.mobile)}"></div>
         <div><label class="fld">WhatsApp (+90…)</label><input class="ipt" id="k_wa" value="${esc(c.whatsapp_number)}"></div>
         <div><label class="fld">E-posta</label><input class="ipt" id="k_email" value="${esc(c.email)}"></div>
-        <div><label class="fld">Kaynak</label><input class="ipt" id="k_source" value="${esc(c.source)}" placeholder="manual / referral …"></div>
+        <div><label class="fld">Kaynak</label>${LOCKED_SOURCES.includes(c.source)
+          ? `<input class="ipt" id="k_source_ro" value="${esc(c.source_label || c.source)}" disabled title="Kanal kaynağı sistem tarafından belirlenir">`
+          : `<select class="ipt" id="k_source">
+              <option value="manual" ${(!c.source || c.source === "manual") ? "selected" : ""}>Elle</option>
+              <option value="referral" ${c.source === "referral" ? "selected" : ""}>Referans</option>
+              <option value="import" ${c.source === "import" ? "selected" : ""}>İçe aktarma</option></select>`}</div>
         <div class="full"><label class="fld">Sorumlu</label><select class="ipt" id="k_owner">${userOptions(c.owner_user_id)}</select></div>
         <div class="full"><label class="fld">Not</label><textarea class="ipt" id="k_notes" rows="2">${esc(c.notes)}</textarea></div>
       </div>`, async function () {
       const name = fval("k_name"); if (!name) { toast("Ad Soyad gerekli."); return; }
-      const payload = { full_name: name, company_id: fnum("k_company"), title: fval("k_title"), phone: fval("k_phone"), mobile: fval("k_mobile"), whatsapp_number: fval("k_wa"), email: fval("k_email"), source: fval("k_source"), notes: fval("k_notes"), owner_user_id: fnum("k_owner") };
+      const payload = { full_name: name, company_id: fnum("k_company"), title: fval("k_title"), phone: fval("k_phone"), mobile: fval("k_mobile"), whatsapp_number: fval("k_wa"), email: fval("k_email"), notes: fval("k_notes"), owner_user_id: fnum("k_owner") };
+      if (el("k_source")) payload.source = fval("k_source");   // kilitli kaynak gönderilmez → sunucu korur
       try {
         await api(id ? "/contacts/" + id : "/contacts", jbody(payload, id ? "PUT" : "POST"));
         closeModal(); toast("Kaydedildi.", "success");
@@ -1113,7 +1121,7 @@
   // ── Silme / kapatma / tamamlama ─────────────────────────────────────────────
   async function delCompany(id) { if (!confirm("Firma arşivlensin mi? (Kayıtlar saklanır)")) return; try { await api("/companies/" + id, { method: "DELETE" }); toast("Arşivlendi.", "success"); closeDrawer(); loadCompanies(); } catch (e) { toast(e.message); } }
   async function delContact(id) { if (!confirm("Kişi arşivlensin mi?")) return; try { await api("/contacts/" + id, { method: "DELETE" }); toast("Arşivlendi.", "success"); closeDrawer(); if (state.tab === "contacts") loadContacts(); } catch (e) { toast(e.message); } }
-  async function delDeal(id) { if (!confirm("Fırsat silinsin mi?")) return; try { await api("/deals/" + id, { method: "DELETE" }); toast("Silindi.", "success"); closeDrawer(); renderPipeline(); } catch (e) { toast(e.message); } }
+  async function delDeal(id) { if (!confirm("Fırsat arşivlensin mi? (Kayıtlar saklanır)")) return; try { await api("/deals/" + id, { method: "DELETE" }); toast("Arşivlendi.", "success"); closeDrawer(); renderPipeline(); } catch (e) { toast(e.message); } }
   async function delTask(id) { if (!confirm("Görev silinsin mi?")) return; try { await api("/tasks/" + id, { method: "DELETE" }); loadTasks(); refreshBadge(); } catch (e) { toast(e.message); } }
 
   async function toggleTask(id, inDrawer) {

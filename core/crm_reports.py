@@ -40,9 +40,9 @@ def _last_months(n: int):
 def report_summary(db: Session, months: int = 6) -> dict:
     stages = (db.query(CrmStage).filter(CrmStage.is_active == True)  # noqa: E712
               .order_by(CrmStage.sort_order, CrmStage.id).all())
-    open_deals = db.query(CrmDeal).filter(CrmDeal.status == "open").all()
-    won_deals = db.query(CrmDeal).filter(CrmDeal.status == "won").all()
-    lost_deals = db.query(CrmDeal).filter(CrmDeal.status == "lost").all()
+    open_deals = db.query(CrmDeal).filter(CrmDeal.status == "open", CrmDeal.is_active == True).all()  # noqa: E712
+    won_deals = db.query(CrmDeal).filter(CrmDeal.status == "won", CrmDeal.is_active == True).all()  # noqa: E712
+    lost_deals = db.query(CrmDeal).filter(CrmDeal.status == "lost", CrmDeal.is_active == True).all()  # noqa: E712
 
     # ── Huni: açık fırsatların aşama dağılımı (won/lost hariç) ──
     stage_val = defaultdict(float)
@@ -83,11 +83,14 @@ def report_summary(db: Session, months: int = 6) -> dict:
     act_cnt = dict(db.query(CrmActivity.author_user_id, func.count(CrmActivity.id))
                    .group_by(CrmActivity.author_user_id).all())
     won_cnt = dict(db.query(CrmDeal.owner_user_id, func.count(CrmDeal.id))
-                   .filter(CrmDeal.status == "won").group_by(CrmDeal.owner_user_id).all())
+                   .filter(CrmDeal.status == "won", CrmDeal.is_active == True)  # noqa: E712
+                   .group_by(CrmDeal.owner_user_id).all())
     won_value = dict(db.query(CrmDeal.owner_user_id, func.coalesce(func.sum(CrmDeal.value), 0.0))
-                     .filter(CrmDeal.status == "won").group_by(CrmDeal.owner_user_id).all())
+                     .filter(CrmDeal.status == "won", CrmDeal.is_active == True)  # noqa: E712
+                     .group_by(CrmDeal.owner_user_id).all())
     open_cnt = dict(db.query(CrmDeal.owner_user_id, func.count(CrmDeal.id))
-                    .filter(CrmDeal.status == "open").group_by(CrmDeal.owner_user_id).all())
+                    .filter(CrmDeal.status == "open", CrmDeal.is_active == True)  # noqa: E712
+                    .group_by(CrmDeal.owner_user_id).all())
     leaderboard = sorted(
         [{"name": u.full_name, "activities": int(act_cnt.get(u.id, 0)),
           "won": int(won_cnt.get(u.id, 0)), "won_value": round(float(won_value.get(u.id, 0.0)), 2),

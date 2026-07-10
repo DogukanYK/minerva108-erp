@@ -236,7 +236,8 @@ def list_companies(
                        .group_by(CrmContact.company_id).all()):
             contact_counts[cid] = n
         for cid, n in (db.query(CrmDeal.company_id, func.count(CrmDeal.id))
-                       .filter(CrmDeal.company_id.in_(ids), CrmDeal.status == "open")
+                       .filter(CrmDeal.company_id.in_(ids), CrmDeal.status == "open",
+                               CrmDeal.is_active == True)  # noqa: E712
                        .group_by(CrmDeal.company_id).all()):
             deal_counts[cid] = n
     return [C.serialize_company(c, contact_count=contact_counts.get(c.id, 0),
@@ -272,7 +273,7 @@ def company_detail(cid: int, db: Session = Depends(get_db),
         return JSONResponse(status_code=404, content={"detail": "Firma bulunamadı."})
     contacts = (db.query(CrmContact).filter(CrmContact.company_id == cid, CrmContact.is_active == True)  # noqa: E712
                 .order_by(CrmContact.full_name).all())
-    deals = (db.query(CrmDeal).filter(CrmDeal.company_id == cid)
+    deals = (db.query(CrmDeal).filter(CrmDeal.company_id == cid, CrmDeal.is_active == True)  # noqa: E712
              .order_by(CrmDeal.status, CrmDeal.created_at.desc()).all())
     stage_names = {s.id: s.name for s in db.query(CrmStage).all()}
     activities = (db.query(CrmActivity).filter(CrmActivity.company_id == cid)
@@ -398,7 +399,9 @@ def update_contact(cid: int, data: ContactIn, request: Request, db: Session = De
     ct.full_name = data.full_name.strip(); ct.company_id = data.company_id
     ct.title = data.title; ct.phone = data.phone; ct.mobile = data.mobile
     ct.email = data.email; ct.whatsapp_number = data.whatsapp_number
-    ct.source = data.source; ct.notes = data.notes
+    # source yollanmadıysa mevcut korunur — kanal/Kommo sınıflaması edit'te silinmesin
+    ct.source = data.source or ct.source
+    ct.notes = data.notes
     ct.owner_user_id = data.owner_user_id; ct.owner_name = _user_name(db, data.owner_user_id)
     db.commit(); db.refresh(ct)
     log_admin_event(db, request, actor=current_user, action="crm.contact.update",
@@ -439,7 +442,8 @@ def pipeline(source: Optional[str] = Query(None),
     """Kanban verisi — aşamalar + her aşamadaki açık fırsatlar + aşama toplamları."""
     stages = (db.query(CrmStage).filter(CrmStage.is_active == True)  # noqa: E712
               .order_by(CrmStage.sort_order, CrmStage.id).all())
-    dq = _source_filter(db.query(CrmDeal).filter(CrmDeal.status == "open"), CrmDeal, source)
+    dq = _source_filter(db.query(CrmDeal).filter(CrmDeal.status == "open",
+                                                 CrmDeal.is_active == True), CrmDeal, source)  # noqa: E712
     dq = _owner_filter(dq, CrmDeal, owner)
     dq = _tag_filter(db, dq, CrmDeal, "deal", tag)
     deals = dq.order_by(CrmDeal.sort_order, CrmDeal.created_at.desc()).all()
@@ -468,7 +472,7 @@ def list_deals(
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("crm", "view")),
 ):
-    query = db.query(CrmDeal)
+    query = db.query(CrmDeal).filter(CrmDeal.is_active == True)  # noqa: E712
     if status in ("open", "won", "lost"):
         query = query.filter(CrmDeal.status == status)
     query = _source_filter(query, CrmDeal, source)
@@ -603,12 +607,11 @@ def delete_deal(did: int, request: Request, db: Session = Depends(get_db),
     d = db.query(CrmDeal).filter(CrmDeal.id == did).first()
     if not d:
         return JSONResponse(status_code=404, content={"detail": "Fırsat bulunamadı."})
-    title = d.title
-    db.delete(d)   # aktiviteler/görevler CASCADE/SET NULL
+    d.is_active = False   # soft-delete — aktiviteler/görevler ve geçmiş korunur
     db.commit()
     log_admin_event(db, request, actor=current_user, action="crm.deal.delete",
-                    target_type="crm_deal", target_id=did, target_name=title)
-    return {"message": "Fırsat silindi."}
+                    target_type="crm_deal", target_id=d.id, target_name=d.title)
+    return {"message": "Fırsat arşivlendi."}
 
 
 # ─── Aktiviteler (paylaşımlı zaman çizelgesi) ────────────────────────────────
@@ -764,20 +767,26 @@ def dashboard(db: Session = Depends(get_db),
 
     companies_total = db.query(func.count(CrmCompany.id)).filter(CrmCompany.is_active == True).scalar() or 0  # noqa: E712
     contacts_total = db.query(func.count(CrmContact.id)).filter(CrmContact.is_active == True).scalar() or 0  # noqa: E712
-    open_deals = db.query(func.count(CrmDeal.id)).filter(CrmDeal.status == "open").scalar() or 0
-    open_value = db.query(func.coalesce(func.sum(CrmDeal.value), 0.0)).filter(CrmDeal.status == "open").scalar() or 0.0
+    open_deals = (db.query(func.count(CrmDeal.id))
+                  .filter(CrmDeal.status == "open", CrmDeal.is_active == True).scalar() or 0)  # noqa: E712
+    open_value = (db.query(func.coalesce(func.sum(CrmDeal.value), 0.0))
+                  .filter(CrmDeal.status == "open", CrmDeal.is_active == True).scalar() or 0.0)  # noqa: E712
     won_month = (db.query(func.count(CrmDeal.id))
-                 .filter(CrmDeal.status == "won", CrmDeal.won_at >= month_start).scalar() or 0)
+                 .filter(CrmDeal.status == "won", CrmDeal.won_at >= month_start,
+                         CrmDeal.is_active == True).scalar() or 0)  # noqa: E712
     won_month_value = (db.query(func.coalesce(func.sum(CrmDeal.value), 0.0))
-                       .filter(CrmDeal.status == "won", CrmDeal.won_at >= month_start).scalar() or 0.0)
+                       .filter(CrmDeal.status == "won", CrmDeal.won_at >= month_start,
+                               CrmDeal.is_active == True).scalar() or 0.0)  # noqa: E712
 
     # Aşamaya göre açık pipeline değeri
     stages = (db.query(CrmStage).filter(CrmStage.is_active == True)  # noqa: E712
               .order_by(CrmStage.sort_order, CrmStage.id).all())
     stage_value = dict(db.query(CrmDeal.stage_id, func.coalesce(func.sum(CrmDeal.value), 0.0))
-                       .filter(CrmDeal.status == "open").group_by(CrmDeal.stage_id).all())
+                       .filter(CrmDeal.status == "open", CrmDeal.is_active == True)  # noqa: E712
+                       .group_by(CrmDeal.stage_id).all())
     stage_count = dict(db.query(CrmDeal.stage_id, func.count(CrmDeal.id))
-                       .filter(CrmDeal.status == "open").group_by(CrmDeal.stage_id).all())
+                       .filter(CrmDeal.status == "open", CrmDeal.is_active == True)  # noqa: E712
+                       .group_by(CrmDeal.stage_id).all())
     pipeline_by_stage = [{
         "stage": s.name, "stage_id": s.id,
         "value": float(stage_value.get(s.id, 0.0)), "count": int(stage_count.get(s.id, 0)),
@@ -844,7 +853,7 @@ def _export_rows(db: Session, entity: str, q, source, status, owner=None):
         names = {c.id: c.name for c in db.query(CrmCompany.id, CrmCompany.name).all()}
         return [C.serialize_contact(ct, company_name=names.get(ct.company_id, "")) for ct in contacts]
     if entity == "deals":
-        query = _source_filter(db.query(CrmDeal), CrmDeal, source)
+        query = _source_filter(db.query(CrmDeal).filter(CrmDeal.is_active == True), CrmDeal, source)  # noqa: E712
         query = _owner_filter(query, CrmDeal, owner)
         if status in ("open", "won", "lost"):
             query = query.filter(CrmDeal.status == status)

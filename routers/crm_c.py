@@ -43,6 +43,12 @@ def _actor(p: dict) -> str:
     return p.get("full_name") or p.get("username") or "—"
 
 
+def _entity_exists(db: Session, entity: str, eid: int) -> bool:
+    """Hedef kayıt gerçekten var mı — olmayan id'ye ek/etiket/alan yazılmasın."""
+    model = _ENT.get(entity)
+    return bool(model and db.query(model.id).filter(model.id == eid).first())
+
+
 # ─── Global arama ────────────────────────────────────────────────────────────
 
 @router.get("/search")
@@ -62,7 +68,7 @@ def crm_search(q: str = Query(..., min_length=1),
             CrmContact.phone.ilike(like), CrmContact.mobile.ilike(like),
             CrmContact.whatsapp_number.ilike(like)))
         .order_by(CrmContact.full_name).limit(6).all())
-    deals = (db.query(CrmDeal).filter(CrmDeal.title.ilike(like))
+    deals = (db.query(CrmDeal).filter(CrmDeal.title.ilike(like), CrmDeal.is_active == True)  # noqa: E712
              .order_by(CrmDeal.created_at.desc()).limit(6).all())
     cnames = {c.id: c.name for c in db.query(CrmCompany.id, CrmCompany.name).all()}
     return {
@@ -189,6 +195,8 @@ def set_entity_tags(entity: str, eid: int, data: TagSet, db: Session = Depends(g
                     _: dict = Depends(require_permission("crm", "edit"))):
     if entity not in _ENT:
         return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    if not _entity_exists(db, entity, eid):
+        return JSONResponse(status_code=404, content={"detail": "Kayıt bulunamadı."})
     db.query(CrmEntityTag).filter(CrmEntityTag.entity == entity, CrmEntityTag.entity_id == eid).delete()
     valid = {tid for (tid,) in db.query(CrmTag.id).filter(CrmTag.id.in_(data.tag_ids or [])).all()}
     for tid in (data.tag_ids or []):
@@ -272,6 +280,8 @@ def set_entity_fields(entity: str, eid: int, data: FieldValues, db: Session = De
                       _: dict = Depends(require_permission("crm", "edit"))):
     if entity not in _ENT:
         return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    if not _entity_exists(db, entity, eid):
+        return JSONResponse(status_code=404, content={"detail": "Kayıt bulunamadı."})
     own = {f.id for f in _field_defs(db, entity)}
     for fid_str, val in (data.values or {}).items():
         try:
@@ -311,6 +321,8 @@ async def upload_attachment(entity: str, eid: int, file: UploadFile = File(...),
                             current_user: dict = Depends(require_permission("crm", "create"))):
     if entity not in _ENT:
         return JSONResponse(status_code=400, content={"detail": "Geçersiz varlık."})
+    if not _entity_exists(db, entity, eid):
+        return JSONResponse(status_code=404, content={"detail": "Kayıt bulunamadı."})
     try:
         stored, size, ctype = await D.save_upload(file)
     except ValueError as e:
@@ -397,10 +409,6 @@ def bulk_action(data: BulkIn, request: Request, db: Session = Depends(get_db),
                 db.add(CrmEntityTag(entity=singular, entity_id=r.id, tag_id=tid))
             n += 1
     elif data.action == "delete":
-        if data.entity == "deals":
-            return JSONResponse(status_code=400, content={"detail": "Fırsatlar toplu silinemez."})
-        if not C.SOURCE_LABELS or not current_user:  # noqa
-            pass
         # crm.delete yetkisi gerekir
         from core.permissions import _has_permission
         u = db.query(User).filter(User.id == int(current_user.get("sub", 0))).first()

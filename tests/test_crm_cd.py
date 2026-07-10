@@ -67,6 +67,23 @@ def test_field_create_requires_admin(labtech_client: TestClient):
 
 # ─── Dosya ekleri (C4) ───────────────────────────────────────────────────────
 
+def test_attachment_upload_missing_entity_404(authed_client: TestClient, db_session):
+    # Var olmayan kayda dosya eklenemez (yetim ek koruması).
+    from database import CrmAttachment
+    r = authed_client.post("/api/crm/company/999999/attachments",
+                           files={"file": ("x.pdf", b"X", "application/pdf")}, headers=_H)
+    assert r.status_code == 404
+    assert db_session.query(CrmAttachment).filter(CrmAttachment.entity_id == 999999).count() == 0
+
+
+def test_tags_and_fields_put_missing_entity_404(authed_client: TestClient):
+    t = authed_client.post("/api/crm/tags", json={"name": "Hayalet"}, headers=_H).json()
+    assert authed_client.put("/api/crm/company/999999/tags",
+                             json={"tag_ids": [t["id"]]}, headers=_H).status_code == 404
+    assert authed_client.put("/api/crm/company/999999/fields",
+                             json={"values": {}}, headers=_H).status_code == 404
+
+
 def test_attachments(authed_client: TestClient):
     co = _company(authed_client, name="Ekli")
     up = authed_client.post(f"/api/crm/company/{co['id']}/attachments",
@@ -96,6 +113,15 @@ def test_bulk_source_and_delete(authed_client: TestClient):
                        json={"entity": "companies", "ids": [a["id"]], "action": "delete"}, headers=_H)
     ids = {c["id"] for c in authed_client.get("/api/crm/companies").json()}
     assert a["id"] not in ids
+
+
+def test_bulk_deals_soft_delete(authed_client: TestClient):
+    # Fırsatlar artık toplu arşivlenebilir (soft delete).
+    did = authed_client.post("/api/crm/deals", json={"title": "Bulk Fırsat"}, headers=_H).json()["id"]
+    br = authed_client.post("/api/crm/bulk",
+                            json={"entity": "deals", "ids": [did], "action": "delete"}, headers=_H)
+    assert br.status_code == 200 and br.json()["count"] == 1
+    assert did not in [x["id"] for x in authed_client.get("/api/crm/deals").json()]
 
 
 def test_bulk_assign(authed_client: TestClient):

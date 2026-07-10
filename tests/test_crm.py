@@ -99,6 +99,19 @@ def test_contact_linked_to_company(authed_client: TestClient):
     assert any(x["id"] == ct["id"] for x in d["contacts"])
 
 
+def test_update_contact_without_source_preserves_it(authed_client: TestClient):
+    # PUT gövdesinde source yoksa mevcut sınıflama (örn. referral/whatsapp) silinmez.
+    ct = _contact(authed_client, name="Kaynaklı Kişi", source="referral")
+    r = authed_client.put(f"/api/crm/contacts/{ct['id']}",
+                          json={"full_name": "Kaynaklı Kişi", "title": "Müdür"}, headers=_H)
+    assert r.status_code == 200
+    assert r.json()["source"] == "referral"
+    # source açıkça yollanırsa değişir
+    r2 = authed_client.put(f"/api/crm/contacts/{ct['id']}",
+                           json={"full_name": "Kaynaklı Kişi", "source": "manual"}, headers=_H)
+    assert r2.json()["source"] == "manual"
+
+
 # ─── Paylaşımlı zaman çizelgesi ───────────────────────────────────────────────
 
 def test_shared_activity_timeline(authed_client: TestClient):
@@ -174,6 +187,23 @@ def test_deal_close_endpoint(authed_client: TestClient):
 
 
 # ─── Pano ─────────────────────────────────────────────────────────────────────
+
+def test_deal_soft_delete_hides_from_lists(authed_client: TestClient, db_session):
+    d = _deal(authed_client, title="Arşivlik", value=750)
+    r = authed_client.delete(f"/api/crm/deals/{d['id']}", headers=_H)
+    assert r.status_code == 200 and "arşiv" in r.json()["message"].lower()
+    # listeler + pipeline + panodan düşer
+    assert d["id"] not in [x["id"] for x in authed_client.get("/api/crm/deals").json()]
+    pipe = authed_client.get("/api/crm/pipeline").json()
+    all_ids = [x["id"] for rows in pipe["deals_by_stage"].values() for x in rows]
+    assert d["id"] not in all_ids
+    assert authed_client.get("/api/crm/dashboard").json()["counts"]["open_deals"] == 0
+    # kayıt DB'de duruyor (arşiv) ve detayı hâlâ açılabilir (geçmiş bağlantıları)
+    from database import CrmDeal
+    row = db_session.query(CrmDeal).filter(CrmDeal.id == d["id"]).one()
+    assert row.is_active is False
+    assert authed_client.get(f"/api/crm/deals/{d['id']}").status_code == 200
+
 
 def test_dashboard_counts(authed_client: TestClient):
     _company(authed_client, name="X")

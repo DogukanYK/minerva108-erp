@@ -55,3 +55,13 @@ def test_owner_filter(authed_client: TestClient):
 
 def test_search_requires_auth(client: TestClient):
     assert client.get("/api/crm/search?q=x").status_code == 401
+
+
+def test_report_summary_excludes_archived(authed_client: TestClient):
+    # Arşivlenen (soft-delete) fırsat rapor toplamlarından düşer.
+    r = authed_client.post("/api/crm/deals", json={"title": "Rapor Fırsat", "value": 500}, headers=_H)
+    did = r.json()["id"]
+    authed_client.post(f"/api/crm/deals/{did}/close", json={"result": "won"}, headers=_H)
+    assert authed_client.get("/api/crm/reports/summary").json()["totals"]["won_count"] == 1
+    authed_client.delete(f"/api/crm/deals/{did}", headers=_H)
+    assert authed_client.get("/api/crm/reports/summary").json()["totals"]["won_count"] == 0
