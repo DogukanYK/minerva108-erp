@@ -168,6 +168,9 @@ def assemble(db: Session, item_ids: list, domain: str) -> dict:
         raw_total = sum(r["net"] for r in raws)
         for r in raws:
             r["pct"] = round(r["net"] / raw_total * 100.0, 4) if raw_total else 0.0
+        # İçindekiler konvansiyonu: en yüksek paydan aşağı (etiket INCI düzeni gibi)
+        raws.sort(key=lambda r: (-r["pct"], tr_key(r["ing_name"])))
+        pkgs.sort(key=lambda r: (r["pkg_type"] or "~", tr_key(r["ing_name"])))
 
         products.append({
             **base,
@@ -183,12 +186,10 @@ def assemble(db: Session, item_ids: list, domain: str) -> dict:
         raw_rows.extend(raws)
         pkg_rows.extend(pkgs)
 
+    # Satırlar ürün içinde sıralı (yukarıda); ürün blokları products sırasıyla
+    # gezildiği için raw_rows/pkg_rows'a ayrıca global sıralama gerekmez.
     products.sort(key=lambda x: (tr_key(x["brand"]), tr_key(x["product_name"])))
     recipeless.sort(key=lambda x: (tr_key(x["brand"]), tr_key(x["product_name"])))
-    raw_rows.sort(key=lambda x: (tr_key(x["brand"]), tr_key(x["product_name"]),
-                                 x["phase"] or "~", tr_key(x["ing_name"])))
-    pkg_rows.sort(key=lambda x: (tr_key(x["brand"]), tr_key(x["product_name"]),
-                                 x["pkg_type"] or "~", tr_key(x["ing_name"])))
 
     return {
         "generated_at": to_tr(datetime.utcnow()).strftime("%d.%m.%Y %H:%M"),
@@ -222,7 +223,7 @@ def _setup_a4(ws, *, landscape: bool = True, title: str = "") -> None:
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0                          # boyuna serbest sayfa
     ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-    ws.print_title_rows = "1:1"                            # başlık her baskı sayfasında
+    ws.print_title_rows = "1:2"                            # rapor bandı her baskı sayfasında
     ws.page_margins = PageMargins(left=0.4, right=0.4, top=0.7, bottom=0.6,
                                   header=0.3, footer=0.3)
     ws.oddHeader.center.text = f"Minerva 108 — İçindekiler Raporu · {title}"
@@ -236,23 +237,32 @@ _SHEET_PKG = "Ambalaj-Paketleme"
 _SHEET_SUMMARY = "Özet"
 _SHEET_RECIPELESS = "Reçetesiz Ürünler"
 
-_HDR_SUMMARY = ["Marka", "Ürün (EN)", "Ürün (TR)", "SKU", "Varyasyon", "Barkod",
-                "Reçete ID", "Reçete", "Batch Çıktısı", "Çıktı Birimi", "Fire %",
-                "Hammadde Kalemi", "Ambalaj Kalemi", "Toplam Hammadde (Net)"]
-_HDR_RAW = ["Marka", "Ürün (EN)", "Ürün (TR)", "Ürün SKU", "Varyasyon", "Reçete ID",
-            "Faz", "Hammadde (EN)", "Hammadde (TR)", "Hammadde SKU", "Net Miktar",
+# Blok sayfaları: her ürün kendi bandı + tablosu + TOPLAM satırıyla ayrı bölüm.
+_HDR_RAW = ["Faz", "Hammadde (EN)", "Hammadde (TR)", "SKU", "Net Miktar",
             "Fire %", "Brüt Miktar", "Birim", "Bileşim %"]
-_HDR_PKG = ["Marka", "Ürün (EN)", "Ürün (TR)", "Ürün SKU", "Varyasyon", "Reçete ID",
-            "Bileşen (EN)", "Bileşen (TR)", "Bileşen SKU", "Ambalaj Tipi",
+_W_RAW = [7, 36, 32, 15, 12, 8, 12, 8, 11]
+_HDR_PKG = ["Bileşen (EN)", "Bileşen (TR)", "SKU", "Ambalaj Tipi",
             "Etiket Dili", "Etiket Grubu", "Miktar", "Birim"]
+_W_PKG = [36, 32, 15, 13, 11, 18, 10, 8]
+_HDR_SUMMARY = ["Marka", "Ürün (EN)", "Ürün (TR)", "SKU", "Varyasyon", "Barkod",
+                "Reçete ID", "Batch Çıktısı", "Çıktı Birimi", "Fire %",
+                "Hammadde Kalemi", "Ambalaj Kalemi", "Toplam Hammadde (Net)"]
+_W_SUMMARY = [13, 36, 32, 13, 11, 15, 9, 12, 10, 8, 9, 9, 14]
 _HDR_RECIPELESS = ["Marka", "Ürün (EN)", "Ürün (TR)", "SKU", "Varyasyon", "Barkod", "Birim"]
+_W_RECIPELESS = [14, 38, 34, 14, 12, 16, 9]
+
+_FMT_QTY, _FMT_PCT = "#,##0.####", "0.00"
 
 
 def build_workbook(data: dict) -> bytes:
-    """4 sayfalık, A4-yazdırılabilir içindekiler Excel'i (bkz. modül docstring'i)."""
+    """A4-yazdırılabilir, ürün-blok düzenli içindekiler Excel'i.
+
+    Hammaddeler/Ambalaj sayfalarında HER ÜRÜN ayrı bölümdür: gold marka bandı →
+    künye satırı → içerik tablosu (% azalan) → TOPLAM. Özet/Reçetesiz düz tablodur.
+    """
     from io import BytesIO
     from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
 
     wb = Workbook()
@@ -260,59 +270,185 @@ def build_workbook(data: dict) -> bytes:
     wb.properties.title = "Minerva 108 — İçindekiler Raporu"
     wb.properties.creator = "Minerva 108 ERP"
 
-    navy_fill = PatternFill("solid", fgColor="232E6E")
-    head_font = Font(bold=True, color="FFFFFF")
+    # Marka kimliği: navy + gold + krem (uygulama temasıyla aynı)
+    NAVY, GOLD, GOLD_SOFT = "232E6E", "C9AC6F", "F3EAD3"
+    CREAM, GREY_TX = "F5F0E8", "6B7280"
+    F_TITLE = Font(bold=True, color="FFFFFF", size=12)
+    F_META = Font(color=GREY_TX, size=9, italic=True)
+    F_HEAD = Font(bold=True, color="FFFFFF", size=9)
+    F_BAND = Font(bold=True, color=NAVY, size=10.5)
+    F_CELL = Font(color="374151", size=9.5)
+    F_TOTAL = Font(bold=True, color=NAVY, size=9.5)
+    FILL_NAVY = PatternFill("solid", fgColor=NAVY)
+    FILL_GOLD = PatternFill("solid", fgColor=GOLD)
+    FILL_SOFT = PatternFill("solid", fgColor=GOLD_SOFT)
+    FILL_CREAM = PatternFill("solid", fgColor=CREAM)
+    THIN = Border(*([Side(style="thin", color="DDDDDD")] * 4))
+    AL_L = Alignment(horizontal="left", vertical="center")
+    AL_C = Alignment(horizontal="center", vertical="center")
+    AL_R = Alignment(horizontal="right", vertical="center")
 
-    def _sheet(title, headers, rows, *, landscape=True, num_formats=None):
+    sm = data["summary"]
+    meta_txt = (f"Oluşturma: {data.get('generated_at') or ''} · {sm['product_count']} ürün"
+                + (f" · {sm['recipeless_count']} reçetesiz" if sm["recipeless_count"] else ""))
+
+    def _cell(ws, r, c, v, *, font=F_CELL, fill=None, align=AL_L, fmt=None, border=THIN):
+        cell = ws.cell(row=r, column=c, value=v)
+        cell.font = font
+        if fill:
+            cell.fill = fill
+        cell.alignment = align
+        if fmt:
+            cell.number_format = fmt
+        if border:
+            cell.border = border
+        return cell
+
+    def _new_sheet(title, widths, *, landscape=True, label=None):
+        """Sayfa + 2 satırlık rapor bandı (baskıda her sayfada tekrar eder)."""
         ws = wb.create_sheet(title=title[:31])  # Excel sayfa adı ≤ 31 karakter
-        ws.append(headers)
-        for c in ws[1]:
-            c.fill = navy_fill
-            c.font = head_font
-            c.alignment = Alignment(horizontal="left", vertical="center")
-        for r in rows:
-            ws.append(r)
-        if num_formats:
-            for col, fmt in num_formats.items():
-                for row_cells in ws.iter_rows(min_row=2, min_col=col, max_col=col):
-                    row_cells[0].number_format = fmt
-        ws.freeze_panes = "A2"
-        for i, h in enumerate(headers, 1):
-            cells = [str(h)] + [str(r[i - 1]) for r in rows]
-            width = min(max(len(x) for x in cells) + 3, 55)
-            ws.column_dimensions[get_column_letter(i)].width = width
+        n = len(widths)
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n)
+        _cell(ws, 1, 1, f"MİNERVA 108 — İÇİNDEKİLER RAPORU · {(label or title).upper()}",
+              font=F_TITLE, fill=FILL_NAVY, border=None)
+        ws.row_dimensions[1].height = 24
+        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n)
+        _cell(ws, 2, 1, meta_txt, font=F_META, fill=FILL_CREAM, border=None)
         _setup_a4(ws, landscape=landscape, title=title)
         return ws
 
-    _sheet(_SHEET_SUMMARY, _HDR_SUMMARY,
-           [[p["brand"], p["product_name"], p["product_name_tr"], p["product_sku"],
-             p["variation"], p["barcode"], p["recipe_id"], "Var",
-             p["output_quantity"], p["output_unit"], p["waste_pct"],
-             p["raw_count"], p["pkg_count"], p["raw_total"]]
-            for p in data["products"]],
-           num_formats={9: "0.####", 11: "0.00", 14: "0.####"})
+    def _header_row(ws, r, headers):
+        for c, h in enumerate(headers, 1):
+            _cell(ws, r, c, h, font=F_HEAD, fill=FILL_NAVY, align=AL_C)
+        ws.row_dimensions[r].height = 16
 
-    _sheet(_SHEET_RAW, _HDR_RAW,
-           [[r["brand"], r["product_name"], r["product_name_tr"], r["product_sku"],
-             r["variation"], r["recipe_id"], r["phase"], r["ing_name"],
-             r["ing_name_tr"], r["ing_sku"], r["net"], r["waste_pct"], r["gross"],
-             r["unit"], r["pct"]]
-            for r in data["raw_rows"]],
-           num_formats={11: "0.####", 12: "0.00", 13: "0.####", 15: "0.00"})
+    def _band(ws, r, ncols, p):
+        """Ürün bandı (gold) + künye satırı (krem)."""
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=ncols)
+        name = f"{p['brand']} — {p['product_name']}"
+        if p["product_name_tr"]:
+            name += f"  /  {p['product_name_tr']}"
+        _cell(ws, r, 1, name, font=F_BAND, fill=FILL_GOLD, border=None)
+        ws.row_dimensions[r].height = 20
+        ws.merge_cells(start_row=r + 1, start_column=1, end_row=r + 1, end_column=ncols)
+        kunye = (f"Barkod: {p['barcode'] or '—'} · Varyasyon: {p['variation'] or '—'}"
+                 f" · SKU: {p['product_sku'] or '—'}"
+                 f" · Batch: {p['output_quantity']:g} {p['output_unit']}"
+                 f" · Fire: %{p['waste_pct']:g} · Reçete #{p['recipe_id']}")
+        _cell(ws, r + 1, 1, kunye, font=F_META, fill=FILL_CREAM, border=None)
+        return r + 2
 
-    _sheet(_SHEET_PKG, _HDR_PKG,
-           [[r["brand"], r["product_name"], r["product_name_tr"], r["product_sku"],
-             r["variation"], r["recipe_id"], r["ing_name"], r["ing_name_tr"],
-             r["ing_sku"], r["pkg_type"], r["language"], r["label_group"],
-             r["net"], r["unit"]]
-            for r in data["pkg_rows"]],
-           num_formats={13: "0.####"})
+    by_recipe_raw, by_recipe_pkg = {}, {}
+    for x in data["raw_rows"]:
+        by_recipe_raw.setdefault(x["recipe_id"], []).append(x)
+    for x in data["pkg_rows"]:
+        by_recipe_pkg.setdefault(x["recipe_id"], []).append(x)
 
-    _sheet(_SHEET_RECIPELESS, _HDR_RECIPELESS,
-           [[r["brand"], r["product_name"], r["product_name_tr"], r["product_sku"],
-             r["variation"], r["barcode"], r["unit"]]
-            for r in data["recipeless"]],
-           landscape=False)
+    # ── Özet (düz tablo) ──
+    ws = _new_sheet(_SHEET_SUMMARY, _W_SUMMARY)
+    _header_row(ws, 4, _HDR_SUMMARY)
+    r = 5
+    for i, p in enumerate(data["products"]):
+        zebra = FILL_CREAM if i % 2 else None
+        vals = [p["brand"], p["product_name"], p["product_name_tr"], p["product_sku"],
+                p["variation"], p["barcode"], p["recipe_id"], p["output_quantity"],
+                p["output_unit"], p["waste_pct"], p["raw_count"], p["pkg_count"],
+                p["raw_total"]]
+        for c, v in enumerate(vals, 1):
+            fmt = {8: _FMT_QTY, 10: _FMT_PCT, 13: _FMT_QTY}.get(c)
+            _cell(ws, r, c, v, fill=zebra, fmt=fmt,
+                  align=AL_R if c in (7, 8, 10, 11, 12, 13) else AL_L)
+        r += 1
+    if not data["products"]:
+        _cell(ws, 5, 1, "Kayıt yok.", font=F_META, border=None)
+    ws.freeze_panes = "A5"
+
+    # ── Hammaddeler (ürün blokları) ──
+    ws = _new_sheet(_SHEET_RAW, _W_RAW)
+    r = 4
+    for p in data["products"]:
+        raws = by_recipe_raw.get(p["recipe_id"], [])
+        r = _band(ws, r, len(_HDR_RAW), p)
+        _header_row(ws, r, _HDR_RAW)
+        r += 1
+        if not raws:
+            _cell(ws, r, 1, "Bu reçetede hammadde satırı yok.", font=F_META, border=None)
+            r += 2
+            continue
+        for i, x in enumerate(raws):
+            zebra = FILL_CREAM if i % 2 else None
+            _cell(ws, r, 1, x["phase"] or "—", fill=zebra, align=AL_C)
+            _cell(ws, r, 2, x["ing_name"], fill=zebra)
+            _cell(ws, r, 3, x["ing_name_tr"], fill=zebra)
+            _cell(ws, r, 4, x["ing_sku"], fill=zebra)
+            _cell(ws, r, 5, x["net"], fill=zebra, align=AL_R, fmt=_FMT_QTY)
+            _cell(ws, r, 6, x["waste_pct"], fill=zebra, align=AL_R, fmt=_FMT_PCT)
+            _cell(ws, r, 7, x["gross"], fill=zebra, align=AL_R, fmt=_FMT_QTY)
+            _cell(ws, r, 8, x["unit"], fill=zebra, align=AL_C)
+            _cell(ws, r, 9, x["pct"], fill=zebra, align=AL_R, fmt=_FMT_PCT)
+            r += 1
+        _cell(ws, r, 1, "", fill=FILL_SOFT)
+        _cell(ws, r, 2, "TOPLAM", font=F_TOTAL, fill=FILL_SOFT)
+        _cell(ws, r, 3, "", fill=FILL_SOFT)
+        _cell(ws, r, 4, "", fill=FILL_SOFT)
+        _cell(ws, r, 5, round(sum(x["net"] for x in raws), 6),
+              font=F_TOTAL, fill=FILL_SOFT, align=AL_R, fmt=_FMT_QTY)
+        _cell(ws, r, 6, "", fill=FILL_SOFT)
+        _cell(ws, r, 7, round(sum(x["gross"] for x in raws), 6),
+              font=F_TOTAL, fill=FILL_SOFT, align=AL_R, fmt=_FMT_QTY)
+        _cell(ws, r, 8, "", fill=FILL_SOFT)
+        _cell(ws, r, 9, round(sum(x["pct"] for x in raws), 2),
+              font=F_TOTAL, fill=FILL_SOFT, align=AL_R, fmt=_FMT_PCT)
+        r += 2                                              # blok arası boşluk
+    if not data["products"]:
+        _cell(ws, 4, 1, "Kayıt yok.", font=F_META, border=None)
+    ws.freeze_panes = "A3"
+
+    # ── Ambalaj-Paketleme (ürün blokları) ──
+    ws = _new_sheet(_SHEET_PKG, _W_PKG)
+    r = 4
+    for p in data["products"]:
+        pkgs = by_recipe_pkg.get(p["recipe_id"], [])
+        r = _band(ws, r, len(_HDR_PKG), p)
+        _header_row(ws, r, _HDR_PKG)
+        r += 1
+        if not pkgs:
+            _cell(ws, r, 1, "Bu reçetede ambalaj satırı yok.", font=F_META, border=None)
+            r += 2
+            continue
+        for i, x in enumerate(pkgs):
+            zebra = FILL_CREAM if i % 2 else None
+            _cell(ws, r, 1, x["ing_name"], fill=zebra)
+            _cell(ws, r, 2, x["ing_name_tr"], fill=zebra)
+            _cell(ws, r, 3, x["ing_sku"], fill=zebra)
+            _cell(ws, r, 4, x["pkg_type"], fill=zebra, align=AL_C)
+            _cell(ws, r, 5, x["language"], fill=zebra, align=AL_C)
+            _cell(ws, r, 6, x["label_group"], fill=zebra)
+            _cell(ws, r, 7, x["net"], fill=zebra, align=AL_R, fmt=_FMT_QTY)
+            _cell(ws, r, 8, x["unit"], fill=zebra, align=AL_C)
+            r += 1
+        r += 1                                              # blok arası boşluk
+    if not data["products"]:
+        _cell(ws, 4, 1, "Kayıt yok.", font=F_META, border=None)
+    ws.freeze_panes = "A3"
+
+    # ── Reçetesiz Ürünler (düz tablo) ──
+    ws = _new_sheet(_SHEET_RECIPELESS, _W_RECIPELESS, landscape=False)
+    _header_row(ws, 4, _HDR_RECIPELESS)
+    r = 5
+    for i, p in enumerate(data["recipeless"]):
+        zebra = FILL_CREAM if i % 2 else None
+        vals = [p["brand"], p["product_name"], p["product_name_tr"], p["product_sku"],
+                p["variation"], p["barcode"], p["unit"]]
+        for c, v in enumerate(vals, 1):
+            _cell(ws, r, c, v, fill=zebra)
+        r += 1
+    if not data["recipeless"]:
+        _cell(ws, 5, 1, "Kayıt yok — seçilen tüm ürünlerin reçetesi var.",
+              font=F_META, border=None)
+    ws.freeze_panes = "A5"
 
     buf = BytesIO()
     wb.save(buf)
@@ -400,13 +536,45 @@ def _report_story(data: dict, s: float = 1.0):
     return story
 
 
+def _merge_letterhead_shared(content: bytes) -> bytes:
+    """Çok sayfalı rapor için verimli antet: delivery_note.merge_letterhead her
+    sayfada antedi YENİDEN okuyup gömer (~830 KB × sayfa → 30 MB'lık dosyalar,
+    yaşandı). Burada antet TEK nesne olarak okunur, her içerik sayfasının ALTINA
+    (over=False) damgalanır — görüntü XObject'i dosyaya bir kez yazılır.
+    Antetli okunamzsa içerik antetsiz döner (merge_letterhead ile aynı politika)."""
+    try:
+        from io import BytesIO
+        from pypdf import PdfReader, PdfWriter
+        from core.delivery_note import LETTERHEAD, _A4_PT
+
+        lh = PdfReader(LETTERHEAD).pages[0]
+        lh.scale_to(*_A4_PT)                     # US Letter antet → A4 (HANDOFF #2)
+        writer = PdfWriter()
+        writer.append(PdfReader(BytesIO(content)))
+        for pg in writer.pages:
+            pg.merge_page(lh, over=False)        # antet içeriğin ALTINA
+        writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)
+        buf = BytesIO()
+        writer.write(buf)
+        return buf.getvalue()
+    except Exception:
+        return content
+
+
 def render_pdf(data: dict) -> bytes:
     from reportlab.lib.units import mm
 
-    from core.delivery_note import merge_letterhead, render_autofit
+    from core.delivery_note import render_autofit
 
+    # Çok ürünlü rapor tek sayfaya zaten sığmaz — autofit'in 4 ölçek denemesi
+    # koca dokümanı 5 kez kurup "hazırlanıyor"da bekletiyordu (yaşandı).
+    # 1-2 üründe tek-sayfa cilası kalsın; fazlasında tek build → doğrudan çok sayfa.
+    few = (len(data["products"]) + len(data["recipeless"])) <= 2
+    # Alt marj 50mm: bu antetin 4 satırlık footer bloğu ~48mm'ye çıkıyor (raster
+    # doğrulamayla ölçüldü); HANDOFF #2'nin 40mm tabanı burada tabloya değiyordu.
     content = render_autofit(
         lambda s: _report_story(data, s),
-        margins=(20 * mm, 20 * mm, 48 * mm, 40 * mm),   # HANDOFF #2 — değiştirme
-        doc_kwargs={"title": "İçindekiler Raporu", "author": "Minerva 108"})
-    return merge_letterhead(content)
+        margins=(20 * mm, 20 * mm, 48 * mm, 50 * mm),
+        doc_kwargs={"title": "İçindekiler Raporu", "author": "Minerva 108"},
+        steps=(0.96, 0.92, 0.88, 0.85) if few else ())
+    return _merge_letterhead_shared(content)
