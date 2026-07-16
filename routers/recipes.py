@@ -246,6 +246,58 @@ def update_recipe(
         return JSONResponse(status_code=500, content={"detail": "Reçete güncellenemedi."})
 
 
+# ─── İçindekiler Raporu ─────────────────────────────────────────────────────
+# Reçete bileşimi ticari sırdır → recipes:view gate'i (Distributor'da yok).
+# Rapor maliyetsizdir (yalnız içerik) — finance gating gerekmez.
+
+class IngredientsReportRequest(BaseModel):
+    # 1000 ürün — gerçekçi tavan (katalog ~500); saldırgan dev payload yollayamaz
+    item_ids: List[int] = Field(..., min_length=1, max_length=1000)
+    format: str = Field("xlsx", pattern="^(xlsx|pdf)$")
+
+
+@router.get("/recipes/ingredients-report/products")
+def ingredients_report_products(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("recipes", "view")),
+    domain: str = Depends(active_domain),
+):
+    """Rapor seçim paneli: aktif paneldeki bitmiş ürünler (marka + reçete durumu)."""
+    from core.ingredients_report import list_report_products
+    return {"products": list_report_products(db, domain)}
+
+
+@router.post("/recipes/ingredients-report/export")
+def ingredients_report_export(
+    data: IngredientsReportRequest,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("recipes", "view")),
+    domain: str = Depends(active_domain),
+):
+    """Seçilen bitmiş ürünlerin içindekiler raporu — A4-yazdırılabilir Excel / antetli PDF."""
+    import io
+
+    from fastapi.responses import StreamingResponse
+
+    from core.ingredients_report import assemble, build_workbook, render_pdf, report_filename
+
+    rep = assemble(db, data.item_ids, domain)
+    if not rep["products"] and not rep["recipeless"]:
+        # Domain dışı / geçersiz id'ler assemble'da düşer — burada 400'e çevrilir.
+        return JSONResponse(status_code=400, content={"detail": "Seçilen ürün bulunamadı."})
+    try:
+        if data.format == "pdf":
+            content, media, ext = render_pdf(rep), "application/pdf", "pdf"
+        else:
+            content = build_workbook(rep)
+            media, ext = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
+    except Exception:
+        return JSONResponse(status_code=500, content={"detail": "Rapor üretilemedi."})
+    return StreamingResponse(
+        io.BytesIO(content), media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{report_filename(ext)}"'})
+
+
 @router.get("/recipes/{recipe_id}")
 def get_recipe_detail(
     recipe_id: int,
