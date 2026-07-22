@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="/static/theme.js"></script>
+  <script>
+    window.PERMS = {{ permissions | tojson }};
+    window.DOMAIN = {{ domain | tojson }};
+    window.CAN_APPROVE = {{ 'true' if can('qc','approve') else 'false' }};
+    window.can = function (category, action) {
+      const cat = window.PERMS && window.PERMS[category];
+      return !!(cat && cat[action]);
+    };
+  </script>
+  <title>Minerva108 ERP — Numune Analizi</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <link rel="manifest" href="/static/manifest.json" />
+  <meta name="theme-color" content="#232E6E" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/dark.css" />
+  <link rel="stylesheet" href="/static/print.css" media="print" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    :root{ --navy:#232E6E; --gold:#C9AC6F; --gold2:#D9BE85; --cream:#f5f0e8; --white:#fff; --sidebar-width:240px; --navbar-height:64px; }
+    *,*::before,*::after{ box-sizing:border-box; }
+    body{ margin:0; font-family:'Jost',sans-serif; background:var(--cream); color:#1f2937; }
+    .sidebar{ position:fixed; top:0; left:0; width:var(--sidebar-width); height:100vh; background:var(--navy); display:flex; flex-direction:column; z-index:100; }
+    .sidebar-brand{ padding:1.4rem 1.25rem 1.2rem; border-bottom:1px solid rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; }
+    .sidebar-brand-logo{ width:100%; max-width:168px; height:auto; opacity:0.96; }
+    .sidebar-nav{ flex:1; padding:1.25rem 0.75rem; overflow-y:auto; }
+    .nav-section-label{ font-size:0.65rem; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:rgba(255,255,255,0.3); padding:0.5rem 0.75rem 0.4rem; margin-top:0.5rem; }
+    .nav-link-item{ display:flex; align-items:center; gap:0.75rem; padding:0.6rem 0.85rem; border-radius:8px; color:rgba(255,255,255,0.65); font-size:0.88rem; font-weight:500; text-decoration:none; transition:background .15s,color .15s; margin-bottom:2px; }
+    .nav-link-item:hover{ background:rgba(255,255,255,0.07); color:var(--white); }
+    .nav-link-item.active{ background:rgba(184,150,90,0.18); color:var(--gold2); }
+    .nav-link-item.active .nav-icon{ color:var(--gold); }
+    .nav-icon{ font-size:1rem; width:18px; text-align:center; flex-shrink:0; }
+    .sidebar-footer{ padding:1rem 1.5rem; border-top:1px solid rgba(255,255,255,0.08); }
+    .sidebar-footer-text{ font-size:0.7rem; color:rgba(255,255,255,0.25); text-align:center; }
+    .topnav{ position:fixed; top:0; left:var(--sidebar-width); right:0; height:var(--navbar-height); background:var(--white); border-bottom:1px solid #f0ece4; display:flex; align-items:center; justify-content:space-between; padding:0 1.75rem; z-index:90; box-shadow:0 1px 8px rgba(0,0,0,0.05); }
+    .topnav-title{ font-family:'Playfair Display',serif; font-size:1.15rem; font-weight:600; color:var(--navy); }
+    .topnav-right{ display:flex; align-items:center; gap:1rem; }
+    .user-chip{ display:flex; align-items:center; gap:0.5rem; background:var(--cream); border-radius:20px; padding:0.35rem 0.9rem 0.35rem 0.5rem; }
+    .user-avatar{ width:28px; height:28px; background:var(--navy); color:var(--gold2); border-radius:50%; font-size:0.7rem; font-weight:700; display:flex; align-items:center; justify-content:center; font-family:'Playfair Display',serif; }
+    .user-name{ font-size:0.85rem; font-weight:500; color:#374151; }
+    .btn-logout{ display:flex; align-items:center; gap:0.4rem; padding:0.42rem 1rem; border:1.5px solid #e5e7eb; border-radius:8px; background:var(--white); color:#6b7280; font-family:'Jost',sans-serif; font-size:0.82rem; font-weight:500; cursor:pointer; }
+    .btn-logout:hover{ border-color:#ef4444; color:#ef4444; background:#fff5f5; }
+    .main-content{ margin-left:var(--sidebar-width); padding-top:var(--navbar-height); min-height:100vh; }
+    .content-inner{ padding:2rem 2rem 3rem; }
+    .page-title{ font-family:'Playfair Display',serif; font-size:1.6rem; font-weight:700; color:var(--navy); margin:0 0 0.25rem; }
+    .page-subtitle{ font-size:0.88rem; color:#6b7280; margin:0 0 1.5rem; }
+    .card2{ background:var(--white); border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.05),0 4px 16px rgba(44,44,115,0.06); margin-bottom:1.4rem; overflow:hidden; }
+    .card2-head{ display:flex; align-items:center; gap:0.6rem; padding:1rem 1.25rem; border-bottom:1px solid #f0ece4; }
+    .card2-head i{ color:var(--gold); font-size:1.05rem; }
+    .card2-head h2{ font-family:'Playfair Display',serif; font-size:1.02rem; font-weight:600; color:var(--navy); margin:0; }
+    .card2-body{ padding:1.1rem 1.25rem; }
+    table{ width:100%; border-collapse:collapse; font-size:0.86rem; }
+    th{ text-align:left; padding:0.55rem 0.7rem; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.05em; color:#9ca3af; border-bottom:2px solid #f0ece4; }
+    td{ padding:0.6rem 0.7rem; border-bottom:1px solid #f3f0ea; vertical-align:middle; }
+    .muted{ color:#9ca3af; font-size:0.85rem; }
+    .lbl{ display:block; font-size:0.7rem; font-weight:700; text-transform:uppercase; color:#6b7280; margin-bottom:0.25rem; letter-spacing:0.03em; }
+    .ipt{ width:100%; padding:0.55rem 0.75rem; border:1.5px solid #e5e7eb; border-radius:8px; font-family:inherit; font-size:0.9rem; }
+    .ipt:focus{ outline:none; border-color:var(--navy); }
+    textarea.ipt{ resize:vertical; min-height:64px; }
+    .btn-g{ display:inline-flex; align-items:center; justify-content:center; gap:0.45rem; padding:0.7rem 1.2rem; background:var(--navy); color:#fff; border:none; border-radius:9px; font-family:'Jost',sans-serif; font-size:0.95rem; font-weight:600; cursor:pointer; }
+    .btn-g:hover{ background:#23236b; } .btn-g:disabled{ opacity:0.5; cursor:not-allowed; }
+    .btn-o{ display:inline-flex; align-items:center; gap:0.4rem; padding:0.5rem 1rem; background:#fff; color:var(--navy); border:1.5px solid #e5e7eb; border-radius:8px; font-size:0.86rem; font-weight:600; cursor:pointer; text-decoration:none; }
+    .btn-o:hover{ border-color:var(--navy); }
+    .ico-del{ background:none; border:none; cursor:pointer; color:#9ca3af; font-size:1rem; } .ico-del:hover{ color:#ef4444; }
+    .badge-res{ padding:0.18rem 0.6rem; border-radius:999px; font-size:0.74rem; font-weight:700; white-space:nowrap; }
+    .badge-uygun{ background:#dcfce7; color:#15803d; }
+    .badge-degil{ background:#fee2e2; color:#b91c1c; }
+    .badge-bekle{ background:#f3f4f6; color:#6b7280; }
+    .prop-ipt{ width:100%; padding:0.4rem 0.55rem; border:1.5px solid #e5e7eb; border-radius:7px; font-size:0.85rem; font-family:inherit; }
+    .radio-row{ display:flex; gap:1.1rem; flex-wrap:wrap; align-items:center; padding:0.35rem 0; }
+    .radio-row label{ display:flex; align-items:center; gap:0.35rem; font-size:0.9rem; cursor:pointer; }
+    .radio-row input{ accent-color:var(--navy); }
+    #toast-container{ position:fixed; bottom:1.5rem; right:1.5rem; z-index:9999; display:flex; flex-direction:column; gap:0.6rem; }
+    .toast-msg{ min-width:270px; max-width:380px; padding:0.8rem 1rem; border-radius:10px; font-size:0.88rem; font-weight:500; box-shadow:0 4px 20px rgba(0,0,0,0.12); display:flex; align-items:center; gap:0.6rem; }
+    .toast-error{ background:#fff1f1; color:#b91c1c; border-left:4px solid #ef4444; }
+    .toast-success{ background:#f0fdf4; color:#15803d; border-left:4px solid #22c55e; }
+    .toast-info{ background:#eff6ff; color:#1d4ed8; border-left:4px solid #3b82f6; }
+    /* Detay overlay — id 'Modal' ile bitiyor: print.css baskıda otomatik gizler */
+    .ovl{ position:fixed; inset:0; background:rgba(20,24,60,0.45); z-index:1000; display:none; align-items:flex-start; justify-content:center; padding:4vh 1rem; overflow-y:auto; }
+    .ovl.open{ display:flex; }
+    .ovl-card{ background:#fff; border-radius:14px; max-width:760px; width:100%; box-shadow:0 12px 48px rgba(0,0,0,0.25); }
+    .ovl-head{ display:flex; align-items:center; justify-content:space-between; padding:1rem 1.25rem; border-bottom:1px solid #f0ece4; }
+    .ovl-head h3{ font-family:'Playfair Display',serif; font-size:1.05rem; color:var(--navy); margin:0; }
+    .ovl-body{ padding:1.1rem 1.25rem; max-height:70vh; overflow-y:auto; }
+    .kvrow{ display:flex; border-bottom:1px solid #f3f0ea; font-size:0.88rem; }
+    .kvrow .k{ width:200px; flex-shrink:0; padding:0.5rem 0.6rem; color:#6b7280; font-weight:600; background:#faf8f4; }
+    .kvrow .v{ padding:0.5rem 0.6rem; }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+  <script src="/static/toast.js" defer></script>
+  <script src="/static/idle-watch.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <img src="/static/images/logo_sidebar.png" alt="Minerva 108 Vegan Cosmetics" class="sidebar-brand-logo" />
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      <a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>
+      <a href="/suppliers" class="nav-link-item"><i class="bi bi-truck nav-icon"></i>Tedarikçiler</a>
+      <a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>
+      <a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
+      <a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
+      <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
+      <a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>
+      <a href="/delivery" class="nav-link-item"><i class="bi bi-box-arrow-up nav-icon"></i>Teslimat</a>
+      <a href="/returns" class="nav-link-item"><i class="bi bi-arrow-return-left nav-icon"></i>İadeler</a>
+      <a href="/numune-analiz" class="nav-link-item active"><i class="bi bi-clipboard2-pulse nav-icon"></i>Numune Analizi</a>
+      <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
+      <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+      <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
+      <a href="/drive" class="nav-link-item"><i class="bi bi-folder-fill nav-icon"></i>Dosya Paylaşım</a>
+      {% if can('crm','view') %}<a href="/crm" class="nav-link-item"><i class="bi bi-people-fill nav-icon"></i>CRM</a>{% endif %}
+      {% if can('distributors','view') %}<a href="/distributors" class="nav-link-item"><i class="bi bi-shop nav-icon"></i>Distribütörler</a>{% endif %}
+      {% if can('b2b', 'view') %}
+      <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
+      {% endif %}
+      {% if can('admin', 'view') %}
+      <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>
+      <a href="/admin" class="nav-link-item"><i class="bi bi-shield-lock nav-icon"></i>Yönetim Paneli</a>
+      {% if role == 'SuperAdmin' %}<a href="/system" class="nav-link-item"><i class="bi bi-activity nav-icon"></i>Sistem Durumu</a>{% endif %}
+      {% endif %}
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sidebar-footer-row">
+        <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir" title="Tema değiştir">
+          <i class="bi bi-moon-stars-fill"></i><i class="bi bi-sun-fill"></i>
+        </button>
+        <p class="sidebar-footer-text" style="margin:0;">v2.0.0 &nbsp;·&nbsp; 2026</p>
+        <p class="sidebar-footer-text" style="margin:0.35rem 0 0;font-style:italic;">Geliştirici: Doğukan Yalçınkaya</p>
+      </div>
+    </div>
+  </aside>
+
+  <header class="topnav">
+    <span class="topnav-title">Numune Analizi</span>
+    <div class="topnav-right">
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+      <button class="btn-logout" id="logoutBtn"><i class="bi bi-box-arrow-right"></i>Çıkış Yap</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <div class="content-inner">
+      <h1 class="page-title">Numune Analiz Formları</h1>
+      <p class="page-subtitle">AR-GE / Kalite Kontrol numune analiz kayıtları ({{ sample_form_code }}). Çalışılan formülasyon, lot ve analiz sonuçları burada belgelenir; antetli PDF olarak yazdırılır.</p>
+
+      {% if can('qc','approve') %}
+      <!-- ── Yeni / Düzenle formu ── -->
+      <div class="card2" id="formCard">
+        <div class="card2-head"><i class="bi bi-clipboard2-plus"></i><h2 id="formTitle">Yeni Numune Analiz Formu</h2></div>
+        <div class="card2-body">
+          <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+            <div style="flex:2;min-width:220px;">
+              <label class="lbl">Bulk Adı *</label>
+              <input type="text" id="saBulk" class="ipt" placeholder="ör. Saç Kremi Deneme Bulk" maxlength="200" />
+            </div>
+            <div style="flex:1;min-width:150px;">
+              <label class="lbl">Üretim Tarihi</label>
+              <input type="date" id="saDate" class="ipt" />
+            </div>
+            <div style="flex:1;min-width:150px;">
+              <label class="lbl">Lot Numarası</label>
+              <input type="text" id="saLot" class="ipt" placeholder="ör. LOT-2407-A" maxlength="100" />
+            </div>
+          </div>
+          <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+            <div style="flex:1;min-width:220px;">
+              <label class="lbl">Çalışılan Formülasyon <span class="muted" style="text-transform:none;font-weight:400;">(reçete — opsiyonel)</span></label>
+              <select id="saRecipe" class="ipt"><option value="">— Reçete bağlanmadı —</option></select>
+            </div>
+            <div style="flex:2;min-width:260px;">
+              <label class="lbl">Formülasyon / Sapma Notu</label>
+              <input type="text" id="saFormNotes" class="ipt" placeholder="ör. metil selüloz %3→%1, xanthan gum %1.7→%0.5" maxlength="5000" />
+            </div>
+          </div>
+
+          <label class="lbl" style="margin-top:0.4rem;">Bakılan Özellikler</label>
+          <div style="overflow-x:auto;">
+            <table id="propTable">
+              <thead><tr><th style="width:26%;">Özellik</th><th style="width:34%;">Spesifikasyon</th><th style="width:34%;">Bulunan Değer</th><th style="width:6%;"></th></tr></thead>
+              <tbody id="propBody"></tbody>
+            </table>
+          </div>
+          <button type="button" id="addPropBtn" class="btn-o" style="margin:0.5rem 0 1rem;"><i class="bi bi-plus-lg"></i> Satır Ekle</button>
+
+          <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+            <div style="flex:1;min-width:220px;">
+              <label class="lbl">Analiz Yapan Kişi / KK Sorumlusu</label>
+              <input type="text" id="saAnalyst" class="ipt" value="{{ full_name }}" maxlength="100" />
+            </div>
+            <div style="flex:2;min-width:260px;">
+              <label class="lbl">Analiz Sonucu</label>
+              <div class="radio-row">
+                <label><input type="radio" name="saResult" value="" checked /> Beklemede</label>
+                <label><input type="radio" name="saResult" value="uygun" /> <span style="color:#15803d;font-weight:700;">UYGUNDUR</span></label>
+                <label><input type="radio" name="saResult" value="uygun_degil" /> <span style="color:#b91c1c;font-weight:700;">UYGUN DEĞİLDİR</span></label>
+              </div>
+            </div>
+          </div>
+          <div style="margin-bottom:0.8rem;">
+            <label class="lbl">Sonuç <span class="muted" style="text-transform:none;font-weight:400;">(analiz değerlendirmesi / formülasyon kararı)</span></label>
+            <textarea id="saResultText" class="ipt" maxlength="5000" placeholder="ör. Viskozitesi çok yoğun olduğundan onaylanmadı."></textarea>
+          </div>
+          <div style="margin-bottom:0.8rem;">
+            <label class="lbl">Açıklamalar</label>
+            <textarea id="saNotes" class="ipt" maxlength="5000" placeholder="opsiyonel"></textarea>
+          </div>
+          <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:1rem;">
+            <div style="flex:1;min-width:200px;">
+              <label class="lbl">Onaylayan</label>
+              <input type="text" id="saApprovedBy" class="ipt" placeholder="ör. Işık Durak" maxlength="100" />
+            </div>
+            <div style="flex:1;min-width:200px;">
+              <label class="lbl">AR-GE &amp; KK Yönetim Temsilcisi</label>
+              <input type="text" id="saQaRep" class="ipt" placeholder="ör. Songül Akgül" maxlength="100" />
+            </div>
+          </div>
+          <div style="display:flex;gap:0.7rem;flex-wrap:wrap;">
+            <button type="button" id="saSubmitBtn" class="btn-g" style="flex:1;min-width:220px;" onclick="saSubmit()">
+              <i class="bi bi-clipboard2-check"></i> <span id="saSubmitLabel">Formu Kaydet</span>
+            </button>
+            <button type="button" id="saCancelEditBtn" class="btn-o" style="display:none;" onclick="saResetForm()">Vazgeç</button>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- ── Geçmiş ── -->
+      <div class="card2">
+        <div class="card2-head"><i class="bi bi-clock-history"></i><h2>Kayıtlı Analiz Formları</h2></div>
+        <div class="card2-body" style="overflow-x:auto;">
+          <table>
+            <thead><tr><th>Form No</th><th>Bulk</th><th>Lot</th><th>Formülasyon</th><th>Sonuç</th><th>Kayıt</th><th></th></tr></thead>
+            <tbody id="histBody"><tr><td colspan="7" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ── Detay overlay ── -->
+  <div class="ovl" id="saDetailModal" onclick="if(event.target===this) saCloseDetail()">
+    <div class="ovl-card">
+      <div class="ovl-head">
+        <h3 id="dTitle">Numune Analiz Formu</h3>
+        <button class="ico-del" onclick="saCloseDetail()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
+      </div>
+      <div class="ovl-body" id="dBody"></div>
+      <div style="display:flex;gap:0.6rem;padding:1rem 1.25rem;border-top:1px solid #f0ece4;flex-wrap:wrap;">
+        <a id="dPdfBtn" class="btn-o" target="_blank"><i class="bi bi-file-earmark-pdf"></i> PDF İndir</a>
+        <button id="dEditBtn" class="btn-o" style="display:none;" onclick="saStartEdit()"><i class="bi bi-pencil"></i> Düzenle</button>
+        <button id="dDelBtn" class="btn-o" style="display:none;color:#b91c1c;" onclick="saDelete()"><i class="bi bi-trash3"></i> Sil</button>
+        <button class="btn-o" style="margin-left:auto;" onclick="saCloseDetail()">Kapat</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+  <script>
+    const SAMPLE_PROPERTIES = {{ sample_properties | tojson }};
+    const FORM_CODE = {{ sample_form_code | tojson }};
+    function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+    let _editId = null;      // düzenleme modundaki kayıt id'si
+    let _current = null;     // detay overlay'indeki kayıt
+    let _recipes = [];
+
+    /* ── Özellik satırları ── */
+    function propRow(p, fixed){
+      const label = fixed
+        ? `<b>${esc(p.label)}</b><input type="hidden" class="propKey" value="${esc(p.key)}"><input type="hidden" class="propLabel" value="${esc(p.label)}">`
+        : `<input type="text" class="prop-ipt propLabel" value="${esc(p.label||'')}" placeholder="Özellik adı" maxlength="100"><input type="hidden" class="propKey" value="custom">`;
+      return `<tr>
+        <td>${label}</td>
+        <td><input type="text" class="prop-ipt propSpec" value="${esc(p.spec||'')}" maxlength="300"></td>
+        <td><input type="text" class="prop-ipt propFound" value="${esc(p.found||'')}" maxlength="300"></td>
+        <td>${fixed?'':'<button type="button" class="ico-del" onclick="this.closest(\'tr\').remove()" title="Satırı sil"><i class="bi bi-x-lg"></i></button>'}</td>
+      </tr>`;
+    }
+    function renderProps(props){
+      const body = document.getElementById('propBody');
+      if (!body) return;
+      body.innerHTML = props.map(p => propRow(p, p.key !== 'custom')).join('');
+    }
+    function collectProps(){
+      const rows = [];
+      document.querySelectorAll('#propBody tr').forEach(tr => {
+        const label = (tr.querySelector('.propLabel')?.value || '').trim();
+        if (!label) return;
+        rows.push({
+          key: tr.querySelector('.propKey')?.value || 'custom',
+          label,
+          spec: (tr.querySelector('.propSpec')?.value || '').trim(),
+          found: (tr.querySelector('.propFound')?.value || '').trim(),
+        });
+      });
+      return rows;
+    }
+    document.getElementById('addPropBtn')?.addEventListener('click', () => {
+      document.getElementById('propBody').insertAdjacentHTML('beforeend',
+        propRow({key:'custom', label:'', spec:'', found:''}, false));
+    });
+
+    /* ── Reçete dropdown ── */
+    async function loadRecipes(){
+      const sel = document.getElementById('saRecipe');
+      if (!sel) return;
+      try {
+        const r = await fetch('/api/recipes');
+        const d = await r.json();
+        _recipes = Array.isArray(d) ? d : (d.recipes || []);
+        sel.innerHTML = '<option value="">— Reçete bağlanmadı —</option>' +
+          _recipes.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('');
+      } catch { /* dropdown boş kalır */ }
+    }
+
+    /* ── Form gönder (create / update) ── */
+    function saPayload(){
+      const props = collectProps();
+      if (!props.length) { showToast('En az bir özellik satırı gerekli.'); return null; }
+      const bulk = document.getElementById('saBulk').value.trim();
+      if (!bulk) { showToast('Bulk adı zorunlu.'); return null; }
+      const rid = document.getElementById('saRecipe').value;
+      return {
+        bulk_name: bulk,
+        production_date: document.getElementById('saDate').value || null,
+        lot_number: document.getElementById('saLot').value.trim() || null,
+        recipe_id: rid ? parseInt(rid) : null,
+        formulation_notes: document.getElementById('saFormNotes').value.trim() || null,
+        properties: props,
+        analyst_name: document.getElementById('saAnalyst').value.trim() || null,
+        result: (document.querySelector('input[name=saResult]:checked')?.value || '') || null,
+        result_text: document.getElementById('saResultText').value.trim() || null,
+        notes: document.getElementById('saNotes').value.trim() || null,
+        approved_by: document.getElementById('saApprovedBy').value.trim() || null,
+        qa_representative: document.getElementById('saQaRep').value.trim() || null,
+      };
+    }
+    async function saSubmit(){
+      if (!window.CAN_APPROVE) { showToast('Bu işlem için yetkiniz yok.'); return; }
+      const payload = saPayload();
+      if (!payload) return;
+      const btn = document.getElementById('saSubmitBtn');
+      btn.disabled = true;
+      try {
+        const url = _editId ? `/api/sample-analysis/${_editId}` : '/api/sample-analysis';
+        const r = await fetch(url, {
+          method: _editId ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(d.detail || 'Kaydedilemedi.'); return; }
+        showToast(_editId ? 'Form güncellendi.' : `Form kaydedildi — ${d.document_no}`, 'success');
+        saResetForm();
+        loadHistory();
+      } catch { showToast('Sunucuya bağlanılamadı.'); }
+      finally { btn.disabled = false; }
+    }
+    function saResetForm(){
+      _editId = null;
+      const t = document.getElementById('formTitle');
+      if (t) t.textContent = 'Yeni Numune Analiz Formu';
+      const lb = document.getElementById('saSubmitLabel');
+      if (lb) lb.textContent = 'Formu Kaydet';
+      const cb = document.getElementById('saCancelEditBtn');
+      if (cb) cb.style.display = 'none';
+      ['saBulk','saDate','saLot','saFormNotes','saResultText','saNotes','saApprovedBy','saQaRep']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      const sel = document.getElementById('saRecipe'); if (sel) sel.value = '';
+      const r0 = document.querySelector('input[name=saResult][value=""]'); if (r0) r0.checked = true;
+      renderProps(SAMPLE_PROPERTIES.map(p => ({...p, found: ''})));
+    }
+
+    /* ── Liste ── */
+    function resBadge(x){
+      const cls = x.result === 'uygun' ? 'badge-uygun' : (x.result === 'uygun_degil' ? 'badge-degil' : 'badge-bekle');
+      return `<span class="badge-res ${cls}">${esc(x.result_label)}</span>`;
+    }
+    async function loadHistory(){
+      const b = document.getElementById('histBody');
+      try {
+        const r = await fetch('/api/sample-analysis');
+        const d = await r.json();
+        const rows = d.analyses || [];
+        if (!rows.length) { b.innerHTML = '<tr><td colspan="7" class="muted" style="padding:1rem;">Henüz analiz formu yok.</td></tr>'; return; }
+        b.innerHTML = rows.map(x => `<tr>
+          <td><b>${esc(x.document_no)}</b></td>
+          <td>${esc(x.bulk_name)}</td>
+          <td>${esc(x.lot_number || '—')}</td>
+          <td class="muted">${esc(x.recipe_name || x.formulation_notes || '—')}</td>
+          <td>${resBadge(x)}</td>
+          <td class="muted">${esc(x.created_at)}</td>
+          <td style="white-space:nowrap;">
+            <button class="btn-o" style="padding:0.3rem 0.6rem;" onclick="saOpenDetail(${x.id})"><i class="bi bi-eye"></i></button>
+            <a class="btn-o" style="padding:0.3rem 0.6rem;" href="/api/sample-analysis/${x.id}/pdf" target="_blank"><i class="bi bi-file-earmark-pdf"></i></a>
+          </td>
+        </tr>`).join('');
+      } catch { b.innerHTML = '<tr><td colspan="7" class="muted" style="padding:1rem;">Yüklenemedi.</td></tr>'; }
+    }
+
+    /* ── Detay ── */
+    async function saOpenDetail(id){
+      try {
+        const r = await fetch(`/api/sample-analysis/${id}`);
+        if (!r.ok) { showToast('Kayıt yüklenemedi.'); return; }
+        _current = await r.json();
+      } catch { showToast('Sunucuya bağlanılamadı.'); return; }
+      const x = _current;
+      document.getElementById('dTitle').textContent = `${x.document_no} — ${x.bulk_name}`;
+      const kv = (k, v) => v ? `<div class="kvrow"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>` : '';
+      const props = (x.properties || []).map(p =>
+        `<tr><td><b>${esc(p.label)}</b></td><td>${esc(p.spec || '—')}</td><td>${esc(p.found || '—')}</td></tr>`).join('');
+      document.getElementById('dBody').innerHTML =
+        kv('Bulk Adı', x.bulk_name) + kv('Üretim Tarihi', x.production_date) + kv('Lot Numarası', x.lot_number) +
+        kv('Çalışılan Formülasyon', x.recipe_name) + kv('Formülasyon / Sapma Notu', x.formulation_notes) +
+        `<table style="margin:0.8rem 0;"><thead><tr><th>Özellik</th><th>Spesifikasyon</th><th>Bulunan Değer</th></tr></thead><tbody>${props}</tbody></table>` +
+        kv('Analiz Yapan', x.analyst_name) +
+        `<div style="margin:0.6rem 0;">${resBadge(x)}</div>` +
+        kv('Sonuç', x.result_text) + kv('Açıklamalar', x.notes) +
+        kv('Onaylayan', x.approved_by) + kv('AR-GE & KK Temsilcisi', x.qa_representative) +
+        `<div class="muted" style="margin-top:0.7rem;font-size:0.76rem;">${esc(x.form_code)} · Kayıt: ${esc(x.created_at)} · ${esc(x.created_by)}</div>`;
+      document.getElementById('dPdfBtn').href = `/api/sample-analysis/${x.id}/pdf`;
+      document.getElementById('dEditBtn').style.display = window.CAN_APPROVE ? '' : 'none';
+      document.getElementById('dDelBtn').style.display = window.CAN_APPROVE ? '' : 'none';
+      document.getElementById('saDetailModal').classList.add('open');
+    }
+    function saCloseDetail(){ document.getElementById('saDetailModal').classList.remove('open'); }
+
+    function saStartEdit(){
+      if (!_current) return;
+      const x = _current;
+      saCloseDetail();
+      _editId = x.id;
+      document.getElementById('formTitle').textContent = `Düzenle — ${x.document_no}`;
+      document.getElementById('saSubmitLabel').textContent = 'Değişiklikleri Kaydet';
+      document.getElementById('saCancelEditBtn').style.display = '';
+      document.getElementById('saBulk').value = x.bulk_name || '';
+      // production_date view'da dd.mm.yyyy — date input yyyy-mm-dd ister
+      const m = (x.production_date || '').match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+      document.getElementById('saDate').value = m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+      document.getElementById('saLot').value = x.lot_number || '';
+      document.getElementById('saRecipe').value = x.recipe_id || '';
+      document.getElementById('saFormNotes').value = x.formulation_notes || '';
+      document.getElementById('saAnalyst').value = x.analyst_name || '';
+      const rv = x.result || '';
+      const radio = document.querySelector(`input[name=saResult][value="${rv}"]`);
+      if (radio) radio.checked = true;
+      document.getElementById('saResultText').value = x.result_text || '';
+      document.getElementById('saNotes').value = x.notes || '';
+      document.getElementById('saApprovedBy').value = x.approved_by || '';
+      document.getElementById('saQaRep').value = x.qa_representative || '';
+      renderProps(x.properties && x.properties.length ? x.properties : SAMPLE_PROPERTIES);
+      document.getElementById('formCard').scrollIntoView({behavior:'smooth'});
+    }
+
+    async function saDelete(){
+      if (!_current || !window.CAN_APPROVE) return;
+      if (!confirm(`${_current.document_no} silinsin mi? (kayıt pasife alınır)`)) return;
+      try {
+        const r = await fetch(`/api/sample-analysis/${_current.id}`, { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(d.detail || 'Silinemedi.'); return; }
+        showToast('Form silindi.', 'success');
+        saCloseDetail();
+        if (_editId === _current.id) saResetForm();
+        loadHistory();
+      } catch { showToast('Sunucuya bağlanılamadı.'); }
+    }
+
+    document.getElementById('logoutBtn').addEventListener('click', async function(){
+      try{ await fetch('/api/logout',{method:'POST',headers:{'X-Requested-With':'1'}}); }catch(e){}
+      window.location.href='/login';
+    });
+
+    (function init(){
+      if (document.getElementById('propBody')) {
+        renderProps(SAMPLE_PROPERTIES.map(p => ({...p, found: ''})));
+        loadRecipes();
+      }
+      loadHistory();
+    })();
+  </script>
+</body>
+</html>

@@ -7,7 +7,7 @@
 import os
 from sqlalchemy import (
     create_engine, Column, Integer, BigInteger, String, Float,
-    Boolean, Text, DateTime, ForeignKey, UniqueConstraint, text
+    Boolean, Text, Date, DateTime, ForeignKey, UniqueConstraint, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime, timedelta
@@ -341,6 +341,44 @@ class ProductReturnItem(Base):
 
     ret = relationship("ProductReturn", back_populates="items")
     item = relationship("Item", foreign_keys=[item_id])
+
+
+class SampleAnalysis(Base):
+    """Numune Analiz Formu (FR.KK.01) — AR-GE/KK formülasyon deneme analizi kaydı.
+
+    Kağıt formun dijitali: bulk adı, üretim tarihi, lot, özellik tablosu
+    (görünüm/koku/renk/pH × spesifikasyon/bulunan değer, JSON string —
+    qc_form_data konvansiyonu), analiz sonucu (uygun/uygun_degil/NULL=beklemede),
+    SONUÇ metni, imza adları snapshot. Reçete bağı OPSİYONEL (recipe_name
+    snapshot'ı reçete silinse de belgeyi okunur tutar). form_code satır-başı
+    snapshot: kağıt form revize olursa eski kayıtlar eski revizyonla basılır.
+    Items sekmesindeki 'numune' (Inventory.is_sample = tedarikçi numune lotu)
+    ile İLGİSİZ — bu tablo bir KK belgesidir.
+    """
+    __tablename__ = "sample_analyses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_no = Column(String(40), unique=True, index=True)      # NA-2026-00001
+    bulk_name = Column(String(200), nullable=False)                # BULK ADI
+    production_date = Column(Date, nullable=True)                  # ÜRETİM TARİHİ
+    lot_number = Column(String(100), nullable=True, index=True)    # LOT NUMARASI
+    recipe_id = Column(Integer, ForeignKey("recipes.id"), nullable=True)
+    recipe_name = Column(String(200), nullable=True)               # snapshot
+    formulation_notes = Column(Text, nullable=True)                # çalışılan formülasyon / sapma
+    properties = Column(Text, nullable=False, default="[]")        # JSON [{key,label,spec,found}]
+    analyst_name = Column(String(100), nullable=True)              # ANALİZ YAPAN / KK SORUMLUSU
+    result = Column(String(20), nullable=True)                     # uygun | uygun_degil | NULL=beklemede
+    result_text = Column(Text, nullable=True)                      # SONUÇ
+    notes = Column(Text, nullable=True)                            # açıklamalar
+    approved_by = Column(String(100), nullable=True)               # ONAYLAYAN (ad snapshot)
+    qa_representative = Column(String(100), nullable=True)         # AR-GE & KK YÖNETİM TEMSİLCİSİ
+    form_code = Column(String(80), nullable=True)                  # FR.KK.01 … Rev:0 (satır snapshot)
+    created_by = Column(String(100), nullable=True)
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    recipe = relationship("Recipe", foreign_keys=[recipe_id])
 
 
 class Transaction(Base):
