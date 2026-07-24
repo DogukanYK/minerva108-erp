@@ -163,6 +163,33 @@ def kommo_periodic_sync() -> None:
         db.close()
 
 
+def shopify_stock_sync() -> None:
+    """
+    Periyodik job (5 dk): Shopify yapılandırılmışsa IMS stoğunu mağazalara push
+    eder. UI'dan global `enabled` kapatılırsa (AppSetting) redeploy'suz duraklar.
+    Marka başına try/except motorun içinde — biri patlarsa diğerleri sürer;
+    hatada yöneticilere bildirim. Yapılandırma yoksa sessizce atlar.
+    """
+    from core import shopify as S
+    if not S.any_configured():
+        return
+    db = SessionLocal()
+    try:
+        if not S.get_enabled(db):          # UI toggle — redeploy'suz duraklatma
+            return
+        summary = S.run_shopify_sync(db)   # marka başına try/except içeride
+        logger.info("shopify_stock_sync tamam: %s",
+                    [(s["store"], s["pushed"]) for s in summary.get("per_store", [])])
+        for st in summary.get("per_store", []):
+            if st.get("error"):
+                from core.notifications import notify_shopify_sync_failure
+                notify_shopify_sync_failure(st["store"], st["error"])
+    except Exception:
+        logger.exception("shopify_stock_sync failed")   # scheduler'ı asla düşürme
+    finally:
+        db.close()
+
+
 def kommo_nightly_full_sync() -> None:
     """
     Gecelik job (03:00): Kommo yapılandırılmışsa TAM içe aktarma çalıştırır —
@@ -267,6 +294,20 @@ def start_scheduler() -> None:
             )
     except Exception:
         logger.exception("kommo sync job kaydı atlandı")
+
+    try:
+        from core import shopify as _S
+        if _S.any_configured():
+            scheduler.add_job(
+                shopify_stock_sync,
+                CronTrigger(minute="*/5"),        # her 5 dk — IMS → Shopify stok push
+                id="shopify_stock_sync",
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+            )
+    except Exception:
+        logger.exception("shopify sync job kaydı atlandı")
 
     scheduler.add_job(
         monthly_stock_snapshot,

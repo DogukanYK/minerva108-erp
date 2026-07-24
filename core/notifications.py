@@ -258,6 +258,20 @@ def notify_low_stock(
     })
 
 
+def notify_shopify_sync_failure(store: str, detail: str) -> None:
+    """Shopify stok push hatası → yöneticilere (SuperAdmin+Manager) bildir.
+    Primitif argümanlar (ORM nesnesi geçme — scheduler/background güvenli)."""
+    _emit("error", "SHOPIFY-SYNC",
+          f"Shopify stok senkron hatası: {store} — {detail}", store=store)
+    _send_push("managers", {
+        "title": "⚠️ Shopify Senkron Hatası",
+        "body":  f"{store}: {detail}",
+        "tag":   f"shopify-sync-{store}",         # mağaza başına tek bildirim
+        "url":   "/shopify-sync",
+        "requireInteraction": True,
+    })
+
+
 def notify_new_distributor_order(order_no: str, company_name: str, total: float, currency: str) -> None:
     """Distribütör portaldan yeni sipariş verdi → yöneticilere onay bildirimi."""
     _emit("info", "DISTRIBUTOR-ORDER",

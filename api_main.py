@@ -36,7 +36,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions, get_role_labels
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router, shopify as shopify_router
 from core.domain import get_active_domain, domain_label
 
 
@@ -279,6 +279,8 @@ app.include_router(kommo_router.public_router)
 app.include_router(delivery_router.router)
 app.include_router(returns_router.router)
 app.include_router(sample_analysis_router.router)
+app.include_router(shopify_router.router)
+app.include_router(shopify_router.public_router)
 app.include_router(distributors_router.router)
 app.include_router(portal_router.router)
 
@@ -539,6 +541,17 @@ def numune_analiz_page(request: Request, db: Session = Depends(get_db)):
     ctx["sample_properties"] = SAMPLE_PROPERTIES   # tek kaynak — form satırları
     ctx["sample_form_code"] = FORM_CODE
     return templates.TemplateResponse("numune_analiz.html", ctx)
+
+
+@app.get("/shopify-sync", response_class=HTMLResponse)
+def shopify_sync_page(request: Request, db: Session = Depends(get_db)):
+    """Shopify stok senkron paneli (admin.view) — 3 mağaza durumu + elle tetik."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "admin", "view"):
+        return RedirectResponse(url="/", status_code=302)
+    return templates.TemplateResponse("shopify_sync.html", _page_ctx(request, payload, user))
 
 
 @app.get("/receiving", response_class=HTMLResponse)

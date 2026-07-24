@@ -990,6 +990,28 @@ class CrmIntegrationState(Base):
     updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ShopifySyncState(Base):
+    """IMS → Shopify stok push durumu — mağaza (marka) başına tek satır.
+
+    IMS tek doğruluk kaynağı; bu tablo yalnız son push denemesinin sonucunu tutar
+    (CrmIntegrationState kalıbı). Global buffer/enabled ayarları AppSetting'te
+    (`shopify.buffer` / `shopify.enabled`); buradaki `enabled` per-store duraklatma.
+    """
+    __tablename__ = "shopify_sync_state"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    store_key     = Column(String(20), nullable=False, unique=True, index=True)  # minerva/evanira/serenida
+    brand         = Column(String(40), nullable=True)                            # görüntü adı
+    enabled       = Column(Boolean, default=True, nullable=False)                # per-store duraklat
+    last_sync_at  = Column(DateTime, nullable=True)     # son BAŞARILI push (UTC)
+    last_run_at   = Column(DateTime, nullable=True)     # son deneme
+    last_status   = Column(String(255), nullable=True)  # özet / hata
+    matched_count = Column(Integer, default=0, nullable=False)
+    pushed_count  = Column(Integer, default=0, nullable=False)
+    unmatched     = Column(Text, nullable=True)         # JSON {shopify_only, ims_only, ambiguous}
+    updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 def log_system_event(event_type: str, detail: str = None) -> None:
     """Bir sistem olayını (örn. 'app_start') kaydet.
 
