@@ -76,13 +76,19 @@ def _env(brand: str, suffix: str) -> str:
 
 
 def store_config(brand: str) -> Optional[dict]:
-    """{'store','token','location'} — üçü de doluysa; değilse None (o mağaza kapalı)."""
+    """{'store','client_id','client_secret','location'} — hepsi doluysa; yoksa None.
+
+    Yeni Shopify Dev Dashboard'da statik Admin API token'ı YOK; uygulama mağazaya
+    kurulduktan sonra Client ID + Client Secret ile client_credentials akışından
+    24 saatlik token alınır (bkz. _get_access_token)."""
     store = _env(brand, "STORE")
-    token = _env(brand, "TOKEN")
+    client_id = _env(brand, "CLIENT_ID")
+    client_secret = _env(brand, "CLIENT_SECRET")
     location = _env(brand, "LOCATION")
-    if not (store and token and location):
+    if not (store and client_id and client_secret and location):
         return None
-    return {"store": store, "token": token, "location": location, "brand": brand}
+    return {"store": store, "client_id": client_id, "client_secret": client_secret,
+            "location": location, "brand": brand}
 
 
 def is_configured(brand: str) -> bool:
@@ -144,11 +150,42 @@ def _state(db: Session, sk: str, brand: Optional[str] = None) -> ShopifySyncStat
     return st
 
 
+# ─── OAuth token (client_credentials) — Dev Dashboard uygulaması ─────────────
+# Yeni akış: statik token yok. Uygulama mağazaya KURULDUKTAN sonra Client ID +
+# Client Secret ile POST /admin/oauth/access_token → 24 saatlik access_token.
+# Süresi dolana dek modül-içi cache'lenir (5 dk emniyet payı).
+
+_TOKEN_CACHE: dict = {}   # store → (access_token, expiry_epoch)
+
+
+def _get_access_token(cfg: dict) -> str:
+    store = cfg["store"]
+    cached = _TOKEN_CACHE.get(store)
+    if cached and cached[1] > time.time() + 300:
+        return cached[0]
+    r = httpx.post(
+        f"https://{store}/admin/oauth/access_token",
+        data={"grant_type": "client_credentials",
+              "client_id": cfg["client_id"],
+              "client_secret": cfg["client_secret"]},
+        headers={"Accept": "application/json"},
+        timeout=20.0,
+    )
+    r.raise_for_status()
+    body = r.json()
+    token = body.get("access_token")
+    if not token:
+        raise ShopifyError(f"access_token alınamadı: {str(body)[:200]}")
+    _TOKEN_CACHE[store] = (token, time.time() + int(body.get("expires_in", 86399)))
+    return token
+
+
 # ─── GraphQL istemci ──────────────────────────────────────────────────────────
 
-def _client(store: str, token: str) -> httpx.Client:
+def _client(cfg: dict) -> httpx.Client:
+    token = _get_access_token(cfg)
     return httpx.Client(
-        base_url=f"https://{store}/admin/api/{_api_version()}",
+        base_url=f"https://{cfg['store']}/admin/api/{_api_version()}",
         headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
         timeout=20.0,
     )
@@ -196,7 +233,7 @@ def fetch_variants(brand: str) -> List[dict]:
     if not cfg:
         return []
     out: List[dict] = []
-    with _client(cfg["store"], cfg["token"]) as client:
+    with _client(cfg) as client:
         cursor = None
         while True:
             data = _graphql(client, _Q_VARIANTS, {"cursor": cursor})
@@ -226,7 +263,7 @@ def push_inventory(brand: str, pairs: List[Tuple[str, int]]) -> dict:
         return {"pushed": 0, "userErrors": []}
     loc = f"gid://shopify/Location/{cfg['location']}"
     pushed, errors = 0, []
-    with _client(cfg["store"], cfg["token"]) as client:
+    with _client(cfg) as client:
         for i in range(0, len(pairs), _PUSH_CHUNK):
             chunk = pairs[i:i + _PUSH_CHUNK]
             variables = {"input": {

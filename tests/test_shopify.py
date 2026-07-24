@@ -18,7 +18,8 @@ _H = {"Origin": "http://testserver"}
 
 def _env(monkeypatch, brand="MINERVA"):
     monkeypatch.setenv(f"SHOPIFY_{brand}_STORE", f"{brand.lower()}.myshopify.com")
-    monkeypatch.setenv(f"SHOPIFY_{brand}_TOKEN", "shpat_test")
+    monkeypatch.setenv(f"SHOPIFY_{brand}_CLIENT_ID", f"cid-{brand.lower()}")
+    monkeypatch.setenv(f"SHOPIFY_{brand}_CLIENT_SECRET", f"csec-{brand.lower()}")
     monkeypatch.setenv(f"SHOPIFY_{brand}_LOCATION", "111")
 
 
@@ -208,6 +209,31 @@ def test_user_errors_reported(authed_client, db_session, monkeypatch):
     d = authed_client.post("/api/shopify/sync", json={"brands": ["Minerva"]}, headers=_H).json()
     m = next(s for s in d["per_store"] if s["store"] == "minerva")
     assert m["userErrors"] and m["userErrors"][0]["message"] == "boom"
+
+
+def test_access_token_client_credentials(monkeypatch):
+    """Client ID+Secret → POST /admin/oauth/access_token → token cache'lenir."""
+    import httpx
+    calls = []
+
+    class _Resp:
+        def raise_for_status(self): pass
+        def json(self): return {"access_token": "shpat_live", "expires_in": 86399}
+
+    def fake_post(url, **kw):
+        calls.append((url, kw.get("data", {})))
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    S._TOKEN_CACHE.clear()
+    cfg = {"store": "x.myshopify.com", "client_id": "cid", "client_secret": "csec"}
+    assert S._get_access_token(cfg) == "shpat_live"
+    assert calls[0][0].endswith("/admin/oauth/access_token")
+    assert calls[0][1]["grant_type"] == "client_credentials"
+    # ikinci çağrı cache'ten gelir (yeni HTTP yok)
+    assert S._get_access_token(cfg) == "shpat_live"
+    assert len(calls) == 1
+    S._TOKEN_CACHE.clear()
 
 
 def test_global_enabled_toggle_pauses_job(authed_client, db_session, monkeypatch):
