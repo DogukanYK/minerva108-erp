@@ -669,7 +669,8 @@ def _process_order(db: Session, row, order: dict) -> dict:
                 row.step = "payment"
                 P.add_payment(row.parasut_invoice_id, order["total"],
                               date=order.get("order_date") or None,
-                              description=f"iyzico · Shopify #{order['order_number']}")
+                              description=f"iyzico · Shopify #{order['order_number']}",
+                              store_key=row.store_key)   # marka kendi iyzico hesabına
                 row.status = "paid"
                 db.commit()
             if row.status == "paid":

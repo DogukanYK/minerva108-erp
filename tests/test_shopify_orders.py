@@ -74,7 +74,9 @@ def _mock_parasut(monkeypatch, calls):
     monkeypatch.setattr(P, "find_or_create_contact", lambda o: (calls.append("contact") or 11))
     monkeypatch.setattr(P, "find_or_create_product", lambda c, n, v: (calls.append("product") or 22))
     monkeypatch.setattr(P, "create_invoice", lambda o, l, c: (calls.append("invoice") or 33))
-    monkeypatch.setattr(P, "add_payment", lambda i, a, date=None, description="": calls.append("payment"))
+    monkeypatch.setattr(P, "add_payment",
+                        lambda i, a, date=None, description="", store_key=None:
+                        calls.append(f"payment:{store_key}"))
     def _legalize(o, i):
         calls.append("legalize")
         if P.invoice_mode() != "official":       # gerçek davranış: draft → NO-OP
@@ -224,7 +226,8 @@ def test_parasut_draft_flow_no_legalize(client: TestClient, db_session, monkeypa
     _post(client, _payload())
     db_session.expire_all()
     row = db_session.query(ShopifyOrder).one()
-    assert calls == ["contact", "invoice", "payment", "legalize"]
+    # tahsilat siparişin geldiği mağazanın hesabına gider (marka bazlı iyzico)
+    assert calls == ["contact", "invoice", "payment:minerva", "legalize"]
     assert row.parasut_invoice_id == 33 and row.status == "paid"     # draft → legalized DEĞİL
 
 
@@ -417,4 +420,44 @@ def test_retry_job_noop_when_parasut_unconfigured(db_session, monkeypatch):
     db_session.expire_all()
     from database import ShopifyOrder
     assert db_session.query(ShopifyOrder).filter(ShopifyOrder.id == row.id).one().status == "stock_done"
+    assert calls == []
+
+
+# ─── Marka bazlı iyzico tahsilat hesabı ──────────────────────────────────────
+
+def test_account_id_per_store(monkeypatch):
+    """Her markanın kendi iyzico hesabı; yoksa genel hesaba düşer; o da yoksa None."""
+    for k in ("ACCOUNT_ID_MINERVA", "ACCOUNT_ID_EVANIRA", "ACCOUNT_ID_IYZICO"):
+        monkeypatch.delenv(f"PARASUT_{k}", raising=False)
+    assert P.account_id("minerva") is None                    # hiçbiri yok
+    monkeypatch.setenv("PARASUT_ACCOUNT_ID_IYZICO", "900")
+    assert P.account_id("minerva") == 900                     # genel fallback
+    monkeypatch.setenv("PARASUT_ACCOUNT_ID_MINERVA", "901")
+    monkeypatch.setenv("PARASUT_ACCOUNT_ID_EVANIRA", "902")
+    assert P.account_id("minerva") == 901                     # markaya özel kazanır
+    assert P.account_id("evanira") == 902
+    assert P.account_id("serenida") == 900                    # tanımsız marka → genel
+    assert P.account_id() == 900
+
+
+def test_payment_uses_store_account(db_session, monkeypatch):
+    """Tahsilat, siparişin geldiği MAĞAZANIN hesabına işlenir."""
+    _parasut_env(monkeypatch, mode="draft")
+    monkeypatch.setenv("PARASUT_ACCOUNT_ID_MINERVA", "901")
+    sent = {}
+    monkeypatch.setattr(P, "_api", lambda m, p, json=None, params=None:
+                        (sent.update({"path": p, "body": json}) or {"data": {"id": "1"}}))
+    P.add_payment(55, 120.0, date="2026-07-27", store_key="minerva")
+    assert sent["path"] == "/sales_invoices/55/payments"
+    assert sent["body"]["data"]["attributes"]["account_id"] == 901
+    assert sent["body"]["data"]["attributes"]["amount"] == 120.0
+
+
+def test_payment_skipped_when_no_account(monkeypatch):
+    """Hesap tanımsızsa tahsilat ATLANIR (fatura açık kalır), hata fırlatmaz."""
+    _parasut_env(monkeypatch, mode="draft")
+    monkeypatch.delenv("PARASUT_ACCOUNT_ID_IYZICO", raising=False)
+    calls = []
+    monkeypatch.setattr(P, "_api", lambda *a, **k: calls.append(1))
+    P.add_payment(55, 120.0, store_key="minerva")
     assert calls == []

@@ -59,11 +59,20 @@ def company_id() -> str:
     return _env("COMPANY_ID")
 
 
-def account_id() -> Optional[int]:
-    try:
-        return int(_env("ACCOUNT_ID_IYZICO"))
-    except (TypeError, ValueError):
-        return None
+def account_id(store_key: Optional[str] = None) -> Optional[int]:
+    """Tahsilatın işleneceği Paraşüt kasa/banka hesabı.
+
+    Her markanın KENDİ iyzico hesabı var → mağaza bazlı:
+        PARASUT_ACCOUNT_ID_MINERVA / _EVANIRA / _SERENIDA
+    Mağazaya özel tanım yoksa genel PARASUT_ACCOUNT_ID_IYZICO'ya düşer;
+    o da yoksa None (tahsilat kaydı atlanır, fatura açık kalır).
+    """
+    for key in ([f"ACCOUNT_ID_{store_key.upper()}"] if store_key else []) + ["ACCOUNT_ID_IYZICO"]:
+        try:
+            return int(_env(key))
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def default_vat() -> float:
@@ -261,11 +270,17 @@ def create_invoice(order: dict, lines: List[dict], contact_id: int) -> int:
 
 
 def add_payment(invoice_id: int, amount: float, date: Optional[str] = None,
-                description: str = "iyzico tahsilatı (Shopify)") -> None:
-    """Faturayı iyzico kasasına ödendi işler. ACCOUNT_ID yoksa sessizce atlar."""
-    acc = account_id()
+                description: str = "iyzico tahsilatı (Shopify)",
+                store_key: Optional[str] = None) -> None:
+    """Faturayı ilgili markanın iyzico hesabına ödendi işler.
+
+    Hesap `account_id(store_key)` ile çözülür (marka bazlı → genel fallback).
+    Hiç tanımlı değilse sessizce atlar — fatura açık kalır (muhasebeci kapatır).
+    """
+    acc = account_id(store_key)
     if not acc:
-        logger.warning("PARASUT_ACCOUNT_ID_IYZICO yok — tahsilat kaydı atlandı")
+        logger.warning("Paraşüt tahsilat hesabı tanımsız (%s) — tahsilat kaydı atlandı",
+                       store_key or "genel")
         return
     body = {"data": {"type": "payments", "attributes": {
         "account_id": acc,
