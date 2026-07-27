@@ -272,6 +272,33 @@ def notify_shopify_sync_failure(store: str, detail: str) -> None:
     })
 
 
+def notify_export_order_manual(order_no: str, country: str) -> None:
+    """Yurt dışı (ihracat) Shopify siparişi — otomatik fatura kesilmez, MANUEL."""
+    _emit("warning", "SHOPIFY-EXPORT",
+          f"İhracat siparişi (manuel fatura gerekli): #{order_no} · {country}",
+          order_no=order_no, country=country)
+    _send_push("managers", {
+        "title": "🌍 İhracat Siparişi — Manuel Fatura",
+        "body":  f"#{order_no} ({country}) otomatik faturalanmadı; elle kesilmeli.",
+        "tag":   f"shopify-export-{order_no}",
+        "url":   "/shopify-sync",
+        "requireInteraction": True,
+    })
+
+
+def notify_parasut_failure(order_no: str, detail: str) -> None:
+    """Paraşüt fatura otomasyonu hatası → yöneticilere (resmi belge kritik)."""
+    _emit("error", "PARASUT",
+          f"Fatura otomasyonu hatası: #{order_no} — {detail}", order_no=order_no)
+    _send_push("managers", {
+        "title": "🧾 Fatura Otomasyonu Hatası",
+        "body":  f"#{order_no}: {detail}",
+        "tag":   f"parasut-{order_no}",
+        "url":   "/shopify-sync",
+        "requireInteraction": True,
+    })
+
+
 def notify_new_distributor_order(order_no: str, company_name: str, total: float, currency: str) -> None:
     """Distribütör portaldan yeni sipariş verdi → yöneticilere onay bildirimi."""
     _emit("info", "DISTRIBUTOR-ORDER",

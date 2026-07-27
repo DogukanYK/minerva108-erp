@@ -1012,6 +1012,47 @@ class ShopifySyncState(Base):
     updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ShopifyOrder(Base):
+    """Shopify orders/paid webhook kaydı — idempotency + fatura durum makinesi.
+
+    Durumlar: received → stock_done → invoiced → paid → legalized
+    Uçlar: skipped_export (TR dışı — ihracat manuel) · failed (step+last_error ile;
+    retry job kaldığı ADIMDAN devam eder — stok ASLA ikinci kez düşmez).
+    UniqueConstraint(store_key, shopify_order_id) = webhook redelivery dedup anahtarı.
+    lines_json: yalnız gerekli alt küme (barcode/sku/title/qty/price/vat) — retry için.
+    """
+    __tablename__ = "shopify_orders"
+    __table_args__ = (UniqueConstraint("store_key", "shopify_order_id",
+                                       name="uq_shopify_orders_store_order"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    store_key = Column(String(20), nullable=False, index=True)     # minerva/evanira/serenida
+    shopify_order_id = Column(BigInteger, nullable=False)
+    order_number = Column(String(40), nullable=True)               # #1001 görünen no
+    status = Column(String(30), nullable=False, default="received", index=True)
+    step = Column(String(30), nullable=True)                       # stock/contact/invoice/payment/legalize
+    # Stok düşümü YAPILDI mı — stok commit'iyle BİRLİKTE yazılır. Retry'da tek
+    # güvenilir kaynak budur: hata sonrası rollback `step`'i geri sarabilir, bu
+    # bayrak sarmaz → stok asla ikinci kez düşmez (regresyon testi mevcut).
+    stock_applied = Column(Boolean, nullable=False, default=False)
+    total = Column(Float, nullable=True)
+    currency = Column(String(8), nullable=True)
+    country = Column(String(8), nullable=True)                     # billing/shipping country_code
+    customer_email = Column(String(150), nullable=True)
+    customer_name = Column(String(150), nullable=True)
+    vkn_tckn = Column(String(20), nullable=True)                   # varsa (B2B/TCKN)
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(String(500), nullable=True)
+    parasut_contact_id = Column(BigInteger, nullable=True)
+    parasut_invoice_id = Column(BigInteger, nullable=True)
+    parasut_doc_type = Column(String(20), nullable=True)           # e_archive | e_invoice
+    parasut_doc_id = Column(BigInteger, nullable=True)
+    trackable_job_id = Column(String(80), nullable=True)           # asenkron e-belge takibi
+    lines_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 def log_system_event(event_type: str, detail: str = None) -> None:
     """Bir sistem olayını (örn. 'app_start') kaydet.
 

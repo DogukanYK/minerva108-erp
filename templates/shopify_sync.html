@@ -181,6 +181,20 @@
         </div>
       </div>
 
+      <!-- Siparişler & Faturalar (Faz 2) -->
+      <div class="card2">
+        <div class="card2-head"><i class="bi bi-receipt"></i><h2>Siparişler &amp; Faturalar</h2>
+          <span id="shInvoiceMode" class="muted" style="margin-left:auto;"></span>
+          <button type="button" class="btn-o" onclick="shSetupWebhooks()"><i class="bi bi-link-45deg"></i> Webhook Kurulumu</button>
+        </div>
+        <div class="card2-body" style="overflow-x:auto;">
+          <table>
+            <thead><tr><th>Sipariş</th><th>Mağaza</th><th>Tutar</th><th>Durum</th><th>Paraşüt</th><th>Hata</th><th>Tarih</th><th></th></tr></thead>
+            <tbody id="shOrdersBody"><tr><td colspan="8" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- Sonuç / eşleşmeyen raporu -->
       <div class="card2" id="shResultCard" style="display:none;">
         <div class="card2-head"><i class="bi bi-clipboard-data"></i><h2 id="shResultTitle">Senkron Sonucu</h2></div>
@@ -296,12 +310,65 @@
       }).join('');
     }
 
+    /* ── Siparişler & Faturalar (Faz 2) ── */
+    const ORDER_LABELS = {
+      received:'alındı', stock_done:'stok düştü', invoiced:'fatura kesildi',
+      paid:'tahsil edildi', legalized:'resmileşti',
+      skipped_export:'ihracat — manuel', failed:'HATA'
+    };
+    function orderBadge(s){
+      const cls = (s==='legalized'||s==='paid') ? 'pill-on'
+                : (s==='failed') ? 'pill-off' : 'pill-unconf';
+      return `<span class="pill ${cls}">${esc(ORDER_LABELS[s]||s)}</span>`;
+    }
+    async function shLoadOrders(){
+      const b = document.getElementById('shOrdersBody');
+      try{
+        const d = await (await fetch('/api/shopify/orders')).json();
+        document.getElementById('shInvoiceMode').textContent =
+          d.parasut_configured ? `Paraşüt: ${d.invoice_mode==='official'?'RESMİ belge':'taslak (resmileştirme kapalı)'}`
+                               : 'Paraşüt yapılandırılmamış';
+        const rows = d.orders || [];
+        if(!rows.length){ b.innerHTML='<tr><td colspan="8" class="muted" style="padding:1rem;">Henüz sipariş yok.</td></tr>'; return; }
+        b.innerHTML = rows.map(o=>`<tr>
+          <td><b>${esc(o.order_number||'—')}</b></td>
+          <td>${esc(o.store_key)}</td>
+          <td>${o.total!=null?esc(String(o.total)):'—'} ${esc(o.currency||'')}</td>
+          <td>${orderBadge(o.status)}${o.step?` <span class="muted" style="font-size:0.72rem;">${esc(o.step)}</span>`:''}</td>
+          <td class="muted">${o.parasut_invoice_id?esc(String(o.parasut_invoice_id)):'—'}${o.parasut_doc_type?` · ${esc(o.parasut_doc_type)}`:''}</td>
+          <td class="muted" style="max-width:240px;">${esc((o.last_error||'').slice(0,120))}</td>
+          <td class="muted">${esc(o.created_at||'')}</td>
+          <td>${o.status==='failed'?`<button class="btn-o" style="padding:0.3rem 0.6rem;" onclick="shRetryOrder(${o.id})"><i class="bi bi-arrow-clockwise"></i></button>`:''}</td>
+        </tr>`).join('');
+      }catch{ b.innerHTML='<tr><td colspan="8" class="muted" style="padding:1rem;">Yüklenemedi.</td></tr>'; }
+    }
+    async function shRetryOrder(id){
+      try{
+        const r = await fetch(`/api/shopify/orders/${id}/retry`,{method:'POST',headers:{'Content-Type':'application/json'}});
+        const d = await r.json().catch(()=>({}));
+        if(!r.ok){ showToast(d.detail||'Yeniden denenemedi.'); return; }
+        showToast(`Yeniden denendi — durum: ${esc(d.status||'?')}`,'success');
+        shLoadOrders();
+      }catch{ showToast('Sunucuya bağlanılamadı.'); }
+    }
+    async function shSetupWebhooks(){
+      if(!window.CAN_ADMIN){ showToast('Yetkiniz yok.'); return; }
+      try{
+        const r = await fetch('/api/shopify/webhooks/setup',{method:'POST',headers:{'Content-Type':'application/json'}});
+        const d = await r.json().catch(()=>({}));
+        if(!r.ok){ showToast(d.detail||'Kurulum başarısız.'); return; }
+        const ok = (d.results||[]).filter(x=>x.configured).map(x=>`${x.store}: ${x.error?('HATA '+x.error.slice(0,40)):(x.created?'kuruldu':'zaten kurulu')}`).join(' · ');
+        showToast(ok||'Yapılandırılmış mağaza yok.', 'success');
+      }catch{ showToast('Sunucuya bağlanılamadı.'); }
+    }
+
     document.getElementById('logoutBtn').addEventListener('click', async function(){
       try{ await fetch('/api/logout',{method:'POST',headers:{'X-Requested-With':'1'}}); }catch(e){}
       window.location.href='/login';
     });
 
     shLoad();
+    shLoadOrders();
   </script>
 </body>
 </html>

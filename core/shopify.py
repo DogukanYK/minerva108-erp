@@ -424,3 +424,336 @@ def status_summary(db: Session) -> dict:
         "buffer": get_buffer(db),
         "api_version": _api_version(),
     }
+
+
+# ─── Faz 2: orders/paid webhook → stok düşümü + Paraşüt fatura ───────────────
+
+def brand_for_store_key(sk: str) -> Optional[str]:
+    """'minerva' → 'Minerva' (bilinmeyen → None)."""
+    for b in _BRANDS:
+        if store_key(b) == sk:
+            return b
+    return None
+
+
+def webhook_secret(brand: str) -> str:
+    """Webhook HMAC anahtarı: SHOPIFY_<MARKA>_WEBHOOK_SECRET, yoksa client_secret
+    (dev-dashboard app'lerinde client_secret webhook'ları imzalar)."""
+    explicit = _env(brand, "WEBHOOK_SECRET")
+    if explicit:
+        return explicit
+    cfg = store_config(brand)
+    return cfg["client_secret"] if cfg else ""
+
+
+def _order_summary(store_key_: str, payload: dict) -> dict:
+    """Shopify orders/paid payload'ından gerekli alt küme (retry/fatura için)."""
+    billing = payload.get("billing_address") or payload.get("shipping_address") or {}
+    customer = payload.get("customer") or {}
+    name = " ".join(x for x in [billing.get("first_name") or customer.get("first_name"),
+                                billing.get("last_name") or customer.get("last_name")] if x).strip()
+    lines = []
+    for li in payload.get("line_items") or []:
+        qty = float(li.get("quantity") or 0)
+        price = float(li.get("price") or 0)               # birim, KDV DAHİL (TR mağaza)
+        vat = None
+        for tl in li.get("tax_lines") or []:
+            try:
+                vat = round(float(tl.get("rate")) * 100, 2)
+                break
+            except (TypeError, ValueError):
+                pass
+        disc = 0.0
+        for da in li.get("discount_allocations") or []:
+            try:
+                disc += float(da.get("amount") or 0)
+            except (TypeError, ValueError):
+                pass
+        lines.append({"barcode": (li.get("barcode") or "").strip() or None,
+                      "sku": (li.get("sku") or "").strip() or None,
+                      "title": li.get("title") or "",
+                      "quantity": qty, "unit_price_incl": price,
+                      "vat_rate": vat, "discount_amount": round(disc, 4)})
+    shipping = 0.0
+    for sl in payload.get("shipping_lines") or []:
+        try:
+            shipping += float(sl.get("price") or 0)
+        except (TypeError, ValueError):
+            pass
+    company = (billing.get("company") or "").strip()
+    return {
+        "store_key": store_key_,
+        "store_label": brand_for_store_key(store_key_) or store_key_,
+        "shopify_order_id": int(payload.get("id") or 0),
+        # Shopify 'name' zaten '#1001' biçiminde → baştaki '#' tekilleştirilir
+        "order_number": str(payload.get("name") or payload.get("order_number") or "").lstrip("#"),
+        "total": float(payload.get("total_price") or 0),
+        "currency": payload.get("currency") or "TRY",
+        "country": ((billing.get("country_code") or "") or "").upper(),
+        "customer_email": (payload.get("email") or customer.get("email") or "").strip(),
+        "customer_name": name or company or "Shopify Müşterisi",
+        "vkn_tckn": "",                                  # Shopify standart alanı yok — B2C varsayımı
+        "address": ", ".join(x for x in [billing.get("address1"), billing.get("address2")] if x),
+        "city": billing.get("city") or billing.get("province") or "",
+        "district": billing.get("city") or "",
+        "phone": billing.get("phone") or payload.get("phone") or "",
+        "order_date": (payload.get("created_at") or "")[:10],
+        "shipping_amount": round(shipping, 4),
+        "lines": lines,
+    }
+
+
+def _decrement_stock(db: Session, order: dict) -> Tuple[int, list]:
+    """Kalemleri barkod→(sku fallback)→Item eşle, b2b kalıbıyla düş.
+
+    Belirsiz (≥2 aktif eşleşme) / eşleşmeyen kalem ATLANIR + rapor edilir (fatura
+    yine kesilir — ürün satıldı). Negatife DÜŞEBİLİR (gerçek: satış oldu; 5-dk
+    push Shopify'a zaten max(0,floor) yazar). Döner: (düşülen kalem, sorunlar[]).
+    """
+    from database import Transaction
+    issues, plan = [], []
+    for ln in order["lines"]:
+        qty = float(ln["quantity"] or 0)
+        if qty <= 0:
+            continue
+        item = None
+        bc = (ln.get("barcode") or "").strip()
+        if bc:
+            matches = (db.query(Item)
+                       .filter(Item.barcode == bc, Item.is_active == True,   # noqa: E712
+                               Item.domain == "cosmetics",
+                               Item.category == "Bitmiş Ürün")
+                       .with_for_update().all())
+            if len(matches) > 1:
+                issues.append(f"belirsiz barkod {bc} (ids {[m.id for m in matches]}) — kalem atlandı")
+                continue
+            item = matches[0] if matches else None
+        if item is None and (ln.get("sku") or "").strip():
+            item = (db.query(Item)
+                    .filter(Item.sku == ln["sku"].strip(), Item.is_active == True,  # noqa: E712
+                            Item.domain == "cosmetics", Item.category == "Bitmiş Ürün")
+                    .with_for_update().first())
+        if item is None:
+            issues.append(f"IMS'te eşleşmedi: {ln.get('barcode') or ln.get('sku') or ln.get('title')} — kalem atlandı")
+            continue
+        plan.append((item, qty))
+
+    for item, qty in plan:
+        item.current_stock = round((item.current_stock or 0) - qty, 6)
+        db.add(Transaction(
+            item_id=item.id,
+            transaction_type="Output",
+            quantity=qty,
+            notes=f"Shopify #{order['order_number']} · {order['store_label']}",
+            performed_by="Shopify",
+        ))
+    return len(plan), issues
+
+
+def handle_order_paid(store_key_: str, payload: dict) -> Optional[dict]:
+    """orders/paid webhook işleyicisi — BackgroundTask'ta koşar, kendi session'ı.
+
+    Adım bazlı durum makinesi: received → stock_done → invoiced → paid → legalized.
+    STOK TEK KEZ düşer; Paraşüt hatasında status=failed + step, retry job kaldığı
+    ADIMDAN devam eder. Uçlar: skipped_export (TR dışı), failed.
+    """
+    import json as _json
+
+    from sqlalchemy.exc import IntegrityError
+
+    from database import SessionLocal, ShopifyOrder
+    from core import parasut as P
+    from core.audit import log_admin_event
+
+    db = SessionLocal()
+    try:
+        order = _order_summary(store_key_, payload)
+        if not order["shopify_order_id"]:
+            logger.warning("shopify webhook: order id yok, atlandı")
+            return None
+
+        # ── 1) Dedup (unique store_key+order_id) ──
+        row = ShopifyOrder(store_key=store_key_,
+                           shopify_order_id=order["shopify_order_id"],
+                           order_number=order["order_number"],
+                           status="received", total=order["total"],
+                           currency=order["currency"], country=order["country"],
+                           customer_email=order["customer_email"],
+                           customer_name=order["customer_name"],
+                           lines_json=_json.dumps(
+                               {"lines": order["lines"],
+                                "shipping_amount": order["shipping_amount"],
+                                "order_date": order["order_date"],
+                                "address": order["address"], "city": order["city"],
+                                "phone": order["phone"]}, ensure_ascii=False))
+        db.add(row)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            row = (db.query(ShopifyOrder)
+                   .filter(ShopifyOrder.store_key == store_key_,
+                           ShopifyOrder.shopify_order_id == order["shopify_order_id"])
+                   .with_for_update().first())
+            if not row or row.status not in ("failed",):
+                logger.info("shopify webhook dedup: %s #%s (%s) — atlandı",
+                            store_key_, order["order_number"],
+                            row.status if row else "?")
+                return {"dedup": True}
+        row.attempts = (row.attempts or 0) + 1
+        db.commit()
+
+        return _process_order(db, row, order)
+    except Exception:
+        logger.exception("handle_order_paid failed (%s)", store_key_)
+        return None
+    finally:
+        db.close()
+
+
+def _process_order(db: Session, row, order: dict) -> dict:
+    """Durum makinesini kaldığı yerden yürütür (webhook + retry ortak yolu)."""
+    from core import parasut as P
+    from core.audit import log_admin_event
+    from core.notifications import (notify_export_order_manual, notify_low_stock,
+                                    notify_parasut_failure)
+
+    lows = []
+    try:
+        # ── 2) Ülke ──
+        if row.status == "received":
+            if (order.get("country") or "") != "TR":
+                row.status = "skipped_export"
+                db.commit()
+                try:
+                    notify_export_order_manual(order["order_number"], order.get("country") or "?")
+                except Exception:
+                    logger.exception("export notify failed")
+                return {"status": row.status}
+
+            # ── 3) Stok (yalnız bir kez) ──
+            row.step = "stock"
+            n, issues = _decrement_stock(db, order)
+            if issues:
+                row.last_error = ("; ".join(issues))[:500]
+            row.status = "stock_done"
+            row.stock_applied = True          # stokla BİRLİKTE commit — retry'ın tek doğrusu
+            db.commit()
+            for it_name, cur, mn, unit in _low_stock_after(db, order):
+                lows.append((it_name, cur, mn, unit))
+            for args in lows:
+                try:
+                    notify_low_stock(*args)
+                except Exception:
+                    logger.exception("low stock notify failed")
+            if issues:
+                try:
+                    notify_parasut_failure(order["order_number"],
+                                           "Stok eşleşme uyarısı: " + "; ".join(issues)[:200])
+                except Exception:
+                    pass
+
+        # ── 4) Paraşüt ──
+        if P.is_configured() and _parasut_enabled(db):
+            if row.status == "stock_done":
+                row.step = "contact"
+                order["vkn_tckn"] = row.vkn_tckn or order.get("vkn_tckn") or ""
+                cid = P.find_or_create_contact(order)
+                row.parasut_contact_id = cid
+                row.step = "invoice"
+                inv = P.create_invoice(order, order["lines"], cid)
+                row.parasut_invoice_id = inv
+                row.status = "invoiced"
+                db.commit()
+            if row.status == "invoiced":
+                row.step = "payment"
+                P.add_payment(row.parasut_invoice_id, order["total"],
+                              date=order.get("order_date") or None,
+                              description=f"iyzico · Shopify #{order['order_number']}")
+                row.status = "paid"
+                db.commit()
+            if row.status == "paid":
+                row.step = "legalize"
+                res = P.legalize(order, row.parasut_invoice_id)
+                if res["mode"] == "official":
+                    row.parasut_doc_type = res["doc_type"]
+                    row.trackable_job_id = res["job_id"]
+                    if res["job_status"] == "done":
+                        row.status = "legalized"
+                # draft modda paid'de kalır (bilinçli)
+                db.commit()
+
+        log_admin_event(db, None, actor=None, action="shopify.order_paid",
+                        target_type="shopify_order", target_id=row.id,
+                        target_name=order["order_number"],
+                        details={"store": row.store_key, "total": order["total"],
+                                 "status": row.status})
+        return {"status": row.status}
+    except Exception as exc:
+        db.rollback()
+        row.status = "failed"
+        row.last_error = str(exc)[:500]
+        db.commit()
+        logger.exception("order processing failed: %s", order.get("order_number"))
+        try:
+            notify_parasut_failure(order["order_number"], str(exc)[:200])
+        except Exception:
+            pass
+        return {"status": "failed", "error": str(exc)[:200]}
+
+
+def _low_stock_after(db: Session, order: dict):
+    """Commit sonrası düşen kalemlerin kritik stok kontrolü (primitif döner)."""
+    out = []
+    bcs = [ln.get("barcode") for ln in order["lines"] if ln.get("barcode")]
+    if not bcs:
+        return out
+    rows = (db.query(Item)
+            .filter(Item.barcode.in_(bcs), Item.is_active == True,   # noqa: E712
+                    Item.domain == "cosmetics").all())
+    for it in rows:
+        if (it.min_stock_level or 0) > 0 and (it.current_stock or 0) <= it.min_stock_level:
+            out.append((it.name, float(it.current_stock or 0),
+                        float(it.min_stock_level), it.unit or ""))
+    return out
+
+
+def _parasut_enabled(db: Session) -> bool:
+    return (_get_setting(db, "parasut.enabled") or "true").lower() != "false"
+
+
+def retry_order(db: Session, row) -> dict:
+    """failed siparişi kaldığı adımdan yeniden dener (stok TEKRAR DÜŞMEZ)."""
+    import json as _json
+    try:
+        saved = _json.loads(row.lines_json or "{}")
+    except (TypeError, ValueError):
+        saved = {}
+    order = {
+        "store_key": row.store_key,
+        "store_label": brand_for_store_key(row.store_key) or row.store_key,
+        "shopify_order_id": row.shopify_order_id,
+        "order_number": row.order_number or "",
+        "total": row.total or 0.0, "currency": row.currency or "TRY",
+        "country": row.country or "", "customer_email": row.customer_email or "",
+        "customer_name": row.customer_name or "", "vkn_tckn": row.vkn_tckn or "",
+        "address": saved.get("address") or "", "city": saved.get("city") or "",
+        "district": saved.get("city") or "", "phone": saved.get("phone") or "",
+        "order_date": saved.get("order_date") or "",
+        "shipping_amount": saved.get("shipping_amount") or 0.0,
+        "lines": saved.get("lines") or [],
+    }
+    # failed → kaldığı ADIMA geri sar. Stok için TEK doğru kaynak `stock_applied`
+    # bayrağıdır (step, hata sonrası rollback'te geri sarabilir — yaşandı/testli).
+    if row.status == "failed":
+        if row.parasut_doc_type:
+            row.status = "paid"               # fatura+tahsilat var, resmileştirme kaldı
+        elif row.parasut_invoice_id:
+            row.status = "invoiced"           # fatura var, tahsilat kaldı
+        elif row.stock_applied:
+            row.status = "stock_done"         # stok DÜŞTÜ — asla tekrar düşürme
+        else:
+            row.status = "received"           # stok hiç düşmedi
+        row.attempts = (row.attempts or 0) + 1
+        db.commit()
+    return _process_order(db, row, order)

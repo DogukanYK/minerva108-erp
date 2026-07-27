@@ -190,6 +190,36 @@ def shopify_stock_sync() -> None:
         db.close()
 
 
+def parasut_invoice_retry() -> None:
+    """
+    Periyodik job (10 dk): fatura adımında TAKILAN Shopify siparişlerini kaldığı
+    ADIMDAN yeniden dener (stok ASLA ikinci kez düşmez — durum makinesi korur).
+    5 denemeden sonra bırakılır (kalıcı hata; panelden elle denenebilir).
+    Ayrıca resmileştirmede asenkron bekleyen (trackable_job_id) kayıtları kontrol eder.
+    """
+    from core import parasut as P
+    if not P.is_configured():
+        return
+    db = SessionLocal()
+    try:
+        from database import ShopifyOrder
+        from core import shopify as S
+        rows = (db.query(ShopifyOrder)
+                .filter(ShopifyOrder.status == "failed", ShopifyOrder.attempts < 5)
+                .order_by(ShopifyOrder.id.asc()).limit(20).all())
+        for row in rows:
+            try:
+                S.retry_order(db, row)
+            except Exception:
+                logger.exception("parasut retry failed for order %s", row.order_number)
+        if rows:
+            logger.info("parasut_invoice_retry: %s sipariş denendi", len(rows))
+    except Exception:
+        logger.exception("parasut_invoice_retry failed")
+    finally:
+        db.close()
+
+
 def kommo_nightly_full_sync() -> None:
     """
     Gecelik job (03:00): Kommo yapılandırılmışsa TAM içe aktarma çalıştırır —
@@ -308,6 +338,20 @@ def start_scheduler() -> None:
             )
     except Exception:
         logger.exception("shopify sync job kaydı atlandı")
+
+    try:
+        from core import parasut as _P
+        if _P.is_configured():
+            scheduler.add_job(
+                parasut_invoice_retry,
+                CronTrigger(minute="*/10"),       # her 10 dk — takılan faturaları dene
+                id="parasut_invoice_retry",
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+            )
+    except Exception:
+        logger.exception("parasut retry job kaydı atlandı")
 
     scheduler.add_job(
         monthly_stock_snapshot,

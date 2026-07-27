@@ -153,6 +153,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # secret'lı path + (handler'da) hmac kontrolü korur.  CSRF'ten muaf.
         if request.url.path.startswith("/api/crm/integrations/kommo/webhook/"):
             return await call_next(request)
+        # Shopify orders/paid webhook'u da dış servisten gelir (Origin yok);
+        # HMAC (X-Shopify-Hmac-Sha256) handler'da ham gövde üzerinden doğrulanır.
+        if request.url.path.startswith("/api/shopify/webhook/"):
+            return await call_next(request)
         # Cookie tabanlı auth değilse (örn token-only API çağrısı) muaf —
         # bizde access_token cookie var, dolayısıyla saldırı yüzeyi cookie.
         if "access_token" not in request.cookies:
