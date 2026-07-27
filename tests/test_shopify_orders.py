@@ -304,3 +304,117 @@ def test_orders_list_ok_for_admin(authed_client: TestClient, db_session, monkeyp
     d = authed_client.get("/api/shopify/orders").json()
     assert d["orders"] and d["orders"][0]["order_number"] == "1001"   # '#' tekilleştirilir
     assert d["invoice_mode"] in ("draft", "official")
+
+
+# ─── Retry job: yarım kalmış siparişleri toplama (sessiz boşluk kapatma) ─────
+
+def _stuck_order(db, status="stock_done", age_min=60, attempts=0, invoice_id=None):
+    """Belirtilen durumda, `age_min` dakika ÖNCE güncellenmiş bir sipariş kaydı."""
+    from datetime import datetime, timedelta
+    from database import ShopifyOrder
+    import json as _json
+    row = ShopifyOrder(
+        store_key="minerva", shopify_order_id=7001, order_number="7001",
+        status=status, stock_applied=True, attempts=attempts, total=120.0,
+        currency="TRY", country="TR", customer_email="a@b.com",
+        customer_name="Test", parasut_invoice_id=invoice_id,
+        lines_json=_json.dumps({"lines": [{"barcode": "BC-1", "sku": "", "title": "Krem",
+                                           "quantity": 2, "unit_price_incl": 60.0,
+                                           "vat_rate": 20, "discount_amount": 0}],
+                                "shipping_amount": 0, "order_date": "2026-07-27"}))
+    db.add(row); db.commit()
+    old = datetime.utcnow() - timedelta(minutes=age_min)
+    db.query(ShopifyOrder).filter(ShopifyOrder.id == row.id).update({"updated_at": old})
+    db.commit(); db.refresh(row)
+    return row
+
+
+def test_retry_job_picks_up_stuck_stock_done(db_session, monkeypatch):
+    """Paraşüt kapalıyken gelip stock_done'da bekleyen sipariş, creds gelince
+    kendiliğinden faturalanır (retry sadece 'failed'e bakmıyor)."""
+    from core import scheduler as sch
+    _parasut_env(monkeypatch, mode="draft")
+    row = _stuck_order(db_session, status="stock_done", age_min=60)
+    calls = []
+    _mock_parasut(monkeypatch, calls)
+    monkeypatch.setattr(sch, "SessionLocal", lambda: db_session)
+    sch.parasut_invoice_retry()
+    db_session.expire_all()
+    from database import ShopifyOrder
+    r = db_session.query(ShopifyOrder).filter(ShopifyOrder.id == row.id).one()
+    assert r.status == "paid" and r.parasut_invoice_id == 33
+    assert "invoice" in calls
+
+
+def test_retry_job_skips_fresh_orders(db_session, monkeypatch):
+    """15 dk'dan yeni kayda DOKUNMAZ — işlenmekte olan webhook'la yarışmasın."""
+    from core import scheduler as sch
+    _parasut_env(monkeypatch, mode="draft")
+    row = _stuck_order(db_session, status="stock_done", age_min=2)     # taze
+    calls = []
+    _mock_parasut(monkeypatch, calls)
+    monkeypatch.setattr(sch, "SessionLocal", lambda: db_session)
+    sch.parasut_invoice_retry()
+    db_session.expire_all()
+    from database import ShopifyOrder
+    assert db_session.query(ShopifyOrder).filter(ShopifyOrder.id == row.id).one().status == "stock_done"
+    assert calls == []
+
+
+def test_retry_job_draft_mode_leaves_paid_alone(db_session, monkeypatch):
+    """DRAFT modda 'paid' uç durumdur — sonsuz yeniden deneme olmamalı."""
+    from core import scheduler as sch
+    _parasut_env(monkeypatch, mode="draft")
+    row = _stuck_order(db_session, status="paid", age_min=60, invoice_id=33)
+    calls = []
+    _mock_parasut(monkeypatch, calls)
+    monkeypatch.setattr(sch, "SessionLocal", lambda: db_session)
+    sch.parasut_invoice_retry()
+    db_session.expire_all()
+    from database import ShopifyOrder
+    r = db_session.query(ShopifyOrder).filter(ShopifyOrder.id == row.id).one()
+    assert r.attempts == 0 and calls == []          # hiç dokunulmadı
+
+
+def test_retry_job_official_mode_finishes_paid(db_session, monkeypatch):
+    """OFFICIAL modda 'paid' yarım kalmıştır → resmileştirme tamamlanır."""
+    from core import scheduler as sch
+    _parasut_env(monkeypatch, mode="official")
+    row = _stuck_order(db_session, status="paid", age_min=60, invoice_id=33)
+    calls = []
+    _mock_parasut(monkeypatch, calls)
+    monkeypatch.setattr(sch, "SessionLocal", lambda: db_session)
+    sch.parasut_invoice_retry()
+    db_session.expire_all()
+    from database import ShopifyOrder
+    r = db_session.query(ShopifyOrder).filter(ShopifyOrder.id == row.id).one()
+    assert r.status == "legalized" and "legalize" in calls
+
+
+def test_retry_job_respects_attempt_limit(db_session, monkeypatch):
+    """5 denemeyi aşan kayıt artık toplanmaz (kalıcı hata — elle denenir)."""
+    from core import scheduler as sch
+    _parasut_env(monkeypatch, mode="draft")
+    row = _stuck_order(db_session, status="failed", age_min=60, attempts=5)
+    calls = []
+    _mock_parasut(monkeypatch, calls)
+    monkeypatch.setattr(sch, "SessionLocal", lambda: db_session)
+    sch.parasut_invoice_retry()
+    db_session.expire_all()
+    assert calls == []
+
+
+def test_retry_job_noop_when_parasut_unconfigured(db_session, monkeypatch):
+    """Paraşüt yapılandırılmamışken job hiçbir şey yapmaz (dormant)."""
+    from core import scheduler as sch
+    for k in ("CLIENT_ID", "CLIENT_SECRET", "COMPANY_ID", "EMAIL", "PASSWORD"):
+        monkeypatch.delenv(f"PARASUT_{k}", raising=False)
+    row = _stuck_order(db_session, status="stock_done", age_min=60)
+    calls = []
+    _mock_parasut(monkeypatch, calls)
+    monkeypatch.setattr(sch, "SessionLocal", lambda: db_session)
+    sch.parasut_invoice_retry()
+    db_session.expire_all()
+    from database import ShopifyOrder
+    assert db_session.query(ShopifyOrder).filter(ShopifyOrder.id == row.id).one().status == "stock_done"
+    assert calls == []

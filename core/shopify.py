@@ -754,6 +754,8 @@ def retry_order(db: Session, row) -> dict:
             row.status = "stock_done"         # stok DÜŞTÜ — asla tekrar düşürme
         else:
             row.status = "received"           # stok hiç düşmedi
-        row.attempts = (row.attempts or 0) + 1
-        db.commit()
+    # Her deneme sayılır → 'attempts < 5' limiti tüm durumlar için işler
+    # (yarım kalmış stock_done/invoiced kayıtları da sonsuza dek denenmez).
+    row.attempts = (row.attempts or 0) + 1
+    db.commit()
     return _process_order(db, row, order)

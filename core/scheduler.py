@@ -190,13 +190,35 @@ def shopify_stock_sync() -> None:
         db.close()
 
 
+#: Faturası tamamlanmamış (yarım kalmış) durumlar — retry bunları toplar.
+#  'legalized' ve 'skipped_export' uç durumdur; 'received' stok adımını bekler
+#  (webhook'un kendi akışı hallediyor, retry stoğa hiç dokunmaz).
+#  DRAFT modda 'paid' de UÇ durumdur (resmileştirme yapılmıyor) — yoksa her
+#  ödenmiş sipariş sonsuza dek yeniden denenirdi.
+_PARASUT_PENDING_BASE = ("failed", "stock_done", "invoiced")
+_PARASUT_MIN_AGE_MIN = 15      # taze webhook'la yarışmamak için yaş eşiği
+
+
+def _parasut_pending_states() -> tuple:
+    from core import parasut as P
+    return _PARASUT_PENDING_BASE + (("paid",) if P.invoice_mode() == "official" else ())
+
+
 def parasut_invoice_retry() -> None:
     """
-    Periyodik job (10 dk): fatura adımında TAKILAN Shopify siparişlerini kaldığı
-    ADIMDAN yeniden dener (stok ASLA ikinci kez düşmez — durum makinesi korur).
-    5 denemeden sonra bırakılır (kalıcı hata; panelden elle denenebilir).
-    Ayrıca resmileştirmede asenkron bekleyen (trackable_job_id) kayıtları kontrol eder.
+    Periyodik job (10 dk): faturası YARIM KALMIŞ Shopify siparişlerini kaldığı
+    ADIMDAN tamamlar (stok ASLA ikinci kez düşmez — `stock_applied` bayrağı korur).
+
+    İki senaryoyu birden kapatır:
+      • hata almış (failed) siparişler → yeniden dener
+      • Paraşüt kapalı/yapılandırılmamışken gelip `stock_done`da bekleyen
+        siparişler → creds girilince kendiliğinden faturalanır (sessiz boşluk yok)
+
+    15 dakikadan yeni kayıtlara DOKUNMAZ (o an işlenmekte olan webhook'la yarışıp
+    çift fatura kesmesin diye). 5 denemeden sonra bırakılır — panelden elle denenir.
     """
+    from datetime import datetime as _dt, timedelta as _td
+
     from core import parasut as P
     if not P.is_configured():
         return
@@ -204,16 +226,21 @@ def parasut_invoice_retry() -> None:
     try:
         from database import ShopifyOrder
         from core import shopify as S
+        cutoff = _dt.utcnow() - _td(minutes=_PARASUT_MIN_AGE_MIN)
         rows = (db.query(ShopifyOrder)
-                .filter(ShopifyOrder.status == "failed", ShopifyOrder.attempts < 5)
+                .filter(ShopifyOrder.status.in_(_parasut_pending_states()),
+                        ShopifyOrder.attempts < 5,
+                        ShopifyOrder.updated_at < cutoff)
                 .order_by(ShopifyOrder.id.asc()).limit(20).all())
+        done = 0
         for row in rows:
             try:
                 S.retry_order(db, row)
+                done += 1
             except Exception:
                 logger.exception("parasut retry failed for order %s", row.order_number)
         if rows:
-            logger.info("parasut_invoice_retry: %s sipariş denendi", len(rows))
+            logger.info("parasut_invoice_retry: %s/%s sipariş işlendi", done, len(rows))
     except Exception:
         logger.exception("parasut_invoice_retry failed")
     finally:
