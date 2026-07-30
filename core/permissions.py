@@ -102,6 +102,10 @@ PERMISSION_CATEGORIES = {
     # Distribütör sipariş portalı
     "portal":        ["view", "order"],                   # distribütör tarafı (self-servis sipariş)
     "distributors":  ["view", "create", "edit", "prices"],  # personel tarafı (hesap + fiyat yönetimi)
+    # PDKS — personel devam takibi (cross-cutting).  check = kendi giriş/çıkışı;
+    # view_own = kendi puantajı; view_all = tüm personelin günü/izinleri;
+    # manage = personel+program+izin+manuel düzeltme; report = aylık puantaj.
+    "pdks":          ["check", "view_own", "view_all", "manage", "report"],
 }
 
 # Default permission set per role — used when a user's `permissions` JSON is null.
@@ -122,6 +126,7 @@ _DEFAULT_PERMISSIONS = {
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": True, "backup": False},
         "portal":        {"view": False, "order": False},
         "distributors":  {"view": True,  "create": True,  "edit": True,  "prices": True},
+        "pdks":          {"check": True, "view_own": True, "view_all": True, "manage": True, "report": True},
     },
     "LabLead": {
         "items":      {"view": True,  "create": True,  "edit": True,  "delete": True,  "import": True},
@@ -134,6 +139,7 @@ _DEFAULT_PERMISSIONS = {
         "crm":        {"view": False, "create": False, "edit": False, "delete": False},
         "reports":    {"view": True},
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
+        "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False},
     },
     "LabTech": {
         "items":      {"view": True,  "create": True,  "edit": False, "delete": False, "import": False},
@@ -146,6 +152,7 @@ _DEFAULT_PERMISSIONS = {
         "crm":        {"view": False, "create": False, "edit": False, "delete": False},
         "reports":    {"view": True},
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
+        "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False},
     },
     "Staff": {
         # Read-only baseline
@@ -159,6 +166,7 @@ _DEFAULT_PERMISSIONS = {
         "crm":        {"view": False, "create": False, "edit": False, "delete": False},
         "reports":    {"view": True},
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
+        "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False},
     },
     "Distributor": {
         # Dışa dönük distribütör — YALNIZ sipariş portalı, ERP'ye hiçbir erişim yok.
@@ -174,6 +182,7 @@ _DEFAULT_PERMISSIONS = {
         "admin":        {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
         "portal":       {"view": True,  "order": True},
         "distributors": {"view": False, "create": False, "edit": False, "prices": False},
+        "pdks":         {"check": False, "view_own": False, "view_all": False, "manage": False, "report": False},
     },
 }
 
@@ -211,7 +220,10 @@ def require_permission(category: str, action: str):
     def _dep(payload: dict = Depends(get_current_user), db: Session = Depends(get_db)):
         user = db.query(User).filter(User.id == int(payload.get("sub", 0))).first()
         if not user or not user.is_active:
-            return JSONResponse(status_code=401, content={"detail": "Yetkisiz."})
+            # DİKKAT: raise şart — dependency'nin RETURN ettiği Response isteği
+            # kısa devre YAPMAZ (endpoint'e parametre olarak enjekte edilir ve
+            # endpoint çalışırdı → pasifleştirilmiş kullanıcı auth bypass'ı).
+            raise HTTPException(status_code=401, detail="Yetkisiz.")
         if not _has_permission(user, category, action):
             raise HTTPException(
                 status_code=403,

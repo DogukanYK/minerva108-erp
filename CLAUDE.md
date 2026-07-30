@@ -102,6 +102,29 @@ same domain). WhatsApp Cloud API + Meta (Lead Ads, Messenger/Instagram DM) are
 planned later phases — they need Meta business setup + App Review and outbound
 calls via `httpx` + signature-verified public webhooks.
 
+**PDKS** (`routers/pdks.py`, `core/pdks.py`, `core/pdks_report.py`,
+`templates/pdks.html`) — Personel Devam Takip Sistemi, `/pdks` sayfası.
+Personel kendi hesabından "Giriş/Çıkış" basar (zaman damgası DAİMA sunucu
+saati); kişi bazlı **versiyonlu haftalık program** (`pdks_schedules`,
+`effective_from` — eski versiyon asla mutate edilmez, geçmiş puantaj sabit
+kalır), izinler (`pdks_leaves`, aralık satırı) ve ortak resmi tatiller
+(`pdks_holidays`) üzerinden aylık puantaj CANLI hesaplanır (saklanan agregat
+yok). Hesap motoru `core/pdks.py` SAF fonksiyonlardır (DB'siz, unit-test
+edilebilir): tek çift + brüt ≥6 sa → mola kesintisi, 5 dk geç/erken toleransı,
+tatil/izin/hafta tatilinde çalışılan her dakika fazla mesai, açık çift ("çıkış
+eksik") 0 sayılır ve yönetici düzeltene kadar toplam dışıdır. **work_date =
+TR-yerel gün** — `'in'` kendi TR günü, `'out'` kapattığı açık `'in'` <16
+saatlikse ONUN günü (gece yarısı kuralı; router `_work_date_for` + check
+akışı aynı sabiti kullanır). **Cross-cutting — NOT domain-scoped** (CRM/Drive
+gibi; domain kolonu/dependency yok). RBAC kategorisi **`pdks`**
+(`check/view_own/view_all/manage/report`; Staff dahil herkes check+view_own,
+Manager tümü). Manuel olay düzeltmeleri `correction_note` zorunlu +
+`log_admin_event` audit'li; olay silme soft-delete. Excel puantaj:
+`GET /api/pdks/report/excel` → `core/pdks_report.py` (Özet + personel başına
+sayfa). Tablolar `pdks_*` — create_all ile gelir (migration
+`f3a5c7e9b2d4`). Not: buradaki "izin" devamsızlık mazeretidir; RBAC
+"permission" kavramıyla karıştırma.
+
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +
 low-stock alerts + CRM task reminders), `scheduler.py` (APScheduler — daily 08:00 CRM

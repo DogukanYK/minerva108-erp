@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="/static/theme.js"></script>
+  <script>
+    window.PERMS = {{ permissions | tojson }};
+    window.DOMAIN = {{ domain | tojson }};
+    window.can = function (category, action) {
+      const cat = window.PERMS && window.PERMS[category];
+      return !!(cat && cat[action]);
+    };
+    window.CAN_CHECK    = {{ 'true' if can('pdks','check') else 'false' }};
+    window.CAN_VIEW_ALL = {{ 'true' if can('pdks','view_all') else 'false' }};
+    window.CAN_MANAGE   = {{ 'true' if can('pdks','manage') else 'false' }};
+    window.CAN_REPORT   = {{ 'true' if can('pdks','report') else 'false' }};
+  </script>
+  <title>Minerva108 ERP — PDKS</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <link rel="manifest" href="/static/manifest.json" />
+  <meta name="theme-color" content="#232E6E" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/dark.css" />
+  <link rel="stylesheet" href="/static/print.css" media="print" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    :root{ --navy:#232E6E; --gold:#C9AC6F; --gold2:#D9BE85; --cream:#f5f0e8; --white:#fff; --sidebar-width:240px; --navbar-height:64px; }
+    *,*::before,*::after{ box-sizing:border-box; }
+    body{ margin:0; font-family:'Jost',sans-serif; background:var(--cream); color:#1f2937; }
+    .sidebar{ position:fixed; top:0; left:0; width:var(--sidebar-width); height:100vh; background:var(--navy); display:flex; flex-direction:column; z-index:100; }
+    .sidebar-brand{ padding:1.4rem 1.25rem 1.2rem; border-bottom:1px solid rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; }
+    .sidebar-brand-logo{ width:100%; max-width:168px; height:auto; opacity:0.96; }
+    .sidebar-nav{ flex:1; padding:1.25rem 0.75rem; overflow-y:auto; }
+    .nav-section-label{ font-size:0.65rem; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:rgba(255,255,255,0.3); padding:0.5rem 0.75rem 0.4rem; margin-top:0.5rem; }
+    .nav-link-item{ display:flex; align-items:center; gap:0.75rem; padding:0.6rem 0.85rem; border-radius:8px; color:rgba(255,255,255,0.65); font-size:0.88rem; font-weight:500; text-decoration:none; transition:background .15s,color .15s; margin-bottom:2px; }
+    .nav-link-item:hover{ background:rgba(255,255,255,0.07); color:var(--white); }
+    .nav-link-item.active{ background:rgba(184,150,90,0.18); color:var(--gold2); }
+    .nav-link-item.active .nav-icon{ color:var(--gold); }
+    .nav-icon{ font-size:1rem; width:18px; text-align:center; flex-shrink:0; }
+    .sidebar-footer{ padding:1rem 1.5rem; border-top:1px solid rgba(255,255,255,0.08); }
+    .sidebar-footer-text{ font-size:0.7rem; color:rgba(255,255,255,0.25); text-align:center; }
+    .topnav{ position:fixed; top:0; left:var(--sidebar-width); right:0; height:var(--navbar-height); background:var(--white); border-bottom:1px solid #f0ece4; display:flex; align-items:center; justify-content:space-between; padding:0 1.75rem; z-index:90; box-shadow:0 1px 8px rgba(0,0,0,0.05); }
+    .topnav-title{ font-family:'Playfair Display',serif; font-size:1.15rem; font-weight:600; color:var(--navy); }
+    .topnav-right{ display:flex; align-items:center; gap:1rem; }
+    .user-chip{ display:flex; align-items:center; gap:0.5rem; background:var(--cream); border-radius:20px; padding:0.35rem 0.9rem 0.35rem 0.5rem; }
+    .user-avatar{ width:28px; height:28px; background:var(--navy); color:var(--gold2); border-radius:50%; font-size:0.7rem; font-weight:700; display:flex; align-items:center; justify-content:center; font-family:'Playfair Display',serif; }
+    .user-name{ font-size:0.85rem; font-weight:500; color:#374151; }
+    .btn-logout{ display:flex; align-items:center; gap:0.4rem; padding:0.42rem 1rem; border:1.5px solid #e5e7eb; border-radius:8px; background:var(--white); color:#6b7280; font-family:'Jost',sans-serif; font-size:0.82rem; font-weight:500; cursor:pointer; }
+    .btn-logout:hover{ border-color:#ef4444; color:#ef4444; background:#fff5f5; }
+    .main-content{ margin-left:var(--sidebar-width); padding-top:var(--navbar-height); min-height:100vh; }
+    .content-inner{ padding:2rem 2rem 3rem; }
+    .page-title{ font-family:'Playfair Display',serif; font-size:1.6rem; font-weight:700; color:var(--navy); margin:0 0 0.25rem; }
+    .page-subtitle{ font-size:0.88rem; color:#6b7280; margin:0 0 1.5rem; }
+    .card2{ background:var(--white); border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.05),0 4px 16px rgba(44,44,115,0.06); margin-bottom:1.4rem; overflow:hidden; }
+    .card2-head{ display:flex; align-items:center; gap:0.6rem; padding:1rem 1.25rem; border-bottom:1px solid #f0ece4; }
+    .card2-head i{ color:var(--gold); font-size:1.05rem; }
+    .card2-head h2{ font-family:'Playfair Display',serif; font-size:1.02rem; font-weight:600; color:var(--navy); margin:0; }
+    .card2-body{ padding:1.1rem 1.25rem; }
+    table{ width:100%; border-collapse:collapse; font-size:0.86rem; }
+    th{ text-align:left; padding:0.55rem 0.7rem; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.05em; color:#9ca3af; border-bottom:2px solid #f0ece4; }
+    td{ padding:0.6rem 0.7rem; border-bottom:1px solid #f3f0ea; vertical-align:middle; }
+    .muted{ color:#9ca3af; font-size:0.85rem; }
+    .lbl{ display:block; font-size:0.7rem; font-weight:700; text-transform:uppercase; color:#6b7280; margin-bottom:0.25rem; letter-spacing:0.03em; }
+    .ipt{ width:100%; padding:0.55rem 0.75rem; border:1.5px solid #e5e7eb; border-radius:8px; font-family:inherit; font-size:0.9rem; }
+    .ipt:focus{ outline:none; border-color:var(--navy); }
+    textarea.ipt{ resize:vertical; min-height:64px; }
+    .btn-g{ display:inline-flex; align-items:center; justify-content:center; gap:0.45rem; padding:0.7rem 1.2rem; background:var(--navy); color:#fff; border:none; border-radius:9px; font-family:'Jost',sans-serif; font-size:0.95rem; font-weight:600; cursor:pointer; }
+    .btn-g:hover{ background:#23236b; } .btn-g:disabled{ opacity:0.5; cursor:not-allowed; }
+    .btn-o{ display:inline-flex; align-items:center; gap:0.4rem; padding:0.5rem 1rem; background:#fff; color:var(--navy); border:1.5px solid #e5e7eb; border-radius:8px; font-size:0.86rem; font-weight:600; cursor:pointer; text-decoration:none; }
+    .btn-o:hover{ border-color:var(--navy); }
+    .ico-del{ background:none; border:none; cursor:pointer; color:#9ca3af; font-size:1rem; } .ico-del:hover{ color:#ef4444; }
+    #toast-container{ position:fixed; bottom:1.5rem; right:1.5rem; z-index:9999; display:flex; flex-direction:column; gap:0.6rem; }
+    .toast-msg{ min-width:270px; max-width:380px; padding:0.8rem 1rem; border-radius:10px; font-size:0.88rem; font-weight:500; box-shadow:0 4px 20px rgba(0,0,0,0.12); display:flex; align-items:center; gap:0.6rem; }
+    .toast-error{ background:#fff1f1; color:#b91c1c; border-left:4px solid #ef4444; }
+    .toast-success{ background:#f0fdf4; color:#15803d; border-left:4px solid #22c55e; }
+    .toast-info{ background:#eff6ff; color:#1d4ed8; border-left:4px solid #3b82f6; }
+    .ovl{ position:fixed; inset:0; background:rgba(20,24,60,0.45); z-index:1000; display:none; align-items:flex-start; justify-content:center; padding:4vh 1rem; overflow-y:auto; }
+    .ovl.open{ display:flex; }
+    .ovl-card{ background:#fff; border-radius:14px; max-width:760px; width:100%; box-shadow:0 12px 48px rgba(0,0,0,0.25); }
+    .ovl-head{ display:flex; align-items:center; justify-content:space-between; padding:1rem 1.25rem; border-bottom:1px solid #f0ece4; }
+    .ovl-head h3{ font-family:'Playfair Display',serif; font-size:1.05rem; color:var(--navy); margin:0; }
+    .ovl-body{ padding:1.1rem 1.25rem; max-height:70vh; overflow-y:auto; }
+    /* ── PDKS'e özgü ── */
+    .pdks-tabs{ display:flex; gap:0.4rem; flex-wrap:wrap; margin-bottom:1.3rem; }
+    .pdks-tab{ padding:0.5rem 1.05rem; border:1.5px solid #e5e7eb; border-radius:999px; background:#fff; color:#4b5563; font-family:'Jost',sans-serif; font-size:0.87rem; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:0.4rem; }
+    .pdks-tab.active{ background:var(--navy); border-color:var(--navy); color:#fff; }
+    .pdks-panel{ display:none; } .pdks-panel.open{ display:block; }
+    .check-hero{ text-align:center; padding:1.6rem 1rem 1.9rem; }
+    .state-badge{ display:inline-flex; align-items:center; gap:0.45rem; padding:0.35rem 1rem; border-radius:999px; font-size:0.9rem; font-weight:700; margin-bottom:1rem; }
+    .state-in{ background:#dcfce7; color:#15803d; }
+    .state-out{ background:#f3f4f6; color:#6b7280; }
+    .btn-check{ display:inline-flex; align-items:center; justify-content:center; gap:0.7rem; width:min(360px,90%); padding:1.15rem 1rem; border:none; border-radius:16px; font-family:'Jost',sans-serif; font-size:1.35rem; font-weight:700; letter-spacing:0.04em; cursor:pointer; color:#fff; box-shadow:0 6px 22px rgba(0,0,0,0.14); }
+    .btn-check.in{ background:#16a34a; } .btn-check.in:hover{ background:#15803d; }
+    .btn-check.out{ background:#dc2626; } .btn-check.out:hover{ background:#b91c1c; }
+    .btn-check:disabled{ opacity:0.55; cursor:not-allowed; }
+    .check-meta{ margin-top:1rem; font-size:0.92rem; color:#4b5563; }
+    .month-nav{ display:flex; align-items:center; gap:0.6rem; }
+    .month-nav b{ min-width:150px; text-align:center; font-family:'Playfair Display',serif; color:var(--navy); font-size:1rem; }
+    .badge-st{ padding:0.18rem 0.6rem; border-radius:999px; font-size:0.74rem; font-weight:700; white-space:nowrap; }
+    .st-calisti{ background:#dcfce7; color:#15803d; }
+    .st-devamsiz{ background:#fee2e2; color:#b91c1c; }
+    .st-eksik_cikis{ background:#ffedd5; color:#c2410c; }
+    .st-izinli{ background:#ccfbf1; color:#0f766e; }
+    .st-hafta_tatili{ background:#f3f4f6; color:#9ca3af; }
+    .st-resmi_tatil{ background:#e5e7eb; color:#6b7280; }
+    .st-bekliyor{ background:#eff6ff; color:#93c5fd; }
+    .flag{ display:inline-block; margin-left:0.3rem; font-size:0.72rem; font-weight:700; padding:0.1rem 0.45rem; border-radius:6px; white-space:nowrap; }
+    .flag-late{ background:#fef9c3; color:#a16207; }
+    .flag-early{ background:#fce7f3; color:#be185d; }
+    .flag-miss{ background:#ffedd5; color:#c2410c; }
+    .flag-ot{ background:#dbeafe; color:#1d4ed8; }
+    .sched-grid td{ padding:0.35rem 0.5rem; border-bottom:none; }
+    .totals-row td{ font-weight:700; background:#faf8f4; border-top:2px solid #e8e2d6; }
+    .emp-row{ cursor:pointer; } .emp-row:hover{ background:#faf8f4; }
+    .day-row{ cursor:pointer; } .day-row:hover{ background:#faf8f4; }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+  <script src="/static/toast.js" defer></script>
+  <script src="/static/idle-watch.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <img src="/static/images/logo_sidebar.png" alt="Minerva 108 Vegan Cosmetics" class="sidebar-brand-logo" />
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      <a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>
+      <a href="/suppliers" class="nav-link-item"><i class="bi bi-truck nav-icon"></i>Tedarikçiler</a>
+      <a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>
+      <a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
+      <a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
+      <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
+      <a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>
+      <a href="/delivery" class="nav-link-item"><i class="bi bi-box-arrow-up nav-icon"></i>Teslimat</a>
+      <a href="/returns" class="nav-link-item"><i class="bi bi-arrow-return-left nav-icon"></i>İadeler</a>
+      <a href="/numune-analiz" class="nav-link-item"><i class="bi bi-clipboard2-pulse nav-icon"></i>Numune Analizi</a>
+      <a href="/pdks" class="nav-link-item active"><i class="bi bi-fingerprint nav-icon"></i>PDKS</a>
+      <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
+      <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+      <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
+      <a href="/drive" class="nav-link-item"><i class="bi bi-folder-fill nav-icon"></i>Dosya Paylaşım</a>
+      {% if can('crm','view') %}<a href="/crm" class="nav-link-item"><i class="bi bi-people-fill nav-icon"></i>CRM</a>{% endif %}
+      {% if can('distributors','view') %}<a href="/distributors" class="nav-link-item"><i class="bi bi-shop nav-icon"></i>Distribütörler</a>{% endif %}
+      {% if can('b2b', 'view') %}
+      <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
+      {% endif %}
+      {% if can('admin', 'view') %}
+      <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>
+      <a href="/admin" class="nav-link-item"><i class="bi bi-shield-lock nav-icon"></i>Yönetim Paneli</a>
+      <a href="/shopify-sync" class="nav-link-item"><i class="bi bi-bag-check nav-icon"></i>Shopify Senkron</a>
+      {% if role == 'SuperAdmin' %}<a href="/system" class="nav-link-item"><i class="bi bi-activity nav-icon"></i>Sistem Durumu</a>{% endif %}
+      {% endif %}
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sidebar-footer-row">
+        <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir" title="Tema değiştir">
+          <i class="bi bi-moon-stars-fill"></i><i class="bi bi-sun-fill"></i>
+        </button>
+        <p class="sidebar-footer-text" style="margin:0;">v2.0.0 &nbsp;·&nbsp; 2026</p>
+        <p class="sidebar-footer-text" style="margin:0.35rem 0 0;font-style:italic;">Geliştirici: Doğukan Yalçınkaya</p>
+      </div>
+    </div>
+  </aside>
+
+  <header class="topnav">
+    <span class="topnav-title">PDKS — Devam Takibi</span>
+    <div class="topnav-right">
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+      <button class="btn-logout" id="logoutBtn"><i class="bi bi-box-arrow-right"></i>Çıkış Yap</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <div class="content-inner">
+      <h1 class="page-title">Personel Devam Takibi</h1>
+      <p class="page-subtitle">Günlük giriş/çıkış, çalışma programları, izinler ve aylık puantaj. Ay sonu hesabı otomatiktir.</p>
+
+      <div class="pdks-tabs">
+        {% if can('pdks','check') %}<button class="pdks-tab" data-tab="check"><i class="bi bi-fingerprint"></i>Giriş / Çıkış</button>{% endif %}
+        <button class="pdks-tab" data-tab="my"><i class="bi bi-calendar3"></i>Puantajım</button>
+        {% if can('pdks','view_all') %}<button class="pdks-tab" data-tab="day"><i class="bi bi-people"></i>Günlük Durum</button>{% endif %}
+        {% if can('pdks','manage') %}<button class="pdks-tab" data-tab="emp"><i class="bi bi-person-gear"></i>Personel</button>{% endif %}
+        {% if can('pdks','view_all') %}<button class="pdks-tab" data-tab="leave"><i class="bi bi-umbrella"></i>İzinler</button>{% endif %}
+        {% if can('pdks','report') %}<button class="pdks-tab" data-tab="report"><i class="bi bi-file-earmark-spreadsheet"></i>Aylık Rapor</button>{% endif %}
+      </div>
+
+      {% if can('pdks','check') %}
+      <!-- ── 1 · Giriş / Çıkış ── -->
+      <section class="pdks-panel" id="panel-check">
+        <div class="card2">
+          <div class="card2-body check-hero" id="checkHero">
+            <p class="muted">Yükleniyor…</p>
+          </div>
+        </div>
+        <div class="card2">
+          <div class="card2-head"><i class="bi bi-clock-history"></i><h2>Bugünkü Hareketler</h2></div>
+          <div class="card2-body" style="overflow-x:auto;">
+            <table>
+              <thead><tr><th>Saat</th><th>Tip</th><th>Kaynak</th></tr></thead>
+              <tbody id="todayEvents"><tr><td colspan="3" class="muted">—</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+      <!-- ── 2 · Puantajım ── -->
+      <section class="pdks-panel" id="panel-my">
+        <div class="card2">
+          <div class="card2-head" style="justify-content:space-between;">
+            <div style="display:flex;align-items:center;gap:0.6rem;"><i class="bi bi-calendar3"></i><h2>Aylık Puantajım</h2></div>
+            <div class="month-nav">
+              <button class="btn-o" onclick="myShift(-1)"><i class="bi bi-chevron-left"></i></button>
+              <b id="myMonthLabel">—</b>
+              <button class="btn-o" onclick="myShift(1)"><i class="bi bi-chevron-right"></i></button>
+            </div>
+          </div>
+          <div class="card2-body" style="overflow-x:auto;">
+            <table>
+              <thead><tr><th>Tarih</th><th>Gün</th><th>Durum</th><th>Giriş</th><th>Çıkış</th><th>Çalışma</th><th>Fazla Mesai</th><th>Bayraklar</th></tr></thead>
+              <tbody id="myBody"><tr><td colspan="8" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      {% if can('pdks','view_all') %}
+      <!-- ── 3 · Günlük Durum ── -->
+      <section class="pdks-panel" id="panel-day">
+        <div class="card2">
+          <div class="card2-head" style="justify-content:space-between;">
+            <div style="display:flex;align-items:center;gap:0.6rem;"><i class="bi bi-people"></i><h2>Günlük Durum</h2></div>
+            <div style="display:flex;align-items:center;gap:0.6rem;">
+              <input type="date" id="dayDate" class="ipt" style="width:auto;" />
+              <span class="muted" id="dayHoliday"></span>
+            </div>
+          </div>
+          <div class="card2-body" style="overflow-x:auto;">
+            <table>
+              <thead><tr><th>Personel</th><th>Şu An</th><th>Durum</th><th>Giriş</th><th>Çıkış</th><th>Çalışma</th><th>Bayraklar</th></tr></thead>
+              <tbody id="dayBody"><tr><td colspan="7" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
+            </table>
+            {% if can('pdks','manage') %}<p class="muted" style="margin:0.7rem 0 0;">Satıra tıklayarak o günün olaylarını düzeltebilirsiniz.</p>{% endif %}
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if can('pdks','manage') %}
+      <!-- ── 4 · Personel ── -->
+      <section class="pdks-panel" id="panel-emp">
+        <div class="card2">
+          <div class="card2-head" style="justify-content:space-between;">
+            <div style="display:flex;align-items:center;gap:0.6rem;"><i class="bi bi-person-gear"></i><h2>Personel Listesi</h2></div>
+            <button class="btn-o" onclick="empOpen(null)"><i class="bi bi-person-plus"></i> Yeni Personel</button>
+          </div>
+          <div class="card2-body" style="overflow-x:auto;">
+            <table>
+              <thead><tr><th>Ad Soyad</th><th>Ünvan</th><th>İşe Giriş</th><th>Bağlı Hesap</th><th>Bugünkü Program</th><th></th></tr></thead>
+              <tbody id="empBody"><tr><td colspan="6" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if can('pdks','view_all') %}
+      <!-- ── 5 · İzinler ── -->
+      <section class="pdks-panel" id="panel-leave">
+        <div style="display:flex;gap:1.4rem;flex-wrap:wrap;align-items:flex-start;">
+          <div class="card2" style="flex:2;min-width:340px;">
+            <div class="card2-head" style="justify-content:space-between;">
+              <div style="display:flex;align-items:center;gap:0.6rem;"><i class="bi bi-umbrella"></i><h2>İzinler</h2></div>
+              {% if can('pdks','manage') %}<button class="btn-o" onclick="leaveOpen(null)"><i class="bi bi-plus-lg"></i> İzin Ekle</button>{% endif %}
+            </div>
+            <div class="card2-body" style="overflow-x:auto;">
+              <table>
+                <thead><tr><th>Personel</th><th>Tür</th><th>Başlangıç</th><th>Bitiş</th><th>Not</th><th></th></tr></thead>
+                <tbody id="leaveBody"><tr><td colspan="6" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card2" style="flex:1;min-width:300px;">
+            <div class="card2-head" style="justify-content:space-between;">
+              <div style="display:flex;align-items:center;gap:0.6rem;"><i class="bi bi-flag"></i><h2>Resmi Tatiller</h2></div>
+              <select id="holYear" class="ipt" style="width:auto;" onchange="loadHolidays()"></select>
+            </div>
+            <div class="card2-body">
+              {% if can('pdks','manage') %}
+              <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.9rem;">
+                <input type="date" id="holDate" class="ipt" style="flex:1;min-width:130px;" />
+                <input type="text" id="holName" class="ipt" style="flex:2;min-width:150px;" placeholder="Tatil adı" maxlength="150" />
+              </div>
+              <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.9rem;">
+                <label style="display:flex;align-items:center;gap:0.35rem;font-size:0.85rem;cursor:pointer;">
+                  <input type="checkbox" id="holHalf" /> Yarım gün (arefe)
+                </label>
+                <button class="btn-o" style="margin-left:auto;" onclick="holAdd()"><i class="bi bi-plus-lg"></i> Ekle</button>
+              </div>
+              {% endif %}
+              <table>
+                <thead><tr><th>Tarih</th><th>Ad</th><th></th></tr></thead>
+                <tbody id="holBody"><tr><td colspan="3" class="muted">Yükleniyor…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if can('pdks','report') %}
+      <!-- ── 6 · Aylık Rapor ── -->
+      <section class="pdks-panel" id="panel-report">
+        <div class="card2">
+          <div class="card2-head" style="justify-content:space-between;">
+            <div style="display:flex;align-items:center;gap:0.6rem;"><i class="bi bi-file-earmark-spreadsheet"></i><h2>Aylık Puantaj Raporu</h2></div>
+            <div style="display:flex;align-items:center;gap:0.7rem;">
+              <div class="month-nav">
+                <button class="btn-o" onclick="repShift(-1)"><i class="bi bi-chevron-left"></i></button>
+                <b id="repMonthLabel">—</b>
+                <button class="btn-o" onclick="repShift(1)"><i class="bi bi-chevron-right"></i></button>
+              </div>
+              <a class="btn-o" id="repExcelBtn" href="#"><i class="bi bi-download"></i> Excel İndir</a>
+            </div>
+          </div>
+          <div class="card2-body" style="overflow-x:auto;">
+            <table>
+              <thead><tr><th>Personel</th><th>Çalışma</th><th>Fazla Mesai</th><th>Eksik</th><th>Geç</th><th>Devamsızlık</th><th>Eksik Çıkış</th><th>İzin Günleri</th></tr></thead>
+              <tbody id="repBody"><tr><td colspan="8" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
+            </table>
+            <p class="muted" style="margin:0.7rem 0 0;">Satıra tıklayınca gün dökümü açılır. "Çıkış eksik" işaretli günler düzeltilene kadar toplamlara dahil edilmez.</p>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+    </div>
+  </main>
+
+  {% if can('pdks','manage') %}
+  <!-- ── Personel drawer ── -->
+  <div class="ovl" id="empModal" onclick="if(event.target===this) empClose()">
+    <div class="ovl-card">
+      <div class="ovl-head">
+        <h3 id="empTitle">Yeni Personel</h3>
+        <button class="ico-del" onclick="empClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
+      </div>
+      <div class="ovl-body">
+        <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+          <div style="flex:2;min-width:200px;">
+            <label class="lbl">Ad Soyad *</label>
+            <input type="text" id="eFullName" class="ipt" maxlength="150" />
+          </div>
+          <div style="flex:1;min-width:150px;">
+            <label class="lbl">Ünvan</label>
+            <input type="text" id="eTitle" class="ipt" maxlength="100" />
+          </div>
+        </div>
+        <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+          <div style="flex:1;min-width:150px;">
+            <label class="lbl">İşe Giriş Tarihi</label>
+            <input type="date" id="eStartDate" class="ipt" />
+          </div>
+          <div style="flex:2;min-width:200px;">
+            <label class="lbl">Bağlı IMS Hesabı <span class="muted" style="text-transform:none;font-weight:400;">(kendi cihazından giriş/çıkış için şart)</span></label>
+            <select id="eUser" class="ipt"><option value="">— Bağlı değil —</option></select>
+          </div>
+        </div>
+        <div style="margin-bottom:0.8rem;">
+          <label class="lbl">Not</label>
+          <textarea id="eNotes" class="ipt" maxlength="2000"></textarea>
+        </div>
+        <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.88rem;cursor:pointer;margin-bottom:1rem;" id="eActiveWrap">
+          <input type="checkbox" id="eActive" checked /> Aktif personel
+        </label>
+
+        <div id="schedEditor" style="border-top:1px solid #f0ece4;padding-top:1rem;">
+          <label class="lbl" style="margin-bottom:0.6rem;">Çalışma Programı</label>
+          <table class="sched-grid" style="max-width:430px;">
+            <tbody id="schedRows"></tbody>
+          </table>
+          <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin:0.8rem 0;">
+            <div style="flex:1;min-width:140px;">
+              <label class="lbl">Öğle Molası (dk)</label>
+              <input type="number" id="sLunch" class="ipt" value="60" min="0" max="240" />
+            </div>
+            <div style="flex:1;min-width:160px;">
+              <label class="lbl">Geçerlilik Başlangıcı *</label>
+              <input type="date" id="sFrom" class="ipt" />
+            </div>
+          </div>
+          <p class="muted" style="margin:0 0 0.8rem;">Farklı bir başlangıç tarihi = yeni versiyon; geçmiş günlerin hesabı değişmez.</p>
+          <div id="schedVersions" class="muted" style="font-size:0.8rem;margin-bottom:0.5rem;"></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:0.6rem;padding:1rem 1.25rem;border-top:1px solid #f0ece4;flex-wrap:wrap;">
+        <button class="btn-g" id="empSaveBtn" onclick="empSave()"><i class="bi bi-check-lg"></i> Kaydet</button>
+        <button class="btn-o" id="empDelBtn" style="display:none;color:#b91c1c;" onclick="empDelete()"><i class="bi bi-trash3"></i> Pasifleştir</button>
+        <button class="btn-o" style="margin-left:auto;" onclick="empClose()">Kapat</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Gün düzeltme modalı ── -->
+  <div class="ovl" id="fixModal" onclick="if(event.target===this) fixClose()">
+    <div class="ovl-card">
+      <div class="ovl-head">
+        <h3 id="fixTitle">Olay Düzeltme</h3>
+        <button class="ico-del" onclick="fixClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
+      </div>
+      <div class="ovl-body">
+        <table>
+          <thead><tr><th>Zaman</th><th>Tip</th><th>Kaynak</th><th>Düzeltme</th><th></th></tr></thead>
+          <tbody id="fixEvents"></tbody>
+        </table>
+        <div style="border-top:1px solid #f0ece4;margin-top:1rem;padding-top:1rem;">
+          <label class="lbl">Yeni Olay Ekle</label>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
+            <select id="fxType" class="ipt" style="flex:1;min-width:110px;">
+              <option value="in">Giriş</option><option value="out">Çıkış</option>
+            </select>
+            <input type="date" id="fxDate" class="ipt" style="flex:1;min-width:140px;" />
+            <input type="time" id="fxTime" class="ipt" style="flex:1;min-width:110px;" />
+          </div>
+          <input type="text" id="fxNote" class="ipt" placeholder="Gerekçe (zorunlu) — ör. çıkış unutuldu" maxlength="300" style="margin-bottom:0.6rem;" />
+          <button class="btn-o" onclick="fixAdd()"><i class="bi bi-plus-lg"></i> Olay Ekle</button>
+        </div>
+      </div>
+      <div style="display:flex;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
+        <button class="btn-o" style="margin-left:auto;" onclick="fixClose()">Kapat</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── İzin modalı ── -->
+  <div class="ovl" id="leaveModal" onclick="if(event.target===this) leaveClose()">
+    <div class="ovl-card" style="max-width:520px;">
+      <div class="ovl-head">
+        <h3 id="leaveTitle">İzin Ekle</h3>
+        <button class="ico-del" onclick="leaveClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
+      </div>
+      <div class="ovl-body">
+        <div style="margin-bottom:0.8rem;">
+          <label class="lbl">Personel *</label>
+          <select id="lvEmp" class="ipt"></select>
+        </div>
+        <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+          <div style="flex:1;min-width:140px;">
+            <label class="lbl">İzin Türü *</label>
+            <select id="lvType" class="ipt">
+              <option value="yillik">Yıllık İzin</option>
+              <option value="raporlu">Raporlu</option>
+              <option value="ucretsiz">Ücretsiz İzin</option>
+              <option value="diger">Diğer</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:140px;">
+            <label class="lbl">Başlangıç *</label>
+            <input type="date" id="lvStart" class="ipt" />
+          </div>
+          <div style="flex:1;min-width:140px;">
+            <label class="lbl">Bitiş *</label>
+            <input type="date" id="lvEnd" class="ipt" />
+          </div>
+        </div>
+        <div style="margin-bottom:0.4rem;">
+          <label class="lbl">Not <span class="muted" style="text-transform:none;font-weight:400;">('Diğer' türünde zorunlu)</span></label>
+          <input type="text" id="lvNote" class="ipt" maxlength="300" />
+        </div>
+      </div>
+      <div style="display:flex;gap:0.6rem;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
+        <button class="btn-g" onclick="leaveSave()"><i class="bi bi-check-lg"></i> Kaydet</button>
+        <button class="btn-o" style="margin-left:auto;" onclick="leaveClose()">Kapat</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div id="toast-container"></div>
+  <script>
+    function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    const WEEKDAYS = ['Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi','Pazar'];
+    const MONTHS = ['','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+    const toastFn = (msg, type) => window.showToast ? showToast(msg, type) : alert(msg);
+
+    async function api(url, opts){
+      const r = await fetch(url, opts);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        let msg = d.detail;
+        if (Array.isArray(msg)) msg = msg.map(x => (x && x.msg) || x).join(' · ');
+        throw new Error(msg || 'İşlem başarısız.');
+      }
+      return d;
+    }
+    const jpost = (url, body, method) => api(url, {
+      method: method || 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    /* ── Sekmeler ── */
+    const loaded = {};
+    function openTab(name){
+      document.querySelectorAll('.pdks-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+      document.querySelectorAll('.pdks-panel').forEach(p => p.classList.toggle('open', p.id === 'panel-' + name));
+      const init = { check: loadCheck, my: loadMy, day: loadDay, emp: loadEmps, leave: loadLeavesTab, report: loadReport };
+      if (init[name]) init[name](!loaded[name]);
+      loaded[name] = true;
+    }
+    document.querySelectorAll('.pdks-tab').forEach(b => b.addEventListener('click', () => openTab(b.dataset.tab)));
+
+    function badgeSt(d){
+      const label = d.status === 'izinli' ? d.status_label : (d.status_label || d.status);
+      return `<span class="badge-st st-${esc(d.status)}">${esc(label)}</span>`;
+    }
+    function flags(d){
+      let out = '';
+      if (d.missing_checkout) out += '<span class="flag flag-miss">Çıkış eksik</span>';
+      if (d.late_minutes > 0) out += `<span class="flag flag-late">Geç ${d.late_minutes} dk</span>`;
+      if (d.early_leave_minutes > 0) out += `<span class="flag flag-early">Erken ${d.early_leave_minutes} dk</span>`;
+      if (d.overtime_minutes > 0) out += `<span class="flag flag-ot">+${esc(d.overtime_label)}</span>`;
+      if (d.holiday_name) out += `<span class="flag" style="background:#e5e7eb;color:#6b7280;">${esc(d.holiday_name)}</span>`;
+      return out || '<span class="muted">—</span>';
+    }
+
+    /* ══ 1 · Giriş / Çıkış ══ */
+    let _checkBusy = false;
+    async function loadCheck(){
+      if (!window.CAN_CHECK) return;
+      const hero = document.getElementById('checkHero');
+      try {
+        renderCheck(await api('/api/pdks/me/today'));
+      } catch (e) {
+        hero.innerHTML = `<p class="muted" style="padding:0.5rem;">${esc(e.message)}</p>`;
+        document.getElementById('todayEvents').innerHTML = '<tr><td colspan="3" class="muted">—</td></tr>';
+      }
+    }
+    function renderCheck(st){
+      const hero = document.getElementById('checkHero');
+      const inside = st.state === 'iceride';
+      const sched = st.schedule
+        ? `Bugünkü mesai: <b>${esc(st.schedule.start)} – ${esc(st.schedule.end)}</b> (mola ${st.schedule.lunch_minutes} dk)`
+        : 'Bugün için tanımlı çalışma programı yok.';
+      hero.innerHTML = `
+        <div class="state-badge ${inside ? 'state-in' : 'state-out'}">
+          <i class="bi ${inside ? 'bi-door-open' : 'bi-door-closed'}"></i>
+          Şu an: ${inside ? 'İçeride' + (st.open_since ? ' (giriş ' + esc(st.open_since) + ')' : '') : 'Dışarıda'}
+        </div><br/>
+        <button class="btn-check ${inside ? 'out' : 'in'}" id="checkBtn" onclick="doCheck('${inside ? 'out' : 'in'}')">
+          <i class="bi bi-fingerprint"></i> ${inside ? 'ÇIKIŞ YAP' : 'GİRİŞ YAP'}
+        </button>
+        <div class="check-meta">${sched}<br/>Bugün çalışılan: <b>${esc(st.worked_live_label)}</b></div>`;
+      const tb = document.getElementById('todayEvents');
+      tb.innerHTML = (st.events && st.events.length)
+        ? st.events.map(e => `<tr><td><b>${esc(e.time)}</b></td><td>${esc(e.type_label)}</td><td class="muted">${esc(e.source_label)}${e.correction_note ? ' · ' + esc(e.correction_note) : ''}</td></tr>`).join('')
+        : '<tr><td colspan="3" class="muted">Bugün henüz hareket yok.</td></tr>';
+    }
+    async function doCheck(type){
+      if (_checkBusy) return;
+      _checkBusy = true;
+      const btn = document.getElementById('checkBtn');
+      if (btn) btn.disabled = true;
+      try {
+        const st = await jpost('/api/pdks/check', { type });
+        toastFn(st.message || 'Kaydedildi.', 'success');
+        renderCheck(st);
+      } catch (e) { toastFn(e.message); loadCheck(); }
+      finally { _checkBusy = false; }
+    }
+
+    /* ══ 2 · Puantajım ══ */
+    const now = new Date();
+    let myY = now.getFullYear(), myM = now.getMonth() + 1;
+    function myShift(d){
+      myM += d;
+      if (myM < 1) { myM = 12; myY--; } if (myM > 12) { myM = 1; myY++; }
+      loadMy();
+    }
+    async function loadMy(){
+      document.getElementById('myMonthLabel').textContent = `${MONTHS[myM]} ${myY}`;
+      const tb = document.getElementById('myBody');
+      try {
+        const d = await api(`/api/pdks/me/month?year=${myY}&month=${myM}`);
+        renderMonthRows(tb, d, 8);
+      } catch (e) {
+        tb.innerHTML = `<tr><td colspan="8" class="muted" style="padding:1rem;">${esc(e.message)}</td></tr>`;
+      }
+    }
+    function renderMonthRows(tb, d, span){
+      const rows = d.days.map(x => `<tr>
+        <td>${esc(x.date_label)}</td>
+        <td class="muted">${esc(x.weekday_label)}</td>
+        <td>${badgeSt(x)}</td>
+        <td>${esc(x.first_in || '—')}</td>
+        <td>${esc(x.last_out || '—')}</td>
+        <td><b>${esc(x.worked_label)}</b></td>
+        <td>${x.overtime_minutes ? '<b>' + esc(x.overtime_label) + '</b>' : '—'}</td>
+        <td>${flags(x)}</td>
+      </tr>`);
+      const t = d.totals;
+      rows.push(`<tr class="totals-row">
+        <td colspan="5">TOPLAM</td>
+        <td>${esc(t.toplam_calisma_label)}</td>
+        <td>${esc(t.toplam_fazla_mesai_label)}</td>
+        <td class="muted">Geç: ${t.gec_sayisi} · Devamsız: ${t.devamsizlik_gun} gün · İzin: ${esc(t.izin_gunleri_label)}</td>
+      </tr>`);
+      tb.innerHTML = rows.join('');
+    }
+
+    /* ══ 3 · Günlük Durum ══ */
+    function trToday(){
+      const d = new Date(Date.now() + 3 * 3600 * 1000);
+      return d.toISOString().slice(0, 10);
+    }
+    let _dayRows = [], _dayDateStr = null;
+    async function loadDay(){
+      if (!window.CAN_VIEW_ALL) return;
+      const inp = document.getElementById('dayDate');
+      if (!inp.value) inp.value = trToday();
+      const tb = document.getElementById('dayBody');
+      try {
+        const d = await api(`/api/pdks/day?date=${inp.value}`);
+        _dayRows = d.rows; _dayDateStr = d.date;
+        document.getElementById('dayHoliday').textContent = d.holiday ? `${d.weekday_label} · ${d.holiday}` : d.weekday_label;
+        if (!d.rows.length) { tb.innerHTML = '<tr><td colspan="7" class="muted" style="padding:1rem;">Aktif personel yok.</td></tr>'; return; }
+        tb.innerHTML = d.rows.map((r, i) => `<tr class="${window.CAN_MANAGE ? 'emp-row' : ''}" ${window.CAN_MANAGE ? `onclick="fixOpenIdx(${i})"` : ''}>
+          <td><b>${esc(r.employee.full_name)}</b>${r.employee.title ? ' <span class="muted">· ' + esc(r.employee.title) + '</span>' : ''}</td>
+          <td>${r.state === 'iceride' ? '<span class="badge-st st-calisti">İçeride</span>' : '<span class="muted">Dışarıda</span>'}</td>
+          <td>${badgeSt(r.day)}</td>
+          <td>${esc(r.day.first_in || '—')}</td>
+          <td>${esc(r.day.last_out || '—')}</td>
+          <td><b>${esc(r.day.worked_label)}</b></td>
+          <td>${flags(r.day)}</td>
+        </tr>`).join('');
+      } catch (e) {
+        tb.innerHTML = `<tr><td colspan="7" class="muted" style="padding:1rem;">${esc(e.message)}</td></tr>`;
+      }
+    }
+    document.getElementById('dayDate')?.addEventListener('change', loadDay);
+
+    /* ── Gün düzeltme modalı ── */
+    let _fixEmp = null, _fixDate = null;
+    function fixOpenIdx(i){
+      const r = _dayRows[i];
+      if (r) fixOpen(r.employee.id, r.employee.full_name, _dayDateStr);
+    }
+    async function fixOpen(empId, empName, dateStr){
+      if (!window.CAN_MANAGE) return;
+      _fixEmp = empId; _fixDate = dateStr;
+      document.getElementById('fixTitle').textContent = `${empName} — ${dateStr.split('-').reverse().join('.')}`;
+      document.getElementById('fxDate').value = dateStr;
+      document.getElementById('fxTime').value = '';
+      document.getElementById('fxNote').value = '';
+      document.getElementById('fixModal').classList.add('open');
+      await fixLoad();
+    }
+    function fixClose(){
+      document.getElementById('fixModal').classList.remove('open');
+      loadDay();
+    }
+    async function fixLoad(){
+      const tb = document.getElementById('fixEvents');
+      try {
+        const d = await api(`/api/pdks/events?employee_id=${_fixEmp}&start=${_fixDate}&end=${_fixDate}`);
+        if (!d.events.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">Bu günde olay yok.</td></tr>'; return; }
+        tb.innerHTML = d.events.map(e => `<tr style="${e.is_active ? '' : 'opacity:0.45;text-decoration:line-through;'}">
+          <td><b>${esc(e.ts_label)}</b></td>
+          <td>${esc(e.type_label)}</td>
+          <td class="muted">${esc(e.source_label)}</td>
+          <td class="muted">${e.corrected_by ? esc(e.corrected_by) + ': ' + esc(e.correction_note) : (e.correction_note ? esc(e.correction_note) : '—')}</td>
+          <td style="white-space:nowrap;">${e.is_active ? `
+            <button class="btn-o" style="padding:0.25rem 0.55rem;" onclick="fixEdit(${e.id}, '${esc(e.date)}', '${esc(e.time)}')" title="Düzenle"><i class="bi bi-pencil"></i></button>
+            <button class="ico-del" onclick="fixDel(${e.id})" title="Sil"><i class="bi bi-trash3"></i></button>` : ''}</td>
+        </tr>`).join('');
+      } catch (e) { tb.innerHTML = `<tr><td colspan="5" class="muted">${esc(e.message)}</td></tr>`; }
+    }
+    async function fixAdd(){
+      const type = document.getElementById('fxType').value;
+      const date = document.getElementById('fxDate').value;
+      const time = document.getElementById('fxTime').value;
+      const note = document.getElementById('fxNote').value.trim();
+      if (!date || !time) { toastFn('Tarih ve saat zorunlu.'); return; }
+      if (note.length < 3) { toastFn('Gerekçe zorunlu.'); return; }
+      try {
+        await jpost('/api/pdks/events', { employee_id: _fixEmp, event_type: type, date, time, note });
+        toastFn('Olay eklendi.', 'success');
+        document.getElementById('fxTime').value = ''; document.getElementById('fxNote').value = '';
+        fixLoad();
+      } catch (e) { toastFn(e.message); }
+    }
+    async function fixEdit(id, curDate, curTime){
+      const time = prompt('Yeni saat (SS:DD):', curTime);
+      if (!time) return;
+      if (!/^[0-2][0-9]:[0-5][0-9]$/.test(time)) { toastFn('Saat biçimi SS:DD olmalı.'); return; }
+      const date = prompt('Tarih (YYYY-AA-GG):', curDate) || curDate;
+      const note = prompt('Düzeltme gerekçesi (zorunlu):', '');
+      if (!note || note.trim().length < 3) { toastFn('Gerekçe zorunlu.'); return; }
+      try {
+        await jpost(`/api/pdks/events/${id}`, { date, time, note: note.trim() }, 'PUT');
+        toastFn('Olay güncellendi.', 'success');
+        fixLoad();
+      } catch (e) { toastFn(e.message); }
+    }
+    async function fixDel(id){
+      const note = prompt('Silme gerekçesi (zorunlu):', '');
+      if (!note || note.trim().length < 3) { toastFn('Gerekçe zorunlu.'); return; }
+      try {
+        await api(`/api/pdks/events/${id}?note=${encodeURIComponent(note.trim())}`, { method: 'DELETE' });
+        toastFn('Olay silindi.', 'success');
+        fixLoad();
+      } catch (e) { toastFn(e.message); }
+    }
+
+    /* ══ 4 · Personel ══ */
+    let _emps = [], _empId = null, _loadedSched = null;
+    async function loadEmps(){
+      if (!window.CAN_MANAGE) return;
+      const tb = document.getElementById('empBody');
+      try {
+        const d = await api('/api/pdks/employees?include_inactive=1');
+        _emps = d.employees;
+        const act = _emps.filter(e => e.is_active);
+        const pas = _emps.filter(e => !e.is_active);
+        const row = e => `<tr class="emp-row" onclick="empOpen(${e.id})" style="${e.is_active ? '' : 'opacity:0.5;'}">
+          <td><b>${esc(e.full_name)}</b>${e.is_active ? '' : ' <span class="muted">(pasif)</span>'}</td>
+          <td>${esc(e.title || '—')}</td>
+          <td class="muted">${esc(e.start_date_label || '—')}</td>
+          <td>${e.username ? '<i class="bi bi-person-check" style="color:#15803d;"></i> ' + esc(e.username) : '<span class="muted">bağlı değil</span>'}</td>
+          <td class="muted">${e.today_schedule ? esc(e.today_schedule.start + ' – ' + e.today_schedule.end) : 'tatil / program yok'}</td>
+          <td><i class="bi bi-chevron-right muted"></i></td>
+        </tr>`;
+        tb.innerHTML = (act.length + pas.length)
+          ? act.map(row).join('') + pas.map(row).join('')
+          : '<tr><td colspan="6" class="muted" style="padding:1rem;">Henüz personel kaydı yok — "Yeni Personel" ile başlayın.</td></tr>';
+      } catch (e) { tb.innerHTML = `<tr><td colspan="6" class="muted" style="padding:1rem;">${esc(e.message)}</td></tr>`; }
+    }
+    function schedRowsHtml(tpl){
+      return WEEKDAYS.map((name, i) => {
+        const v = tpl ? tpl[String(i)] : (i < 5 ? { start: '09:00', end: '18:00' } : null);
+        return `<tr>
+          <td style="width:120px;"><label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.88rem;">
+            <input type="checkbox" class="sDay" data-day="${i}" ${v ? 'checked' : ''} onchange="this.closest('tr').querySelectorAll('input[type=time]').forEach(x=>x.disabled=!this.checked)" /> ${name}</label></td>
+          <td><input type="time" class="ipt sStart" data-day="${i}" value="${v ? esc(v.start) : '09:00'}" ${v ? '' : 'disabled'} style="padding:0.35rem 0.5rem;" /></td>
+          <td><input type="time" class="ipt sEnd" data-day="${i}" value="${v ? esc(v.end) : '18:00'}" ${v ? '' : 'disabled'} style="padding:0.35rem 0.5rem;" /></td>
+        </tr>`;
+      }).join('');
+    }
+    async function empOpen(id){
+      _empId = id;
+      document.getElementById('empTitle').textContent = id ? 'Personel Düzenle' : 'Yeni Personel';
+      document.getElementById('empDelBtn').style.display = id ? '' : 'none';
+      document.getElementById('eActiveWrap').style.display = id ? '' : 'none';
+      // Bağlanabilir hesaplar
+      const sel = document.getElementById('eUser');
+      let linkable = [];
+      try { linkable = (await api('/api/pdks/linkable-users')).users; } catch {}
+      let e = null;
+      if (id) {
+        try { e = await api(`/api/pdks/employees/${id}`); } catch (err) { toastFn(err.message); return; }
+      }
+      const opts = ['<option value="">— Bağlı değil —</option>'];
+      if (e && e.user_id) opts.push(`<option value="${e.user_id}" selected>${esc(e.username || ('#' + e.user_id))} (mevcut)</option>`);
+      linkable.forEach(u => opts.push(`<option value="${u.id}">${esc(u.full_name)} (${esc(u.username)})</option>`));
+      sel.innerHTML = opts.join('');
+      document.getElementById('eFullName').value = e ? e.full_name : '';
+      document.getElementById('eTitle').value = e ? (e.title || '') : '';
+      document.getElementById('eStartDate').value = e ? (e.start_date || '') : '';
+      document.getElementById('eNotes').value = e ? (e.notes || '') : '';
+      document.getElementById('eActive').checked = e ? !!e.is_active : true;
+      // Program: en güncel versiyonu editöre yükle
+      let tpl = null, lunch = 60;
+      const versions = (e && e.schedules) || [];
+      if (versions.length) {
+        try { tpl = JSON.parse(versions[0].weekly_template); lunch = versions[0].lunch_break_minutes; } catch {}
+      }
+      _loadedSched = versions.length
+        ? { tpl: versions[0].weekly_template, lunch: versions[0].lunch_break_minutes }
+        : null;
+      document.getElementById('schedRows').innerHTML = schedRowsHtml(tpl);
+      document.getElementById('sLunch').value = lunch;
+      // Varsayılan geçerlilik = bugün: eski versiyon tarihiyle kazara
+      // retroaktif değişiklik yapılmasın (geçmiş puantaj sabit kalsın)
+      document.getElementById('sFrom').value = trToday();
+      document.getElementById('schedVersions').innerHTML = versions.length
+        ? '<b>Versiyonlar:</b> ' + versions.map(v => `${v.effective_from_label} (${esc(v.created_by || '—')})`).join(' · ')
+        : 'Henüz program tanımlanmadı — kaydetle birlikte oluşturulur.';
+      document.getElementById('empModal').classList.add('open');
+    }
+    function empClose(){ document.getElementById('empModal').classList.remove('open'); }
+    function collectTemplate(){
+      const tpl = {};
+      document.querySelectorAll('#schedRows .sDay').forEach(cb => {
+        const day = cb.dataset.day;
+        if (!cb.checked) { tpl[day] = null; return; }
+        const start = document.querySelector(`#schedRows .sStart[data-day="${day}"]`).value;
+        const end = document.querySelector(`#schedRows .sEnd[data-day="${day}"]`).value;
+        tpl[day] = { start, end };
+      });
+      return tpl;
+    }
+    async function empSave(){
+      const fullName = document.getElementById('eFullName').value.trim();
+      if (!fullName) { toastFn('Ad soyad zorunlu.'); return; }
+      const sFrom = document.getElementById('sFrom').value;
+      if (!sFrom) { toastFn('Program geçerlilik tarihi zorunlu.'); return; }
+      const body = {
+        full_name: fullName,
+        title: document.getElementById('eTitle').value.trim() || null,
+        start_date: document.getElementById('eStartDate').value || null,
+        notes: document.getElementById('eNotes').value.trim() || null,
+        user_id: document.getElementById('eUser').value ? parseInt(document.getElementById('eUser').value) : null,
+        is_active: document.getElementById('eActive').checked,
+      };
+      const btn = document.getElementById('empSaveBtn');
+      btn.disabled = true;
+      try {
+        let empId = _empId;
+        if (empId) { await jpost(`/api/pdks/employees/${empId}`, body, 'PUT'); }
+        else {
+          empId = (await jpost('/api/pdks/employees', body)).id;
+          _empId = empId;   // program kaydı hata verirse tekrar Kaydet mükerrer personel yaratmasın
+        }
+        const tplNow = collectTemplate();
+        const lunchNow = parseInt(document.getElementById('sLunch').value || '60');
+        let schedChanged = true;
+        if (_loadedSched) {
+          try {
+            schedChanged = JSON.stringify(tplNow) !== JSON.stringify(JSON.parse(_loadedSched.tpl))
+              || lunchNow !== _loadedSched.lunch;
+          } catch { schedChanged = true; }
+        }
+        if (schedChanged) {
+          await jpost(`/api/pdks/employees/${empId}/schedule`, {
+            effective_from: sFrom,
+            weekly_template: tplNow,
+            lunch_break_minutes: lunchNow,
+          }, 'PUT');
+        }
+        toastFn('Personel kaydedildi.', 'success');
+        empClose();
+        loadEmps();
+      } catch (e) { toastFn(e.message); }
+      finally { btn.disabled = false; }
+    }
+    async function empDelete(){
+      if (!_empId) return;
+      if (!confirm('Personel pasifleştirilsin mi? (kayıtları silinmez)')) return;
+      try {
+        await api(`/api/pdks/employees/${_empId}`, { method: 'DELETE' });
+        toastFn('Personel pasifleştirildi.', 'success');
+        empClose();
+        loadEmps();
+      } catch (e) { toastFn(e.message); }
+    }
+
+    /* ══ 5 · İzinler + Tatiller ══ */
+    async function loadLeavesTab(){
+      if (!window.CAN_VIEW_ALL) return;
+      loadLeaves();
+      const ySel = document.getElementById('holYear');
+      if (ySel && !ySel.options.length) {
+        const y = new Date().getFullYear();
+        for (let i = y - 1; i <= y + 1; i++) ySel.add(new Option(i, i, false, i === y));
+      }
+      loadHolidays();
+    }
+    let _leaves = [];
+    async function loadLeaves(){
+      const tb = document.getElementById('leaveBody');
+      try {
+        const d = await api('/api/pdks/leaves');
+        _leaves = d.leaves;
+        if (!d.leaves.length) { tb.innerHTML = '<tr><td colspan="6" class="muted" style="padding:1rem;">Kayıtlı izin yok.</td></tr>'; return; }
+        tb.innerHTML = d.leaves.map((l, i) => `<tr>
+          <td><b>${esc(l.employee_name)}</b></td>
+          <td><span class="badge-st st-izinli">${esc(l.leave_type_label)}</span></td>
+          <td>${esc(l.start_date_label)}</td>
+          <td>${esc(l.end_date_label)}</td>
+          <td class="muted">${esc(l.note || '—')}</td>
+          <td style="white-space:nowrap;">${window.CAN_MANAGE ? `
+            <button class="btn-o" style="padding:0.25rem 0.55rem;" onclick="leaveOpenIdx(${i})" title="Düzenle"><i class="bi bi-pencil"></i></button>
+            <button class="ico-del" onclick="leaveDel(${l.id})" title="Sil"><i class="bi bi-trash3"></i></button>` : ''}</td>
+        </tr>`).join('');
+      } catch (e) { tb.innerHTML = `<tr><td colspan="6" class="muted" style="padding:1rem;">${esc(e.message)}</td></tr>`; }
+    }
+    let _leaveId = null;
+    function leaveOpenIdx(i){ if (_leaves[i]) leaveOpen(_leaves[i]); }
+    async function leaveOpen(l){
+      if (!window.CAN_MANAGE) return;
+      _leaveId = l ? l.id : null;
+      document.getElementById('leaveTitle').textContent = l ? 'İzin Düzenle' : 'İzin Ekle';
+      const sel = document.getElementById('lvEmp');
+      try {
+        const d = await api('/api/pdks/employees');
+        sel.innerHTML = d.employees.map(e => `<option value="${e.id}">${esc(e.full_name)}</option>`).join('');
+      } catch (e) { toastFn(e.message); return; }
+      if (l) {
+        sel.value = l.employee_id;
+        document.getElementById('lvType').value = l.leave_type;
+        document.getElementById('lvStart').value = l.start_date;
+        document.getElementById('lvEnd').value = l.end_date;
+        document.getElementById('lvNote').value = l.note || '';
+      } else {
+        document.getElementById('lvStart').value = ''; document.getElementById('lvEnd').value = '';
+        document.getElementById('lvNote').value = '';
+      }
+      document.getElementById('leaveModal').classList.add('open');
+    }
+    function leaveClose(){ document.getElementById('leaveModal').classList.remove('open'); }
+    async function leaveSave(){
+      const body = {
+        employee_id: parseInt(document.getElementById('lvEmp').value),
+        leave_type: document.getElementById('lvType').value,
+        start_date: document.getElementById('lvStart').value,
+        end_date: document.getElementById('lvEnd').value,
+        note: document.getElementById('lvNote').value.trim() || null,
+      };
+      if (!body.start_date || !body.end_date) { toastFn('Başlangıç ve bitiş tarihi zorunlu.'); return; }
+      try {
+        if (_leaveId) { await jpost(`/api/pdks/leaves/${_leaveId}`, body, 'PUT'); }
+        else { await jpost('/api/pdks/leaves', body); }
+        toastFn('İzin kaydedildi.', 'success');
+        leaveClose();
+        loadLeaves();
+      } catch (e) { toastFn(e.message); }
+    }
+    async function leaveDel(id){
+      if (!confirm('İzin silinsin mi?')) return;
+      try {
+        await api(`/api/pdks/leaves/${id}`, { method: 'DELETE' });
+        toastFn('İzin silindi.', 'success');
+        loadLeaves();
+      } catch (e) { toastFn(e.message); }
+    }
+    async function loadHolidays(){
+      const tb = document.getElementById('holBody');
+      const y = document.getElementById('holYear')?.value || new Date().getFullYear();
+      try {
+        const d = await api(`/api/pdks/holidays?year=${y}`);
+        if (!d.holidays.length) { tb.innerHTML = '<tr><td colspan="3" class="muted">Bu yıl için tatil girilmemiş.</td></tr>'; return; }
+        tb.innerHTML = d.holidays.map(h => `<tr>
+          <td><b>${esc(h.holiday_date_label)}</b> <span class="muted">${esc(h.weekday_label)}</span></td>
+          <td>${esc(h.name)}${h.is_half_day ? ' <span class="muted">(yarım gün)</span>' : ''}</td>
+          <td>${window.CAN_MANAGE ? `<button class="ico-del" onclick="holDel(${h.id})" title="Sil"><i class="bi bi-trash3"></i></button>` : ''}</td>
+        </tr>`).join('');
+      } catch (e) { tb.innerHTML = `<tr><td colspan="3" class="muted">${esc(e.message)}</td></tr>`; }
+    }
+    async function holAdd(){
+      const holiday_date = document.getElementById('holDate').value;
+      const name = document.getElementById('holName').value.trim();
+      if (!holiday_date || !name) { toastFn('Tarih ve ad zorunlu.'); return; }
+      try {
+        await jpost('/api/pdks/holidays', { holiday_date, name, is_half_day: document.getElementById('holHalf').checked });
+        toastFn('Resmi tatil eklendi.', 'success');
+        document.getElementById('holDate').value = ''; document.getElementById('holName').value = '';
+        document.getElementById('holHalf').checked = false;
+        loadHolidays();
+      } catch (e) { toastFn(e.message); }
+    }
+    async function holDel(id){
+      if (!confirm('Tatil silinsin mi?')) return;
+      try {
+        await api(`/api/pdks/holidays/${id}`, { method: 'DELETE' });
+        loadHolidays();
+      } catch (e) { toastFn(e.message); }
+    }
+
+    /* ══ 6 · Aylık Rapor ══ */
+    let repY = now.getFullYear(), repM = now.getMonth() + 1;
+    function repShift(d){
+      repM += d;
+      if (repM < 1) { repM = 12; repY--; } if (repM > 12) { repM = 1; repY++; }
+      loadReport();
+    }
+    async function loadReport(){
+      if (!window.CAN_REPORT) return;
+      document.getElementById('repMonthLabel').textContent = `${MONTHS[repM]} ${repY}`;
+      document.getElementById('repExcelBtn').href = `/api/pdks/report/excel?year=${repY}&month=${repM}`;
+      const tb = document.getElementById('repBody');
+      tb.innerHTML = '<tr><td colspan="8" class="muted" style="padding:1rem;">Hesaplanıyor…</td></tr>';
+      try {
+        const d = await api(`/api/pdks/report?year=${repY}&month=${repM}`);
+        if (!d.employees.length) { tb.innerHTML = '<tr><td colspan="8" class="muted" style="padding:1rem;">Aktif personel yok.</td></tr>'; return; }
+        tb.innerHTML = d.employees.map((item, i) => {
+          const t = item.month.totals;
+          return `<tr class="day-row" onclick="repToggle(${i})">
+            <td><b>${esc(item.employee.full_name)}</b> <i class="bi bi-chevron-down muted"></i></td>
+            <td><b>${esc(t.toplam_calisma_label)}</b></td>
+            <td>${esc(t.toplam_fazla_mesai_label)}</td>
+            <td>${esc(t.toplam_eksik_label)}</td>
+            <td>${t.gec_sayisi}</td>
+            <td>${t.devamsizlik_gun}</td>
+            <td>${t.eksik_cikis_sayisi ? '<span class="flag flag-miss">' + t.eksik_cikis_sayisi + '</span>' : '0'}</td>
+            <td class="muted">${esc(t.izin_gunleri_label)}</td>
+          </tr>
+          <tr id="repDetail${i}" style="display:none;"><td colspan="8" style="padding:0;">
+            <div style="padding:0.6rem 1rem;background:#faf8f4;overflow-x:auto;">
+              <table><thead><tr><th>Tarih</th><th>Gün</th><th>Durum</th><th>Giriş</th><th>Çıkış</th><th>Çalışma</th><th>Fazla Mesai</th><th>Bayraklar</th></tr></thead>
+              <tbody>${item.month.days.map(x => `<tr>
+                <td>${esc(x.date_label)}</td><td class="muted">${esc(x.weekday_label)}</td>
+                <td>${badgeSt(x)}</td><td>${esc(x.first_in || '—')}</td><td>${esc(x.last_out || '—')}</td>
+                <td>${esc(x.worked_label)}</td><td>${x.overtime_minutes ? esc(x.overtime_label) : '—'}</td>
+                <td>${flags(x)}</td>
+              </tr>`).join('')}</tbody></table>
+            </div>
+          </td></tr>`;
+        }).join('');
+      } catch (e) { tb.innerHTML = `<tr><td colspan="8" class="muted" style="padding:1rem;">${esc(e.message)}</td></tr>`; }
+    }
+    function repToggle(i){
+      const el = document.getElementById('repDetail' + i);
+      if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+    }
+
+    document.getElementById('logoutBtn').addEventListener('click', async function(){
+      try{ await fetch('/api/logout',{method:'POST',headers:{'X-Requested-With':'1'}}); }catch(e){}
+      window.location.href='/login';
+    });
+
+    (function init(){
+      const first = document.querySelector('.pdks-tab');
+      if (first) openTab(window.CAN_CHECK ? 'check' : first.dataset.tab);
+    })();
+  </script>
+</body>
+</html>

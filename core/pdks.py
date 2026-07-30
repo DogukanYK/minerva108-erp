@@ -1,0 +1,379 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Copyright (c) 2026 Doğukan Yalçınkaya.  All rights reserved.
+# Bu dosya FSEK kapsamında bir bilgisayar programı eserinin parçasıdır.
+# Mali haklar yazılı devir olmadıkça eser sahibinde kalır (FSEK m.48).
+# Bkz. LICENSE ve AUTHORS.md.
+# ─────────────────────────────────────────────────────────────────────────────
+"""
+PDKS hesap motoru — SAF fonksiyonlar (DB session/query yok).
+
+Router satırları yükler, buradaki fonksiyonlara düz veri (dict/datetime) verir,
+sonucu serialize eder.  Bu ayrım hesap mantığını DB fixture'sız unit-test
+edilebilir kılar.
+
+Veri sözleşmeleri:
+  schedule versiyonu: {"effective_from": date, "template": {int hafta_günü:
+      {"start": "09:00", "end": "18:00"} | None}, "lunch_break_minutes": int}
+  olay: {"id": int|None, "event_type": "in"|"out", "ts_utc": datetime,
+      "source": str}
+  tatil: {"name": str, "is_half_day": bool}
+
+Kurallar (tek kaynak — UI ve Excel bu modülün çıktısını gösterir):
+  • Çalışma = kapalı in→out çiftlerinin UTC farkları toplamı (gece yarısını
+    aşan çift doğal olarak doğru hesaplanır — fark UTC'de alınır).
+  • Öğle molası: gün TEK kapalı çiftten oluşuyor ve brüt süre
+    LUNCH_AUTO_DEDUCT_MIN_MINUTES'i aşıyorsa programdaki mola düşülür.
+    Çoklu çift = molalar zaten ayrı basılmış, kesinti yapılmaz.  Programsız
+    günlerde (hafta tatili/izin) mola bilgisi olmadığından kesinti yok.
+  • Beklenen süre = program aralığı − mola (iş günü); izin/tam tatil/programsız
+    gün = 0; yarım gün resmi tatilde yarısı.
+  • Fazla mesai = max(0, çalışılan − beklenen) → tatil/izin/hafta tatilinde
+    çalışılan her dakika mesaidir.
+  • Geç/erken: TR duvar saatiyle, LATE_TOLERANCE_MIN dakika toleransla
+    (simetrik — geç gelmede de erken çıkmada da aynı tolerans).
+  • Açık çift (çıkış unutulmuş) 0 dakika sayılır ve missing_checkout bayrağı
+    kalkar — yönetici düzeltene kadar toplamlara girmez (bilinçli zorlayıcı).
+  • Gün durumu önceliği: resmi_tatil > izinli > hafta_tatili > eksik_cikis >
+    calisti > devamsiz.  Tatil/izin günü çalışma durumu değiştirmez, süre +
+    mesai yine görünür.
+"""
+import json
+from calendar import monthrange
+from datetime import date, datetime, timedelta
+
+from database import TR_OFFSET, to_tr
+
+# Tek kapalı çiftte otomatik mola kesintisi için alt sınır (dakika).
+LUNCH_AUTO_DEDUCT_MIN_MINUTES = 360
+# Geç gelme / erken çıkma toleransı (dakika, simetrik).
+LATE_TOLERANCE_MIN = 5
+# Bir 'out' bu süreden (saat) eski bir açık 'in'i kapatmaz — router'ın
+# work_date atama kuralı da aynı sabiti kullanır.
+OPEN_PAIR_MAX_HOURS = 16
+
+LEAVE_TYPES = ("yillik", "raporlu", "ucretsiz", "diger")
+
+LEAVE_TYPE_LABELS = {
+    "yillik":   "Yıllık İzin",
+    "raporlu":  "Raporlu",
+    "ucretsiz": "Ücretsiz İzin",
+    "diger":    "Diğer",
+}
+
+DAY_STATUS_LABELS = {
+    "calisti":      "Çalıştı",
+    "devamsiz":     "Devamsız",
+    "eksik_cikis":  "Çıkış eksik",
+    "izinli":       "İzinli",
+    "hafta_tatili": "Hafta tatili",
+    "resmi_tatil":  "Resmi tatil",
+    "bekliyor":     "Bekliyor",
+}
+
+# 0=Pazartesi … 6=Pazar (date.weekday() sırası)
+WEEKDAY_LABELS = ("Pazartesi", "Salı", "Çarşamba", "Perşembe",
+                  "Cuma", "Cumartesi", "Pazar")
+# 1-indexli ay adları (MONTH_LABELS[1] = Ocak)
+MONTH_LABELS = ("", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+                "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık")
+
+
+# ─── Küçük yardımcılar ───────────────────────────────────────────────────────
+
+def tr_date_of(ts_utc: datetime) -> date:
+    """UTC zaman damgasının TR-yerel takvim günü — work_date yazım kuralı."""
+    return (ts_utc + TR_OFFSET).date()
+
+
+def fmt_minutes(m) -> str:
+    """375 → '6 sa 15 dk' (0 → '—'). UI + Excel ortak biçimi."""
+    if not m:
+        return "—"
+    m = int(m)
+    h, mm = divmod(m, 60)
+    if h and mm:
+        return f"{h} sa {mm} dk"
+    if h:
+        return f"{h} sa"
+    return f"{mm} dk"
+
+
+def _hm_to_minutes(hm: str) -> int:
+    """'09:30' → 570.  Bozuk değerde ValueError fırlatır (doğrulama router'da)."""
+    h, m = hm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def parse_template(raw):
+    """weekly_template JSON'ını {int gün: {'start','end'}|None} sözlüğüne çevir.
+
+    Anahtarlar date.weekday() (0=Pazartesi … 6=Pazar).  Eksik anahtar = o gün
+    çalışma yok (None ile aynı).  Bozuk JSON → boş şablon (hiç çalışma günü yok)."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for k, v in raw.items():
+        try:
+            wd = int(k)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= wd <= 6:
+            out[wd] = v if (isinstance(v, dict) and v.get("start") and v.get("end")) else None
+    return out
+
+
+def validate_template(raw):
+    """Program kaydı öncesi doğrulama.  Hata → Türkçe mesaj str, geçerli → None."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return "Program şablonu geçersiz (JSON okunamadı)."
+    if not isinstance(raw, dict):
+        return "Program şablonu geçersiz."
+    any_workday = False
+    for k, v in raw.items():
+        try:
+            wd = int(k)
+        except (TypeError, ValueError):
+            return f"Geçersiz gün anahtarı: {k}"
+        if not (0 <= wd <= 6):
+            return f"Geçersiz gün anahtarı: {k}"
+        if v is None:
+            continue
+        if not isinstance(v, dict) or not v.get("start") or not v.get("end"):
+            return "Çalışma günü için başlangıç ve bitiş saati zorunlu."
+        try:
+            s, e = _hm_to_minutes(v["start"]), _hm_to_minutes(v["end"])
+        except (ValueError, AttributeError):
+            return "Saat biçimi geçersiz (SS:DD bekleniyor)."
+        if not (0 <= s < 1440 and 0 < e <= 1440):
+            return "Saat 00:00–24:00 aralığında olmalı."
+        if e <= s:
+            return "Bitiş saati başlangıçtan sonra olmalı (gece vardiyası v1'de desteklenmiyor)."
+        any_workday = True
+    if not any_workday:
+        return "En az bir çalışma günü tanımlanmalı."
+    return None
+
+
+# ─── Program çözümleme ───────────────────────────────────────────────────────
+
+def schedule_for(schedules, work_date):
+    """work_date için geçerli program versiyonunun O GÜNKÜ girdisini döndür.
+
+    schedules: parse edilmiş versiyon listesi (sıra önemsiz).
+    Dönüş: {"start": "09:00", "end": "18:00", "lunch_minutes": 60,
+            "span_minutes": 540} — ya da None (o gün çalışma yok / geçerli
+    versiyon yok)."""
+    best = None
+    for s in schedules or []:
+        ef = s.get("effective_from")
+        if ef is None or ef > work_date:
+            continue
+        if best is None or ef > best.get("effective_from"):
+            best = s
+    if not best:
+        return None
+    day = parse_template(best.get("template")).get(work_date.weekday())
+    if not day:
+        return None
+    start_m = _hm_to_minutes(day["start"])
+    end_m = _hm_to_minutes(day["end"])
+    return {
+        "start": day["start"],
+        "end": day["end"],
+        "lunch_minutes": int(best.get("lunch_break_minutes") or 0),
+        "span_minutes": max(0, end_m - start_m),
+    }
+
+
+# ─── Olay eşleme + gün hesabı ────────────────────────────────────────────────
+
+def pair_events(events):
+    """ts_utc sıralı ardışık in→out eşlemesi.
+
+    Dönüş: [{"in": olay|None, "out": olay|None, "minutes": int|None}].
+    Sonda kapanmamış 'in' → açık çift (out=None).  Yetim 'out' (manuel giriş
+    kaynaklı olabilir) → in=None anomali çifti.  Peş peşe iki 'in' → ilki açık
+    çift olarak kapanır (0 dk), ikincisi yeni çift başlatır."""
+    pairs = []
+    open_in = None
+    for e in sorted(events or [], key=lambda x: x["ts_utc"]):
+        if e["event_type"] == "in":
+            if open_in is not None:
+                pairs.append({"in": open_in, "out": None, "minutes": None})
+            open_in = e
+        else:  # out
+            if open_in is not None:
+                mins = int((e["ts_utc"] - open_in["ts_utc"]).total_seconds() // 60)
+                pairs.append({"in": open_in, "out": e, "minutes": max(0, mins)})
+                open_in = None
+            else:
+                pairs.append({"in": None, "out": e, "minutes": None})
+    if open_in is not None:
+        pairs.append({"in": open_in, "out": None, "minutes": None})
+    return pairs
+
+
+def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None):
+    """Bir personelin TEK gününü hesapla.
+
+    events: o work_date'e yazılmış aktif olaylar (dict listesi).
+    day_schedule: schedule_for() çıktısı ya da None.
+    leave_type: o günü kapsayan izin türü ya da None.
+    holiday: {"name", "is_half_day"} ya da None.
+    """
+    pairs = pair_events(events)
+    closed = [p for p in pairs if p["in"] and p["out"]]
+    missing_checkout = any(p["in"] and not p["out"] for p in pairs)
+    orphan_out = any(p["out"] and not p["in"] for p in pairs)
+
+    gross = sum(p["minutes"] for p in closed)
+    lunch_deducted = False
+    worked = gross
+    if (day_schedule and len(closed) == 1 and not missing_checkout
+            and gross >= LUNCH_AUTO_DEDUCT_MIN_MINUTES):
+        worked = max(0, gross - day_schedule["lunch_minutes"])
+        lunch_deducted = worked != gross
+
+    # Beklenen süre
+    half_day_holiday = bool(holiday and holiday.get("is_half_day"))
+    full_holiday = bool(holiday and not half_day_holiday)
+    if leave_type or full_holiday or not day_schedule:
+        expected = 0
+    else:
+        expected = max(0, day_schedule["span_minutes"] - day_schedule["lunch_minutes"])
+        if half_day_holiday:
+            expected //= 2
+
+    overtime = max(0, worked - expected)
+    # Eksik süre: çıkış eksikse hesaplanamaz (gün zaten toplam dışı bayraklı).
+    missing = 0 if missing_checkout else max(0, expected - worked)
+
+    # Geç / erken — yalnız programlı iş gününde ve fiilen gelinmişse (TR saati).
+    first_in = min((p["in"]["ts_utc"] for p in pairs if p["in"]), default=None)
+    last_out = max((p["out"]["ts_utc"] for p in pairs if p["out"]), default=None)
+    # Resmi tatilde (yarım gün dahil) geç/erken hesaplanmaz — yarım günün hangi
+    # yarısının tatil olduğu şemada tutulmadığından tam-gün saatlerine göre
+    # ölçüm yanıltıcı olur (295 dk "erken çıkış" gibi).
+    late = early = 0
+    if day_schedule and not leave_type and not holiday:
+        if first_in is not None:
+            arr = to_tr(first_in)
+            arr_m = arr.hour * 60 + arr.minute
+            late = max(0, arr_m - _hm_to_minutes(day_schedule["start"]) - LATE_TOLERANCE_MIN)
+        if last_out is not None and not missing_checkout:
+            dep = to_tr(last_out)
+            dep_m = dep.hour * 60 + dep.minute
+            # Gece yarısını aşan çıkış (dep tarihi work_date'ten sonra) erken sayılmaz.
+            if dep.date() == work_date:
+                early = max(0, _hm_to_minutes(day_schedule["end"]) - dep_m - LATE_TOLERANCE_MIN)
+
+    # Durum — öncelik sırası sabit (modül docstring'i).
+    if holiday:
+        status = "resmi_tatil"
+    elif leave_type:
+        status = "izinli"
+    elif not day_schedule:
+        status = "hafta_tatili"
+    elif missing_checkout:
+        status = "eksik_cikis"
+    elif closed:
+        status = "calisti"
+    else:
+        status = "devamsiz"
+
+    return {
+        "date": work_date,
+        "status": status,
+        "status_label": (LEAVE_TYPE_LABELS.get(leave_type, "İzinli")
+                         if status == "izinli" else DAY_STATUS_LABELS[status]),
+        "leave_type": leave_type,
+        "holiday_name": holiday.get("name") if holiday else None,
+        "first_in": first_in,
+        "last_out": last_out,
+        "worked_minutes": worked,
+        "expected_minutes": expected,
+        "overtime_minutes": overtime,
+        "missing_minutes": missing,
+        "late_minutes": late,
+        "early_leave_minutes": early,
+        "missing_checkout": missing_checkout,
+        "orphan_out": orphan_out,
+        "lunch_deducted": lunch_deducted,
+        "pairs": pairs,
+    }
+
+
+def leave_for(leaves, work_date):
+    """work_date'i kapsayan ilk aktif iznin türü (yoksa None)."""
+    for lv in leaves or []:
+        if lv["start_date"] <= work_date <= lv["end_date"]:
+            return lv["leave_type"]
+    return None
+
+
+def compute_month(year, month, schedules, events_by_date, leaves, holidays, today_tr):
+    """Bir personelin bir ayını hesapla.
+
+    events_by_date: {date: [olay]}   holidays: {date: {"name","is_half_day"}}
+    today_tr: bugünün TR-yerel tarihi — sonraki günler 'bekliyor' olur ve
+    toplamlara girmez.
+
+    izin_gunleri sayacı yalnız PROGRAMLI iş gününe denk gelen izin günlerini
+    sayar (hafta tatiline taşan izin, izin hakkından gün düşürmez); görüntü
+    önceliği yine izinli'dir.
+    """
+    _, ndays = monthrange(year, month)
+    days = []
+    totals = {
+        "toplam_calisma": 0, "toplam_fazla_mesai": 0, "toplam_eksik": 0,
+        "gec_sayisi": 0, "devamsizlik_gun": 0, "eksik_cikis_sayisi": 0,
+        "izin_gunleri": {k: 0 for k in LEAVE_TYPES},
+    }
+    for dnum in range(1, ndays + 1):
+        d = date(year, month, dnum)
+        if d > today_tr:
+            days.append({
+                "date": d, "status": "bekliyor",
+                "status_label": DAY_STATUS_LABELS["bekliyor"],
+                "leave_type": None, "holiday_name": None,
+                "first_in": None, "last_out": None,
+                "worked_minutes": 0, "expected_minutes": 0, "overtime_minutes": 0,
+                "missing_minutes": 0, "late_minutes": 0, "early_leave_minutes": 0,
+                "missing_checkout": False, "orphan_out": False,
+                "lunch_deducted": False, "pairs": [],
+            })
+            continue
+        sched = schedule_for(schedules, d)
+        day = compute_day(
+            d,
+            (events_by_date or {}).get(d, []),
+            sched,
+            leave_type=leave_for(leaves, d),
+            holiday=(holidays or {}).get(d),
+        )
+        days.append(day)
+        totals["toplam_calisma"] += day["worked_minutes"]
+        totals["toplam_fazla_mesai"] += day["overtime_minutes"]
+        totals["toplam_eksik"] += day["missing_minutes"]
+        if day["late_minutes"] > 0:
+            totals["gec_sayisi"] += 1
+        if day["status"] == "devamsiz":
+            totals["devamsizlik_gun"] += 1
+        if day["missing_checkout"]:
+            totals["eksik_cikis_sayisi"] += 1
+        # Tam resmi tatile denk gelen izin günü izin hakkından düşmez
+        # (İş Kanunu m.56 — yıllık izne rastlayan tatil izinden sayılmaz).
+        hol = (holidays or {}).get(d)
+        if (day["leave_type"] and sched
+                and not (hol and not hol.get("is_half_day"))):
+            totals["izin_gunleri"][day["leave_type"]] = \
+                totals["izin_gunleri"].get(day["leave_type"], 0) + 1
+    return {"year": year, "month": month, "days": days, "totals": totals}

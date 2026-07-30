@@ -7,7 +7,7 @@
 import os
 from sqlalchemy import (
     create_engine, Column, Integer, BigInteger, String, Float,
-    Boolean, Text, Date, DateTime, ForeignKey, UniqueConstraint, text
+    Boolean, Text, Date, DateTime, ForeignKey, UniqueConstraint, Index, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime, timedelta
@@ -1053,6 +1053,117 @@ class ShopifyOrder(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+# ─── PDKS — Personel Devam Takip Sistemi ─────────────────────────────────────
+# Cross-cutting modül (CRM/Drive gibi): domain kolonu YOK — devam takibi kişiye
+# aittir, Kozmetik/Supplement paneline değil.  Tüm DateTime'lar UTC; gün bazlı
+# sorgular için TR-yerel work_date ayrıca yazılır ((utc + TR_OFFSET).date()).
+
+
+class Employee(Base):
+    """Personel kaydı — opsiyonel olarak bir User'a 1:1 bağlı (Distributor kalıbı).
+
+    user_id NULL olabilir: çalışan IMS hesabı açılmadan önce de tanımlanabilir
+    (yönetici manuel olay girebilir); kendi cihazından giriş/çıkış için bağ
+    şarttır.  RBAC'taki 'Staff' rol etiketiyle ("Personel") İLGİSİZ — bu tablo
+    puantajın öznesidir, login hesabı değil."""
+    __tablename__ = "pdks_employees"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(Integer, ForeignKey("users.id"), unique=True, nullable=True, index=True)
+    full_name  = Column(String(150), nullable=False)
+    title      = Column(String(100), nullable=True)      # görev/ünvan
+    start_date = Column(Date, nullable=True)             # işe giriş (TR-yerel)
+    notes      = Column(Text, nullable=True)
+    is_active  = Column(Boolean, default=True)           # soft delete (işten ayrılan)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class EmployeeSchedule(Base):
+    """Personelin haftalık çalışma programı — versiyonlu (effective_from).
+
+    Puantaj CANLI hesaplanır; ay ortası program değişikliği geçmiş günlerin
+    mesaisini bozmasın diye her değişiklik YENİ satır olarak eklenir, eski
+    versiyonlar asla değiştirilmez.  weekly_template JSON: anahtar
+    date.weekday() (str "0"=Pazartesi … "6"=Pazar), değer
+    {"start": "09:00", "end": "18:00"} ya da null (tatil günü)."""
+    __tablename__ = "pdks_schedules"
+    __table_args__ = (UniqueConstraint("employee_id", "effective_from",
+                                       name="uq_pdks_schedule_emp_from"),)
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    employee_id         = Column(Integer, ForeignKey("pdks_employees.id"), nullable=False, index=True)
+    effective_from      = Column(Date, nullable=False)   # TR-yerel
+    weekly_template     = Column(Text, nullable=False)   # JSON — üstteki şema
+    lunch_break_minutes = Column(Integer, nullable=False, default=60)
+    created_by          = Column(String(100), nullable=True)   # actor snapshot
+    created_at          = Column(DateTime, default=datetime.utcnow)
+
+
+class AttendanceEvent(Base):
+    """Tek giriş/çıkış olayı — gün satırı değil OLAY satırı.
+
+    Çoklu giriş/çıkış (öğle arası), unutulan çıkış (açık çift) ve olay bazlı
+    düzeltme izi bu modeli gerektirir.  ts_utc self olaylarda DAİMA sunucu
+    saatidir (istemci saatine güvenilmez).  work_date TR-yerel gündür:
+    'in' → kendi TR günü; 'out' → kapattığı açık 'in' <16 saatlikse ONUN
+    work_date'i (gece yarısını aşan vardiya doğru güne yazılır)."""
+    __tablename__ = "pdks_events"
+    __table_args__ = (Index("ix_pdks_events_emp_date", "employee_id", "work_date"),)
+
+    id                 = Column(Integer, primary_key=True, index=True)
+    employee_id        = Column(Integer, ForeignKey("pdks_employees.id"), nullable=False, index=True)
+    event_type         = Column(String(10), nullable=False)        # 'in' | 'out'
+    ts_utc             = Column(DateTime, nullable=False)          # sunucu saati (UTC)
+    work_date          = Column(Date, nullable=False, index=True)  # TR-yerel gün
+    source             = Column(String(20), nullable=False, default="self")  # self | manual
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    ip_address         = Column(String(64), nullable=True)
+    corrected_by       = Column(String(100), nullable=True)
+    corrected_at       = Column(DateTime, nullable=True)
+    correction_note    = Column(String(300), nullable=True)        # PUT/DELETE'te zorunlu
+    is_active          = Column(Boolean, default=True)             # soft delete — iz kalır
+    created_at         = Column(DateTime, default=datetime.utcnow)
+
+
+class LeaveRecord(Base):
+    """İzin kaydı — KAPSAYICI tarih aralığı (start_date..end_date, TR-yerel).
+
+    leave_type: yillik | raporlu | ucretsiz | diger ('diger'de note zorunlu).
+    Buradaki 'izin' devamsızlık mazeretidir (yıllık izin, rapor…) — RBAC
+    yetki ('permission') kavramıyla karıştırma; RBAC kategorisi 'pdks'."""
+    __tablename__ = "pdks_leaves"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("pdks_employees.id"), nullable=False, index=True)
+    leave_type  = Column(String(20), nullable=False)
+    start_date  = Column(Date, nullable=False)
+    end_date    = Column(Date, nullable=False)
+    note        = Column(String(300), nullable=True)
+    created_by  = Column(String(100), nullable=True)
+    is_active   = Column(Boolean, default=True)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+
+class PublicHoliday(Base):
+    """Resmi tatil — herkes için ortak (employee_id yok).  Arefe → is_half_day.
+
+    Soft delete (is_active): tatil silmek geçmiş puantajı geriye dönük
+    değiştirir; iz kalsın ve geri alınabilsin diye satır silinmez.  Aynı
+    tarihe yeniden ekleme mümkün olsun diye DB-unique yok — tekillik aktif
+    satırlar arasında router'da doğrulanır."""
+    __tablename__ = "pdks_holidays"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    holiday_date = Column(Date, nullable=False, index=True)
+    name         = Column(String(150), nullable=False)
+    is_half_day  = Column(Boolean, default=False)
+    created_by   = Column(String(100), nullable=True)
+    is_active    = Column(Boolean, default=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
 def log_system_event(event_type: str, detail: str = None) -> None:
     """Bir sistem olayını (örn. 'app_start') kaydet.
 
@@ -1235,6 +1346,10 @@ def init_db():
             "UPDATE crm_deal SET stage_changed_at = created_at WHERE stage_changed_at IS NULL",
             "ALTER TABLE crm_deal ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE",
             "UPDATE crm_deal SET is_active = TRUE WHERE is_active IS NULL",
+            # PDKS — pdks_* tabloları (personel/program/olay/izin/tatil)
+            # create_all ile gelir.  is_active, tabloyu ilk sürümden kurmuş
+            # dev DB'ler için idempotent eklenir.
+            "ALTER TABLE pdks_holidays ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
         ):
             alter_safe(stmt)
 
