@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from core import parasut as P
@@ -461,6 +462,86 @@ def test_payment_skipped_when_no_account(monkeypatch):
     monkeypatch.setattr(P, "_api", lambda *a, **k: calls.append(1))
     P.add_payment(55, 120.0, store_key="minerva")
     assert calls == []
+
+
+# ─── Tahsilat idempotansı (gerçek prod bug'ı regresyonu: #1008) ──────────────
+
+def _payment_api(monkeypatch, invoice_att, on_post=None):
+    """GET /sales_invoices/{id} → verilen attributes; POST payments → kaydeder."""
+    posts = []
+
+    def fake(method, path, json=None, params=None):
+        if method == "GET":
+            return {"data": {"id": "55", "attributes": invoice_att}}
+        posts.append(json)
+        if on_post:
+            on_post()
+        return {"data": {"id": "9"}}
+
+    monkeypatch.setattr(P, "_api", fake)
+    return posts
+
+
+def test_payment_skipped_when_invoice_already_paid(monkeypatch):
+    """Aynı webhook iki kez gelirse ikinci tahsilat HİÇ yazılmaz (çift tahsilat yok).
+    (Yaşandı: #1008 → 400 'amount can not be bigger than remaining' → sipariş failed.)"""
+    _parasut_env(monkeypatch, mode="draft")
+    monkeypatch.setenv("PARASUT_ACCOUNT_ID_MINERVA", "901")
+    posts = _payment_api(monkeypatch, {"net_total": 1450.0, "total_paid": 1450.0})
+    P.add_payment(55, 1450.0, store_key="minerva")
+    assert posts == []
+
+
+def test_payment_clamped_to_remaining(monkeypatch):
+    """Kalan tutardan büyük tahsilat, kalana kırpılır (KDV yuvarlama farkı)."""
+    _parasut_env(monkeypatch, mode="draft")
+    monkeypatch.setenv("PARASUT_ACCOUNT_ID_MINERVA", "901")
+    posts = _payment_api(monkeypatch, {"net_total": 1449.98, "total_paid": 0})
+    P.add_payment(55, 1450.0, store_key="minerva")
+    assert posts[0]["data"]["attributes"]["amount"] == 1449.98
+
+
+def test_payment_swallows_race_already_paid_error(monkeypatch):
+    """Kontrolden SONRA araya tahsilat girerse Paraşüt'ün 400'ü hata sayılmaz."""
+    _parasut_env(monkeypatch, mode="draft")
+    monkeypatch.setenv("PARASUT_ACCOUNT_ID_MINERVA", "901")
+
+    def boom():
+        raise P.ParasutError("Paraşüt POST → 400: data->attributes->amount can not be "
+                             "bigger than remaining of the SalesInvoice")
+
+    _payment_api(monkeypatch, {"net_total": 1450.0, "total_paid": 0}, on_post=boom)
+    P.add_payment(55, 1450.0, store_key="minerva")      # fırlatmamalı
+
+
+def test_payment_still_raises_other_errors(monkeypatch):
+    """Gerçek hatalar (yetki, geçersiz hesap) yutulmaz — sipariş failed kalmalı."""
+    _parasut_env(monkeypatch, mode="draft")
+    monkeypatch.setenv("PARASUT_ACCOUNT_ID_MINERVA", "901")
+
+    def boom():
+        raise P.ParasutError("Paraşüt POST → 422: account not found")
+
+    _payment_api(monkeypatch, {"net_total": 1450.0, "total_paid": 0}, on_post=boom)
+    with pytest.raises(P.ParasutError):
+        P.add_payment(55, 1450.0, store_key="minerva")
+
+
+def test_payment_proceeds_when_invoice_unreadable(monkeypatch):
+    """Fatura okunamazsa (API hatası) tahsilat yine denenir — sessizce kaybolmaz."""
+    _parasut_env(monkeypatch, mode="draft")
+    monkeypatch.setenv("PARASUT_ACCOUNT_ID_MINERVA", "901")
+    posts = []
+
+    def fake(method, path, json=None, params=None):
+        if method == "GET":
+            raise P.ParasutError("Paraşüt GET → 503")
+        posts.append(json)
+        return {"data": {"id": "9"}}
+
+    monkeypatch.setattr(P, "_api", fake)
+    P.add_payment(55, 120.0, store_key="minerva")
+    assert posts[0]["data"]["attributes"]["amount"] == 120.0
 
 
 # ─── Ülke tespiti: çok kaynaklı (gerçek prod bug'ı regresyonu) ───────────────

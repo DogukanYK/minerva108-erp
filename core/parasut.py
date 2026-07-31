@@ -269,6 +269,28 @@ def create_invoice(order: dict, lines: List[dict], contact_id: int) -> int:
     return int(data["data"]["id"])
 
 
+def invoice_remaining(invoice_id: int) -> Optional[float]:
+    """Faturanın kalan (ödenmemiş) tutarı. Okunamazsa None (= bilinmiyor)."""
+    try:
+        att = ((_api("GET", f"/sales_invoices/{invoice_id}").get("data") or {})
+               .get("attributes") or {})
+    except ParasutError as exc:
+        logger.warning("Fatura %s okunamadı (%s) — kalan bakiye kontrolü atlandı",
+                       invoice_id, exc)
+        return None
+    if att.get("remaining") is not None:
+        try:
+            return round(float(att["remaining"]), 2)
+        except (TypeError, ValueError):
+            pass
+    try:
+        total = float(att.get("net_total") or att.get("gross_total") or 0)
+        paid = float(att.get("total_paid") or 0)
+    except (TypeError, ValueError):
+        return None
+    return round(total - paid, 2) if total else None
+
+
 def add_payment(invoice_id: int, amount: float, date: Optional[str] = None,
                 description: str = "iyzico tahsilatı (Shopify)",
                 store_key: Optional[str] = None) -> None:
@@ -276,19 +298,45 @@ def add_payment(invoice_id: int, amount: float, date: Optional[str] = None,
 
     Hesap `account_id(store_key)` ile çözülür (marka bazlı → genel fallback).
     Hiç tanımlı değilse sessizce atlar — fatura açık kalır (muhasebeci kapatır).
+
+    İDEMPOTENT: fatura zaten kapalıysa hiç yazmaz, kalanı aşan tutarı kalana
+    kırpar. Aynı webhook iki kez gelirse (Shopify tekrar gönderimi) veya KDV
+    yuvarlaması Shopify toplamının 1-2 kuruş altında kalırsa çift tahsilat /
+    "bigger than remaining" hatası oluşmaz.
     """
     acc = account_id(store_key)
     if not acc:
         logger.warning("Paraşüt tahsilat hesabı tanımsız (%s) — tahsilat kaydı atlandı",
                        store_key or "genel")
         return
+
+    amount = round(float(amount), 2)
+    remaining = invoice_remaining(invoice_id)
+    if remaining is not None:
+        if remaining <= 0.01:
+            logger.info("Fatura %s zaten kapalı (kalan %.2f) — tahsilat atlandı",
+                        invoice_id, remaining)
+            return
+        if amount > remaining:
+            logger.info("Fatura %s kalanı %.2f — tahsilat %.2f yerine kalan kadar yazıldı",
+                        invoice_id, remaining, amount)
+            amount = remaining
+
     body = {"data": {"type": "payments", "attributes": {
         "account_id": acc,
         "date": (date or to_tr(datetime.utcnow()).strftime("%Y-%m-%d"))[:10],
-        "amount": round(float(amount), 2),
+        "amount": amount,
         "description": description[:250],
     }}}
-    _api("POST", f"/sales_invoices/{invoice_id}/payments", json=body)
+    try:
+        _api("POST", f"/sales_invoices/{invoice_id}/payments", json=body)
+    except ParasutError as exc:
+        # Yarış durumu: araya başka bir tahsilat girdi → fatura zaten kapandı.
+        if "bigger than remaining" in str(exc).lower():
+            logger.info("Fatura %s bu arada kapanmış — çift tahsilat denemesi yutuldu",
+                        invoice_id)
+            return
+        raise
 
 
 # ─── Resmileştirme (e-Arşiv / e-Fatura) ──────────────────────────────────────
