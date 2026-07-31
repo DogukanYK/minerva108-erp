@@ -274,6 +274,25 @@ def test_retry_does_not_double_decrement(client: TestClient, db_session, monkeyp
     assert db_session.query(Item).filter(Item.id == it.id).one().current_stock == 8   # TEKRAR DÜŞMEDİ
     assert db_session.query(Transaction).filter(Transaction.item_id == it.id).count() == 1
     assert db_session.query(ShopifyOrder).one().parasut_invoice_id == 33
+    # sipariş tamamlandı → eski hata metni panelde asılı kalmaz
+    assert db_session.query(ShopifyOrder).one().last_error is None
+
+
+def test_stock_warning_survives_successful_parasut_run(client: TestClient, db_session,
+                                                       monkeypatch):
+    """Eşleşmeyen kalem uyarısı, fatura başarıyla kesilse bile silinmez."""
+    _env(monkeypatch); _parasut_env(monkeypatch)
+    _mock_parasut(monkeypatch, [])
+    ok = _item(db_session, "Minerva 108 Krem", "BC-1", stock=10)
+    p = _payload(lines=[
+        {"barcode": "BC-1", "sku": "", "title": "Krem", "quantity": 1, "price": "60.00"},
+        {"barcode": "YOK-BC", "sku": "", "title": "Bilinmeyen", "quantity": 5, "price": "10.00"}])
+    _post(client, p)
+    db_session.expire_all()
+    row = db_session.query(ShopifyOrder).one()
+    assert row.status in ("paid", "legalized")
+    assert (row.last_error or "").startswith("Stok: ") and "eşleşmedi" in row.last_error
+    assert db_session.query(Item).filter(Item.id == ok.id).one().current_stock == 9
 
 
 def test_parasut_token_password_grant_cached(monkeypatch):

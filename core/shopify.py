@@ -708,7 +708,8 @@ def _process_order(db: Session, row, order: dict) -> dict:
             row.step = "stock"
             n, issues = _decrement_stock(db, order)
             if issues:
-                row.last_error = ("; ".join(issues))[:500]
+                # "Stok: " öneki kalıcıdır — başarılı Paraşüt turunda silinmez
+                row.last_error = ("Stok: " + "; ".join(issues))[:500]
             row.status = "stock_done"
             row.stock_applied = True          # stokla BİRLİKTE commit — retry'ın tek doğrusu
             db.commit()
@@ -756,6 +757,13 @@ def _process_order(db: Session, row, order: dict) -> dict:
                         row.status = "legalized"
                 # draft modda paid'de kalır (bilinçli)
                 db.commit()
+
+        # Sipariş tamamlandıysa önceki denemenin hata metni artık geçersiz —
+        # panelde "paid ama kırmızı hata" görünmesin. Stok uyarısı korunur.
+        if (row.status in ("paid", "legalized") and row.last_error
+                and not row.last_error.startswith("Stok: ")):
+            row.last_error = None
+            db.commit()
 
         log_admin_event(db, None, actor=None, action="shopify.order_paid",
                         target_type="shopify_order", target_id=row.id,
