@@ -461,3 +461,40 @@ def test_payment_skipped_when_no_account(monkeypatch):
     monkeypatch.setattr(P, "_api", lambda *a, **k: calls.append(1))
     P.add_payment(55, 120.0, store_key="minerva")
     assert calls == []
+
+
+# ─── Ülke tespiti: çok kaynaklı (gerçek prod bug'ı regresyonu) ───────────────
+
+def test_country_falls_back_to_shipping_and_customer():
+    """billing.country_code BOŞ gelse bile TR siparişi ihracat sayılmamalı.
+    (Yaşandı: draft order → complete akışında billing.country null geliyor.)"""
+    # 1) billing boş, shipping'de kod var
+    p = {"billing_address": {"city": "İstanbul"}, "shipping_address": {"country_code": "tr"}}
+    assert S._country_code(p, p["billing_address"]) == "TR"
+    # 2) hiçbirinde kod yok, shipping'de ülke ADI var
+    p = {"billing_address": {"city": "İstanbul"}, "shipping_address": {"country": "Turkey"}}
+    assert S._country_code(p, p["billing_address"]) == "TR"
+    # 3) yalnız müşterinin varsayılan adresinde var
+    p = {"billing_address": {"city": "İstanbul"},
+         "customer": {"default_address": {"country_code": "TR"}}}
+    assert S._country_code(p, p["billing_address"]) == "TR"
+    # 4) billing önceliklidir
+    p = {"billing_address": {"country_code": "DE"}, "shipping_address": {"country_code": "TR"}}
+    assert S._country_code(p, p["billing_address"]) == "DE"
+    # 5) hiçbir ülke bilgisi yok → boş (akış MANUEL'e düşürür, tahmin etmez)
+    p = {"billing_address": {"city": "X"}}
+    assert S._country_code(p, p["billing_address"]) == ""
+
+
+def test_tr_order_with_empty_billing_country_is_processed(client, db_session, monkeypatch):
+    """Uçtan uca: billing.country boş + shipping 'Turkey' → stok DÜŞER, atlanmaz."""
+    _env(monkeypatch)
+    it = _item(db_session, "Minerva 108 Krem", "BC-1", stock=10)
+    p = _payload()
+    p["billing_address"].pop("country_code", None)          # Shopify'ın boş bıraktığı hal
+    p["shipping_address"] = {"country": "Turkey", "city": "İstanbul"}
+    assert _post(client, p).status_code == 200
+    db_session.expire_all()
+    row = db_session.query(ShopifyOrder).one()
+    assert row.country == "TR" and row.status != "skipped_export"
+    assert db_session.query(Item).filter(Item.id == it.id).one().current_stock == 8

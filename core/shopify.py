@@ -446,6 +446,35 @@ def webhook_secret(brand: str) -> str:
     return cfg["client_secret"] if cfg else ""
 
 
+#: "Turkey" gibi ülke ADI gelen (country_code boş) siparişler için eşleme.
+_TR_NAMES = {"turkey", "türkiye", "turkiye", "republic of türkiye", "republic of turkey"}
+
+
+def _country_code(payload: dict, billing: dict) -> str:
+    """Sipariş ülkesi — çok kaynaklı, dayanıklı tespit.
+
+    Shopify bazı akışlarda (draft order → complete, bazı ödeme yöntemleri)
+    billing_address'i doldurur ama country/country_code'u BOŞ bırakır — yaşandı:
+    gerçek bir TR siparişi 'ihracat' sanılıp faturasız kalıyordu.
+    Sıra: billing → shipping → müşterinin varsayılan adresi; kod yoksa ülke ADINDAN
+    çıkarım. Hiçbiri yoksa "" döner → akış onu ihracat sayıp MANUEL'e düşürür
+    (güvenli taraf: resmi belge asla tahminle kesilmez).
+    """
+    cust = ((payload.get("customer") or {}).get("default_address") or {})
+    sources = [billing or {}, payload.get("shipping_address") or {}, cust]
+    for src in sources:                       # 1) ISO kodu
+        cc = ((src.get("country_code") or "")).strip().upper()
+        if cc:
+            return cc
+    for src in sources:                       # 2) ülke adı → TR
+        nm = ((src.get("country") or "")).strip().lower()
+        if nm in _TR_NAMES:
+            return "TR"
+        if nm:
+            return nm[:8].upper()             # bilinmeyen ülke adı → TR değil
+    return ""
+
+
 def _order_summary(store_key_: str, payload: dict) -> dict:
     """Shopify orders/paid payload'ından gerekli alt küme (retry/fatura için)."""
     billing = payload.get("billing_address") or payload.get("shipping_address") or {}
@@ -489,7 +518,7 @@ def _order_summary(store_key_: str, payload: dict) -> dict:
         "order_number": str(payload.get("name") or payload.get("order_number") or "").lstrip("#"),
         "total": float(payload.get("total_price") or 0),
         "currency": payload.get("currency") or "TRY",
-        "country": ((billing.get("country_code") or "") or "").upper(),
+        "country": _country_code(payload, billing),
         "customer_email": (payload.get("email") or customer.get("email") or "").strip(),
         "customer_name": name or company or "Shopify Müşterisi",
         "vkn_tckn": "",                                  # Shopify standart alanı yok — B2C varsayımı
