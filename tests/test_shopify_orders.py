@@ -498,3 +498,25 @@ def test_tr_order_with_empty_billing_country_is_processed(client, db_session, mo
     row = db_session.query(ShopifyOrder).one()
     assert row.country == "TR" and row.status != "skipped_export"
     assert db_session.query(Item).filter(Item.id == it.id).one().current_stock == 8
+
+
+def test_variant_id_fallback_matches_stock(client, db_session, monkeypatch):
+    """Shopify sipariş webhook'u BARKOD göndermez (sadece sku + variant_id).
+    IMS'te sku de yoksa, variant_id → barkod haritasıyla eşleşip stok DÜŞMELİ.
+    (Yaşandı: gerçek siparişte 'IMS'te eşleşmedi' → stok hiç düşmüyordu.)"""
+    _env(monkeypatch)
+    it = _item(db_session, "Minerva 108 Face Scrub", "8683829206413", stock=69, sku=None)
+    monkeypatch.setattr(S, "fetch_variants", lambda b: [
+        {"barcode": "8683829206413", "sku": "MIN-FACESCRB-60",
+         "inventory_item_id": "gid://iv/1", "variant_id": "43396254662704",
+         "product_status": "ACTIVE"}])
+    S._VARIANT_BC_CACHE.clear()
+    p = _payload(lines=[{"barcode": None, "sku": "MIN-FACESCRB-60", "variant_id": 43396254662704,
+                         "title": "Face Scrub", "quantity": 1, "price": "1450.00",
+                         "tax_lines": [{"rate": 0.20}]}])
+    assert _post(client, p).status_code == 200
+    db_session.expire_all()
+    assert db_session.query(Item).filter(Item.id == it.id).one().current_stock == 68
+    row = db_session.query(ShopifyOrder).one()
+    assert row.stock_applied is True and "eşleşmedi" not in (row.last_error or "")
+    S._VARIANT_BC_CACHE.clear()

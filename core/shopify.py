@@ -446,6 +446,34 @@ def webhook_secret(brand: str) -> str:
     return cfg["client_secret"] if cfg else ""
 
 
+#: variant_id → barkod önbelleği (mağaza başına). Sipariş webhook'u barkod
+#  göndermediği için stok eşleşmesinde kullanılır; 10 dk sonra tazelenir.
+_VARIANT_BC_CACHE: dict = {}      # store_key → (expiry_epoch, {variant_id: barcode})
+_VARIANT_BC_TTL = 600
+
+
+def _variant_barcode(store_key_: str, variant_id) -> Optional[str]:
+    """Shopify variant_id'den barkod. Mağaza haritası önbelleklenir; hata → None."""
+    try:
+        vid = str(variant_id).split("/")[-1]
+        cached = _VARIANT_BC_CACHE.get(store_key_)
+        if not cached or cached[0] < time.time():
+            brand = brand_for_store_key(store_key_)
+            if not brand:
+                return None
+            mapping = {}
+            for v in fetch_variants(brand):
+                key = str(v.get("variant_id") or "").split("/")[-1]
+                if key and v.get("barcode"):
+                    mapping[key] = v["barcode"]
+            cached = (time.time() + _VARIANT_BC_TTL, mapping)
+            _VARIANT_BC_CACHE[store_key_] = cached
+        return cached[1].get(vid)
+    except Exception:
+        logger.exception("variant_id → barkod çözümlenemedi (%s)", store_key_)
+        return None
+
+
 #: "Turkey" gibi ülke ADI gelen (country_code boş) siparişler için eşleme.
 _TR_NAMES = {"turkey", "türkiye", "turkiye", "republic of türkiye", "republic of turkey"}
 
@@ -500,6 +528,7 @@ def _order_summary(store_key_: str, payload: dict) -> dict:
                 pass
         lines.append({"barcode": (li.get("barcode") or "").strip() or None,
                       "sku": (li.get("sku") or "").strip() or None,
+                      "variant_id": li.get("variant_id"),   # barkod gelmezse eşleşme anahtarı
                       "title": li.get("title") or "",
                       "quantity": qty, "unit_price_incl": price,
                       "vat_rate": vat, "discount_amount": round(disc, 4)})
@@ -562,6 +591,21 @@ def _decrement_stock(db: Session, order: dict) -> Tuple[int, list]:
                     .filter(Item.sku == ln["sku"].strip(), Item.is_active == True,  # noqa: E712
                             Item.domain == "cosmetics", Item.category == "Bitmiş Ürün")
                     .with_for_update().first())
+        if item is None and ln.get("variant_id"):
+            # Shopify sipariş webhook'u line_item'da BARKOD GÖNDERMEZ (sadece sku +
+            # variant_id) — yaşandı: barkod-eşleşmeli stok hiç düşmüyordu. Mağazadan
+            # variant_id → barkod haritasını (bir kez) çekip barkodla eşleştir.
+            bc2 = (_variant_barcode(order["store_key"], ln["variant_id"]) or "").strip()
+            if bc2:
+                matches = (db.query(Item)
+                           .filter(Item.barcode == bc2, Item.is_active == True,   # noqa: E712
+                                   Item.domain == "cosmetics",
+                                   Item.category == "Bitmiş Ürün")
+                           .with_for_update().all())
+                if len(matches) > 1:
+                    issues.append(f"belirsiz barkod {bc2} (ids {[m.id for m in matches]}) — kalem atlandı")
+                    continue
+                item = matches[0] if matches else None
         if item is None:
             issues.append(f"IMS'te eşleşmedi: {ln.get('barcode') or ln.get('sku') or ln.get('title')} — kalem atlandı")
             continue
