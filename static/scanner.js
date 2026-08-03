@@ -31,6 +31,8 @@
   let modalEl = null;
   let bsModal = null;
   let scannerInstance = null;       // Html5Qrcode instance (or null)
+  let _decoded = false;             // bu açılışta okuma oldu mu (onClose bastırma)
+  let _onCloseCb = null;            // okumadan kapatılınca çağrılacak (opsiyonel)
 
   function ensureModal() {
     if (modalEl) return modalEl;
@@ -76,6 +78,11 @@
       if (r) r.innerHTML = '';
       const lbl = document.getElementById('barcodeScanCamLabel');
       if (lbl) lbl.textContent = '';
+      // Okuma olmadan kapatıldıysa çağırana haber ver (ör. PDKS "iptal edildi" toast'ı) —
+      // yoksa çağıran taraf butonunu sonsuza kadar disabled bırakabilir.
+      const cb = _onCloseCb;
+      _onCloseCb = null;
+      if (!_decoded && typeof cb === 'function') cb();
     });
 
     return modalEl;
@@ -133,8 +140,14 @@
 
   /**
    * @param {(text: string) => void} callback
+   * @param {{qrbox?: {width:number,height:number}, title?: string, hint?: string,
+   *          onClose?: () => void}} [opts] — geriye uyumlu; hiçbiri zorunlu değil.
+   *          onClose: okuma olmadan modal kapatılınca (kullanıcı vazgeçti) çağrılır.
    */
-  window.openBarcodeScanner = async function (callback) {
+  window.openBarcodeScanner = async function (callback, opts) {
+    _decoded = false;
+    _onCloseCb = (opts && typeof opts.onClose === 'function') ? opts.onClose : null;
+
     // ── Native uygulama (Capacitor) → ML Kit native barkod tarayıcı ──────────
     // WebView getUserMedia kamerası bazı cihazlarda izin verili olsa bile
     // NotAllowedError/çökme yapıyor. Native'de telefonun gerçek barkod
@@ -157,28 +170,42 @@
           const res = await _BS.scan();
           const codes = (res && res.barcodes) || [];
           if (codes.length && typeof callback === 'function') {
+            _decoded = true;
             callback(String(codes[0].rawValue || codes[0].displayValue || '').trim());
           }
         }
       } catch (e) {
         const msg = (e && e.message) ? e.message : String(e);
         if (!/cancel/i.test(msg)) alert('Barkod taranamadı: ' + msg);
+      } finally {
+        // Native yolda hidden.bs.modal hiç tetiklenmez (modal hiç açılmadı) —
+        // okuma olmadıysa onClose'u burada elle tetikle.
+        if (!_decoded) { const cb = _onCloseCb; _onCloseCb = null; if (cb) cb(); }
       }
       return;
     }
 
     if (!('mediaDevices' in navigator) || typeof navigator.mediaDevices.getUserMedia !== 'function') {
       alert('Bu cihaz / tarayıcı kamera erişimini desteklemiyor.');
+      { const cb = _onCloseCb; _onCloseCb = null; if (cb) cb(); }
       return;
     }
     if (typeof Html5Qrcode === 'undefined') {
       alert('Tarayıcı kütüphanesi yüklenemedi. İnternet bağlantınızı kontrol edip sayfayı yenileyin.');
+      { const cb = _onCloseCb; _onCloseCb = null; if (cb) cb(); }
       return;
     }
 
     const el = ensureModal();
     const errEl = document.getElementById('barcodeScanError');
     if (errEl) errEl.style.display = 'none';
+    const titleEl = el.querySelector('.modal-title');
+    if (titleEl) {
+      titleEl.innerHTML = `<i class="bi bi-qr-code-scan"></i> ${(opts && opts.title) ? opts.title.replace(/</g, '&lt;') : 'Barkod Tara'}`;
+    }
+    const hintEl = document.getElementById('barcodeScanHint');
+    if (hintEl && opts && opts.hint) hintEl.textContent = opts.hint;
+    else if (hintEl) hintEl.textContent = 'Kamerayı barkoda doğrultun. Tarama başarılı olduğunda otomatik kapanır.';
 
     if (!bsModal) bsModal = new bootstrap.Modal(el);
     bsModal.show();
@@ -188,6 +215,7 @@
 
     const onDecoded = (decodedText) => {
       // Stop + close — single-shot scan
+      _decoded = true;
       if (scannerInstance) {
         scannerInstance.stop().catch(() => {});
         scannerInstance = null;
@@ -206,7 +234,7 @@
                         && window.Capacitor.isNativePlatform());
     const cfg = {
       fps: 10,
-      qrbox: { width: 260, height: 160 },
+      qrbox: (opts && opts.qrbox) || { width: 260, height: 160 },
       aspectRatio: 1.4,
       // Help with poorly-lit shipping labels (tarayıcıda hızlı; WebView'de çökertir)
       experimentalFeatures: { useBarCodeDetectorIfSupported: !isNative },

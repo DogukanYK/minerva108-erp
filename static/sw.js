@@ -12,7 +12,7 @@
  * Bump CACHE_NAME any time you ship a breaking static-asset change so users
  * pick it up on next reload instead of being stuck on stale CSS/JS.
  */
-const CACHE_NAME = 'minerva108-v20';     // bumped — theme.js beforeprint kancası + print.css kullanıcılara ulaşsın
+const CACHE_NAME = 'minerva108-v21';     // bumped — scanner.js opts (PDKS kare QR + onClose)
 
 const PRECACHE = [
   '/static/dark.css',

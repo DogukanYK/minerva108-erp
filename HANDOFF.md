@@ -1,103 +1,162 @@
-# Minerva 108 — Oturum Handoff (2026-07-03)
+# Minerva 108 — Oturum Handoff (2026-07-31)
 
-Canlı sürüm: `317b0dd` (main = origin/main = prod, doğrulandı) · alembic head:
-`c4f6a8b2d1e5` (tek) · Prod: `turhost` (root@136.144.251.26:23422), `/var/www/minerva`,
-systemd `minerva`, PostgreSQL `minerva_db` · deploy **yalnız `./deploy.sh`**
-(test gate + HTTP doğrulama). İki paralel oturum çalıştı: **A = ERP çekirdek**
-(teslimat/iade/yazdırma), **B = portal + mobil**. Bu dosya ikisini de kapsar.
+Canlı sürüm: **`fe0ad1c`** (main = origin/main = prod, doğrulandı) · alembic head:
+**`f3a5c7e9b2d4`** (tek) · testler **398 passed** · Prod: `turhost`
+(root@136.144.251.26:23422), `/var/www/minerva`, systemd `minerva`, PostgreSQL
+`minerva_db` · deploy **yalnız `./deploy.sh`** (test gate + HTTP doğrulama).
+
+> `./deploy.sh` commit mesajını **interaktif** sorar. Ajans/otomasyon içinden çalıştırırken
+> `echo "mesaj" | ./deploy.sh` — yoksa Step 2'de `read` patlar (yaşandı).
 
 ---
 
-## A. ERP çekirdek akışı (bu oturum — CANLI)
+## A. Bu oturumda eklenenler (hepsi CANLI)
 
 | Özellik | Ana dosyalar | Not |
 |---|---|---|
-| Teslimat: çift-dilli arama + zorunlu belge dili + antetli belge | `routers/delivery.py`, `core/delivery_note.py`, `templates/delivery.html` | `Item.name_tr` + `Delivery.doc_lang`; arama sonuçları inline (overflow fix) |
-| Türkçe ad toplu import (barkodla) | `routers/inventory.py` → `/api/items/import-names` | Fuar Excel'leri BARCODE→TR ad; ölçü ada eklenir (100/500 ML ayrışır) |
-| Proforma Fatura + SuperAdmin onayı | `core/proforma_invoice.py` + delivery router | Stok **ONAYDA** düşer; `PRF-` belge no |
-| Kargo/Sevkiyat (ertelenmiş stok) | delivery router `ship/cancel/shipments`, `core/shipment_note.py` | `KRG-`; stok **takip no girilince** düşer (idempotent, hep-ya-hiç); hazırlık + master toplama PDF |
-| Tek-tık + çok-bacaklı kargo takibi | `Delivery.tracking_legs` (JSON), delivery.html `legsModal` | Yerel TR → Global → Varış; her bacak 📍 tek tık; **her teslimata** (hediye/numune dahil) takip eklenebilir |
-| Sevkiyat düzenleme | `PUT /api/delivery/{id}` | Taslakta ürünler dahil; kargolanmışta yalnız meta — **stok güvenli** |
-| **Ürün İadesi** (yan menü → İadeler) | `routers/returns.py`, `core/return_note.py`, `templates/returns.html` | `RET-`; belgeye bağlı KISMİ iade (aşırı-iade SUM guard) + serbest iade; SAĞLAM→stok+`Transaction(Input)`, HASARLI→fire izi (stok değişmez) |
-| Drive Quick Look önizleme | `routers/drive.py` `preview/meta+raw`, drive.html | foto/PDF/Excel/metin; boşluk tuşu; beyaz-liste + nosniff (XSS guard korunur) |
-| **Sistem geneli yazdırma** | `static/print.css` (21 şablon), `theme.js` beforeprint | Cmd+P her sayfada temiz; koyu tema baskıda otomatik light |
-| **Ürünler → Yazdır (PDF)** | `core/items_report.py`, `GET /api/items/print`, items.html | Sekme+alt-tip+arama filtreli antetli A4; Maliyet **finance-gated** (sunucuda) |
-| Rol görünen adları + hata mesajı düzeltmeleri | `core/permissions.py get_role_labels`, admin.html `errMsg` | AppSetting tabanlı; 422 "[object Object]" fix |
+| **İçindekiler Raporu** (Ürünler → esnek seçim → Excel/PDF) | `core/ingredients_report.py`, `routers/reports.py`, `templates/items.html` | Marka/ürün çoklu seçim; Excel **ürün-blok** düzeni (hammadde + ambalaj ayrı sheet), A4 yazdırılabilir; antetli PDF |
+| **Numune Analiz Formu (FR.KK.01)** | `core/sample_questions.py`, `core/sample_report.py`, `routers/sample_analysis.py`, `templates/numune_analiz.html` | Songül Hanım'ın kâğıt formunun dijital ikizi; formülasyon/tarih/lot/açıklama; antetli PDF; tablo `sample_analyses` |
+| **Shopify Faz 1 — IMS→Shopify stok push** | `core/shopify.py`, `routers/shopify.py`, `templates/shopify_sync.html` | 3 mağaza (Minerva/Evanira/Serenida); eşleşme **barkod**; `*/5 dk` scheduler job; `ShopifySyncState` |
+| **Shopify Faz 2 — sipariş → stok → fatura → tahsilat** | `core/shopify.py` (`handle_order_paid`/`_process_order`/`retry_order`), `core/parasut.py` | `orders/paid` webhook (HMAC) → stok Output → Paraşüt faturası → iyzico tahsilatı; `ShopifyOrder` durum makinesi |
+| **Paraşüt entegrasyonu** | `core/parasut.py` | password grant + 10 istek/10sn rate guard; contact/product find-or-create; KDV-hariç kalem; e-Arşiv/e-Fatura + trackable job poll |
+| **PDKS** (personel giriş/çıkış + puantaj) | `routers/pdks.py`, `core/pdks.py`, `core/pdks_report.py`, `templates/pdks.html` | Detay CLAUDE.md'de; tablolar `pdks_*` (migration `f3a5c7e9b2d4`) |
+| **Barkod reconciliation** | `scripts/reconcile_shopify_barcodes.py` | GS1 master otorite; 18 düzeltme prod'da uygulandı; idempotent (tekrar çalışır) |
 
-Testler: `test_shipment` (17) · `test_returns` (7) · `test_items_print` (7) ·
-`test_pdf_a4` (A4+autofit+marj) · `test_drive_preview` (7) · `test_import_names` (3) ·
-`test_proforma` · `test_role_labels`.
-
-### Kritik kararlar / tuzaklar (İLERİDE BOZMA)
-1. **İade Transaction tipi = `Input`** ('Return' tipi ekleme!): `core/snapshots.py` +
-   `core/monthly_report.py` stok rekonstrüksiyonu yalnız Input/Output/Adjustment tanır.
-   Ayrım `notes` ön eki: `İade (RET-…) ← kaynak`.
-2. **Antetli PDF marjları `(20,20,48,40)mm`** — antetli footer ~34mm; alt marjı 30'a
-   düşürme (footer'a taşar — yaşandı). Antetli `static/letterhead.pdf` **US Letter**;
-   `merge_letterhead` A4'e `scale_to` ile normalize eder (~%6 esneme; sıfır bozulma
-   için kullanıcıdan gerçek A4 antetli istenmeli).
-3. **`render_autofit` politikası**: tek sayfa öncelikli → maks %15 küçült → yetmezse
-   çok sayfa (öksüz satır olmaz). `test_pdf_a4` kilitler.
-4. **Content-Disposition daima `core.delivery_note.content_disposition()`** (RFC 5987)
-   — Türkçe dosya adı doğrudan header'a konursa 500 (yaşandı).
-5. **`/preview/raw` için app X-Frame-Options SET ETMEZ** — nginx zaten SAMEORIGIN
-   ekliyor; çiftlenirse Chrome iframe'i keser ("refused to connect", yaşandı).
-   CSP `frame-ancestors 'self'` yeterli.
-6. **print.css cascade**: dark.css → print.css → sayfa-içi `<style>`. production föyü +
-   quotations invoice kendi @media print kurallarıyla korunur. Yeni modal id'si
-   `…Modal` ile bitmeli (baskıda otomatik gizlenir).
-7. **Statik dosya değişince `static/sw.js` CACHE_NAME bump** (şu an v20) — yoksa
-   PWA kullanıcılarına ulaşmaz (theme.js/scanner.js'te yaşandı).
-8. **TR sıralama sunucuda `core.items_report.tr_key`** (order-map; `locale` modülü kullanma).
-9. **Şema kuralı:** her yeni KOLON hem Alembic migration hem `init_db()` alter_safe;
-   yeni TABLO ise create_all otomatik (yalnız migration yeter).
+Testler: `test_ingredients_report` (16) · `test_sample_analysis` (13) · `test_shopify` (20) ·
+`test_shopify_orders` (38) · `test_pdks`.
 
 ---
 
-## B. Distribütör Portalı + Native uygulamalar (paralel oturum — CANLI, 29.06)
+## B. Shopify + Paraşüt — operasyonel durum
 
-- **Portal:** `siparis.minerva108.com` — Distribütör = `role="Distributor"` User + 1:1
-  `Distributor` profili; sipariş = `distributor_id`'li PENDING `Quotation` → personel
-  B2B Teklifler'den onaylar (stok düşer) / reddeder. Fiyat daima sunucudan
-  (`DistributorPrice` = katalog). Stok distribütöre yalnız var/yok. Dosyalar:
-  `core/distributor.py`, `routers/{distributors,portal}.py`, `templates/distributor_portal.html`,
-  `static/portal.js`. DNS+nginx+TLS kuruldu (`ops/siparis-subdomain.md`).
-  İlk distribütör: ims → Distribütörler → Yeni + Fiyatlar → kullanıcıya siparis adresi ver.
-- **Native Android (Capacitor WebView, TWA değil):** IMS `~/Desktop/Claude/minerva-mobile/ims`
-  (`com.minerva108.ims`, APK v1.0.7) + CRM `…/crm`. Native ML Kit barkod, DownloadManager,
-  adjustResize, splash. **Keystore'lar `<app>/signing/` — SAKLA.** Build: JDK17 + SDK,
-  `./gradlew assembleRelease`. Detay: `~/Desktop/Claude/minerva-mobile/POLISH-LOG.md`.
-- Diğer: login IP limiti 5→40/15dk (`routers/auth.py`); iOS PWA viewport-fit geri alındı;
-  mobilde daima açık tema.
+### Şu an ne çalışıyor
+
+| Mağaza | Stok senkronu (IMS→Shopify) | Sipariş → fatura |
+|---|---|---|
+| **Minerva** `dkkwdr-rr` | ✓ 29 ürün | ✓ TAM OTOMATİK |
+| **Evanira** `j0jfuy-j9` | ✓ 12 ürün | ✗ kendi app'i + ORDERS_PAID webhook kurulmadı |
+| **Serenida** | — mağaza yok | — |
+
+**Akış:** `orders/paid` → HMAC doğrula → ülke TR mi (değilse `skipped_export` + bildirim)
+→ stok Output (**yalnız bir kez**, `stock_applied`) → Paraşüt müşteri/fatura → iyzico
+tahsilatı → (official modda) e-belge. Yarım kalanları `*/10 dk` retry job kaldığı
+ADIMDAN tamamlar (15 dk'dan yeni kayda dokunmaz, `attempts` limiti 5).
+
+### ⚠️ Açık iş #1 — fatura hâlâ RESMİ DEĞİL
+Prod `.env`: `INVOICE_MODE=draft` (env adı **PARASUT_ öneksiz**; `invoice_mode()`
+doğrudan `os.getenv("INVOICE_MODE")` okur — diğer tüm Paraşüt env'leri `PARASUT_*`).
+Draft = fatura Paraşüt'te oluşur, tutar/tahsilat doğru, ama **GİB'e gönderilmez**.
+`official` yapıldığında: VKN varsa e-Fatura kutusu sorgulanır → mükellefse **e-Fatura**,
+değilse **e-Arşiv**. Geçiş = prod `.env` tek satır + `systemctl restart minerva`
+(kullanıcının işi; ad-hoc prod restart hook'la bloklu).
+
+### ⚠️ Açık iş #2 — kullanıcı Minerva'yı ELLE de faturalıyor
+Sistem otomatik kesiyor. Elle kesmeye devam ederse **çift fatura**. Kullanıcıya
+defalarca söylendi, teyit alınmadı.
+
+### ⚠️ Açık iş #3 — TEST VERİSİ DURUYOR (kullanıcı incelesin diye bilinçli bırakıldı)
+Sipariş **#1008**: Shopify siparişi (`IMS-TEST` etiketli) · Paraşüt faturası
+**1094665360** (1.450 TL, ödendi) · `shopify_orders` id=5 (durum `paid`) + Transaction ·
+Face Scrub 60ml stok **69→68**. Kullanıcı "temizle" deyince: Shopify iptal → Paraşüt
+fatura sil → IMS satır + Transaction sil → stok 68→69 → Shopify'a geri push.
+Not: id=5'in `last_error` alanında eski hata metni duruyor (kayıt bir daha
+işlenmeyeceği için temizlenmedi) — temizlikte gidecek.
+
+### Diğer bekleyenler
+- Evanira sipariş→fatura: o mağazaya `read_orders` izinli kendi custom app'i + panelden
+  "Webhook Kurulumu". (Minerva'daki app adı **PARASUT**, Client ID `3f00e4ef…`.)
+- Serenida mağazası kurulunca `SHOPIFY_SERENIDA_*` env'leri doldur → stok otomatik başlar.
+- **Komisyon gideri manuel** (muhasebeci kararı): sistem faturayı satış tutarının
+  TAMAMI kadar ödendi işler; iyzico komisyonu ayrıca gider kaydedilecek.
+- Shopify client secret'ları geçmişte sohbete düştü → **rotate** önerildi, yapılmadı.
 
 ---
 
-## C. Açık işler / bekleyenler
+## C. Kritik kararlar / tuzaklar (İLERİDE BOZMA)
 
-- **Işık Hanım'ın STOK SON DURUM.xlsx** tedarikçi fiyat importu (UI hazır — kullanıcı yükleyecek).
-- **TR ad importunda eşleşmeyen 5 MINERVA ürünü** (barkod sistemde yok): KOYU LEKE KREMİ
-  50ML `…206598` · YOĞUN SAÇ MASKESİ 200ML `…206451` · ROLL ON DEODORANT 50ML `…206345` ·
-  YÜZ TEMİZLEME JELİ 200ML `…206420` · TIRNAK BAKIM SERUMU 7ml `…206376`. İlk 2'nin ürünü
-  sistemde FARKLI barkodla var (`…206208`, `…206529`) — kullanıcı kararı: barkod düzelt vs yeni ürün.
+### Bu oturumdan
+1. **Tahsilat idempotan olmalı** (`P.add_payment`): POST öncesi `invoice_remaining()`
+   bakılır; kalan ≤0.01 → hiç yazma; tutar kalandan büyükse **kırp**; yarışta gelen
+   `"bigger than remaining"` hatası **yutulur**, diğer hatalar fırlatılır. Yaşandı:
+   Shopify aynı `orders/paid`'i iki kez gönderdi → 400 → sipariş boşuna `failed` oldu.
+2. **`row.last_error`**: stok eşleşme uyarıları `"Stok: "` önekiyle yazılır ve
+   **asla silinmez**; sipariş `paid`/`legalized` olunca önek*siz* (Paraşüt) hata
+   metni temizlenir. Panelde "paid ama kırmızı hata" görünmesin diye.
+3. **`stock_applied` bayrağı stok commit'iyle BİRLİKTE yazılır.** Hata sonrası
+   `db.rollback()` `step` alanını geri sarıyordu → retry stoğu ÇİFT düşürüyordu.
+   Retry kararı `status`/`step`'e değil bu bayrağa bakar.
+4. **Shopify sipariş webhook'u line_item'da BARKOD GÖNDERMEZ** (yalnız `sku` +
+   `variant_id`). Eşleşme zinciri: barkod → sku → `_variant_barcode()` (variant_id→barkod
+   mağaza haritası, 10 dk cache). Bu olmadan stok HİÇ düşmüyordu (canlı testte yakalandı).
+5. **`billing_address.country` boş gelebilir** (draft order→complete akışı) → TR siparişi
+   `skipped_export` oluyordu. `_country_code()`: billing → shipping → müşteri varsayılan
+   adresi, hem ISO kodu hem ülke ADI ("Turkey"→TR).
+6. **Shopify auth = client_credentials** (yeni Dev Dashboard'da statik `shpat_` token YOK).
+   App mağazaya kurulur, sonra Client ID+Secret ile `POST /admin/oauth/access_token`.
+   **Her Shopify org'u kendi app'ini ister** — Minerva ve Evanira ayrı org'ta.
+7. **Test yöntemi:** API ile `financial_status:"paid"` vererek order create etmek
+   `orders/paid` webhook'unu TETİKLEMEZ. Gerçek olay için: `draft_orders` → `complete`
+   (`payment_pending=false`) → sale transaction doğar → webhook gelir.
+8. **openpyxl A4 yazdırma** (`_setup_a4`): `paperSize=PAPERSIZE_A4` + `fitToWidth=1` +
+   `fitToHeight=0` + `sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)`
+   + `print_title_rows`. Üçü birden olmadan fitToPage çalışmaz.
+9. **Antetli PDF performansı**: her sayfaya ayrı letterhead merge etmek 25 MB / dakikalarca
+   sürüyordu → TEK letterhead page objesi tüm sayfalara merge + `compress_identical_objects`
+   (1.7 MB / ~3 sn). Ayrıca 2'den fazla ürün varsa `render_autofit(steps=())` — autofit
+   tüm dokümanı 5 kez yeniden kuruyordu.
+
+### Önceki oturumlardan (hâlâ geçerli)
+10. **İade Transaction tipi = `Input`** ('Return' tipi EKLEME): `core/snapshots.py` +
+    `core/monthly_report.py` stok rekonstrüksiyonu yalnız Input/Output/Adjustment tanır.
+    Ayrım `notes` ön ekiyle: `İade (RET-…) ← kaynak`.
+11. **Antetli PDF marjları `(20,20,48,40)mm`** — antetli footer ~34mm. İçerik yoğun
+    formlarda (İçindekiler Raporu) **alt marj 50mm**, yoksa footer'a taşar (raster
+    doğrulandı). Antetli `static/letterhead.pdf` US Letter; `merge_letterhead` A4'e
+    `scale_to` ile normalize eder.
+12. **`render_autofit` politikası**: tek sayfa öncelikli → maks %15 küçült → yetmezse
+    çok sayfa (öksüz satır olmaz). `test_pdf_a4` kilitler.
+13. **Content-Disposition daima `core.delivery_note.content_disposition()`** (RFC 5987) —
+    Türkçe dosya adı doğrudan header'a konursa 500.
+14. **`/preview/raw` için app X-Frame-Options SET ETMEZ** — nginx zaten SAMEORIGIN ekliyor;
+    çiftlenirse Chrome iframe'i keser.
+15. **print.css cascade**: dark.css → print.css → sayfa-içi `<style>`. Yeni modal id'si
+    `…Modal` ile bitmeli (baskıda otomatik gizlenir).
+16. **Statik dosya değişince `static/sw.js` CACHE_NAME bump** — yoksa PWA kullanıcılarına
+    ulaşmaz.
+17. **TR sıralama sunucuda `core.items_report.tr_key`** (`locale` modülü kullanma).
+18. **Şema kuralı:** her yeni KOLON hem Alembic migration hem `init_db()` alter_safe;
+    yeni TABLO ise create_all otomatik (yalnız migration yeter).
+
+---
+
+## D. Diğer açık işler
+
+- **Işık Hanım'ın STOK SON DURUM.xlsx** tedarikçi fiyat importu — UI hazır, kullanıcı
+  yükleyecek (bu oturumda başlandı, İçindekiler Raporu talebi araya girdi).
 - **EN/TR ölçü çelişkileri** (kaynak veri, kullanıcı karar verecek): `…206222` EN
   "Toner 200ml" ↔ TR "TONİK 100 ML"; `…206192` EN "Serum 30ml" ↔ TR "SERUMU 20 ML".
-- **print.css manuel smoke** (kullanıcı doğrulaması): koyu temada Cmd+P · modal açıkken
-  Cmd+P · production föyü + quotations regresyonu · 200+ satırda thead tekrarı.
-- Portal opsiyonelleri: distribütöre push, portal proforma PDF'i, min sipariş miktarı,
-  distribütör rolü için ungated-read denetimi. Native push (FCM) ayrı faz.
+- Portal opsiyonelleri: distribütöre push, portal proforma PDF'i, min sipariş miktarı.
+  Native push (FCM) ayrı faz.
 - Fikir kuyruğu: diğer liste sayfalarına Yazdır butonu · Drive Word/video önizleme ·
-  kısmi kargo sevkiyatı · iade onay akışı.
+  kısmi kargo sevkiyatı · iade onay akışı · Shopify Faz 3 (iade/iptal faturası,
+  fatura PDF'ini Shopify'a geri yazma).
 
-## D. Operasyon notları
+## E. Operasyon notları
 
 - **⚠️ İki-oturum çakışması:** test/deploy öncesi `pgrep -f 'bin/pytest'` BOŞ olmalı;
-  iki pytest aynı `minerva_test` DB'de çakışıp sqlalchemy hataları üretir (kod hatası
-  DEĞİL — temiz pencerede tekrar dene). Paralel oturum bazen diğerinin dosyalarını kendi
-  commitine süpürür (zararsız; git log okurken bil).
+  iki pytest aynı `minerva_test` DB'sinde çakışıp sqlalchemy hataları üretir — **kod
+  hatası DEĞİL**, temiz pencerede tekrar dene. (PDKS deploy'unda yaşandı: "deploy error"
+  sanılan şey buydu.)
 - **Lokal PostgreSQL** (brew postgresql@16): makine yeniden başlarsa stale
-  `postmaster.pid` kalabilir (PID başka sürece gider) → pid dosyasını sil +
-  `brew services restart postgresql@16` (yaşandı).
-- Prod nginx/DNS/TLS elle (kullanıcı `ssh turhost`); ad-hoc prod deploy hook'la bloklu.
+  `postmaster.pid` kalabilir → pid dosyasını sil + `brew services restart postgresql@16`.
+- **Prod okuma** serbest: `ssh turhost 'sudo -n -u postgres psql -d minerva_db -tAc "SELECT …"'`
+  (`-A` çıktısı `|` ayraçlı; SQL literali gerekiyorsa tırnak kaçışına dikkat).
+  Ad-hoc prod deploy/restart hook'la **bloklu**.
+- **Secret'lar sohbete YAZILMAZ** — yalnız prod `.env`'e. Kullanıcı `.env`'e yapıştırırken
+  şablon `<...>` parantezlerini bırakıp eski satırı silmemişti → `source` syntax hatası;
+  parantez strip + son-kopya dedup ile düzeltildi (yedek `.env.bak.*`).
 - Idempotent şablon scriptleri (yeni şablon eklenince tekrar çalıştır):
-  `scripts/add_print_css.py` · `scripts/add_returns_nav.py`.
-- Hafıza: `~/.claude/projects/.../memory/` (MEMORY.md indeks).
+  `scripts/add_print_css.py` · `scripts/add_returns_nav.py` · `scripts/add_numune_nav.py` ·
+  `scripts/add_shopify_nav.py`.
+- Hafıza: `~/.claude/projects/-Users-dogukan-Desktop-Claude/memory/` (MEMORY.md indeks;
+  bu konu → `shopify_ims_entegrasyon.md`).

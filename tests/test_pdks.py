@@ -4,15 +4,19 @@ Saf testler core/pdks fonksiyonlarını DB'siz sınar; API testleri conftest
 fixture'larını kullanır.  TR duvar saati → UTC çevirisi: utc = tr - 3 saat.
 """
 import json
+import time
 from datetime import date, datetime, timedelta
 
 import pytest
 
+from core.auth import SECRET_KEY
 from core.pdks import (
-    compute_day, compute_month, pair_events, schedule_for, tr_date_of,
+    compute_day, compute_month, geo_within, haversine_m, ip_allowed,
+    make_qr_token, pair_events, qr_bucket, schedule_for, tr_date_of,
+    verify_qr_token,
 )
 from database import (
-    AdminAuditLog, AttendanceEvent, Employee, EmployeeSchedule,
+    AdminAuditLog, AppSetting, AttendanceEvent, Employee, EmployeeSchedule,
     LeaveRecord, User,
 )
 
@@ -561,3 +565,279 @@ def test_report_excel(authed_client, db_session):
     assert "Rapor Personeli" in wb.sheetnames
     ws = wb["Özet"]
     assert ws["A1"].value.startswith("Puantaj")
+
+
+# ═══ Üçlü doğrulama: ofis ağı (IP) + konum + canlı QR ═══════════════════════
+
+# ─── Saf unit ───────────────────────────────────────────────────────────────
+
+def test_haversine():
+    assert haversine_m(41.0, 29.0, 41.0, 29.0) == 0.0
+    # İstanbul ↔ Ankara ≈ 350 km (%2 tolerans)
+    d = haversine_m(41.0082, 28.9784, 39.9334, 32.8597)
+    assert 340_000 < d < 360_000
+    # 0.001° enlem ≈ 111 m
+    assert 100 < haversine_m(41.0, 29.0, 41.001, 29.0) < 120
+
+
+def test_geo_within_accuracy_cap():
+    assert geo_within(100, 150, None) is True          # yarıçap içinde
+    assert geo_within(200, 150, None) is False         # dışında, tolerans yok
+    assert geo_within(200, 150, 60) is True            # GPS belirsizliği kurtarır
+    assert geo_within(260, 150, 60) is False           # belirsizlik yetmiyor
+    # accuracy 100 m'de sınırlanır: 150+500 değil 150+100
+    assert geo_within(300, 150, 500) is False
+    assert geo_within(240, 150, 500) is True
+
+
+def test_ip_allowed_forms():
+    assert ip_allowed("85.105.20.31", "85.105.20.31") is True
+    assert ip_allowed("85.105.20.32", "85.105.20.31") is False
+    assert ip_allowed("78.180.4.9", "85.105.20.31, 78.180.") is True   # prefiks
+    assert ip_allowed("78.181.4.9", "78.180.") is False
+    assert ip_allowed("1.2.3.4", "") is False          # liste boş → asla geçme
+    assert ip_allowed("", "1.2.3.4") is False          # ip yok → asla geçme
+    assert ip_allowed("1.2.3.4", " 9.9.9.9 , 1.2.3.4 ") is True   # boşluklu liste
+
+
+def test_qr_token_lifecycle():
+    now = 1_785_000_000
+    tok = make_qr_token(SECRET_KEY, qr_bucket(now))
+    assert verify_qr_token(SECRET_KEY, tok, now) == "ok"
+    # ±1 bucket toleransı (sınırda okutma)
+    assert verify_qr_token(SECRET_KEY, tok, now + 30) == "ok"
+    assert verify_qr_token(SECRET_KEY, tok, now - 30) == "ok"
+    # 2 bucket sonra süresi dolar (eski ekran görüntüsü işe yaramaz)
+    assert verify_qr_token(SECRET_KEY, tok, now + 90) == "expired"
+    # Bozuk imza / format / yanlış secret → invalid
+    assert verify_qr_token(SECRET_KEY, tok[:-1] + "0", now) == "invalid"
+    assert verify_qr_token(SECRET_KEY, "PDKSQR1:abc:def", now) == "invalid"
+    assert verify_qr_token(SECRET_KEY, "garbage", now) == "invalid"
+    assert verify_qr_token(SECRET_KEY, "", now) == "invalid"
+    assert verify_qr_token("baska-secret-1234567890", tok, now) == "invalid"
+    # ASCII olmayan QR (personel başka bir kod okuttu) → 500 DEĞİL, invalid
+    assert verify_qr_token(SECRET_KEY, "PDKSQR1:123:ığüşöç0123456789", now) == "invalid"
+    assert verify_qr_token(SECRET_KEY, "Şirket menüsü", now) == "invalid"
+
+
+def test_real_client_ip_spoof_guard():
+    from routers.pdks import _real_client_ip
+
+    class _Req:
+        def __init__(self, peer, headers=None):
+            self.client = type("C", (), {"host": peer})()
+            self.headers = headers or {}
+
+    # Doğrudan dış bağlantı → X-Real-IP'ye ASLA güvenme (sahtelenebilir)
+    assert _real_client_ip(_Req("203.0.113.9", {"x-real-ip": "85.105.20.31"})) == "203.0.113.9"
+    # Loopback peer (nginx arkası) → header'a güven
+    assert _real_client_ip(_Req("127.0.0.1", {"x-real-ip": "85.105.20.31"})) == "85.105.20.31"
+    # Header yoksa peer'e düş
+    assert _real_client_ip(_Req("127.0.0.1")) == "127.0.0.1"
+    assert _real_client_ip(_Req("testclient")) == "testclient"
+
+
+# ─── API ────────────────────────────────────────────────────────────────────
+
+def _enforce_on(db, ips="testclient", lat=41.06, lon=29.0, radius=150):
+    """Üçlü doğrulamayı AppSetting üzerinden aç."""
+    for key, val in (("pdks.checkin.enforce", "true"),
+                     ("pdks.checkin.allowed_ips", ips),
+                     ("pdks.checkin.lat", str(lat)),
+                     ("pdks.checkin.lon", str(lon)),
+                     ("pdks.checkin.radius_m", str(radius))):
+        row = db.query(AppSetting).filter(AppSetting.key == key).first()
+        if row:
+            row.value = val
+        else:
+            db.add(AppSetting(key=key, value=val))
+    db.commit()
+
+
+def _valid_token():
+    return make_qr_token(SECRET_KEY, qr_bucket(time.time()))
+
+
+def _login(client, username, password="minerva123"):
+    """Aynı TestClient üzerinde kullanıcı değiştir — authed_client ve
+    staff_employee_client TEK client paylaşır, ikinci login ilkinin çerezini
+    ezer; iki rolü aynı testte kullanırken bunu açıkça yapmak gerekir."""
+    r = client.post("/api/login", json={"username": username, "password": password},
+                    headers=ORIGIN)
+    assert r.status_code == 200, f"{username} login başarısız: {r.text}"
+    return client
+
+
+def test_enforce_off_is_backward_compatible(staff_employee_client, db_session):
+    """Doğrulama kapalıyken eski akış aynen çalışır (geo/QR alanı gerekmez)."""
+    c, emp_id = staff_employee_client
+    r = c.post("/api/pdks/check", json={"type": "in"}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    assert r.json()["checkin"]["enforce"] is False
+
+
+def test_enforce_blocks_wrong_ip(staff_employee_client, db_session):
+    c, _ = staff_employee_client
+    _enforce_on(db_session, ips="85.105.20.31")        # testclient listede yok
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "qr_token": _valid_token(),
+                     "lat": 41.06, "lon": 29.0, "accuracy": 10},
+               headers=ORIGIN)
+    assert r.status_code == 400
+    assert "Ofis internetine" in r.json()["detail"]
+
+
+def test_enforce_qr_required_and_validated(staff_employee_client, db_session):
+    c, _ = staff_employee_client
+    _enforce_on(db_session)
+    base = {"type": "in", "lat": 41.06, "lon": 29.0, "accuracy": 10}
+    # QR yok
+    r = c.post("/api/pdks/check", json=base, headers=ORIGIN)
+    assert r.status_code == 400 and "QR kod okutulmadı" in r.json()["detail"]
+    # Geçersiz QR
+    r = c.post("/api/pdks/check", json={**base, "qr_token": "PDKSQR1:1:deadbeefdeadbeef"},
+               headers=ORIGIN)
+    assert r.status_code == 400 and "geçersiz" in r.json()["detail"]
+    # Süresi dolmuş QR (10 bucket önce üretilmiş)
+    old = make_qr_token(SECRET_KEY, qr_bucket(time.time()) - 10)
+    r = c.post("/api/pdks/check", json={**base, "qr_token": old}, headers=ORIGIN)
+    assert r.status_code == 400 and "süresi dolmuş" in r.json()["detail"]
+
+
+def test_enforce_geo_required_and_validated(staff_employee_client, db_session):
+    c, _ = staff_employee_client
+    _enforce_on(db_session, lat=41.06, lon=29.0, radius=150)
+    # Konum yok
+    r = c.post("/api/pdks/check", json={"type": "in", "qr_token": _valid_token()},
+               headers=ORIGIN)
+    assert r.status_code == 400 and "Konum bilgisi alınamadı" in r.json()["detail"]
+    # Ankara'dan giriş denemesi
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "qr_token": _valid_token(),
+                     "lat": 39.9334, "lon": 32.8597, "accuracy": 10},
+               headers=ORIGIN)
+    assert r.status_code == 400 and "Ofis konumunda" in r.json()["detail"]
+
+
+def test_enforce_all_pass_persists_geo(staff_employee_client, db_session):
+    c, emp_id = staff_employee_client
+    _enforce_on(db_session)
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "qr_token": _valid_token(),
+                     "lat": 41.0601, "lon": 29.0002, "accuracy": 12.5},
+               headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "iceride"
+    assert r.json()["checkin"]["enforce"] is True
+    ev = db_session.query(AttendanceEvent).filter_by(employee_id=emp_id).first()
+    assert ev.source == "self" and ev.ip_address == "testclient"
+    assert round(ev.geo_lat, 4) == 41.0601 and round(ev.geo_lon, 4) == 29.0002
+    assert ev.geo_accuracy_m == 12.5
+
+
+def test_enforce_trusts_x_real_ip_behind_proxy(staff_employee_client, db_session):
+    """TestClient peer'i loopback sınıfında → nginx'in yazdığı X-Real-IP geçerli."""
+    c, _ = staff_employee_client
+    _enforce_on(db_session, ips="203.0.113.7")
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "qr_token": _valid_token(),
+                     "lat": 41.06, "lon": 29.0, "accuracy": 10},
+               headers={**ORIGIN, "X-Real-IP": "203.0.113.7"})
+    assert r.status_code == 200, r.text
+
+
+def test_checkin_config_rbac_and_roundtrip(staff_employee_client, db_session):
+    c, _ = staff_employee_client
+    assert c.get("/api/pdks/checkin-config").status_code == 403
+    assert c.put("/api/pdks/checkin-config", json={"enforce": True},
+                 headers=ORIGIN).status_code == 403
+
+    authed_client = _login(c, "dogukan")     # SuperAdmin'e geç
+    r = authed_client.get("/api/pdks/checkin-config")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["enforce"] is False and d["radius_m"] == 150
+    assert d["detected_ip"] == "testclient"
+
+    # Eksik ayarla enforce açılamaz
+    r = authed_client.put("/api/pdks/checkin-config", json={"enforce": True}, headers=ORIGIN)
+    assert r.status_code == 400 and "Önce ofis IP" in r.json()["detail"]
+
+    # Kısmi güncelleme → sonra enforce
+    r = authed_client.put("/api/pdks/checkin-config",
+                          json={"allowed_ips": "testclient", "lat": 41.06,
+                                "lon": 29.0, "radius_m": 200},
+                          headers=ORIGIN)
+    assert r.status_code == 200 and r.json()["radius_m"] == 200
+    r = authed_client.put("/api/pdks/checkin-config", json={"enforce": True}, headers=ORIGIN)
+    assert r.status_code == 200 and r.json()["enforce"] is True
+    assert r.json()["allowed_ips"] == "testclient"     # dokunulmayan alan korundu
+    # Yarıçap sınırları
+    assert authed_client.put("/api/pdks/checkin-config", json={"radius_m": 5},
+                             headers=ORIGIN).status_code == 422
+    # Audit
+    actions = {a.action for a in db_session.query(AdminAuditLog).all()}
+    assert "pdks.checkin_config" in actions
+
+
+def test_kiosk_qr_endpoint_and_page(staff_employee_client, db_session):
+    # Normal personel kiosk yetkisi almaz
+    c, _ = staff_employee_client
+    assert c.get("/api/pdks/qr").status_code == 403
+    assert c.get("/pdks-qr", follow_redirects=False).status_code == 302
+
+    # SuperAdmin (her yetki açık) QR alabilir
+    authed_client = _login(c, "dogukan")
+    r = authed_client.get("/api/pdks/qr")
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["svg"].lstrip().startswith("<svg")
+    assert 1 <= d["seconds_left"] <= d["period"] == 30
+    assert verify_qr_token(SECRET_KEY, d["token"], time.time()) == "ok"
+    assert "no-store" in r.headers.get("cache-control", "")   # canlı token cache'lenmesin
+    assert authed_client.get("/pdks-qr").status_code == 200
+
+
+def test_qr_svg_is_scalable_not_clipped(authed_client):
+    """QR'ın viewBox'ı OLMAK ZORUNDA.
+
+    viewBox'sız kök <svg>'de CSS width/height yalnız viewport'u değiştirir;
+    koordinat sistemi 1:1 px kalır ve sembol kiosk kartında kırpılır → QR
+    decode edilemez, doğrulama açıldığı anda kimse imza atamaz.  Bu testi
+    'startswith(<svg>)' yakalayamıyordu (canlı tarayıcıda tespit edildi)."""
+    svg = authed_client.get("/api/pdks/qr").json()["svg"]
+    head = svg[:svg.index(">") + 1]
+    assert "viewBox=" in head, f"viewBox yok — QR kırpılır: {head}"
+    assert "width=" not in head and "height=" not in head, \
+        f"sabit boyut ölçeklemeyi engeller: {head}"
+
+
+def test_kiosk_override_user_can_only_show_qr(client, db_session):
+    """Kiosk cihazı: yalnız pdks.kiosk yetkili özel hesap."""
+    perms = {"pdks": {"check": False, "view_own": False, "view_all": False,
+                      "manage": False, "report": False, "kiosk": True}}
+    u = _mk_user(db_session, "pdks-kiosk", full_name="Giriş Ekranı")
+    u.permissions = json.dumps(perms)
+    db_session.commit()
+    r = client.post("/api/login", json={"username": "pdks-kiosk", "password": "minerva123"},
+                    headers=ORIGIN)
+    assert r.status_code == 200
+    assert client.get("/api/pdks/qr").status_code == 200
+    assert client.get("/pdks-qr").status_code == 200
+    # Kiosk hesabı puantaj/olay uçlarına giremez
+    assert client.get("/api/pdks/me/today").status_code == 403
+    assert client.post("/api/pdks/check", json={"type": "in"},
+                       headers=ORIGIN).status_code == 403
+
+
+def test_kiosk_token_accepted_by_check(staff_employee_client, db_session):
+    """Uçtan uca: kiosk ekranından alınan token ile gerçek giriş."""
+    c, _ = staff_employee_client
+    token = _login(c, "dogukan").get("/api/pdks/qr").json()["token"]
+    _login(c, "personel1")         # personel olarak geri dön
+    _enforce_on(db_session)
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "qr_token": token,
+                     "lat": 41.06, "lon": 29.0, "accuracy": 8},
+               headers=ORIGIN)
+    assert r.status_code == 200, r.text

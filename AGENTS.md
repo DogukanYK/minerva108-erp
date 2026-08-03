@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## What this is
 
@@ -124,48 +124,6 @@ Manager tümü). Manuel olay düzeltmeleri `correction_note` zorunlu +
 sayfa). Tablolar `pdks_*` — create_all ile gelir (migration
 `f3a5c7e9b2d4`). Not: buradaki "izin" devamsızlık mazeretidir; RBAC
 "permission" kavramıyla karıştırma.
-
-**PDKS üçlü doğrulama (imza güvenliği).** Self giriş/çıkış, master anahtar
-açıkken **üçü birden** sağlanmadan yazılmaz — sıra: **IP → QR → konum**
-(`routers/pdks.check_in_out`):
-1. **Ofis ağı** — tarayıcı Wi-Fi SSID'sini GÖREMEZ; "Minerva108 ağında ol"
-   şartı sunucu tarafı **IP allowlist**'iyle karşılanır (`ip_allowed`; virgüllü
-   liste, nokta ile biten girdi = prefiks, ör. `78.180.`). Gerçek IP
-   `_real_client_ip()` ile bulunur: **peer loopback/`testclient` ise
-   `X-Real-IP`'ye güvenilir** (nginx bu başlığı kendisi yazar, istemci değerini
-   ezer), doğrudan dış peer'de header ASLA dikkate alınmaz (sahtelenebilirdi).
-   *Prod zinciri doğrulandı (2026-08-03):* nginx `sites-available/minerva` ims
-   bloğu `X-Real-IP` + `X-Forwarded-For $proxy_add_x_forwarded_for` yazıyor;
-   systemd `ExecStart` uvicorn'u `--proxy-headers
-   --forwarded-allow-ips="127.0.0.1"` ile başlatıyor → uvicorn XFF zincirini
-   SONDAN okuyup ilk güvenilmeyen adresi alır (nginx'in kendi eklediği
-   `$remote_addr`), yani `request.client.host` prod'da **zaten gerçek ofis
-   IP'si ve istemci tarafından sahtelenemez**. Doğrulama sekmesindeki
-   "Bu ağın IP'sini ekle" bu değeri gösterir — `127.0.0.1` görünüyorsa zincir
-   bozulmuş demektir, allowlist'e ASLA `127.0.0.1` yazma (herkes geçer).
-2. **Konum** — tarayıcı geolocation, `haversine_m` ile ofis koordinatına
-   uzaklık; tolerans `radius_m + min(accuracy, 100)`. `Permissions-Policy`
-   bu yüzden `geolocation=(self)` (eskiden `()` idi = tüm sayfalarda kapalı).
-3. **Canlı QR** — `/pdks-qr` kiosk sayfası (perm **`pdks.kiosk`**, yalnız özel
-   cihaz hesabına per-user override ile verilir) 30 sn'de bir yenilenen imzalı
-   token gösterir: `PDKSQR1:<bucket>:<hmac16>`, `bucket = unix//30`, HMAC
-   domain prefix `pdks-qr:`, secret `core.auth.SECRET_KEY`. Sunucu ±1 bucket
-   kabul eder → ekran görüntüsü/fotoğraf ~1 dk sonra ölür. **Stateless** (DB'de
-   token tutulmaz).
-   **TUZAK — `segno...save(..., omitsize=True)` ŞART** (`kiosk_qr`): omitsize
-   olmadan segno sabit `width/height` yazar, `viewBox` YAZMAZ; viewBox'sız kök
-   `<svg>`'de CSS `width:100%` yalnız viewport'u değiştirir, koordinat sistemi
-   1:1 px kalır → sembol kiosk kartında ~%29 KIRPILIR ve hiçbir kamera decode
-   edemez (doğrulama açıldığı an kimse imza atamaz). `test_qr_svg_is_scalable_
-   not_clipped` bunu kilitler — `startswith("<svg")` yeterli DEĞİL.
-Ayarlar `AppSetting`'te: `pdks.checkin.enforce|allowed_ips|lat|lon|radius_m`;
-UI PDKS → **Doğrulama** sekmesi (`pdks.manage`), uçlar
-`GET/PUT /api/pdks/checkin-config`. **enforce KAPALI başlar**; kapatmak tek
-PUT'tur (deploysuz anında geri dönüş) ve `/checkin-config` doğrulamadan
-etkilenmez — yönetici kendini kilitleyemez. **Yönetici manuel olay girişi
-bilinçli olarak MUAF** (kasıtlı fallback). Olaylara `geo_lat/geo_lon/
-geo_accuracy_m` (migration `a4c8e2f6b9d1`) her zaman yazılır. Bilinçli
-ertelenen: tek-kullanımlık QR/replay önleme, IPv6/CIDR, kiosk cihaz token'ı.
 
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +
@@ -322,7 +280,7 @@ pipeline:
 
 Never deploy ad-hoc (raw `git push` + `ssh`) — that skips the test gate and the HTTP
 verification. This is enforced mechanically: a project PreToolUse hook
-(`.claude/settings.json` → `.claude/hooks/block-adhoc-deploy.sh`) **blocks** any Bash
+(`.Codex/settings.json` → `.Codex/hooks/block-adhoc-deploy.sh`) **blocks** any Bash
 command that ssh's to prod (`turhost` / `136.144.251.26`) and runs `systemctl
 restart`, `git reset --hard`, or `git pull`. Read-only ssh (`journalctl`, `systemctl
 status`) is allowed; `./deploy.sh`'s own internal ssh is not affected (it runs as a

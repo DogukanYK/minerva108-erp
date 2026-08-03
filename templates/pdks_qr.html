@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>PDKS — Giriş/Çıkış QR</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <meta name="theme-color" content="#0d1128" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    :root{ --navy:#232E6E; --gold:#C9AC6F; --bg:#0d1128; }
+    *,*::before,*::after{ box-sizing:border-box; }
+    html,body{ height:100%; }
+    body{
+      margin:0; font-family:'Jost',sans-serif; background:radial-gradient(circle at 50% 20%, #182050 0%, var(--bg) 70%);
+      color:#fff; min-height:100vh; display:flex; align-items:center; justify-content:center;
+      overflow:hidden; -webkit-user-select:none; user-select:none;
+    }
+    .kiosk{ display:flex; flex-direction:column; align-items:center; gap:1.6rem; padding:2rem; width:100%; max-width:560px; }
+    .brand{ text-align:center; }
+    .brand .co{ font-family:'Playfair Display',serif; font-size:1.5rem; font-weight:700; letter-spacing:0.04em; color:#fff; }
+    .brand .sub{ font-size:0.95rem; color:var(--gold); margin-top:0.2rem; letter-spacing:0.03em; }
+    .qr-card{ background:#fff; border-radius:22px; padding:1.8rem; box-shadow:0 20px 60px rgba(0,0,0,0.45); display:flex; align-items:center; justify-content:center; width:min(78vw,340px); height:min(78vw,340px); }
+    .qr-card svg{ width:100%; height:100%; display:block; }
+    .hint{ text-align:center; font-size:1.02rem; color:rgba(255,255,255,0.85); line-height:1.5; max-width:420px; }
+    .hint b{ color:var(--gold); }
+    .progress-wrap{ width:min(78vw,340px); height:6px; background:rgba(255,255,255,0.12); border-radius:999px; overflow:hidden; }
+    .progress-bar{ height:100%; background:var(--gold); width:100%; border-radius:999px; }
+    .clock{ font-family:'Playfair Display',serif; font-size:1.1rem; color:rgba(255,255,255,0.55); letter-spacing:0.05em; }
+    .state-msg{ display:none; text-align:center; padding:2rem; }
+    .state-msg.show{ display:flex; flex-direction:column; align-items:center; gap:1rem; }
+    .state-msg i{ font-size:2.4rem; color:var(--gold); }
+    .state-msg p{ font-size:1.05rem; color:rgba(255,255,255,0.85); max-width:380px; }
+    .state-msg a{ color:var(--gold); font-weight:600; text-decoration:none; }
+    .footer-actions{ position:fixed; bottom:1rem; right:1rem; display:flex; gap:0.6rem; }
+    .fa-btn{ background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); color:rgba(255,255,255,0.6);
+      border-radius:8px; padding:0.4rem 0.75rem; font-size:0.78rem; cursor:pointer; font-family:'Jost',sans-serif; }
+    .fa-btn:hover{ background:rgba(255,255,255,0.16); color:#fff; }
+    @media (max-width:420px){ .brand .co{ font-size:1.2rem; } .hint{ font-size:0.92rem; } }
+  </style>
+</head>
+<body>
+  <div class="kiosk" id="kioskMain">
+    <div class="brand">
+      <div class="co">MINERVA 108</div>
+      <div class="sub">Personel Giriş / Çıkış Doğrulama</div>
+    </div>
+    <div class="qr-card" id="qrCard">
+      <span style="color:#9ca3af;font-size:0.85rem;">Yükleniyor…</span>
+    </div>
+    <div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
+    <div class="hint">Telefonunuzdaki <b>PDKS</b> sayfasından Giriş/Çıkış butonuna basıp<br/>bu kodu <b>canlı kamerayla</b> okutun.</div>
+    <div class="clock" id="clock">--:--:--</div>
+  </div>
+
+  <div class="state-msg" id="stateMsg">
+    <i class="bi bi-exclamation-triangle"></i>
+    <p id="stateMsgText">—</p>
+    <a href="/login" id="stateMsgLink" style="display:none;">Tekrar giriş yap</a>
+  </div>
+
+  <div class="footer-actions">
+    <button class="fa-btn" id="fsBtn" onclick="toggleFullscreen()"><i class="bi bi-arrows-fullscreen"></i> Tam Ekran</button>
+  </div>
+
+  <script>
+    /* Ekran uyanık kalsın — uykuya dalan tablette okutulacak QR kalmaz.
+       Wake Lock desteklenmeyen cihazlarda sessizce atlanır (kritik değil). */
+    let _wakeLock = null;
+    async function keepAwake(){
+      try {
+        if ('wakeLock' in navigator && !_wakeLock) {
+          _wakeLock = await navigator.wakeLock.request('screen');
+          _wakeLock.addEventListener('release', () => { _wakeLock = null; });
+        }
+      } catch { /* izin yok / desteklenmiyor — yoksay */ }
+    }
+
+    function toggleFullscreen(){
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen?.().catch(() => {});
+      } else {
+        document.exitFullscreen?.();
+      }
+    }
+
+    function showState(text, showLoginLink){
+      document.getElementById('kioskMain').style.display = 'none';
+      const el = document.getElementById('stateMsg');
+      document.getElementById('stateMsgText').textContent = text;
+      document.getElementById('stateMsgLink').style.display = showLoginLink ? '' : 'none';
+      el.classList.add('show');
+    }
+    function hideState(){
+      document.getElementById('stateMsg').classList.remove('show');
+      document.getElementById('kioskMain').style.display = 'flex';
+    }
+
+    // TR duvar saati — sunucu saatinden bağımsız, yalnız görsel; doğrulama
+    // sunucuda yapılır, bu saat tamamen kozmetiktir.
+    function tickClock(){
+      const d = new Date();
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      const ss = String(d.getSeconds()).padStart(2, '0');
+      const c = document.getElementById('clock');
+      if (c) c.textContent = `${hh}:${mm}:${ss}`;
+    }
+    setInterval(tickClock, 1000);
+    tickClock();
+
+    let _timer = null;
+    let _errStreak = 0;
+
+    async function refresh(){
+      if (_timer) { clearTimeout(_timer); _timer = null; }
+      let r;
+      try {
+        r = await fetch('/api/pdks/qr', { cache: 'no-store' });
+      } catch {
+        _errStreak++;
+        showState('Bağlantı yok — yeniden deneniyor…', false);
+        _timer = setTimeout(refresh, 5000);
+        return;
+      }
+      if (r.status === 401 || r.status === 403) {
+        showState('Oturum süresi doldu veya yetki yok — kiosk hesabıyla tekrar giriş yapın.', true);
+        _timer = setTimeout(refresh, 15000);
+        return;
+      }
+      if (!r.ok) {
+        _errStreak++;
+        showState('Kod alınamadı — yeniden deneniyor…', false);
+        _timer = setTimeout(refresh, 5000);
+        return;
+      }
+      let d;
+      try { d = await r.json(); } catch {
+        _timer = setTimeout(refresh, 5000);
+        return;
+      }
+      _errStreak = 0;
+      hideState();
+      document.getElementById('qrCard').innerHTML = d.svg || '';
+      const bar = document.getElementById('progressBar');
+      const seconds = Math.max(1, d.seconds_left || d.period || 30);
+      bar.style.transition = 'none';
+      bar.style.width = '100%';
+      // reflow zorla — sonraki transition'ın baştan başlaması için
+      void bar.offsetWidth;
+      bar.style.transition = `width ${seconds}s linear`;
+      bar.style.width = '0%';
+      _timer = setTimeout(refresh, seconds * 1000 + 400);
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') { refresh(); keepAwake(); }
+    });
+
+    refresh();
+    keepAwake();
+  </script>
+</body>
+</html>

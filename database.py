@@ -1120,6 +1120,11 @@ class AttendanceEvent(Base):
     source             = Column(String(20), nullable=False, default="self")  # self | manual
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     ip_address         = Column(String(64), nullable=True)
+    # Üçlü doğrulama (ofis ağı + konum + canlı QR) açıkken self olaylarda
+    # doldurulur; manuel olaylarda ve doğrulama kapalıyken NULL kalabilir.
+    geo_lat            = Column(Float, nullable=True)
+    geo_lon            = Column(Float, nullable=True)
+    geo_accuracy_m     = Column(Float, nullable=True)
     corrected_by       = Column(String(100), nullable=True)
     corrected_at       = Column(DateTime, nullable=True)
     correction_note    = Column(String(300), nullable=True)        # PUT/DELETE'te zorunlu
@@ -1350,6 +1355,10 @@ def init_db():
             # create_all ile gelir.  is_active, tabloyu ilk sürümden kurmuş
             # dev DB'ler için idempotent eklenir.
             "ALTER TABLE pdks_holidays ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
+            # PDKS — üçlü doğrulama (ofis ağı + konum + canlı QR) geo kolonları
+            "ALTER TABLE pdks_events ADD COLUMN geo_lat DOUBLE PRECISION",
+            "ALTER TABLE pdks_events ADD COLUMN geo_lon DOUBLE PRECISION",
+            "ALTER TABLE pdks_events ADD COLUMN geo_accuracy_m DOUBLE PRECISION",
         ):
             alter_safe(stmt)
 

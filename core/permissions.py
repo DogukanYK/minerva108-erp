@@ -104,8 +104,10 @@ PERMISSION_CATEGORIES = {
     "distributors":  ["view", "create", "edit", "prices"],  # personel tarafı (hesap + fiyat yönetimi)
     # PDKS — personel devam takibi (cross-cutting).  check = kendi giriş/çıkışı;
     # view_own = kendi puantajı; view_all = tüm personelin günü/izinleri;
-    # manage = personel+program+izin+manuel düzeltme; report = aylık puantaj.
-    "pdks":          ["check", "view_own", "view_all", "manage", "report"],
+    # manage = personel+program+izin+manuel düzeltme+doğrulama ayarları;
+    # report = aylık puantaj; kiosk = girişteki dönen-QR ekranını görüntüleme
+    # (yalnız özel bir kiosk cihaz hesabına per-user override ile verilir).
+    "pdks":          ["check", "view_own", "view_all", "manage", "report", "kiosk"],
 }
 
 # Default permission set per role — used when a user's `permissions` JSON is null.
@@ -126,7 +128,7 @@ _DEFAULT_PERMISSIONS = {
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": True, "backup": False},
         "portal":        {"view": False, "order": False},
         "distributors":  {"view": True,  "create": True,  "edit": True,  "prices": True},
-        "pdks":          {"check": True, "view_own": True, "view_all": True, "manage": True, "report": True},
+        "pdks":          {"check": True, "view_own": True, "view_all": True, "manage": True, "report": True, "kiosk": False},
     },
     "LabLead": {
         "items":      {"view": True,  "create": True,  "edit": True,  "delete": True,  "import": True},
@@ -139,7 +141,7 @@ _DEFAULT_PERMISSIONS = {
         "crm":        {"view": False, "create": False, "edit": False, "delete": False},
         "reports":    {"view": True},
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
-        "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False},
+        "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False, "kiosk": False},
     },
     "LabTech": {
         "items":      {"view": True,  "create": True,  "edit": False, "delete": False, "import": False},
@@ -152,7 +154,7 @@ _DEFAULT_PERMISSIONS = {
         "crm":        {"view": False, "create": False, "edit": False, "delete": False},
         "reports":    {"view": True},
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
-        "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False},
+        "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False, "kiosk": False},
     },
     "Staff": {
         # Read-only baseline
@@ -166,7 +168,7 @@ _DEFAULT_PERMISSIONS = {
         "crm":        {"view": False, "create": False, "edit": False, "delete": False},
         "reports":    {"view": True},
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
-        "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False},
+        "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False, "kiosk": False},
     },
     "Distributor": {
         # Dışa dönük distribütör — YALNIZ sipariş portalı, ERP'ye hiçbir erişim yok.
@@ -182,7 +184,7 @@ _DEFAULT_PERMISSIONS = {
         "admin":        {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
         "portal":       {"view": True,  "order": True},
         "distributors": {"view": False, "create": False, "edit": False, "prices": False},
-        "pdks":         {"check": False, "view_own": False, "view_all": False, "manage": False, "report": False},
+        "pdks":         {"check": False, "view_own": False, "view_all": False, "manage": False, "report": False, "kiosk": False},
     },
 }
 

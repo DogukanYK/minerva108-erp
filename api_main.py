@@ -120,9 +120,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         # HSTS — sadece prod HTTPS'te anlamlı; lokalde tarayıcı kabul etmez ama zararsız
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        # Browser API gating — biz sadece kamera (barkod scan) kullanıyoruz
+        # Browser API gating — kamera (barkod/QR scan) + konum (PDKS check-in
+        # doğrulaması) same-origin'e açık; geri kalanı kapalı.
         response.headers["Permissions-Policy"] = (
-            "geolocation=(), microphone=(), payment=(), usb=()"
+            "geolocation=(self), microphone=(), payment=(), usb=()"
         )
         return response
 
@@ -557,6 +558,18 @@ def pdks_page(request: Request, db: Session = Depends(get_db)):
     if not _user_can(user, "pdks", "view_own"):
         return RedirectResponse(url="/", status_code=302)
     return templates.TemplateResponse("pdks.html", _page_ctx(request, payload, user))
+
+
+@app.get("/pdks-qr", response_class=HTMLResponse)
+def pdks_qr_page(request: Request, db: Session = Depends(get_db)):
+    """PDKS kiosk — girişteki ekranda dönen imzalı QR (yalnız pdks.kiosk yetkili
+    özel cihaz hesabı görebilir; sidebar/idle-watch YOK — kiosk boşta kalmaz)."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "pdks", "kiosk"):
+        return RedirectResponse(url="/", status_code=302)
+    return templates.TemplateResponse("pdks_qr.html", _page_ctx(request, payload, user))
 
 
 @app.get("/shopify-sync", response_class=HTMLResponse)

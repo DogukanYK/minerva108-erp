@@ -12,6 +12,7 @@ core/pdks.py'de (saf fonksiyonlar); burada yalnız DB I/O + doğrulama +
 serileştirme var.  Self giriş/çıkışta zaman damgası DAİMA sunucu saatidir.
 Manuel düzeltmeler audit-log'a yazılır; olay silme soft-delete'tir (iz kalır).
 """
+import time
 from datetime import date, datetime, timedelta
 from typing import Dict, Optional
 
@@ -22,22 +23,32 @@ from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from database import (
-    TR_OFFSET, get_db, to_tr, User,
+    TR_OFFSET, get_db, to_tr, User, AppSetting,
     Employee, EmployeeSchedule, AttendanceEvent, LeaveRecord, PublicHoliday,
 )
 from core.audit import log_admin_event
+from core.auth import SECRET_KEY
 from core.permissions import require_permission
 from core.pdks import (
     LEAVE_TYPES, LEAVE_TYPE_LABELS, DAY_STATUS_LABELS,
     WEEKDAY_LABELS, MONTH_LABELS, OPEN_PAIR_MAX_HOURS,
-    compute_day, compute_month, fmt_minutes, leave_for,
-    schedule_for, tr_date_of, validate_template,
+    QR_BUCKET_SECONDS, compute_day, compute_month, fmt_minutes,
+    geo_within, haversine_m, ip_allowed, leave_for, make_qr_token,
+    qr_bucket, schedule_for, tr_date_of, validate_template, verify_qr_token,
 )
 
 router = APIRouter(prefix="/api/pdks", tags=["pdks"])
 
 # Aynı tip olayın bu süre içindeki tekrarı idempotent sayılır (çift tık).
 DOUBLE_TAP_SECONDS = 120
+
+# ── Check-in doğrulama ayarları — AppSetting anahtarları ────────────────────
+_CFG_ENFORCE = "pdks.checkin.enforce"
+_CFG_IPS = "pdks.checkin.allowed_ips"
+_CFG_LAT = "pdks.checkin.lat"
+_CFG_LON = "pdks.checkin.lon"
+_CFG_RADIUS = "pdks.checkin.radius_m"
+_DEFAULT_RADIUS_M = 150
 
 _SOURCE_LABELS = {"self": "Kendi cihazı", "manual": "Manuel (yönetici)"}
 _TYPE_LABELS = {"in": "Giriş", "out": "Çıkış"}
@@ -47,6 +58,19 @@ _TYPE_LABELS = {"in": "Giriş", "out": "Çıkış"}
 
 class CheckBody(BaseModel):
     type: str = Field(..., pattern="^(in|out)$")
+    # Üçlü doğrulama açıkken zorunlu; kapalıyken yok sayılır.
+    qr_token: Optional[str] = Field(None, max_length=120)
+    lat: Optional[float] = Field(None, ge=-90, le=90)
+    lon: Optional[float] = Field(None, ge=-180, le=180)
+    accuracy: Optional[float] = Field(None, ge=0)
+
+
+class CheckinConfigBody(BaseModel):
+    enforce: Optional[bool] = None
+    allowed_ips: Optional[str] = Field(None, max_length=500)
+    lat: Optional[float] = Field(None, ge=-90, le=90)
+    lon: Optional[float] = Field(None, ge=-180, le=180)
+    radius_m: Optional[int] = Field(None, ge=10, le=5000)
 
 
 class EmployeeBody(BaseModel):
@@ -96,6 +120,63 @@ class HolidayBody(BaseModel):
 
 def _err(status: int, msg: str) -> JSONResponse:
     return JSONResponse(status_code=status, content={"detail": msg})
+
+
+# ── AppSetting KV yardımcıları (core/shopify.py:104-118 kalıbı) ─────────────
+
+def _get_setting(db: Session, key: str) -> Optional[str]:
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    return row.value if row else None
+
+
+def _set_setting(db: Session, key: str, value: Optional[str]) -> None:
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    if value is None:
+        if row:
+            db.delete(row)
+        return
+    if row:
+        row.value = value
+    else:
+        db.add(AppSetting(key=key, value=value))
+
+
+def _checkin_cfg(db: Session) -> dict:
+    """Üçlü doğrulama ayarları — okunamayan/eksik değerler güvenli varsayılana
+    düşer (enforce=False, radius=150; lat/lon eksikse enforce zaten PUT'ta
+    engellenir ama burada da None kalabilir — check_in_out ayrıca kontrol eder)."""
+    def _f(key):
+        raw = _get_setting(db, key)
+        try:
+            return float(raw) if raw not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        radius = int(float(_get_setting(db, _CFG_RADIUS) or _DEFAULT_RADIUS_M))
+    except (TypeError, ValueError):
+        radius = _DEFAULT_RADIUS_M
+    return {
+        "enforce": (_get_setting(db, _CFG_ENFORCE) or "false").lower() == "true",
+        "allowed_ips": _get_setting(db, _CFG_IPS) or "",
+        "lat": _f(_CFG_LAT),
+        "lon": _f(_CFG_LON),
+        "radius_m": max(10, radius),
+    }
+
+
+def _real_client_ip(request: Request) -> str:
+    """Gerçek istemci IP'si — nginx arkasında `request.client.host` genelde
+    127.0.0.1'dir.  Yalnız DOĞRUDAN bağlantı loopback/test istemcisiyse
+    X-Real-IP başlığına güvenilir (nginx bu başlığı proxy_set_header ile
+    KENDİSİ yazar, istemci değerini EZER — dışarıdan sahtelenemez).  Peer
+    doğrudan bir dış adres ise (nginx yoksa/atlanmışsa) header'a asla
+    güvenilmez — sahte X-Real-IP ile allowlist atlatılabilirdi."""
+    peer = (request.client.host if request and request.client else "") or ""
+    if peer in ("127.0.0.1", "::1", "testclient"):
+        real = (request.headers.get("x-real-ip") or "").strip()
+        return real or peer
+    return peer
 
 
 def _actor(current_user: dict) -> str:
@@ -370,6 +451,7 @@ def _today_status(db: Session, emp: Employee) -> dict:
     worked_live = day["worked_minutes"]
     if open_ev is not None:
         worked_live += int((now - open_ev.ts_utc).total_seconds() // 60)
+    cfg = _checkin_cfg(db)
     return {
         "employee": {"id": emp.id, "full_name": emp.full_name},
         "state": "iceride" if open_ev is not None else "disarida",
@@ -379,6 +461,8 @@ def _today_status(db: Session, emp: Employee) -> dict:
         "worked_live_label": fmt_minutes(worked_live),
         "schedule": sched,
         "events": [_event_view(e) for e in events],
+        # İstemci (pdks.html) bu bayrağa göre konum+QR akışını devreye alır.
+        "checkin": {"enforce": cfg["enforce"]},
     }
 
 
@@ -409,6 +493,35 @@ def check_in_out(
     emp = _employee_for_user(db, current_user)
     if not emp:
         return _err(404, "Personel kaydınız bulunamadı — yöneticinize başvurun.")
+
+    ip = _real_client_ip(request)
+    cfg = _checkin_cfg(db)
+    if cfg["enforce"]:
+        # Sıra: IP (en ucuz) → QR (sahte token'ı erken ele) → konum.
+        if not ip_allowed(ip, cfg["allowed_ips"]):
+            return _err(400, "Ofis internetine bağlı değilsiniz — giriş/çıkış "
+                             "yalnızca ofis ağından (Minerva108 Wi-Fi) yapılabilir.")
+        if not data.qr_token:
+            return _err(400, "QR kod okutulmadı — girişteki ekrandan güncel "
+                             "QR kodu okutun.")
+        qr_state = verify_qr_token(SECRET_KEY, data.qr_token, time.time())
+        if qr_state == "expired":
+            return _err(400, "QR kodun süresi dolmuş — ekrandaki güncel kodu "
+                             "tekrar okutun.")
+        if qr_state != "ok":
+            return _err(400, "QR kod geçersiz — girişteki ekrandaki canlı "
+                             "kodu okutun.")
+        if data.lat is None or data.lon is None:
+            return _err(400, "Konum bilgisi alınamadı — konum iznini verip "
+                             "tekrar deneyin.")
+        if cfg["lat"] is None or cfg["lon"] is None:
+            return _err(400, "PDKS doğrulama ayarları eksik — yöneticinize "
+                             "başvurun.")
+        dist = haversine_m(data.lat, data.lon, cfg["lat"], cfg["lon"])
+        if not geo_within(dist, cfg["radius_m"], data.accuracy):
+            return _err(400, "Ofis konumunda görünmüyorsunuz — giriş/çıkış "
+                             "yalnızca ofiste yapılabilir.")
+
     _lock_employee(db, emp.id)   # paralel iki istek çift açık 'in' yazmasın
     now = datetime.utcnow()
     last = _last_event(db, emp.id)
@@ -432,11 +545,13 @@ def check_in_out(
             return _err(400, "Açık giriş kaydınız yok — önce giriş yapın.")
         work_date = open_ev.work_date   # gece yarısını aşan çıkış doğru güne yazılır
 
-    ip = (request.client.host if request and request.client else None) or None
     ev = AttendanceEvent(
         employee_id=emp.id, event_type=data.type, ts_utc=now,
         work_date=work_date, source="self",
-        created_by_user_id=_uid(current_user) or None, ip_address=ip,
+        created_by_user_id=_uid(current_user) or None, ip_address=ip or None,
+        # Doğrulama kapalıyken de gelmişse (istemci her zaman geo göndermeyi
+        # dener) kaydedilir — ileride analiz/denetim için faydalı, zararsız.
+        geo_lat=data.lat, geo_lon=data.lon, geo_accuracy_m=data.accuracy,
     )
     try:
         db.add(ev)
@@ -1075,6 +1190,86 @@ def delete_holiday(
                     details={"tarih": h.holiday_date.isoformat(),
                              "yarim_gun": bool(h.is_half_day)})
     return {"message": "Resmi tatil silindi."}
+
+
+# ─── Check-in doğrulama — kiosk QR ekranı + ayarlar ─────────────────────────
+
+@router.get("/qr")
+def kiosk_qr(
+    _: dict = Depends(require_permission("pdks", "kiosk")),
+):
+    """Girişteki ekranın çektiği uç — 30 sn'de bir yenilenen imzalı QR.
+    Kiosk cihazı, yalnız `pdks.kiosk` yetkisi olan özel bir hesapla girer."""
+    import segno
+    import io as _io
+
+    now = time.time()
+    token = make_qr_token(SECRET_KEY, qr_bucket(now))
+    buf = _io.BytesIO()
+    # omitsize=True ŞART: sabit width/height yerine viewBox üretir.  viewBox'sız
+    # kök <svg>'de CSS width/height yalnız viewport'u değiştirir, koordinat
+    # sistemi 1:1 px kalır ve sembol karta sığmayıp KIRPILIR → QR decode
+    # edilemez (kiosk ekranı işe yaramaz).  Testte de sabitlendi.
+    segno.make(token, error="m").save(buf, kind="svg", xmldecl=False,
+                                      scale=12, dark="#111827", border=2,
+                                      omitsize=True)
+    seconds_left = QR_BUCKET_SECONDS - int(now) % QR_BUCKET_SECONDS
+    return JSONResponse(
+        content={"token": token, "svg": buf.getvalue().decode("utf-8"),
+                 "seconds_left": seconds_left, "period": QR_BUCKET_SECONDS},
+        # Canlı token — ara katman/tarayıcı önbelleğinde tutulmasın
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
+@router.get("/checkin-config")
+def get_checkin_config(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("pdks", "manage")),
+):
+    cfg = _checkin_cfg(db)
+    cfg["detected_ip"] = _real_client_ip(request)
+    return cfg
+
+
+@router.put("/checkin-config")
+def update_checkin_config(
+    data: CheckinConfigBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("pdks", "manage")),
+):
+    cur = _checkin_cfg(db)
+    new_enforce = cur["enforce"] if data.enforce is None else data.enforce
+    new_ips = cur["allowed_ips"] if data.allowed_ips is None else data.allowed_ips
+    new_lat = cur["lat"] if data.lat is None else data.lat
+    new_lon = cur["lon"] if data.lon is None else data.lon
+    if new_enforce and (not (new_ips or "").strip() or new_lat is None or new_lon is None):
+        return _err(400, "Önce ofis IP ve konum ayarlarını kaydedin — "
+                         "doğrulama ondan sonra açılabilir.")
+    if data.enforce is not None:
+        _set_setting(db, _CFG_ENFORCE, "true" if data.enforce else "false")
+    if data.allowed_ips is not None:
+        _set_setting(db, _CFG_IPS, data.allowed_ips.strip())
+    if data.lat is not None:
+        _set_setting(db, _CFG_LAT, str(data.lat))
+    if data.lon is not None:
+        _set_setting(db, _CFG_LON, str(data.lon))
+    if data.radius_m is not None:
+        _set_setting(db, _CFG_RADIUS, str(data.radius_m))
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        return _err(500, "Ayarlar kaydedilemedi.")
+    log_admin_event(db, request, actor=current_user, action="pdks.checkin_config",
+                    target_type="integration", target_name="pdks",
+                    details={"enforce": data.enforce, "allowed_ips": data.allowed_ips,
+                             "lat": data.lat, "lon": data.lon, "radius_m": data.radius_m})
+    result = _checkin_cfg(db)
+    result["detected_ip"] = _real_client_ip(request)
+    return result
 
 
 # ─── Aylık rapor ─────────────────────────────────────────────────────────────

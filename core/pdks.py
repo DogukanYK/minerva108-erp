@@ -37,7 +37,10 @@ Kurallar (tek kaynak — UI ve Excel bu modülün çıktısını gösterir):
     calisti > devamsiz.  Tatil/izin günü çalışma durumu değiştirmez, süre +
     mesai yine görünür.
 """
+import hashlib
+import hmac
 import json
+import math
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 
@@ -377,3 +380,99 @@ def compute_month(year, month, schedules, events_by_date, leaves, holidays, toda
             totals["izin_gunleri"][day["leave_type"]] = \
                 totals["izin_gunleri"].get(day["leave_type"], 0) + 1
     return {"year": year, "month": month, "days": days, "totals": totals}
+
+
+# ─── Check-in doğrulama — saf fonksiyonlar ───────────────────────────────────
+# Üçlü doğrulama (ofis ağı + konum + canlı QR) açıkken /api/pdks/check bu
+# fonksiyonları kullanır.  Secret her zaman ÇAĞIRAN tarafından verilir
+# (core.auth.SECRET_KEY) — burada env okunmaz, sessiz fallback secret'ı yok
+# (core/drive.py'deki kalıbın aksine).
+
+QR_BUCKET_SECONDS = 30           # QR ekranı bu sürede bir yenilenir
+QR_PREFIX = "PDKSQR1"
+QR_SIG_LEN = 16                  # hex karakter — kısa ama tahmin edilemez
+_QR_DOMAIN = "pdks-qr:"          # HMAC domain-separation (core/drive.py kalıbı)
+
+GEO_ACCURACY_CAP_M = 100.0       # tarayıcının bildirdiği "accuracy" bu değerle sınırlanır
+EARTH_RADIUS_M = 6371000.0
+
+
+def qr_bucket(now_unix) -> int:
+    """Unix saniyeyi 30 sn'lik bir 'bucket' numarasına indirger — hem QR
+    ekranı hem de doğrulayan aynı bucket'ı bağımsızca hesaplar."""
+    return int(now_unix) // QR_BUCKET_SECONDS
+
+
+def _qr_sig(secret: str, bucket: int) -> str:
+    msg = f"{_QR_DOMAIN}{bucket}".encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()[:QR_SIG_LEN]
+
+
+def make_qr_token(secret: str, bucket: int) -> str:
+    """Kiosk ekranının gösterdiği QR metni — 'PDKSQR1:<bucket>:<imza>'."""
+    return f"{QR_PREFIX}:{bucket}:{_qr_sig(secret, bucket)}"
+
+
+def verify_qr_token(secret: str, token: str, now_unix, tolerance: int = 1) -> str:
+    """QR token'ı doğrula.  Dönüş: 'ok' | 'expired' | 'invalid'.
+
+    'expired': imza geçerli ama bucket şu anki penceden (±tolerance) daha eski
+    — ekrandaki kod süresi dolmuş, personel eski bir ekran görüntüsü/fotoğraf
+    kullanıyor olabilir.  'invalid': format bozuk ya da imza tutmuyor
+    (sahte/başka secret'la üretilmiş token)."""
+    if not token or not isinstance(token, str):
+        return "invalid"
+    # compare_digest ASCII olmayan str'de TypeError atar — personel yanlışlıkla
+    # başka bir QR (ör. Türkçe metin) okutursa 500 değil düzgün hata dönmeli.
+    if not token.isascii():
+        return "invalid"
+    parts = token.split(":")
+    if len(parts) != 3 or parts[0] != QR_PREFIX:
+        return "invalid"
+    try:
+        bucket = int(parts[1])
+    except ValueError:
+        return "invalid"
+    if not hmac.compare_digest(_qr_sig(secret, bucket), parts[2]):
+        return "invalid"
+    if abs(qr_bucket(now_unix) - bucket) > tolerance:
+        return "expired"
+    return "ok"
+
+
+def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """İki koordinat arası kuş uçuşu mesafe (metre)."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = (math.sin(dphi / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2)
+    return EARTH_RADIUS_M * 2 * math.asin(min(1.0, math.sqrt(a)))
+
+
+def geo_within(dist_m: float, radius_m: float, accuracy_m=None) -> bool:
+    """Mesafe, yarıçap + tarayıcının bildirdiği GPS belirsizliği (100 m'ye
+    kadar) toleransı içinde mi.  accuracy_m None/negatifse tolerans 0."""
+    tol = min(max(accuracy_m or 0.0, 0.0), GEO_ACCURACY_CAP_M)
+    return dist_m <= radius_m + tol
+
+
+def ip_allowed(ip: str, allowlist_raw: str) -> bool:
+    """Virgülle ayrılmış IP/prefiks listesine göre kontrol.
+
+    Girdi noktayla bitiyorsa ("85.10.") prefiks eşleşmesi (o bloktaki her IP);
+    aksi halde tam eşleşme.  Boş liste ya da boş ip → False (güvenli varsayılan
+    — yapılandırılmamış doğrulama asla sessizce geçmemeli)."""
+    ip = (ip or "").strip()
+    if not ip:
+        return False
+    for entry in (allowlist_raw or "").split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if entry.endswith("."):
+            if ip.startswith(entry):
+                return True
+        elif ip == entry:
+            return True
+    return False

@@ -115,11 +115,20 @@
     .totals-row td{ font-weight:700; background:#faf8f4; border-top:2px solid #e8e2d6; }
     .emp-row{ cursor:pointer; } .emp-row:hover{ background:#faf8f4; }
     .day-row{ cursor:pointer; } .day-row:hover{ background:#faf8f4; }
+    .cfg-warn{ padding:0.7rem 1rem; border-radius:9px; font-size:0.9rem; background:#f3f4f6; color:#4b5563; border-left:4px solid #9ca3af; }
+    .cfg-warn.on{ background:#dcfce7; color:#15803d; border-left-color:#22c55e; }
+    .check-guard{ margin-top:0.9rem; font-size:0.83rem; color:#6b7280; }
+    .check-guard i{ color:#16a34a; }
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
   <script src="/static/toast.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
+  <!-- QR doğrulama: scanner.js bootstrap.Modal'a ihtiyaç duyar (bu sayfa şimdiye
+       kadar yalnız Bootstrap CSS yüklüyordu) -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script>
+  <script src="/static/scanner.js?v=4" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
 </head>
 <body>
   <aside class="sidebar">
@@ -190,6 +199,7 @@
         {% if can('pdks','manage') %}<button class="pdks-tab" data-tab="emp"><i class="bi bi-person-gear"></i>Personel</button>{% endif %}
         {% if can('pdks','view_all') %}<button class="pdks-tab" data-tab="leave"><i class="bi bi-umbrella"></i>İzinler</button>{% endif %}
         {% if can('pdks','report') %}<button class="pdks-tab" data-tab="report"><i class="bi bi-file-earmark-spreadsheet"></i>Aylık Rapor</button>{% endif %}
+        {% if can('pdks','manage') %}<button class="pdks-tab" data-tab="cfg"><i class="bi bi-shield-check"></i>Doğrulama</button>{% endif %}
       </div>
 
       {% if can('pdks','check') %}
@@ -337,6 +347,71 @@
               <tbody id="repBody"><tr><td colspan="8" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
             </table>
             <p class="muted" style="margin:0.7rem 0 0;">Satıra tıklayınca gün dökümü açılır. "Çıkış eksik" işaretli günler düzeltilene kadar toplamlara dahil edilmez.</p>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if can('pdks','manage') %}
+      <!-- ── 7 · Doğrulama (ofis ağı + konum + canlı QR) ── -->
+      <section class="pdks-panel" id="panel-cfg">
+        <div class="card2">
+          <div class="card2-head"><i class="bi bi-shield-check"></i><h2>Giriş/Çıkış Doğrulaması</h2></div>
+          <div class="card2-body">
+            <div class="cfg-warn" id="cfgStateBox">
+              <b>Doğrulama kapalı.</b> Giriş/çıkış her yerden yapılabiliyor.
+            </div>
+            <p class="muted" style="margin:0.9rem 0 1.2rem;">
+              Açıkken imza (giriş/çıkış) yalnızca <b>üçü birden</b> sağlanınca atılır:
+              ofis internetine bağlı olmak · ofis konumunda bulunmak · girişteki ekrandaki
+              <b>canlı QR</b> kodunu kamerayla okutmak. Yönetici manuel olay girişi bundan etkilenmez.
+            </p>
+
+            <div style="display:flex;gap:1.4rem;flex-wrap:wrap;">
+              <div style="flex:1;min-width:280px;">
+                <label class="lbl">1 · Ofis IP Adresleri</label>
+                <input type="text" id="cfgIps" class="ipt" placeholder="ör. 85.105.20.31, 78.180." maxlength="500" />
+                <p class="muted" style="margin:0.35rem 0 0.6rem;font-size:0.78rem;">
+                  Virgülle ayırın. Nokta ile biten girdi (<code>78.180.</code>) o bloğun tamamını kapsar
+                  — IP'niz değişkense faydalı.
+                </p>
+                <button class="btn-o" onclick="cfgAddMyIp()"><i class="bi bi-plus-lg"></i> Bu ağın IP'sini ekle</button>
+                <span class="muted" id="cfgDetectedIp" style="margin-left:0.5rem;font-size:0.8rem;"></span>
+              </div>
+
+              <div style="flex:1;min-width:280px;">
+                <label class="lbl">2 · Ofis Konumu</label>
+                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                  <input type="number" id="cfgLat" class="ipt" style="flex:1;min-width:120px;" step="0.000001" placeholder="Enlem" />
+                  <input type="number" id="cfgLon" class="ipt" style="flex:1;min-width:120px;" step="0.000001" placeholder="Boylam" />
+                </div>
+                <p class="muted" style="margin:0.35rem 0 0.6rem;font-size:0.78rem;">
+                  Bu sayfayı <b>ofiste</b> açıp "Konumumu kullan"a basmanız en pratiği.
+                </p>
+                <button class="btn-o" onclick="cfgUseMyLocation()"><i class="bi bi-geo-alt"></i> Konumumu kullan</button>
+                <div style="margin-top:0.8rem;">
+                  <label class="lbl">Yarıçap (metre)</label>
+                  <input type="number" id="cfgRadius" class="ipt" value="150" min="10" max="5000" style="max-width:150px;" />
+                </div>
+              </div>
+            </div>
+
+            <div style="border-top:1px solid #f0ece4;margin-top:1.2rem;padding-top:1.1rem;">
+              <label class="lbl">3 · Giriş Ekranı (QR Kiosk)</label>
+              <p class="muted" style="margin:0 0 0.6rem;">
+                Girişe koyacağınız tablet/telefonda <a href="/pdks-qr" target="_blank"><b>/pdks-qr</b></a> sayfasını
+                tam ekran açık bırakın — kod 30 saniyede bir yenilenir, ekran görüntüsü/fotoğraf işe yaramaz.
+                Cihaz, yalnız <b>Kiosk (QR Ekranı)</b> yetkisi verilmiş özel bir hesapla giriş yapmalı.
+              </p>
+            </div>
+
+            <div style="border-top:1px solid #f0ece4;margin-top:1.1rem;padding-top:1.1rem;display:flex;gap:0.9rem;flex-wrap:wrap;align-items:center;">
+              <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;font-weight:600;">
+                <input type="checkbox" id="cfgEnforce" style="width:18px;height:18px;" /> Doğrulamayı aç
+              </label>
+              <button class="btn-g" id="cfgSaveBtn" onclick="cfgSave()"><i class="bi bi-check-lg"></i> Kaydet</button>
+              <span class="muted" style="font-size:0.8rem;">Sorun çıkarsa bu kutuyu kapatıp kaydetmek anında geri alır.</span>
+            </div>
           </div>
         </div>
       </section>
@@ -511,7 +586,7 @@
     function openTab(name){
       document.querySelectorAll('.pdks-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
       document.querySelectorAll('.pdks-panel').forEach(p => p.classList.toggle('open', p.id === 'panel-' + name));
-      const init = { check: loadCheck, my: loadMy, day: loadDay, emp: loadEmps, leave: loadLeavesTab, report: loadReport };
+      const init = { check: loadCheck, my: loadMy, day: loadDay, emp: loadEmps, leave: loadLeavesTab, report: loadReport, cfg: loadCfg };
       if (init[name]) init[name](!loaded[name]);
       loaded[name] = true;
     }
@@ -546,9 +621,13 @@
     function renderCheck(st){
       const hero = document.getElementById('checkHero');
       const inside = st.state === 'iceride';
+      window._pdksEnforce = !!(st.checkin && st.checkin.enforce);
       const sched = st.schedule
         ? `Bugünkü mesai: <b>${esc(st.schedule.start)} – ${esc(st.schedule.end)}</b> (mola ${st.schedule.lunch_minutes} dk)`
         : 'Bugün için tanımlı çalışma programı yok.';
+      const guard = window._pdksEnforce
+        ? `<div class="check-guard"><i class="bi bi-shield-check"></i> Doğrulama aktif: ofis ağı · konum · girişteki QR kodu</div>`
+        : '';
       hero.innerHTML = `
         <div class="state-badge ${inside ? 'state-in' : 'state-out'}">
           <i class="bi ${inside ? 'bi-door-open' : 'bi-door-closed'}"></i>
@@ -557,22 +636,75 @@
         <button class="btn-check ${inside ? 'out' : 'in'}" id="checkBtn" onclick="doCheck('${inside ? 'out' : 'in'}')">
           <i class="bi bi-fingerprint"></i> ${inside ? 'ÇIKIŞ YAP' : 'GİRİŞ YAP'}
         </button>
-        <div class="check-meta">${sched}<br/>Bugün çalışılan: <b>${esc(st.worked_live_label)}</b></div>`;
+        <div class="check-meta">${sched}<br/>Bugün çalışılan: <b>${esc(st.worked_live_label)}</b></div>
+        ${guard}`;
       const tb = document.getElementById('todayEvents');
       tb.innerHTML = (st.events && st.events.length)
         ? st.events.map(e => `<tr><td><b>${esc(e.time)}</b></td><td>${esc(e.type_label)}</td><td class="muted">${esc(e.source_label)}${e.correction_note ? ' · ' + esc(e.correction_note) : ''}</td></tr>`).join('')
         : '<tr><td colspan="3" class="muted">Bugün henüz hareket yok.</td></tr>';
     }
+    /* Konum — Permissions-Policy geolocation=(self) ile açık (api_main.py). */
+    function getPosition(){
+      return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) { reject(new Error('__nogeo__')); return; }
+        navigator.geolocation.getCurrentPosition(
+          p => resolve(p),
+          err => reject(err),
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+        );
+      });
+    }
+    /* Canlı kameradan QR — scanner.js (html5-qrcode). Okumadan kapatılırsa reject. */
+    function scanQr(){
+      return new Promise((resolve, reject) => {
+        if (typeof openBarcodeScanner !== 'function') { reject(new Error('__noscanner__')); return; }
+        openBarcodeScanner(text => resolve(String(text || '').trim()), {
+          qrbox: { width: 240, height: 240 },
+          title: 'PDKS QR Doğrulama',
+          hint: 'Girişteki ekranda görünen QR kodu kameraya gösterin.',
+          onClose: () => reject(new Error('__cancel__')),
+        });
+      });
+    }
+    function geoErrMessage(err){
+      if (!err) return 'Konum alınamadı — tekrar deneyin.';
+      if (err.message === '__nogeo__') return 'Bu cihaz konum servisini desteklemiyor.';
+      if (err.code === 1) return 'Konum izni gerekli — tarayıcı ayarlarından konuma izin verip tekrar deneyin.';
+      if (err.code === 3) return 'Konum zaman aşımına uğradı — açık alana yakın durup tekrar deneyin.';
+      if (err.code === 2) return 'Konum alınamadı — cihaz konum servisini açın.';
+      return 'Konum alınamadı — tekrar deneyin.';
+    }
+
     async function doCheck(type){
       if (_checkBusy) return;
       _checkBusy = true;
       const btn = document.getElementById('checkBtn');
       if (btn) btn.disabled = true;
       try {
-        const st = await jpost('/api/pdks/check', { type });
+        let body = { type };
+        if (window._pdksEnforce) {
+          // Konum isteğini hemen başlat (izin diyaloğu paralel çıksın), QR'ı okut.
+          const geoP = getPosition();
+          geoP.catch(() => {});   // scanner iptalinde unhandled rejection olmasın
+          const qr_token = await scanQr();
+          if (!qr_token) throw new Error('QR kod okunamadı — tekrar deneyin.');
+          const pos = await geoP;
+          body = {
+            type, qr_token,
+            lat: pos.coords.latitude, lon: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+          };
+        }
+        const st = await jpost('/api/pdks/check', body);
         toastFn(st.message || 'Kaydedildi.', 'success');
         renderCheck(st);
-      } catch (e) { toastFn(e.message); loadCheck(); }
+      } catch (e) {
+        if (e && e.message === '__cancel__') toastFn('QR okutma iptal edildi.', 'info');
+        else if (e && e.message === '__noscanner__') toastFn('Kamera modülü hazır değil — sayfayı yenileyin.');
+        else if (e && (typeof e.code === 'number' || e.message === '__nogeo__')) toastFn(geoErrMessage(e));
+        else toastFn(e.message || 'İşlem başarısız.');
+        loadCheck();   // hero'yu yeniden çiz → buton tekrar aktif
+      }
       finally { _checkBusy = false; }
     }
 
@@ -1018,6 +1150,66 @@
     function repToggle(i){
       const el = document.getElementById('repDetail' + i);
       if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+    }
+
+    /* ══ 7 · Doğrulama ayarları ══ */
+    async function loadCfg(){
+      if (!window.CAN_MANAGE) return;
+      try {
+        const c = await api('/api/pdks/checkin-config');
+        document.getElementById('cfgIps').value = c.allowed_ips || '';
+        document.getElementById('cfgLat').value = (c.lat === null || c.lat === undefined) ? '' : c.lat;
+        document.getElementById('cfgLon').value = (c.lon === null || c.lon === undefined) ? '' : c.lon;
+        document.getElementById('cfgRadius').value = c.radius_m || 150;
+        document.getElementById('cfgEnforce').checked = !!c.enforce;
+        document.getElementById('cfgDetectedIp').textContent =
+          c.detected_ip ? `Şu anki IP'niz: ${c.detected_ip}` : '';
+        const box = document.getElementById('cfgStateBox');
+        box.classList.toggle('on', !!c.enforce);
+        box.innerHTML = c.enforce
+          ? '<b>Doğrulama açık.</b> Giriş/çıkış yalnızca ofis ağı + ofis konumu + canlı QR ile yapılabiliyor.'
+          : '<b>Doğrulama kapalı.</b> Giriş/çıkış her yerden yapılabiliyor.';
+      } catch (e) { toastFn(e.message); }
+    }
+    async function cfgAddMyIp(){
+      try {
+        const c = await api('/api/pdks/checkin-config');
+        const ip = (c.detected_ip || '').trim();
+        if (!ip) { toastFn('IP tespit edilemedi.'); return; }
+        const el = document.getElementById('cfgIps');
+        const cur = (el.value || '').split(',').map(s => s.trim()).filter(Boolean);
+        if (cur.includes(ip)) { toastFn('Bu IP zaten listede.', 'info'); return; }
+        cur.push(ip);
+        el.value = cur.join(', ');
+        toastFn(`${ip} eklendi — Kaydet'e basmayı unutmayın.`, 'info');
+      } catch (e) { toastFn(e.message); }
+    }
+    function cfgUseMyLocation(){
+      getPosition().then(pos => {
+        document.getElementById('cfgLat').value = pos.coords.latitude.toFixed(6);
+        document.getElementById('cfgLon').value = pos.coords.longitude.toFixed(6);
+        toastFn(`Konum alındı (±${Math.round(pos.coords.accuracy)} m) — Kaydet'e basın.`, 'info');
+      }).catch(err => toastFn(geoErrMessage(err)));
+    }
+    async function cfgSave(){
+      const lat = document.getElementById('cfgLat').value;
+      const lon = document.getElementById('cfgLon').value;
+      const body = {
+        enforce: document.getElementById('cfgEnforce').checked,
+        allowed_ips: document.getElementById('cfgIps').value.trim(),
+        lat: lat === '' ? null : parseFloat(lat),
+        lon: lon === '' ? null : parseFloat(lon),
+        radius_m: parseInt(document.getElementById('cfgRadius').value || '150'),
+      };
+      const btn = document.getElementById('cfgSaveBtn');
+      btn.disabled = true;
+      try {
+        await jpost('/api/pdks/checkin-config', body, 'PUT');
+        toastFn('Doğrulama ayarları kaydedildi.', 'success');
+        loadCfg();
+        loadCheck();   // Giriş/Çıkış sekmesindeki rozet güncellensin
+      } catch (e) { toastFn(e.message); }
+      finally { btn.disabled = false; }
     }
 
     document.getElementById('logoutBtn').addEventListener('click', async function(){
