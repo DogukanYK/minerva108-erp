@@ -122,8 +122,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         # Browser API gating — kamera (barkod/QR scan) + konum (PDKS check-in
         # doğrulaması) same-origin'e açık; geri kalanı kapalı.
+        # camera AÇIKÇA yazılır: nginx de bir Permissions-Policy gönderiyor ve
+        # iki header'da aynı özellik geçtiğinde en kısıtlayıcısı uygulanır.
+        # nginx'teki eski değer `camera=()` idi → PDKS QR okuyucu hiç açılmıyordu
+        # (canlıda yaşandı).  İki taraf da aynı listeyi göndermeli.
         response.headers["Permissions-Policy"] = (
-            "geolocation=(self), microphone=(), payment=(), usb=()"
+            "geolocation=(self), camera=(self), microphone=(), payment=(), usb=()"
         )
         return response
 

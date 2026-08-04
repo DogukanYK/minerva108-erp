@@ -97,10 +97,15 @@
     .state-badge{ display:inline-flex; align-items:center; gap:0.45rem; padding:0.35rem 1rem; border-radius:999px; font-size:0.9rem; font-weight:700; margin-bottom:1rem; }
     .state-in{ background:#dcfce7; color:#15803d; }
     .state-out{ background:#f3f4f6; color:#6b7280; }
-    .btn-check{ display:inline-flex; align-items:center; justify-content:center; gap:0.7rem; width:min(360px,90%); padding:1.15rem 1rem; border:none; border-radius:16px; font-family:'Jost',sans-serif; font-size:1.35rem; font-weight:700; letter-spacing:0.04em; cursor:pointer; color:#fff; box-shadow:0 6px 22px rgba(0,0,0,0.14); }
-    .btn-check.in{ background:#16a34a; } .btn-check.in:hover{ background:#15803d; }
-    .btn-check.out{ background:#dc2626; } .btn-check.out:hover{ background:#b91c1c; }
-    .btn-check:disabled{ opacity:0.55; cursor:not-allowed; }
+    /* DİKKAT: bu sınıf ESKİDEN 'btn-check' idi — Bootstrap'in
+       .btn-check{position:absolute;clip:rect(0,0,0,0);pointer-events:none}
+       kuralıyla çakışıyordu.  Bizim kural o üç property'yi tanımlamadığı için
+       cascade onları koruyor ve buton GÖRÜNMEZ + TIKLANAMAZ oluyordu.
+       Bootstrap yüklü sayfalarda 'btn-*' önekli ad KULLANMA. */
+    .check-action{ display:inline-flex; align-items:center; justify-content:center; gap:0.7rem; width:min(360px,90%); padding:1.15rem 1rem; border:none; border-radius:16px; font-family:'Jost',sans-serif; font-size:1.35rem; font-weight:700; letter-spacing:0.04em; cursor:pointer; color:#fff; box-shadow:0 6px 22px rgba(0,0,0,0.14); }
+    .check-action.in{ background:#16a34a; } .check-action.in:hover{ background:#15803d; }
+    .check-action.out{ background:#dc2626; } .check-action.out:hover{ background:#b91c1c; }
+    .check-action:disabled{ opacity:0.55; cursor:not-allowed; }
     .check-meta{ margin-top:1rem; font-size:0.92rem; color:#4b5563; }
     .month-nav{ display:flex; align-items:center; gap:0.6rem; }
     .month-nav b{ min-width:150px; text-align:center; font-family:'Playfair Display',serif; color:var(--navy); font-size:1rem; }
@@ -703,7 +708,7 @@
           <i class="bi ${inside ? 'bi-door-open' : 'bi-door-closed'}"></i>
           Şu an: ${inside ? 'İçeride' + (st.open_since ? ' (giriş ' + esc(st.open_since) + ')' : '') : 'Dışarıda'}
         </div><br/>
-        <button class="btn-check ${inside ? 'out' : 'in'}" id="checkBtn" onclick="doCheck('${inside ? 'out' : 'in'}')">
+        <button class="check-action ${inside ? 'out' : 'in'}" id="checkBtn" onclick="doCheck('${inside ? 'out' : 'in'}')">
           <i class="bi bi-fingerprint"></i> ${inside ? 'ÇIKIŞ YAP' : 'GİRİŞ YAP'}
         </button>
         <div class="check-meta">${sched}<br/>Bugün çalışılan: <b>${esc(st.worked_live_label)}</b></div>

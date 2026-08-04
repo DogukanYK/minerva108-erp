@@ -9,6 +9,9 @@ template'in:
   • Render edilmiş HTML'in /static/toast.js içerdiğini
 doğrular.  Auto-refactor regresyonlarını erken yakalar.
 """
+import pathlib
+import re
+
 from fastapi.testclient import TestClient
 
 
@@ -230,3 +233,25 @@ def test_monthly_report_list_for_superadmin(authed_client: TestClient):
     r = authed_client.get("/api/system/reports")
     assert r.status_code == 200
     assert "reports" in r.json()
+
+
+# ─── Bootstrap sınıf çakışması (canlıda yaşandı) ────────────────────────────
+
+# Bootstrap'in kendi kuralları aynı adlı yerel sınıfı GÖRÜNMEZ yapabilir.
+# .btn-check{position:absolute;clip:rect(0,0,0,0);pointer-events:none}
+# Yerel kural bu üç property'yi tanımlamazsa cascade onları korur → element
+# ekranda yok, tıklanamaz.  PDKS "GİRİŞ/ÇIKIŞ YAP" butonu tam olarak böyle
+# kayboldu; personel modülü haftalarca kullanamadı.
+_BOOTSTRAP_SHADOWING = ("btn-check",)
+
+
+def test_no_bootstrap_shadowed_class_names():
+    for f in sorted(pathlib.Path("templates").glob("*.html")):
+        src = f.read_text(encoding="utf-8")
+        if "bootstrap" not in src:
+            continue                      # Bootstrap yüklenmiyorsa çakışma yok
+        code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)     # CSS yorumlarını at
+        for cls in _BOOTSTRAP_SHADOWING:
+            assert cls not in code, (
+                f"{f.name}: '{cls}' Bootstrap'te gizleyici bir sınıf — "
+                f"başka bir ad kullan (ör. 'check-action')")

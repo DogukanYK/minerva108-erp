@@ -190,6 +190,13 @@ def test_security_headers_on_all_responses(client: TestClient):
     assert "strict-origin-when-cross-origin" in headers.get("referrer-policy", "")
     assert "max-age=" in headers.get("strict-transport-security", "")
 
+    # PDKS: QR okuyucu kamerayı, check-in konumu gerektirir.  Bunlar
+    # Permissions-Policy'de AÇIKÇA self olmalı — nginx de ayrı bir
+    # Permissions-Policy gönderiyor ve iki header'da en kısıtlayıcı kazanıyor;
+    # nginx'teki `camera=()` yüzünden okuyucu canlıda hiç açılmamıştı.
+    pp = headers.get("permissions-policy", "")
+    assert "camera=(self)" in pp and "geolocation=(self)" in pp
+
 
 def test_api_docs_disabled_by_default(client: TestClient):
     """conftest EXPOSE_API_DOCS=false → /api/docs 404 olmalı."""
