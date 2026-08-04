@@ -215,6 +215,27 @@ serializers + `wa.me` helper), `snapshots.py` (month-end stock freeze / reconstr
 panel scoping — see Domain section), `undo.py` (undo log), `password_strength.py`,
 `limiter.py` (SlowAPI).
 
+**TUZAK — güvenlik başlıkları İKİ yerden gelir.** nginx (`sites-available/minerva`)
+*ve* `SecurityHeadersMiddleware` ayrı `Permissions-Policy` + `Content-Security-Policy`
+gönderir; aynı özellik iki header'da geçtiğinde **en kısıtlayıcısı uygulanır**.
+nginx'teki eski değer `camera=(), geolocation=()` idi → PDKS QR okuyucusu ve
+konum doğrulaması canlıda HİÇ çalışmıyordu (uygulama izin verse bile). 2026-08-04'te
+ikisi de `geolocation=(self), camera=(self), microphone=(), payment=(), usb=()`
+değerine hizalandı (nginx yedeği `/root/minerva-nginx.bak.*`). Tarayıcı API'si
+(kamera/konum/mikrofon) gerektiren bir özellik eklerken **iki tarafı birden**
+güncelle; `test_security_headers_on_all_responses` uygulama tarafını kilitler,
+nginx tarafını `curl -sI https://ims.minerva108.com/login | grep -i permissions`
+ile doğrula.
+
+**TUZAK — Bootstrap sınıf gölgelemesi.** Şablonlar Bootstrap 5.3 CSS'i yüklüyor.
+Yerel bir sınıfa Bootstrap'te var olan bir ad verilirse, **yerel kuralın
+tanımlamadığı property'ler Bootstrap'ten sızar**. Yaşandı: PDKS'nin
+`.btn-check` sınıfı Bootstrap'in `.btn-check{position:absolute;
+clip:rect(0,0,0,0);pointer-events:none}` kuralıyla çakıştı → "GİRİŞ/ÇIKIŞ YAP"
+butonu ekranda yok ve tıklanamaz oldu (modül haftalarca kullanılamadı; sınıf
+`check-action` olarak yeniden adlandırıldı). Bootstrap yüklü şablonlarda
+`btn-*` önekli ad KULLANMA. `test_no_bootstrap_shadowed_class_names` kilitler.
+
 **Middleware stack** (api_main.py): `SecurityHeadersMiddleware` (CSP + headers),
 `CSRFMiddleware` (Origin/Referer check on mutating verbs; exempts `/api/login`,
 `/api/logout`), `SlowAPIMiddleware` (rate limiting). Auth is JWT in an HttpOnly +
