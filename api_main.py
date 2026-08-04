@@ -557,7 +557,14 @@ def pdks_page(request: Request, db: Session = Depends(get_db)):
     user = _resolve_active_user(payload, db)
     if not _user_can(user, "pdks", "view_own"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("pdks.html", _page_ctx(request, payload, user))
+    from core.pdks import (DEFAULT_WORK_END, DEFAULT_WORK_START,
+                           TOTAL_BREAK_MINUTES, breaks_view)
+    ctx = _page_ctx(request, payload, user)
+    # Mola şeması + standart mesai TEK KAYNAK core/pdks.py'de — şablon burayı
+    # okur, kendi içinde saat sabiti tutmaz.
+    ctx.update(pdks_breaks=breaks_view(), pdks_break_total=TOTAL_BREAK_MINUTES,
+               pdks_work_start=DEFAULT_WORK_START, pdks_work_end=DEFAULT_WORK_END)
+    return templates.TemplateResponse("pdks.html", ctx)
 
 
 @app.get("/pdks-qr", response_class=HTMLResponse)

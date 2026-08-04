@@ -22,7 +22,9 @@ from database import (
 
 ORIGIN = {"Origin": "http://testserver"}
 
-# Pzt–Cum 09:00–18:00, 60 dk mola — testlerin standart programı
+# Pzt–Cum 09:00–18:00 — testlerin standart programı.  Molalar artık programa
+# DEĞİL şirket geneli sabit şemaya bağlı (BREAKS: 09:30/15 · 12:45/45 · 16:00/15);
+# bu pencerede üçü de tam kapsanır → 75 dk, beklenen 540 − 75 = 465 dk.
 STD_TEMPLATE = {str(i): {"start": "09:00", "end": "18:00"} for i in range(5)}
 STD_TEMPLATE.update({"5": None, "6": None})
 STD_SCHEDULES = [{"effective_from": date(2026, 1, 1),
@@ -56,13 +58,13 @@ def test_tr_date_of_midnight():
 
 
 def test_overtime_single_pair():
-    # 09:00–20:00 → brüt 11 sa − 1 sa mola = 10 sa; beklenen 8 sa; mesai 2 sa
+    # 09:00–20:00 → brüt 660 − 75 dk mola = 585; beklenen 465; mesai 120
     d = std_day([ev("in", tr(2026, 7, 6, 9)), ev("out", tr(2026, 7, 6, 20))])
-    assert d["worked_minutes"] == 600
-    assert d["expected_minutes"] == 480
+    assert d["worked_minutes"] == 585
+    assert d["expected_minutes"] == 465
     assert d["overtime_minutes"] == 120
     assert d["late_minutes"] == 0 and d["early_leave_minutes"] == 0
-    assert d["lunch_deducted"] is True
+    assert d["break_deducted"] is True and d["break_minutes"] == 75
     assert d["status"] == "calisti"
 
 
@@ -71,22 +73,70 @@ def test_late_and_early():
     d = std_day([ev("in", tr(2026, 7, 6, 9, 20)), ev("out", tr(2026, 7, 6, 17, 30))])
     assert d["late_minutes"] == 15
     assert d["early_leave_minutes"] == 25
-    # brüt 490 ≥ 360 → mola düşüldü; eksik = 480 − 430 = 50
-    assert d["worked_minutes"] == 430
+    # brüt 490 − 75 dk mola = 415; eksik = 465 − 415 = 50
+    assert d["worked_minutes"] == 415
     assert d["missing_minutes"] == 50
 
 
-def test_lunch_rules():
-    # İki çift = mola fiilen basılmış → kesinti yok
+def test_break_rules():
+    # İki çift = personel molada çıkış basmış → ikinci kez kesinti YOK
     d = std_day([ev("in", tr(2026, 7, 6, 9)), ev("out", tr(2026, 7, 6, 13)),
                  ev("in", tr(2026, 7, 6, 14)), ev("out", tr(2026, 7, 6, 18))])
     assert d["worked_minutes"] == 480
-    assert d["lunch_deducted"] is False
-    assert d["overtime_minutes"] == 0
-    # Tek çift ama < 6 saat → kesinti yok
+    assert d["break_deducted"] is False and d["break_minutes"] == 0
+    assert d["overtime_minutes"] == 15          # 480 − 465
+    # Tek çift, kısa gün: yalnız PENCEREYE DÜŞEN molalar düşülür.
+    # 09:00–14:00 → kahvaltı 15 + öğle 45 (12:45–13:30 tamamı) = 60;
+    # 16:00 molası pencere dışında kaldı (tam günün 75'i düşmedi)
     d2 = std_day([ev("in", tr(2026, 7, 6, 9)), ev("out", tr(2026, 7, 6, 14))])
-    assert d2["worked_minutes"] == 300
-    assert d2["lunch_deducted"] is False
+    assert d2["break_minutes"] == 60
+    assert d2["worked_minutes"] == 240
+    # Kısmi kesişim: 09:00–13:00 → kahvaltı 15 + öğlenin ilk 15 dk'sı = 30
+    d2b = std_day([ev("in", tr(2026, 7, 6, 9)), ev("out", tr(2026, 7, 6, 13))])
+    assert d2b["break_minutes"] == 30
+    # Hiçbir molaya değmeyen kısa çalışma → kesinti yok
+    d3 = std_day([ev("in", tr(2026, 7, 6, 10)), ev("out", tr(2026, 7, 6, 12))])
+    assert d3["break_minutes"] == 0 and d3["worked_minutes"] == 120
+
+
+def test_standard_workday_nets_eight_hours():
+    """Şirketin gerçek programı: 08:30–17:45, 75 dk mola → tam 8 saat net."""
+    from core.pdks import (BREAKS, DEFAULT_WORK_END, DEFAULT_WORK_START,
+                           TOTAL_BREAK_MINUTES, break_minutes_within)
+    assert (DEFAULT_WORK_START, DEFAULT_WORK_END) == ("08:30", "17:45")
+    assert TOTAL_BREAK_MINUTES == 75
+    assert break_minutes_within(DEFAULT_WORK_START, DEFAULT_WORK_END) == 75
+
+    tpl = {str(i): {"start": DEFAULT_WORK_START, "end": DEFAULT_WORK_END} for i in range(5)}
+    tpl.update({"5": None, "6": None})
+    scheds = [{"effective_from": date(2026, 1, 1), "template": tpl}]
+    s = schedule_for(scheds, MONDAY)
+    assert s["span_minutes"] == 555 and s["break_minutes"] == 75
+    d = compute_day(MONDAY,
+                    [ev("in", tr(2026, 7, 6, 8, 30)), ev("out", tr(2026, 7, 6, 17, 45))],
+                    s)
+    assert d["expected_minutes"] == 480          # 8 saat
+    assert d["worked_minutes"] == 480            # tam mesai → eksik/mesai yok
+    assert d["missing_minutes"] == 0 and d["overtime_minutes"] == 0
+    assert d["late_minutes"] == 0 and d["early_leave_minutes"] == 0
+    # Molaların hepsi mesai penceresinin İÇİNDE olmalı (şema tutarlılığı)
+    for b in BREAKS:
+        assert DEFAULT_WORK_START < b["start"] < DEFAULT_WORK_END
+
+
+def test_break_window_intersection_edges():
+    from core.pdks import break_minutes_within
+    # Molaya bitişik ama değmiyor (09:45 kahvaltının bitişi)
+    assert break_minutes_within("09:45", "12:45") == 0
+    # Tek molanın tamamı
+    assert break_minutes_within("16:00", "16:15") == 15
+    # Molanın yalnız yarısı
+    assert break_minutes_within("13:00", "13:15") == 15      # öğlenin ortası
+    # Ters/boş pencere (gece vardiyası) → şema uygulanmaz
+    assert break_minutes_within("20:00", "01:00") == 0
+    assert break_minutes_within("10:00", "10:00") == 0
+    # Tüm günü kapsayan pencere → hepsi
+    assert break_minutes_within("00:00", "23:59") == 75
 
 
 def test_midnight_crossing_pair():
@@ -112,11 +162,12 @@ def test_holiday_full_and_half():
                 holiday=hol)
     assert d["status"] == "resmi_tatil"
     assert d["expected_minutes"] == 0
-    assert d["overtime_minutes"] == 240
-    # Yarım gün (arefe): beklenen = (540 − 60) // 2 = 240
+    # Tatilde 09:00–13:00: kahvaltı 15 + öğlenin ilk 15 dk'sı = 30 düşülür
+    assert d["overtime_minutes"] == 210
+    # Yarım gün (arefe): beklenen = (540 − 75) // 2 = 232
     half = {"name": "Arefe", "is_half_day": True}
     d2 = std_day([], holiday=half)
-    assert d2["expected_minutes"] == 240
+    assert d2["expected_minutes"] == 232
     assert d2["status"] == "resmi_tatil"
 
 
@@ -140,11 +191,12 @@ def test_schedule_versioning():
     schedules = STD_SCHEDULES + [{
         "effective_from": date(2026, 7, 15),
         "template": {str(i): {"start": "10:00", "end": "16:00"} for i in range(5)},
-        "lunch_break_minutes": 30,
+        "lunch_break_minutes": 30,     # artık YOK SAYILIR (sabit şema geçerli)
     }]
     assert schedule_for(schedules, date(2026, 7, 10))["start"] == "09:00"
     s = schedule_for(schedules, date(2026, 7, 20))
-    assert s["start"] == "10:00" and s["lunch_minutes"] == 30
+    # 10:00–16:00 penceresi: öğle 45 dk tam içinde, kahvaltı/16:00 molası dışında
+    assert s["start"] == "10:00" and s["break_minutes"] == 45
 
 
 def test_pair_events_orphans():
@@ -435,7 +487,7 @@ def test_report_json_with_leave(authed_client, db_session):
     by_date = {d["date"]: d for d in month["days"]}
     day6 = by_date["2026-07-06"]
     assert day6["status"] == "calisti"
-    assert day6["worked_minutes"] == 480       # 9 sa − 60 dk mola
+    assert day6["worked_minutes"] == 465       # 9 sa − 75 dk mola
     day7 = by_date["2026-07-07"]
     assert day7["status"] == "izinli"
     assert day7["status_label"] == "Yıllık İzin"
@@ -448,12 +500,14 @@ def test_half_day_no_late_early():
     # Yarım gün tatilde geç/erken hesaplanmaz; beklenen süreyi dolduran
     # personel "295 dk erken çıkış" görünmemeli.
     half = {"name": "Arefe", "is_half_day": True}
-    d = std_day([ev("in", tr(2026, 7, 6, 9)), ev("out", tr(2026, 7, 6, 13))],
+    # 09:00–14:00 → brüt 300 − 60 mola (kahvaltı 15 + öğle 45) = 240 net;
+    # yarım gün beklenen (540 − 75) // 2 = 232 → dolduruldu
+    d = std_day([ev("in", tr(2026, 7, 6, 9)), ev("out", tr(2026, 7, 6, 14))],
                 holiday=half)
-    assert d["expected_minutes"] == 240
+    assert d["expected_minutes"] == 232
     assert d["worked_minutes"] == 240
     assert d["late_minutes"] == 0 and d["early_leave_minutes"] == 0
-    assert d["missing_minutes"] == 0 and d["overtime_minutes"] == 0
+    assert d["missing_minutes"] == 0
 
 
 def test_leave_overlapping_holiday_not_counted():

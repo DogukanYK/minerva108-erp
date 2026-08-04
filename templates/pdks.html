@@ -15,6 +15,12 @@
     window.CAN_VIEW_ALL = {{ 'true' if can('pdks','view_all') else 'false' }};
     window.CAN_MANAGE   = {{ 'true' if can('pdks','manage') else 'false' }};
     window.CAN_REPORT   = {{ 'true' if can('pdks','report') else 'false' }};
+    /* Mola şeması + standart mesai — tek kaynak core/pdks.py (BREAKS,
+       DEFAULT_WORK_START/END); şablon kendi saatini uydurmaz. */
+    window.PDKS_BREAKS  = {{ pdks_breaks | tojson }};
+    window.BREAK_TOTAL  = {{ pdks_break_total }};
+    window.WORK_START   = {{ pdks_work_start | tojson }};
+    window.WORK_END     = {{ pdks_work_end | tojson }};
   </script>
   <title>Minerva108 ERP — PDKS</title>
   <link rel="icon" type="image/png" href="/static/images/favicon.png" />
@@ -126,6 +132,10 @@
     .check-alt button:hover{ color:var(--gold); }
     .code-input{ text-align:center; font-size:2rem; font-weight:600; letter-spacing:0.4em;
       text-indent:0.4em; font-variant-numeric:tabular-nums; padding:0.6rem 0.4rem; }
+    .breaks-box{ background:#faf8f4; border:1px solid #f0ece4; border-radius:10px;
+      padding:0.7rem 0.85rem; margin-bottom:0.8rem; font-size:0.86rem; }
+    .breaks-box b{ display:block; color:var(--navy); margin-bottom:0.35rem; font-size:0.82rem; }
+    .breaks-box b i{ color:var(--gold); }
     .check-empty{ padding:0.5rem 0.5rem 0.2rem; }
     .check-empty i{ font-size:2rem; color:var(--gold); }
     .check-empty p{ margin:0.7rem 0 0; color:#6b7280; }
@@ -138,6 +148,9 @@
        kadar yalnız Bootstrap CSS yüklüyordu) -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script>
   <script src="/static/scanner.js?v=4" defer></script>
+  <!-- Tarih/saat girişleri TR biçiminde (gg.aa.yyyy · ss:dd, 24 saat);
+       .value ISO kalır, sunucu sözleşmesi değişmez. -->
+  <script src="/static/tr-datetime.js?v=1" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
 </head>
 <body>
@@ -475,15 +488,13 @@
           <table class="sched-grid" style="max-width:430px;">
             <tbody id="schedRows"></tbody>
           </table>
-          <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin:0.8rem 0;">
-            <div style="flex:1;min-width:140px;">
-              <label class="lbl">Öğle Molası (dk)</label>
-              <input type="number" id="sLunch" class="ipt" value="60" min="0" max="240" />
-            </div>
-            <div style="flex:1;min-width:160px;">
-              <label class="lbl">Geçerlilik Başlangıcı *</label>
-              <input type="date" id="sFrom" class="ipt" />
-            </div>
+          <div style="margin:0.8rem 0;">
+            <label class="lbl">Geçerlilik Başlangıcı *</label>
+            <input type="date" id="sFrom" class="ipt" style="max-width:220px;" />
+          </div>
+          <div class="breaks-box">
+            <b><i class="bi bi-cup-hot"></i> Molalar (şirket geneli, sabit)</b>
+            <div id="breaksList" class="muted">—</div>
           </div>
           <p class="muted" style="margin:0 0 0.8rem;">Farklı bir başlangıç tarihi = yeni versiyon; geçmiş günlerin hesabı değişmez.</p>
           <div id="schedVersions" class="muted" style="font-size:0.8rem;margin-bottom:0.5rem;"></div>
@@ -681,7 +692,8 @@
       const inside = st.state === 'iceride';
       window._pdksEnforce = !!(st.checkin && st.checkin.enforce);
       const sched = st.schedule
-        ? `Bugünkü mesai: <b>${esc(st.schedule.start)} – ${esc(st.schedule.end)}</b> (mola ${st.schedule.lunch_minutes} dk)`
+        ? `Bugünkü mesai: <b>${esc(st.schedule.start)} – ${esc(st.schedule.end)}</b>`
+          + (st.break_minutes_total ? ` · mola ${st.break_minutes_total} dk` : '')
         : 'Bugün için tanımlı çalışma programı yok.';
       const guard = window._pdksEnforce
         ? `<div class="check-guard"><i class="bi bi-shield-check"></i> Doğrulama aktif: ofis ağı · konum · girişteki QR kodu</div>`
@@ -993,14 +1005,25 @@
           : '<tr><td colspan="6" class="muted" style="padding:1rem;">Henüz personel kaydı yok — "Yeni Personel" ile başlayın.</td></tr>';
       } catch (e) { tb.innerHTML = `<tr><td colspan="6" class="muted" style="padding:1rem;">${esc(e.message)}</td></tr>`; }
     }
+    /* Molalar şirket geneli sabit — düzenlenmez, bilgi olarak gösterilir. */
+    function renderBreaksBox(){
+      const el = document.getElementById('breaksList');
+      if (!el) return;
+      const bs = window.PDKS_BREAKS || [];
+      el.innerHTML = bs.length
+        ? bs.map(b => `${esc(b.start)}–${esc(b.end)} ${esc(b.label)} <b style="display:inline;font-size:inherit;color:inherit;">${b.minutes} dk</b>`).join(' · ')
+          + `<div style="margin-top:0.3rem;">Toplam <b style="display:inline;font-size:inherit;color:inherit;">${window.BREAK_TOTAL} dk</b> — personel tek giriş/çıkış bastığında bu süre otomatik düşülür; molada çıkış basarsa çifte kesinti olmaz.</div>`
+        : 'Tanımlı mola yok.';
+    }
+
     function schedRowsHtml(tpl){
       return WEEKDAYS.map((name, i) => {
-        const v = tpl ? tpl[String(i)] : (i < 5 ? { start: '09:00', end: '18:00' } : null);
+        const v = tpl ? tpl[String(i)] : (i < 5 ? { start: WORK_START, end: WORK_END } : null);
         return `<tr>
           <td style="width:120px;"><label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.88rem;">
             <input type="checkbox" class="sDay" data-day="${i}" ${v ? 'checked' : ''} onchange="this.closest('tr').querySelectorAll('input[type=time]').forEach(x=>x.disabled=!this.checked)" /> ${name}</label></td>
-          <td><input type="time" class="ipt sStart" data-day="${i}" value="${v ? esc(v.start) : '09:00'}" ${v ? '' : 'disabled'} style="padding:0.35rem 0.5rem;" /></td>
-          <td><input type="time" class="ipt sEnd" data-day="${i}" value="${v ? esc(v.end) : '18:00'}" ${v ? '' : 'disabled'} style="padding:0.35rem 0.5rem;" /></td>
+          <td><input type="time" class="ipt sStart" data-day="${i}" value="${v ? esc(v.start) : WORK_START}" ${v ? '' : 'disabled'} style="padding:0.35rem 0.5rem;" /></td>
+          <td><input type="time" class="ipt sEnd" data-day="${i}" value="${v ? esc(v.end) : WORK_END}" ${v ? '' : 'disabled'} style="padding:0.35rem 0.5rem;" /></td>
         </tr>`;
       }).join('');
     }
@@ -1027,16 +1050,14 @@
       document.getElementById('eNotes').value = e ? (e.notes || '') : '';
       document.getElementById('eActive').checked = e ? !!e.is_active : true;
       // Program: en güncel versiyonu editöre yükle
-      let tpl = null, lunch = 60;
+      let tpl = null;
       const versions = (e && e.schedules) || [];
       if (versions.length) {
-        try { tpl = JSON.parse(versions[0].weekly_template); lunch = versions[0].lunch_break_minutes; } catch {}
+        try { tpl = JSON.parse(versions[0].weekly_template); } catch {}
       }
-      _loadedSched = versions.length
-        ? { tpl: versions[0].weekly_template, lunch: versions[0].lunch_break_minutes }
-        : null;
+      _loadedSched = versions.length ? { tpl: versions[0].weekly_template } : null;
       document.getElementById('schedRows').innerHTML = schedRowsHtml(tpl);
-      document.getElementById('sLunch').value = lunch;
+      renderBreaksBox();
       // Varsayılan geçerlilik = bugün: eski versiyon tarihiyle kazara
       // retroaktif değişiklik yapılmasın (geçmiş puantaj sabit kalsın)
       document.getElementById('sFrom').value = trToday();
@@ -1080,19 +1101,18 @@
           _empId = empId;   // program kaydı hata verirse tekrar Kaydet mükerrer personel yaratmasın
         }
         const tplNow = collectTemplate();
-        const lunchNow = parseInt(document.getElementById('sLunch').value || '60');
         let schedChanged = true;
         if (_loadedSched) {
           try {
-            schedChanged = JSON.stringify(tplNow) !== JSON.stringify(JSON.parse(_loadedSched.tpl))
-              || lunchNow !== _loadedSched.lunch;
+            schedChanged = JSON.stringify(tplNow) !== JSON.stringify(JSON.parse(_loadedSched.tpl));
           } catch { schedChanged = true; }
         }
         if (schedChanged) {
+          // lunch_break_minutes GÖNDERİLMİYOR — molalar şirket geneli sabit
+          // (core/pdks.BREAKS).  Kolon eski kayıtlar için DB'de duruyor.
           await jpost(`/api/pdks/employees/${empId}/schedule`, {
             effective_from: sFrom,
             weekly_template: tplNow,
-            lunch_break_minutes: lunchNow,
           }, 'PUT');
         }
         toastFn('Personel kaydedildi.', 'success');

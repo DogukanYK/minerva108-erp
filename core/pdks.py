@@ -21,12 +21,14 @@ Veri sözleşmeleri:
 Kurallar (tek kaynak — UI ve Excel bu modülün çıktısını gösterir):
   • Çalışma = kapalı in→out çiftlerinin UTC farkları toplamı (gece yarısını
     aşan çift doğal olarak doğru hesaplanır — fark UTC'de alınır).
-  • Öğle molası: gün TEK kapalı çiftten oluşuyor ve brüt süre
-    LUNCH_AUTO_DEDUCT_MIN_MINUTES'i aşıyorsa programdaki mola düşülür.
-    Çoklu çift = molalar zaten ayrı basılmış, kesinti yapılmaz.  Programsız
-    günlerde (hafta tatili/izin) mola bilgisi olmadığından kesinti yok.
-  • Beklenen süre = program aralığı − mola (iş günü); izin/tam tatil/programsız
-    gün = 0; yarım gün resmi tatilde yarısı.
+  • Molalar ŞİRKET GENELİ SABİT (BREAKS: 09:30/15 · 12:45/45 · 16:00/15 dk).
+    Gün TEK kapalı çiftten oluşuyorsa, o çiftin TR saat penceresine düşen
+    molalar düşülür (kısmi kesişim orantılı — yarım gün çalışandan tam günün
+    molası düşmez).  Çoklu çift = personel molada çıkış basmış, kesinti
+    yapılmaz.  Programsız günlerde (hafta tatili/izin) kesinti yok.
+  • Beklenen süre = program aralığı − o aralığa düşen molalar (iş günü);
+    izin/tam tatil/programsız gün = 0; yarım gün resmi tatilde yarısı.
+    Standart mesai 08:30–17:45 → 555 − 75 = net 480 dk (8 saat).
   • Fazla mesai = max(0, çalışılan − beklenen) → tatil/izin/hafta tatilinde
     çalışılan her dakika mesaidir.
   • Geç/erken: TR duvar saatiyle, LATE_TOLERANCE_MIN dakika toleransla
@@ -46,7 +48,22 @@ from datetime import date, datetime, timedelta
 
 from database import TR_OFFSET, to_tr
 
-# Tek kapalı çiftte otomatik mola kesintisi için alt sınır (dakika).
+# ── Şirket geneli sabit mola şeması (TR duvar saati) ────────────────────────
+# Molalar herkes için aynı; kişi bazlı "öğle molası (dk)" girişi KALDIRILDI.
+# Program versiyonlarındaki `lunch_break_minutes` kolonu DB'de KORUNUR (eski
+# kayıtların bilgisi kaybolmasın) ama hesapta artık kullanılmaz.
+BREAKS = (
+    {"start": "09:30", "minutes": 15, "label": "Kahvaltı"},
+    {"start": "12:45", "minutes": 45, "label": "Öğle yemeği"},
+    {"start": "16:00", "minutes": 15, "label": "Mola"},
+)
+# Standart mesai — yeni program varsayılanı (08:30–17:45 = 555 dk brüt,
+# 75 dk mola → net 8 saat).
+DEFAULT_WORK_START = "08:30"
+DEFAULT_WORK_END = "17:45"
+
+# Geriye dönük: eski kayıtlarda tek 'öğle molası' alanı vardı.  Artık
+# kullanılmıyor; sabit tutuluyor ki eski import/testler kırılmasın.
 LUNCH_AUTO_DEDUCT_MIN_MINUTES = 360
 # Geç gelme / erken çıkma toleransı (dakika, simetrik).
 LATE_TOLERANCE_MIN = 5
@@ -165,15 +182,51 @@ def validate_template(raw):
     return None
 
 
+# ─── Mola ────────────────────────────────────────────────────────────────────
+
+def break_minutes_within(start_hm: str, end_hm: str) -> int:
+    """[start, end) penceresine düşen toplam mola dakikası.
+
+    Kısmi kesişim orantılı sayılır — 08:30–13:00 çalışan kahvaltının tamamını
+    (15) + öğlenin ilk 15 dakikasını görür.  Böylece yarım gün çalışandan tam
+    günün molası düşülmez.  Gece yarısını aşan çift (end <= start) için 0 —
+    mola şeması gündüz mesaisi içindir, gece vardiyasına uydurulmaz."""
+    s = _hm_to_minutes(start_hm)
+    e = _hm_to_minutes(end_hm)
+    if e <= s:
+        return 0
+    total = 0
+    for b in BREAKS:
+        bs = _hm_to_minutes(b["start"])
+        be = bs + int(b["minutes"])
+        total += max(0, min(e, be) - max(s, bs))
+    return total
+
+
+def breaks_view() -> list:
+    """UI/rapor için mola şeması — bitiş saati hesaplanmış hâlde."""
+    out = []
+    for b in BREAKS:
+        bs = _hm_to_minutes(b["start"])
+        be = bs + int(b["minutes"])
+        out.append({"start": b["start"], "end": f"{be // 60:02d}:{be % 60:02d}",
+                    "minutes": int(b["minutes"]), "label": b["label"]})
+    return out
+
+
+TOTAL_BREAK_MINUTES = sum(int(b["minutes"]) for b in BREAKS)
+
+
 # ─── Program çözümleme ───────────────────────────────────────────────────────
 
 def schedule_for(schedules, work_date):
     """work_date için geçerli program versiyonunun O GÜNKÜ girdisini döndür.
 
     schedules: parse edilmiş versiyon listesi (sıra önemsiz).
-    Dönüş: {"start": "09:00", "end": "18:00", "lunch_minutes": 60,
-            "span_minutes": 540} — ya da None (o gün çalışma yok / geçerli
-    versiyon yok)."""
+    Dönüş: {"start": "08:30", "end": "17:45", "break_minutes": 75,
+            "span_minutes": 555} — ya da None (o gün çalışma yok / geçerli
+    versiyon yok).  `break_minutes` sabit şemadan (BREAKS) türer, programın
+    eski `lunch_break_minutes` alanından DEĞİL."""
     best = None
     for s in schedules or []:
         ef = s.get("effective_from")
@@ -191,7 +244,7 @@ def schedule_for(schedules, work_date):
     return {
         "start": day["start"],
         "end": day["end"],
-        "lunch_minutes": int(best.get("lunch_break_minutes") or 0),
+        "break_minutes": break_minutes_within(day["start"], day["end"]),
         "span_minutes": max(0, end_m - start_m),
     }
 
@@ -238,12 +291,19 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None):
     orphan_out = any(p["out"] and not p["in"] for p in pairs)
 
     gross = sum(p["minutes"] for p in closed)
-    lunch_deducted = False
+    break_deducted = False
+    break_minutes = 0
     worked = gross
-    if (day_schedule and len(closed) == 1 and not missing_checkout
-            and gross >= LUNCH_AUTO_DEDUCT_MIN_MINUTES):
-        worked = max(0, gross - day_schedule["lunch_minutes"])
-        lunch_deducted = worked != gross
+    # Tek kapalı çift = personel molada çıkış basmamış → o pencereye düşen
+    # sabit molalar düşülür.  Çoklu çift = molalar zaten fiilen basılmış,
+    # ikinci kez düşmek çifte kesinti olurdu.
+    if day_schedule and len(closed) == 1 and not missing_checkout:
+        p0 = closed[0]
+        break_minutes = break_minutes_within(
+            to_tr(p0["in"]["ts_utc"]).strftime("%H:%M"),
+            to_tr(p0["out"]["ts_utc"]).strftime("%H:%M"))
+        worked = max(0, gross - break_minutes)
+        break_deducted = break_minutes > 0
 
     # Beklenen süre
     half_day_holiday = bool(holiday and holiday.get("is_half_day"))
@@ -251,7 +311,7 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None):
     if leave_type or full_holiday or not day_schedule:
         expected = 0
     else:
-        expected = max(0, day_schedule["span_minutes"] - day_schedule["lunch_minutes"])
+        expected = max(0, day_schedule["span_minutes"] - day_schedule["break_minutes"])
         if half_day_holiday:
             expected //= 2
 
@@ -309,7 +369,8 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None):
         "early_leave_minutes": early,
         "missing_checkout": missing_checkout,
         "orphan_out": orphan_out,
-        "lunch_deducted": lunch_deducted,
+        "break_deducted": break_deducted,
+        "break_minutes": break_minutes,
         "pairs": pairs,
     }
 
@@ -351,7 +412,7 @@ def compute_month(year, month, schedules, events_by_date, leaves, holidays, toda
                 "worked_minutes": 0, "expected_minutes": 0, "overtime_minutes": 0,
                 "missing_minutes": 0, "late_minutes": 0, "early_leave_minutes": 0,
                 "missing_checkout": False, "orphan_out": False,
-                "lunch_deducted": False, "pairs": [],
+                "break_deducted": False, "break_minutes": 0, "pairs": [],
             })
             continue
         sched = schedule_for(schedules, d)

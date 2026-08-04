@@ -110,7 +110,7 @@ saati); kişi bazlı **versiyonlu haftalık program** (`pdks_schedules`,
 kalır), izinler (`pdks_leaves`, aralık satırı) ve ortak resmi tatiller
 (`pdks_holidays`) üzerinden aylık puantaj CANLI hesaplanır (saklanan agregat
 yok). Hesap motoru `core/pdks.py` SAF fonksiyonlardır (DB'siz, unit-test
-edilebilir): tek çift + brüt ≥6 sa → mola kesintisi, 5 dk geç/erken toleransı,
+edilebilir): 5 dk geç/erken toleransı,
 tatil/izin/hafta tatilinde çalışılan her dakika fazla mesai, açık çift ("çıkış
 eksik") 0 sayılır ve yönetici düzeltene kadar toplam dışıdır. **work_date =
 TR-yerel gün** — `'in'` kendi TR günü, `'out'` kapattığı açık `'in'` <16
@@ -124,6 +124,32 @@ Manager tümü). Manuel olay düzeltmeleri `correction_note` zorunlu +
 sayfa). Tablolar `pdks_*` — create_all ile gelir (migration
 `f3a5c7e9b2d4`). Not: buradaki "izin" devamsızlık mazeretidir; RBAC
 "permission" kavramıyla karıştırma.
+
+**Molalar ŞİRKET GENELİ SABİT** (`core/pdks.BREAKS` — 09:30/15 Kahvaltı ·
+12:45/45 Öğle · 16:00/15 Mola = **75 dk**; standart mesai
+`DEFAULT_WORK_START/END` = **08:30–17:45** → 555 − 75 = net 8 saat). Kişi
+bazlı "öğle molası (dk)" girişi UI'dan KALDIRILDI; `pdks_schedules.
+lunch_break_minutes` kolonu eski kayıtlar için DB'de durur ama **hesapta
+kullanılmaz** (`ScheduleBody` alanı hâlâ kabul edilir, yok sayılır).
+Kesinti kuralı: gün TEK kapalı çiftse o çiftin TR saat penceresine düşen
+molalar `break_minutes_within()` ile **kısmi kesişim orantılı** düşülür
+(yarım gün çalışandan tam günün molası düşmez); çoklu çift = personel molada
+çıkış basmış, ikinci kez kesinti YOK. Gece yarısını aşan pencerede (end ≤
+start) şema uygulanmaz. Gün çıktısında `break_minutes` + `break_deducted`
+(eski ad `lunch_deducted`), `schedule_for()` çıktısında `break_minutes`
+(eski `lunch_minutes`). Şema tek kaynak: `/pdks` sayfası `breaks_view()`
+sonucunu `window.PDKS_BREAKS`/`WORK_START`/`WORK_END` olarak alır — şablon
+kendi saat sabitini tutmaz.
+
+**TR tarih/saat girişi** (`static/tr-datetime.js`): `<input type=date|time>`
+TARAYICI DİLİNE göre render edilir (İngilizce tarayıcıda `08/04/2026` ve
+`04:30 PM`); `lang="tr"` bunu değiştirmez. Yardımcı, input'u `text`e çevirip
+TR maskesi uygular (`gg.aa.yyyy` · `ss:dd`, 24 saat) ve **`el.value`
+property'sini override ederek DAİMA ISO döndürür** — mevcut JS ve sunucu
+sözleşmesi hiç değişmez. `innerHTML` ile sonradan basılan input'lar
+MutationObserver ile yakalanır (`data-tr-dt` guard'ı çift sarmalamayı önler).
+Şu an yalnız `/pdks` sayfasında yüklü; başka sayfaya eklemek = tek `<script>`
+satırı (+ `sw.js` CACHE_NAME bump).
 
 **PDKS üçlü doğrulama (imza güvenliği).** Self giriş/çıkış, master anahtar
 açıkken **üçü birden** sağlanmadan yazılmaz — sıra: **IP → QR → konum**

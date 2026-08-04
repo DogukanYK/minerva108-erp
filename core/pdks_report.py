@@ -111,7 +111,7 @@ def render_puantaj_excel(data: dict) -> bytes:
                 notes.append(d["holiday_name"])
             if d["missing_checkout"]:
                 notes.append("Çıkış eksik — toplam dışı")
-            if d["lunch_deducted"]:
+            if d["break_deducted"]:
                 notes.append("Mola düşüldü")
             row = [
                 d["date_label"], d["weekday_label"], d["status_label"],

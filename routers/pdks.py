@@ -32,7 +32,8 @@ from core.permissions import require_permission
 from core.pdks import (
     LEAVE_TYPES, LEAVE_TYPE_LABELS, DAY_STATUS_LABELS,
     WEEKDAY_LABELS, MONTH_LABELS, OPEN_PAIR_MAX_HOURS,
-    NUMERIC_CODE_LEN, QR_BUCKET_SECONDS, compute_day, compute_month, fmt_minutes,
+    NUMERIC_CODE_LEN, QR_BUCKET_SECONDS, TOTAL_BREAK_MINUTES, breaks_view,
+    compute_day, compute_month, fmt_minutes,
     geo_within, haversine_m, ip_allowed, leave_for, make_numeric_code,
     make_qr_token, qr_bucket, schedule_for, tr_date_of, validate_template,
     verify_numeric_code, verify_qr_token,
@@ -358,7 +359,9 @@ def _day_view(day: dict) -> dict:
         "early_leave_minutes": day["early_leave_minutes"],
         "missing_checkout": day["missing_checkout"],
         "orphan_out": day["orphan_out"],
-        "lunch_deducted": day["lunch_deducted"],
+        "break_deducted": day["break_deducted"],
+        "break_minutes": day.get("break_minutes", 0),
+        "break_label": fmt_minutes(day.get("break_minutes", 0)),
         "pairs": [{"in": _hhmm(p["in"]["ts_utc"]) if p["in"] else "",
                    "out": _hhmm(p["out"]["ts_utc"]) if p["out"] else "",
                    "minutes": p["minutes"]} for p in day["pairs"]],
@@ -485,6 +488,9 @@ def _today_status(db: Session, emp: Employee) -> dict:
         "events": [_event_view(e) for e in events],
         # İstemci (pdks.html) bu bayrağa göre konum+QR akışını devreye alır.
         "checkin": {"enforce": cfg["enforce"]},
+        # Mola şeması şirket geneli sabit — personel ekranda görsün.
+        "breaks": breaks_view(),
+        "break_minutes_total": TOTAL_BREAK_MINUTES,
     }
 
 
