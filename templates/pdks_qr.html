@@ -25,6 +25,13 @@
     .qr-card svg{ width:100%; height:100%; display:block; }
     .hint{ text-align:center; font-size:1.02rem; color:rgba(255,255,255,0.85); line-height:1.5; max-width:420px; }
     .hint b{ color:var(--gold); }
+    /* Yedek sayısal kod — QR ile aynı pencerede döner.  letter-spacing sonda
+       fazladan boşluk bırakır; text-indent aynı değerle onu telafi eder. */
+    .code-wrap{ text-align:center; }
+    .code-label{ font-size:0.78rem; letter-spacing:0.14em; text-transform:uppercase;
+      color:rgba(255,255,255,0.5); margin-bottom:0.3rem; }
+    .code{ font-size:2.5rem; font-weight:600; letter-spacing:0.26em; text-indent:0.26em;
+      color:var(--gold); line-height:1.1; font-variant-numeric:tabular-nums; }
     .progress-wrap{ width:min(78vw,340px); height:6px; background:rgba(255,255,255,0.12); border-radius:999px; overflow:hidden; }
     .progress-bar{ height:100%; background:var(--gold); width:100%; border-radius:999px; }
     .clock{ font-family:'Playfair Display',serif; font-size:1.1rem; color:rgba(255,255,255,0.55); letter-spacing:0.05em; }
@@ -49,8 +56,12 @@
     <div class="qr-card" id="qrCard">
       <span style="color:#9ca3af;font-size:0.85rem;">Yükleniyor…</span>
     </div>
+    <div class="code-wrap">
+      <div class="code-label">Kamera okumuyorsa bu kodu girin</div>
+      <div class="code" id="qrCode">——————</div>
+    </div>
     <div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
-    <div class="hint">Telefonunuzdaki <b>PDKS</b> sayfasından Giriş/Çıkış butonuna basıp<br/>bu kodu <b>canlı kamerayla</b> okutun.</div>
+    <div class="hint">Telefonunuzdaki <b>PDKS</b> sayfasından Giriş/Çıkış butonuna basıp<br/>bu kodu <b>kamerayla okutun</b> ya da alttaki <b>sayısal kodu</b> yazın.</div>
     <div class="clock" id="clock">--:--:--</div>
   </div>
 
@@ -143,6 +154,7 @@
       _errStreak = 0;
       hideState();
       document.getElementById('qrCard').innerHTML = d.svg || '';
+      document.getElementById('qrCode').textContent = d.code || '——————';
       const bar = document.getElementById('progressBar');
       const seconds = Math.max(1, d.seconds_left || d.period || 30);
       bar.style.transition = 'none';

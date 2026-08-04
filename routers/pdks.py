@@ -32,15 +32,35 @@ from core.permissions import require_permission
 from core.pdks import (
     LEAVE_TYPES, LEAVE_TYPE_LABELS, DAY_STATUS_LABELS,
     WEEKDAY_LABELS, MONTH_LABELS, OPEN_PAIR_MAX_HOURS,
-    QR_BUCKET_SECONDS, compute_day, compute_month, fmt_minutes,
-    geo_within, haversine_m, ip_allowed, leave_for, make_qr_token,
-    qr_bucket, schedule_for, tr_date_of, validate_template, verify_qr_token,
+    NUMERIC_CODE_LEN, QR_BUCKET_SECONDS, compute_day, compute_month, fmt_minutes,
+    geo_within, haversine_m, ip_allowed, leave_for, make_numeric_code,
+    make_qr_token, qr_bucket, schedule_for, tr_date_of, validate_template,
+    verify_numeric_code, verify_qr_token,
 )
 
 router = APIRouter(prefix="/api/pdks", tags=["pdks"])
 
 # Aynı tip olayın bu süre içindeki tekrarı idempotent sayılır (çift tık).
 DOUBLE_TAP_SECONDS = 120
+
+# Yedek sayısal kod, QR'a göre kaba kuvvete daha açık (6 hane + ±2 bucket =
+# ~5/1.000.000).  Personel başına deneme penceresi bunu pratikte imkânsız
+# kılar.  Süreç belleğinde tutulur — restart'ta sıfırlanır (kabul edilebilir:
+# saldırgan zaten ofis ağında + ofis konumunda olmak zorunda).
+CODE_FAIL_LIMIT = 5
+CODE_FAIL_WINDOW_SECONDS = 300
+_code_fails: dict = {}          # employee_id → [unix_ts, …]
+
+
+def _code_fail_blocked(employee_id: int, now_unix: float) -> bool:
+    hits = [t for t in _code_fails.get(employee_id, [])
+            if now_unix - t < CODE_FAIL_WINDOW_SECONDS]
+    _code_fails[employee_id] = hits
+    return len(hits) >= CODE_FAIL_LIMIT
+
+
+def _code_fail_record(employee_id: int, now_unix: float) -> None:
+    _code_fails.setdefault(employee_id, []).append(now_unix)
 
 # ── Check-in doğrulama ayarları — AppSetting anahtarları ────────────────────
 _CFG_ENFORCE = "pdks.checkin.enforce"
@@ -60,6 +80,8 @@ class CheckBody(BaseModel):
     type: str = Field(..., pattern="^(in|out)$")
     # Üçlü doğrulama açıkken zorunlu; kapalıyken yok sayılır.
     qr_token: Optional[str] = Field(None, max_length=120)
+    # Kamera çalışmadığında QR yerine geçen, ekranda QR'ın altında yazan kod.
+    manual_code: Optional[str] = Field(None, max_length=12)
     lat: Optional[float] = Field(None, ge=-90, le=90)
     lon: Optional[float] = Field(None, ge=-180, le=180)
     accuracy: Optional[float] = Field(None, ge=0)
@@ -501,16 +523,33 @@ def check_in_out(
         if not ip_allowed(ip, cfg["allowed_ips"]):
             return _err(400, "Ofis internetine bağlı değilsiniz — giriş/çıkış "
                              "yalnızca ofis ağından (Minerva108 Wi-Fi) yapılabilir.")
-        if not data.qr_token:
-            return _err(400, "QR kod okutulmadı — girişteki ekrandan güncel "
-                             "QR kodu okutun.")
-        qr_state = verify_qr_token(SECRET_KEY, data.qr_token, time.time())
-        if qr_state == "expired":
-            return _err(400, "QR kodun süresi dolmuş — ekrandaki güncel kodu "
-                             "tekrar okutun.")
-        if qr_state != "ok":
-            return _err(400, "QR kod geçersiz — girişteki ekrandaki canlı "
-                             "kodu okutun.")
+        now_unix = time.time()
+        if data.qr_token:
+            qr_state = verify_qr_token(SECRET_KEY, data.qr_token, now_unix)
+            if qr_state == "expired":
+                return _err(400, "QR kodun süresi dolmuş — ekrandaki güncel kodu "
+                                 "tekrar okutun.")
+            if qr_state != "ok":
+                return _err(400, "QR kod geçersiz — girişteki ekrandaki canlı "
+                                 "kodu okutun.")
+        elif data.manual_code:
+            # Kamera yoksa/okumuyorsa: ekranda QR'ın altında yazan sayısal kod.
+            if _code_fail_blocked(emp.id, now_unix):
+                return _err(429, "Çok fazla hatalı kod denemesi — birkaç dakika "
+                                 "sonra tekrar deneyin veya QR'ı okutun.")
+            code_state = verify_numeric_code(SECRET_KEY, data.manual_code, now_unix)
+            if code_state != "ok":
+                _code_fail_record(emp.id, now_unix)
+            if code_state == "expired":
+                return _err(400, "Kodun süresi dolmuş — ekranda o an yazan yeni "
+                                 "kodu girin.")
+            if code_state != "ok":
+                return _err(400, f"Kod geçersiz — girişteki ekranda yazan "
+                                 f"{NUMERIC_CODE_LEN} haneli kodu girin.")
+            _code_fails.pop(emp.id, None)      # doğru kod → sayaç sıfırlanır
+        else:
+            return _err(400, "QR kod okutulmadı — girişteki ekrandan güncel QR "
+                             "kodu okutun ya da ekrandaki sayısal kodu girin.")
         if data.lat is None or data.lon is None:
             return _err(400, "Konum bilgisi alınamadı — konum iznini verip "
                              "tekrar deneyin.")
@@ -1204,7 +1243,8 @@ def kiosk_qr(
     import io as _io
 
     now = time.time()
-    token = make_qr_token(SECRET_KEY, qr_bucket(now))
+    bucket = qr_bucket(now)
+    token = make_qr_token(SECRET_KEY, bucket)
     buf = _io.BytesIO()
     # omitsize=True ŞART: sabit width/height yerine viewBox üretir.  viewBox'sız
     # kök <svg>'de CSS width/height yalnız viewport'u değiştirir, koordinat
@@ -1216,6 +1256,9 @@ def kiosk_qr(
     seconds_left = QR_BUCKET_SECONDS - int(now) % QR_BUCKET_SECONDS
     return JSONResponse(
         content={"token": token, "svg": buf.getvalue().decode("utf-8"),
+                 # Kamerası olmayan/okumayan personel için yedek: QR ile aynı
+                 # pencerede döner, ayrı HMAC domain'inden türetilir.
+                 "code": make_numeric_code(SECRET_KEY, bucket),
                  "seconds_left": seconds_left, "period": QR_BUCKET_SECONDS},
         # Canlı token — ara katman/tarayıcı önbelleğinde tutulmasın
         headers={"Cache-Control": "no-store, max-age=0"},

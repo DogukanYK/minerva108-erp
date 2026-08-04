@@ -158,6 +158,17 @@ açıkken **üçü birden** sağlanmadan yazılmaz — sıra: **IP → QR → ko
    1:1 px kalır → sembol kiosk kartında ~%29 KIRPILIR ve hiçbir kamera decode
    edemez (doğrulama açıldığı an kimse imza atamaz). `test_qr_svg_is_scalable_
    not_clipped` bunu kilitler — `startswith("<svg")` yeterli DEĞİL.
+   **Yedek sayısal kod** (kamerası olmayan/çalışmayan personel): kiosk ekranı
+   QR'ın ALTINDA aynı bucket'tan türeyen **6 haneli** bir kod da gösterir
+   (`make_numeric_code`, RFC 4226 dinamik kırpma; HMAC domain `pdks-code:` —
+   QR'dan AYRI, biri diğerini ele vermez). İstemci `qr_token` yerine
+   `manual_code` yollar; **IP ve konum şartı aynen uygulanır**, kod yalnız
+   QR'ın yerine geçer. Kabul penceresi ±2 bucket (60–90 sn; kod elle yazılır,
+   QR'dan uzun sürer) — dışında ama son ~10 dk içindeyse `expired`. 6 hane
+   kaba kuvvete QR'dan açık olduğu için **personel başına deneme penceresi**
+   var (`_code_fails`, 5 hata / 5 dk → **429**; doğru kod sayacı sıfırlar, QR
+   yolu bundan etkilenmez). Sayaç süreç belleğinde — restart'ta sıfırlanır
+   (kabul edilebilir: saldırgan zaten ofis ağında + ofis konumunda olmalı).
 Ayarlar `AppSetting`'te: `pdks.checkin.enforce|allowed_ips|lat|lon|radius_m`;
 UI PDKS → **Doğrulama** sekmesi (`pdks.manage`), uçlar
 `GET/PUT /api/pdks/checkin-config`. **enforce KAPALI başlar**; kapatmak tek

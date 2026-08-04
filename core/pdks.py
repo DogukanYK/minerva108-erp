@@ -440,6 +440,52 @@ def verify_qr_token(secret: str, token: str, now_unix, tolerance: int = 1) -> st
     return "ok"
 
 
+# ─── Yedek sayısal kod (kamera çalışmadığında) ───────────────────────────────
+# Kiosk ekranı QR'ın ALTINDA aynı bucket'tan türeyen 6 haneli bir kod da
+# gösterir; personel kamerayla okutamıyorsa bunu elle yazar.  QR ile AYNI
+# pencerede döner ama HMAC domain'i farklıdır — koddan QR token'ı (veya tersi)
+# türetilemez.
+
+NUMERIC_CODE_LEN = 6
+_CODE_DOMAIN = "pdks-code:"      # QR'dan ayrı domain-separation
+CODE_TOLERANCE = 2               # ±2 bucket (60–90 sn) — kod ELLE yazılır, QR'dan uzun sürer
+_CODE_STALE_WINDOW = 20          # ±10 dk: imza tutuyor ama çok eski → 'invalid' değil 'expired'
+
+
+def make_numeric_code(secret: str, bucket: int) -> str:
+    """Bucket'ın 6 haneli yedek kodu.  RFC 4226 (HOTP) dinamik kırpma kalıbı:
+    HMAC'in son nibble'ı ofseti seçer, oradan 4 bayt okunup mod 10^n alınır —
+    böylece her bucket'ta baştaki sıfırlar dahil düzgün dağılmış bir kod çıkar."""
+    msg = f"{_CODE_DOMAIN}{bucket}".encode("utf-8")
+    dig = hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).digest()
+    off = dig[-1] & 0x0F
+    num = int.from_bytes(dig[off:off + 4], "big") & 0x7FFFFFFF
+    return str(num % (10 ** NUMERIC_CODE_LEN)).zfill(NUMERIC_CODE_LEN)
+
+
+def verify_numeric_code(secret: str, code, now_unix,
+                        tolerance: int = CODE_TOLERANCE) -> str:
+    """Yedek kodu doğrula.  Dönüş: 'ok' | 'expired' | 'invalid'.
+
+    QR'dan farkı: kod bucket bilgisi TAŞIMAZ, bu yüzden pencere taranır.
+    Kabul penceresi ±tolerance; onun dışında ama son ~10 dk içinde tutan bir
+    kod 'expired' döner (personel ekrandaki eski kodu yazmış) — 'invalid' ise
+    format bozuk ya da kod hiç bu secret'la üretilmemiş."""
+    code = code.strip() if isinstance(code, str) else ""
+    # isdigit() Unicode rakamlarını da (٣, ३) True sayar; compare_digest ise
+    # ASCII olmayan str'de TypeError atar → önce ascii kontrolü.
+    if len(code) != NUMERIC_CODE_LEN or not code.isascii() or not code.isdigit():
+        return "invalid"
+    now_b = qr_bucket(now_unix)
+    for d in range(-tolerance, tolerance + 1):
+        if hmac.compare_digest(make_numeric_code(secret, now_b + d), code):
+            return "ok"
+    for d in range(-_CODE_STALE_WINDOW, _CODE_STALE_WINDOW + 1):
+        if hmac.compare_digest(make_numeric_code(secret, now_b + d), code):
+            return "expired"
+    return "invalid"
+
+
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """İki koordinat arası kuş uçuşu mesafe (metre)."""
     p1, p2 = math.radians(lat1), math.radians(lat2)

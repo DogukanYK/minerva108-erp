@@ -11,9 +11,9 @@ import pytest
 
 from core.auth import SECRET_KEY
 from core.pdks import (
-    compute_day, compute_month, geo_within, haversine_m, ip_allowed,
-    make_qr_token, pair_events, qr_bucket, schedule_for, tr_date_of,
-    verify_qr_token,
+    NUMERIC_CODE_LEN, compute_day, compute_month, geo_within, haversine_m,
+    ip_allowed, make_numeric_code, make_qr_token, pair_events, qr_bucket,
+    schedule_for, tr_date_of, verify_numeric_code, verify_qr_token,
 )
 from database import (
     AdminAuditLog, AppSetting, AttendanceEvent, Employee, EmployeeSchedule,
@@ -620,6 +620,38 @@ def test_qr_token_lifecycle():
     assert verify_qr_token(SECRET_KEY, "Şirket menüsü", now) == "invalid"
 
 
+def test_numeric_code_lifecycle():
+    """Yedek kod: QR ile aynı pencerede döner, ±2 bucket kabul edilir."""
+    now = 1_785_000_000
+    code = make_numeric_code(SECRET_KEY, qr_bucket(now))
+    assert len(code) == NUMERIC_CODE_LEN and code.isdigit()
+    assert verify_numeric_code(SECRET_KEY, code, now) == "ok"
+    # ±2 bucket (60–90 sn) — kod ELLE yazılır, QR'dan uzun sürer
+    assert verify_numeric_code(SECRET_KEY, code, now + 60) == "ok"
+    assert verify_numeric_code(SECRET_KEY, code, now - 60) == "ok"
+    # Pencere dışı ama imzası tutuyor → 'expired' (ekrandaki eski kod yazılmış)
+    assert verify_numeric_code(SECRET_KEY, code, now + 150) == "expired"
+    # Bozuk / yanlış uzunluk / yanlış secret → invalid
+    assert verify_numeric_code(SECRET_KEY, "000000", now + 999_999) == "invalid"
+    assert verify_numeric_code(SECRET_KEY, code[:-1], now) == "invalid"
+    assert verify_numeric_code(SECRET_KEY, "abcdef", now) == "invalid"
+    assert verify_numeric_code(SECRET_KEY, "", now) == "invalid"
+    assert verify_numeric_code(SECRET_KEY, None, now) == "invalid"
+    assert verify_numeric_code("baska-secret-1234567890", code, now) == "invalid"
+    # ASCII olmayan rakamlar (Arapça-Hint) isdigit() True döner → compare_digest
+    # TypeError atardı; 500 DEĞİL invalid dönmeli
+    assert verify_numeric_code(SECRET_KEY, "٣٤٥٦٧٨", now) == "invalid"
+
+
+def test_numeric_code_differs_from_qr_signature():
+    """Kod ve QR aynı bucket'tan ama AYRI HMAC domain'inden türer — biri
+    diğerini ele vermez."""
+    b = qr_bucket(1_785_000_000)
+    assert make_numeric_code(SECRET_KEY, b) not in make_qr_token(SECRET_KEY, b)
+    # ardışık bucket'larda kod değişir (sabit kod = kalıcı şifre olurdu)
+    assert make_numeric_code(SECRET_KEY, b) != make_numeric_code(SECRET_KEY, b + 1)
+
+
 def test_real_client_ip_spoof_guard():
     from routers.pdks import _real_client_ip
 
@@ -702,6 +734,64 @@ def test_enforce_qr_required_and_validated(staff_employee_client, db_session):
     old = make_qr_token(SECRET_KEY, qr_bucket(time.time()) - 10)
     r = c.post("/api/pdks/check", json={**base, "qr_token": old}, headers=ORIGIN)
     assert r.status_code == 400 and "süresi dolmuş" in r.json()["detail"]
+
+
+def test_manual_code_accepted_instead_of_qr(staff_employee_client, db_session):
+    """Kamerası olmayan personel: ekrandaki 6 haneli kodla imza atabilmeli."""
+    from routers.pdks import _code_fails
+    _code_fails.clear()
+    c, _ = staff_employee_client
+    _enforce_on(db_session, lat=41.06, lon=29.0, radius=150)
+    code = make_numeric_code(SECRET_KEY, qr_bucket(time.time()))
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "manual_code": code,
+                     "lat": 41.06, "lon": 29.0, "accuracy": 10},
+               headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "iceride"
+    # Konum şartı kodla girişte de aynen geçerli — kod tek başına yetmez
+    _code_fails.clear()
+    r = c.post("/api/pdks/check",
+               json={"type": "out", "manual_code": code,
+                     "lat": 39.9334, "lon": 32.8597, "accuracy": 10},
+               headers=ORIGIN)
+    assert r.status_code == 400 and "Ofis konumunda" in r.json()["detail"]
+
+
+def test_manual_code_invalid_and_expired(staff_employee_client, db_session):
+    from routers.pdks import _code_fails
+    _code_fails.clear()
+    c, _ = staff_employee_client
+    _enforce_on(db_session)
+    base = {"type": "in", "lat": 41.06, "lon": 29.0, "accuracy": 10}
+    r = c.post("/api/pdks/check", json={**base, "manual_code": "000000"}, headers=ORIGIN)
+    assert r.status_code == 400 and "geçersiz" in r.json()["detail"]
+    _code_fails.clear()
+    old = make_numeric_code(SECRET_KEY, qr_bucket(time.time()) - 8)
+    r = c.post("/api/pdks/check", json={**base, "manual_code": old}, headers=ORIGIN)
+    assert r.status_code == 400 and "süresi dolmuş" in r.json()["detail"]
+
+
+def test_manual_code_brute_force_blocked(staff_employee_client, db_session):
+    """6 hane kaba kuvvete QR'dan açık — personel başına deneme penceresi var."""
+    from routers.pdks import _code_fails, CODE_FAIL_LIMIT
+    _code_fails.clear()
+    c, _ = staff_employee_client
+    _enforce_on(db_session)
+    base = {"type": "in", "lat": 41.06, "lon": 29.0, "accuracy": 10}
+    for _ in range(CODE_FAIL_LIMIT):
+        r = c.post("/api/pdks/check", json={**base, "manual_code": "000000"}, headers=ORIGIN)
+        assert r.status_code == 400
+    r = c.post("/api/pdks/check", json={**base, "manual_code": "000000"}, headers=ORIGIN)
+    assert r.status_code == 429 and "hatalı kod" in r.json()["detail"]
+    # DOĞRU kod da bloklu — pencere dolmadan geçilemez
+    good = make_numeric_code(SECRET_KEY, qr_bucket(time.time()))
+    assert c.post("/api/pdks/check", json={**base, "manual_code": good},
+                  headers=ORIGIN).status_code == 429
+    # QR yolu bundan etkilenmez (kamera çalışan personel kilitlenmesin)
+    r = c.post("/api/pdks/check", json={**base, "qr_token": _valid_token()}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    _code_fails.clear()
 
 
 def test_enforce_geo_required_and_validated(staff_employee_client, db_session):
@@ -794,6 +884,9 @@ def test_kiosk_qr_endpoint_and_page(staff_employee_client, db_session):
     assert d["svg"].lstrip().startswith("<svg")
     assert 1 <= d["seconds_left"] <= d["period"] == 30
     assert verify_qr_token(SECRET_KEY, d["token"], time.time()) == "ok"
+    # Kamerası olmayan personel için yedek kod da aynı yanıtta gelir
+    assert len(d["code"]) == NUMERIC_CODE_LEN and d["code"].isdigit()
+    assert verify_numeric_code(SECRET_KEY, d["code"], time.time()) == "ok"
     assert "no-store" in r.headers.get("cache-control", "")   # canlı token cache'lenmesin
     assert authed_client.get("/pdks-qr").status_code == 200
 

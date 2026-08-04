@@ -119,6 +119,16 @@
     .cfg-warn.on{ background:#dcfce7; color:#15803d; border-left-color:#22c55e; }
     .check-guard{ margin-top:0.9rem; font-size:0.83rem; color:#6b7280; }
     .check-guard i{ color:#16a34a; }
+    /* Kamera çalışmadığında yedek kod akışı */
+    .check-alt{ margin-top:0.85rem; }
+    .check-alt button{ background:none; border:none; color:var(--navy); font-family:'Jost',sans-serif;
+      font-size:0.88rem; text-decoration:underline; cursor:pointer; padding:0.2rem; }
+    .check-alt button:hover{ color:var(--gold); }
+    .code-input{ text-align:center; font-size:2rem; font-weight:600; letter-spacing:0.4em;
+      text-indent:0.4em; font-variant-numeric:tabular-nums; padding:0.6rem 0.4rem; }
+    .check-empty{ padding:0.5rem 0.5rem 0.2rem; }
+    .check-empty i{ font-size:2rem; color:var(--gold); }
+    .check-empty p{ margin:0.7rem 0 0; color:#6b7280; }
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
@@ -364,7 +374,9 @@
             <p class="muted" style="margin:0.9rem 0 1.2rem;">
               Açıkken imza (giriş/çıkış) yalnızca <b>üçü birden</b> sağlanınca atılır:
               ofis internetine bağlı olmak · ofis konumunda bulunmak · girişteki ekrandaki
-              <b>canlı QR</b> kodunu kamerayla okutmak. Yönetici manuel olay girişi bundan etkilenmez.
+              <b>canlı QR</b> kodunu kamerayla okutmak (kamera çalışmazsa QR'ın altında yazan
+              <b>6 haneli kodu</b> elle girmek de olur — o da 30 sn'de bir yenilenir).
+              Yönetici manuel olay girişi bundan etkilenmez.
             </p>
 
             <div style="display:flex;gap:1.4rem;flex-wrap:wrap;">
@@ -402,6 +414,8 @@
                 Girişe koyacağınız tablet/telefonda <a href="/pdks-qr" target="_blank"><b>/pdks-qr</b></a> sayfasını
                 tam ekran açık bırakın — kod 30 saniyede bir yenilenir, ekran görüntüsü/fotoğraf işe yaramaz.
                 Cihaz, yalnız <b>Kiosk (QR Ekranı)</b> yetkisi verilmiş özel bir hesapla giriş yapmalı.
+                Ekranda QR'ın altında ayrıca <b>6 haneli yedek kod</b> yazar; kamerası olmayan/çalışmayan
+                personel bunu elle girerek imza atabilir.
               </p>
             </div>
 
@@ -558,6 +572,32 @@
   </div>
   {% endif %}
 
+  {% if can('pdks','check') %}
+  <!-- ── Yedek kod modalı (kamera çalışmadığında) ── -->
+  <div class="ovl" id="codeModal" onclick="if(event.target===this) codeClose()">
+    <div class="ovl-card" style="max-width:420px;">
+      <div class="ovl-head">
+        <h3 id="codeTitle">Kod ile Giriş</h3>
+        <button class="ico-del" onclick="codeClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
+      </div>
+      <div class="ovl-body" style="text-align:center;">
+        <p class="muted" style="margin:0 0 1rem;">
+          Girişteki ekranda <b>QR kodun altında</b> yazan 6 haneli kodu girin.
+          Kod 30 saniyede bir yenilenir.
+        </p>
+        <input type="text" id="codeInput" class="ipt code-input" inputmode="numeric"
+               autocomplete="one-time-code" maxlength="6" placeholder="––––––"
+               onkeydown="if(event.key==='Enter') codeSubmit()" />
+        <p class="muted" id="codeHint" style="margin:0.8rem 0 0;font-size:0.82rem;">&nbsp;</p>
+      </div>
+      <div style="display:flex;gap:0.6rem;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
+        <button class="btn-g" id="codeOkBtn" onclick="codeSubmit()"><i class="bi bi-check-lg"></i> Onayla</button>
+        <button class="btn-o" style="margin-left:auto;" onclick="codeClose()">Vazgeç</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <div id="toast-container"></div>
   <script>
     function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -571,7 +611,9 @@
       if (!r.ok) {
         let msg = d.detail;
         if (Array.isArray(msg)) msg = msg.map(x => (x && x.msg) || x).join(' · ');
-        throw new Error(msg || 'İşlem başarısız.');
+        const err = new Error(msg || 'İşlem başarısız.');
+        err.status = r.status;      // çağıran 404/429'u ayırt edebilsin
+        throw err;
       }
       return d;
     }
@@ -614,7 +656,23 @@
       try {
         renderCheck(await api('/api/pdks/me/today'));
       } catch (e) {
-        hero.innerHTML = `<p class="muted" style="padding:0.5rem;">${esc(e.message)}</p>`;
+        // 404 = bu hesap hiçbir personel kartına bağlı değil.  Kuru bir hata
+        // metni yerine ne yapılacağını söyle — yöneticiye doğrudan yol göster.
+        hero.innerHTML = (e && e.status === 404)
+          ? `<div class="check-empty">
+               <i class="bi bi-person-badge"></i>
+               <p><b>Personel kartınız yok.</b><br/>Giriş/çıkış yapabilmek için hesabınızın bir
+                  personel kaydına bağlanması gerekiyor.</p>
+               ${window.CAN_MANAGE
+                 ? `<p style="margin-top:0.9rem;">
+                      <button class="btn-g" onclick="openTab('emp')"><i class="bi bi-plus-lg"></i> Personel Ekle</button>
+                    </p>
+                    <p style="font-size:0.82rem;">Personel sekmesinde kaydı oluşturup <b>Bağlı Hesap</b>
+                       alanına kendi kullanıcınızı seçin.</p>`
+                 : `<p style="font-size:0.85rem;">Yöneticinizden sizi PDKS personel listesine
+                      eklemesini isteyin.</p>`}
+             </div>`
+          : `<p class="muted" style="padding:0.5rem;">${esc(e.message)}</p>`;
         document.getElementById('todayEvents').innerHTML = '<tr><td colspan="3" class="muted">—</td></tr>';
       }
     }
@@ -637,6 +695,13 @@
           <i class="bi bi-fingerprint"></i> ${inside ? 'ÇIKIŞ YAP' : 'GİRİŞ YAP'}
         </button>
         <div class="check-meta">${sched}<br/>Bugün çalışılan: <b>${esc(st.worked_live_label)}</b></div>
+        ${window._pdksEnforce
+          ? `<div class="check-alt">
+               <button type="button" onclick="codeOpen('${inside ? 'out' : 'in'}')">
+                 <i class="bi bi-keyboard"></i> Kamera çalışmıyor mu? Kod ile ${inside ? 'çıkış' : 'giriş'} yap
+               </button>
+             </div>`
+          : ''}
         ${guard}`;
       const tb = document.getElementById('todayEvents');
       tb.innerHTML = (st.events && st.events.length)
@@ -675,8 +740,11 @@
       return 'Konum alınamadı — tekrar deneyin.';
     }
 
-    async function doCheck(type){
-      if (_checkBusy) return;
+    /* manualCode verilirse kamera hiç açılmaz — ekrandaki sayısal kod QR'ın
+       yerine geçer.  Konum + ofis ağı şartı ikisinde de aynen uygulanır.
+       Dönüş: {ok:true} | {ok:false, err} — kod modalı buna göre açık kalır. */
+    async function doCheck(type, manualCode){
+      if (_checkBusy) return { ok: false };
       _checkBusy = true;
       const btn = document.getElementById('checkBtn');
       if (btn) btn.disabled = true;
@@ -686,26 +754,77 @@
           // Konum isteğini hemen başlat (izin diyaloğu paralel çıksın), QR'ı okut.
           const geoP = getPosition();
           geoP.catch(() => {});   // scanner iptalinde unhandled rejection olmasın
-          const qr_token = await scanQr();
-          if (!qr_token) throw new Error('QR kod okunamadı — tekrar deneyin.');
+          let proof;
+          if (manualCode) {
+            proof = { manual_code: manualCode };
+          } else {
+            const qr_token = await scanQr();
+            if (!qr_token) throw new Error('QR kod okunamadı — tekrar deneyin.');
+            proof = { qr_token };
+          }
           const pos = await geoP;
-          body = {
-            type, qr_token,
+          body = Object.assign({ type }, proof, {
             lat: pos.coords.latitude, lon: pos.coords.longitude,
             accuracy: pos.coords.accuracy,
-          };
+          });
         }
         const st = await jpost('/api/pdks/check', body);
         toastFn(st.message || 'Kaydedildi.', 'success');
         renderCheck(st);
+        return { ok: true };
       } catch (e) {
         if (e && e.message === '__cancel__') toastFn('QR okutma iptal edildi.', 'info');
-        else if (e && e.message === '__noscanner__') toastFn('Kamera modülü hazır değil — sayfayı yenileyin.');
+        else if (e && e.message === '__noscanner__') {
+          // Kamera modülü yüklenemedi (eski tarayıcı / kamera izni yok) —
+          // personeli boşuna uğraştırma, doğrudan kod akışına al.
+          toastFn('Kamera açılamadı — ekrandaki kodu girin.', 'info');
+          codeOpen(type);
+        }
         else if (e && (typeof e.code === 'number' || e.message === '__nogeo__')) toastFn(geoErrMessage(e));
         else toastFn(e.message || 'İşlem başarısız.');
-        loadCheck();   // hero'yu yeniden çiz → buton tekrar aktif
+        if (!manualCode) loadCheck();   // hero'yu yeniden çiz → buton tekrar aktif
+        return { ok: false, err: e };
       }
       finally { _checkBusy = false; }
+    }
+
+    /* ── Yedek kod modalı ── */
+    let _codeType = 'in';
+    function codeOpen(type){
+      _codeType = type;
+      document.getElementById('codeTitle').textContent =
+        type === 'out' ? 'Kod ile Çıkış' : 'Kod ile Giriş';
+      const inp = document.getElementById('codeInput');
+      inp.value = '';
+      document.getElementById('codeHint').innerHTML = '&nbsp;';
+      document.getElementById('codeModal').classList.add('open');
+      setTimeout(() => inp.focus(), 50);
+    }
+    function codeClose(){
+      document.getElementById('codeModal').classList.remove('open');
+      loadCheck();          // buton yeniden aktif olsun
+    }
+    async function codeSubmit(){
+      const inp = document.getElementById('codeInput');
+      const hint = document.getElementById('codeHint');
+      const code = (inp.value || '').replace(/\D/g, '');
+      if (code.length !== 6) {
+        hint.textContent = 'Kod 6 haneli olmalı.';
+        return;
+      }
+      const okBtn = document.getElementById('codeOkBtn');
+      okBtn.disabled = true;
+      hint.textContent = 'Doğrulanıyor…';
+      const res = await doCheck(_codeType, code);
+      okBtn.disabled = false;
+      if (res && res.ok) {
+        document.getElementById('codeModal').classList.remove('open');
+        return;
+      }
+      // Hatalı/eski kod → modal açık kalsın, personel yeni kodu hemen yazsın.
+      hint.textContent = (res && res.err && res.err.message) || 'Kod doğrulanamadı.';
+      inp.value = '';
+      inp.focus();
     }
 
     /* ══ 2 · Puantajım ══ */
