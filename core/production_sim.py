@@ -29,9 +29,10 @@ from sqlalchemy.orm import Session
 from database import Recipe, Item
 
 
-def brand_of(name: str) -> str:
-    """Ürün adından markayı türet — ilk kelime (Minerva / Serenida / Evanira…)."""
-    return (name or "").strip().split(" ")[0] or "—"
+# Marka mantığı core/brands.py'ye taşındı (tek kaynak).  Bu satır bir
+# RE-EXPORT SHIM'idir: core/shopify.py ve core/ingredients_report.py buradan
+# import ediyor — kaldırılırsa o modüller kırılır.
+from core.brands import brand_of  # noqa: F401  (geriye uyumluluk)
 
 
 def list_plan_products(db: Session, domain: str) -> list:

@@ -400,6 +400,7 @@
       <a href="/delivery" class="nav-link-item"><i class="bi bi-box-arrow-up nav-icon"></i>Teslimat</a>
       <a href="/returns" class="nav-link-item"><i class="bi bi-arrow-return-left nav-icon"></i>İadeler</a>
       <a href="/numune-analiz" class="nav-link-item"><i class="bi bi-clipboard2-pulse nav-icon"></i>Numune Analizi</a>
+      <a href="/sahit-numune" class="nav-link-item"><i class="bi bi-archive nav-icon"></i>Şahit Numune</a>
       <a href="/pdks" class="nav-link-item"><i class="bi bi-fingerprint nav-icon"></i>PDKS</a>
       <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
       <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
@@ -549,6 +550,25 @@
                     <input type="radio" name="prodLang" value="EN" onchange="updatePreview()" />
                     <span>🇬🇧 İngilizce</span>
                   </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Lot numarası — sistem önerir, kullanıcı düzenleyebilir -->
+            <div class="row g-3" style="margin-top:0.1rem;">
+              <div class="col-md-6">
+                <label class="form-label-sm">Lot Numarası
+                  <small style="color:#9ca3af;font-weight:400;text-transform:none;letter-spacing:0;">
+                    — sistem önerir, değiştirebilirsiniz
+                  </small>
+                </label>
+                <input type="text" class="form-control" id="prodLot"
+                       maxlength="100" placeholder="Reçete seçin…" autocomplete="off" />
+              </div>
+              <div class="col-md-6" style="display:flex;align-items:flex-end;">
+                <div style="font-size:0.82rem;color:#6b7280;line-height:1.4;padding-bottom:0.45rem;">
+                  <i class="bi bi-upc-scan"></i>
+                  <span id="prodLotHint">Reçete seçilince son lot numarası gösterilir.</span>
                 </div>
               </div>
             </div>
@@ -760,6 +780,7 @@
       document.getElementById('previewPanel').style.display = 'none';
       document.getElementById('prodUnitAddon').textContent = '—';
       document.getElementById('prodQuantity').value = '';
+      loadNextLot(id);                     // lot önerisi (id boşsa alanı temizler)
       if (!id) return;
       try {
         const res = await fetch(`/api/recipes/${id}`);
@@ -783,6 +804,32 @@
          - Ambalaj:   net × multiplier              (fire muaf)
        Önizleme hem net'i hem brüt'ü ayrı sütunlarda gösterir; stok kontrolü
        backend'in gerçekten düşeceği BRÜT miktara karşı yapılır. */
+    /* Lot numarası önerisi — 'bu üründen en son MNR005'i ürettiniz, bu MNR006
+       olmalı'.  Sayaç ürün bazlı; kullanıcı alanı düzenleyebilir. */
+    let _cabinetName = '';
+    async function loadNextLot(recipeId) {
+      const inp  = document.getElementById('prodLot');
+      const hint = document.getElementById('prodLotHint');
+      if (!inp || !hint) return;
+      if (!recipeId) {
+        inp.value = ''; _cabinetName = '';
+        hint.textContent = 'Reçete seçilince son lot numarası gösterilir.';
+        return;
+      }
+      try {
+        const r = await fetch(`/api/production/next-lot?recipe_id=${recipeId}`);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Lot önerisi alınamadı.');
+        inp.value = d.lot_number || '';
+        _cabinetName = d.cabinet || '';
+        hint.textContent = d.message || '';
+      } catch (e) {
+        inp.value = '';
+        hint.textContent = e.message || 'Lot önerisi alınamadı — elle girebilirsiniz.';
+      }
+      updateWitnessHint();
+    }
+
     /* Şahit numune ipucu — adet × birim hesabı canlı */
     function updateWitnessHint() {
       const hint = document.getElementById('witnessSplitHint');
@@ -800,7 +847,8 @@
       } else if (w >= total) {
         hint.innerHTML = `<span style="color:#b45309;">Uyarı: tüm üretim şahit numuneye gidiyor (showroom 0).</span>`;
       } else {
-        hint.innerHTML = `<b>${show}</b> adet showroom · <b>${w}</b> adet şahit numune dolabı.`;
+        const cab = _cabinetName ? ` (${_cabinetName})` : '';
+        hint.innerHTML = `<b>${show}</b> adet showroom · <b>${w}</b> adet şahit numune dolabı${cab}.`;
       }
     }
 
@@ -1030,6 +1078,7 @@
             recipe_id: recipeId,
             produced_quantity: qty,
             label_language: selLang,
+            lot_number: (document.getElementById('prodLot')?.value || '').trim() || null,
             witness_quantity: witness,
             ingredient_lot_choices: lotChoices,   // {item_id: inventory_id} — boş = FIFO
           }),

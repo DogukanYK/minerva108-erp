@@ -132,6 +132,9 @@ class Item(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Faz 3 — Kozmetik / Food Supplement
+    # Ürün bazlı üretim sayacı — lot önerisi (MNR006).  Geçmiş taramasıyla
+    # birlikte kullanılır (core/lots.next_sequence), tek başına otorite değil.
+    lot_seq = Column(Integer, nullable=False, default=0)
 
     supplier = relationship("Supplier", back_populates="items")
     recipe_ingredients = relationship("RecipeIngredient", back_populates="item")
@@ -531,7 +534,79 @@ class ProductionHistory(Base):
     produced_at = Column(DateTime, default=datetime.utcnow)
     produced_by = Column(String(50), nullable=True)             # Audit: who started production
     lot_number = Column(String(100), nullable=True, index=True) # Genealogy: lot of finished good
+    # Kaç adedi şahit numune dolabına ayrıldı.  Bugüne kadar bu bilgi yalnız
+    # Transaction not metninde vardı; rapor/denetim için kalıcı kolon.
+    witness_quantity = Column(Float, nullable=False, default=0.0)
     domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Faz 3 — Kozmetik / Food Supplement
+
+
+class RetentionSample(Base):
+    """Şahit numune dolabı kaydı — `Inventory` üstünde bir YÖNETİM katmanı.
+
+    Üretimde şahit numuneye ayrılan adetler bugünkü gibi `Inventory`'ye `-S`
+    lotu olarak yazılmaya devam eder (stok kaynağı orası; `Item.current_stock`
+    içinde sayılırlar).  Bu tablo onların üstüne, `Inventory`'de yeri olmayan
+    bilgiyi ekler: hangi dolapta, hangi rafta/gözde, ne zamana kadar saklanacak,
+    kim ne zaman çıkardı.
+
+    `inventory_id` UNIQUE — bir `-S` lotunun tek yönetim kaydı olur; backfill
+    script'inin idempotency anahtarı da budur.
+
+    Dolap = MARKA (ayrı tablo yok).  `brand` kanonik yazımdır ("Minerva 108"),
+    `core.brands.cabinet_of()` üretir.
+    """
+    __tablename__ = "retention_samples"
+
+    id = Column(Integer, primary_key=True, index=True)
+    inventory_id = Column(Integer, ForeignKey("inventory.id"), nullable=True,
+                          unique=True, index=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False, index=True)
+    item_name = Column(String(150), nullable=True)                 # snapshot
+    lot_number = Column(String(100), nullable=False, index=True)    # Inventory'dekiyle aynı (-S dahil)
+    production_history_id = Column(Integer, ForeignKey("production_history.id"), nullable=True)
+    brand = Column(String(60), nullable=False, index=True)          # = dolap kimliği
+    shelf = Column(String(20), nullable=True)                       # raf
+    slot = Column(String(20), nullable=True)                        # göz
+    quantity = Column(Float, nullable=False, default=0.0)           # dolapta KALAN
+    initial_quantity = Column(Float, nullable=False, default=0.0)   # ilk konulan (değişmez)
+    unit = Column(String(20), nullable=True)
+    produced_at = Column(DateTime, nullable=True)
+    retention_until = Column(Date, nullable=True, index=True)       # imha uyarısının anahtarı
+    status = Column(String(20), nullable=False, default="stored")   # stored | depleted | destroyed
+    qc_status = Column(String(20), nullable=True)                   # NULL | rejected
+    source = Column(String(20), nullable=False, default="production")  # production | backfill | manual
+    placed_by = Column(String(80), nullable=True)
+    note = Column(Text, nullable=True)
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    item = relationship("Item", foreign_keys=[item_id])
+    movements = relationship("RetentionSampleMovement", back_populates="sample",
+                             cascade="all, delete-orphan",
+                             order_by="RetentionSampleMovement.created_at")
+
+
+class RetentionSampleMovement(Base):
+    """Dolap hareketi — kim / ne zaman / neden / kaç adet.
+
+    `quantity` DAİMA pozitiftir; yönü `movement_type` belirler.  Dolap içi
+    hareketler (`konum`, `duzeltme`) stok yazmaz; `cikis`/`imha` ise çağıran
+    router'da ayrıca `Inventory` + `Item.current_stock` düşümü ve bir
+    `Transaction(Output)` üretir (bkz. routers/retention.py).
+    """
+    __tablename__ = "retention_sample_movements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sample_id = Column(Integer, ForeignKey("retention_samples.id"), nullable=False, index=True)
+    movement_type = Column(String(20), nullable=False)   # giris|cikis|imha|konum|duzeltme
+    quantity = Column(Float, nullable=False, default=0.0)
+    reason = Column(String(40), nullable=True)           # test|musteri|denetim|lab|diger
+    note = Column(Text, nullable=True)
+    performed_by = Column(String(80), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    sample = relationship("RetentionSample", back_populates="movements")
 
 
 class AdminAuditLog(Base):
@@ -1359,6 +1434,10 @@ def init_db():
             "ALTER TABLE pdks_events ADD COLUMN geo_lat DOUBLE PRECISION",
             "ALTER TABLE pdks_events ADD COLUMN geo_lon DOUBLE PRECISION",
             "ALTER TABLE pdks_events ADD COLUMN geo_accuracy_m DOUBLE PRECISION",
+            # Şahit numune dolabı — retention_sample* tabloları create_all ile
+            # gelir; bunlar mevcut tablolara eklenen kolonlar.
+            "ALTER TABLE items ADD COLUMN lot_seq INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE production_history ADD COLUMN witness_quantity DOUBLE PRECISION NOT NULL DEFAULT 0",
         ):
             alter_safe(stmt)
 

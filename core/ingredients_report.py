@@ -24,28 +24,17 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from database import Item, Recipe, to_tr
-from core.production_sim import brand_of
+from core.brands import brand_of
+from core.brands import brand_in as _brand_in_shared
+from core.brands import canonical_brands as _canonical_brands_shared
 from core.items_report import tr_key
 from core.supplier_prices import normalize as _tr_fold
 
 
-def _canonical_brands(names: list) -> dict:
-    """Marka yazım varyantlarını birleştirir: TR-katlanmış anahtar → en yaygın yazım.
-
-    Ürün adları elle girildiğinden aynı marka 'Minerva' / 'MİNERVA' gibi
-    varyantlarla yaşıyor (prod'da gerçek durum). Chip/gruplama tek markada
-    toplanmalı; görüntü olarak en çok kullanılan yazım kazanır.
-    """
-    counts: dict = {}
-    for nm in names:
-        b = brand_of(nm)
-        counts.setdefault(_tr_fold(b), {}).setdefault(b, 0)
-        counts[_tr_fold(b)][b] += 1
-    return {k: max(v, key=v.get) for k, v in counts.items()}
-
-
-def _brand(name: str, canon: dict) -> str:
-    return canon.get(_tr_fold(brand_of(name)), brand_of(name))
+# Marka birleştirme core/brands.py'ye taşındı (tek kaynak) — burada yalnız
+# yerel adlar korunuyor ki bu modülün geri kalanı ve testleri değişmesin.
+_canonical_brands = _canonical_brands_shared
+_brand = _brand_in_shared
 
 
 def report_filename(ext: str = "xlsx") -> str:

@@ -36,7 +36,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions, get_role_labels
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router, shopify as shopify_router, pdks as pdks_router
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router, shopify as shopify_router, pdks as pdks_router, retention as retention_router
 from core.domain import get_active_domain, domain_label
 
 
@@ -289,6 +289,7 @@ app.include_router(delivery_router.router)
 app.include_router(returns_router.router)
 app.include_router(sample_analysis_router.router)
 app.include_router(pdks_router.router)
+app.include_router(retention_router.router)
 app.include_router(shopify_router.router)
 app.include_router(shopify_router.public_router)
 app.include_router(distributors_router.router)
@@ -551,6 +552,20 @@ def numune_analiz_page(request: Request, db: Session = Depends(get_db)):
     ctx["sample_properties"] = SAMPLE_PROPERTIES   # tek kaynak — form satırları
     ctx["sample_form_code"] = FORM_CODE
     return templates.TemplateResponse("numune_analiz.html", ctx)
+
+
+@app.get("/sahit-numune", response_class=HTMLResponse)
+def sahit_numune_page(request: Request, db: Session = Depends(get_db)):
+    """Şahit numune dolabı — marka bazlı dolap stoğu, çıkış/imha, saklama süresi."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "retention", "view"):
+        return RedirectResponse(url="/", status_code=302)
+    from core.retention import CHECKOUT_REASONS, reason_label
+    ctx = _page_ctx(request, payload, user)
+    ctx["retention_reasons"] = [{"key": k, "label": reason_label(k)} for k in CHECKOUT_REASONS]
+    return templates.TemplateResponse("sahit_numune.html", ctx)
 
 
 @app.get("/pdks", response_class=HTMLResponse)
