@@ -16,6 +16,8 @@ Stil kalıbı core/monthly_report.render_excel ile aynı (lacivert başlık).
 
 import re
 
+from core.pdks import fmt_minutes
+
 # Excel sayfa adında yasak karakterler (openpyxl ValueError fırlatır)
 _SHEET_FORBIDDEN = re.compile(r"[\\/?*\[\]:]")
 
@@ -69,7 +71,7 @@ def render_puantaj_excel(data: dict) -> bytes:
 
     # ── Sayfa 1: Özet ────────────────────────────────────────────────────────
     headers = ["Personel", "Ünvan", "Çalışma", "Fazla Mesai", "Eksik",
-               "Geç Sayısı", "Devamsızlık", "Eksik Çıkış", "İzin Günleri"]
+               "Devamsızlık", "Eksik Çıkış", "İzin Günleri"]
     rows = []
     for item in data["employees"]:
         emp, tot = item["employee"], item["month"]["totals"]
@@ -77,7 +79,7 @@ def render_puantaj_excel(data: dict) -> bytes:
         rows.append([
             name, emp.get("title") or "—",
             tot["toplam_calisma_label"], tot["toplam_fazla_mesai_label"],
-            tot["toplam_eksik_label"], tot["gec_sayisi"],
+            tot["toplam_eksik_label"],
             tot["devamsizlik_gun"], tot["eksik_cikis_sayisi"],
             tot["izin_gunleri_label"],
         ])
@@ -97,7 +99,7 @@ def render_puantaj_excel(data: dict) -> bytes:
 
     # ── Personel sayfaları ───────────────────────────────────────────────────
     day_headers = ["Tarih", "Gün", "Durum", "Giriş", "Çıkış", "Çalışma",
-                   "Fazla Mesai", "Geç (dk)", "Erken Çıkış (dk)", "Not"]
+                   "Fazla Mesai", "Eksik", "Not"]
     used_titles = {"Özet"}
     for item in data["employees"]:
         emp, month = item["employee"], item["month"]
@@ -117,7 +119,7 @@ def render_puantaj_excel(data: dict) -> bytes:
                 d["date_label"], d["weekday_label"], d["status_label"],
                 d["first_in"] or "—", d["last_out"] or "—",
                 d["worked_label"], d["overtime_label"],
-                d["late_minutes"] or "", d["early_leave_minutes"] or "",
+                fmt_minutes(d["missing_minutes"]),
                 "; ".join(notes),
             ]
             day_rows.append(row)
@@ -138,9 +140,9 @@ def render_puantaj_excel(data: dict) -> bytes:
         ws.append([])
         total_row = ["TOPLAM", "", "", "", "",
                      tot["toplam_calisma_label"], tot["toplam_fazla_mesai_label"],
-                     f"Geç: {tot['gec_sayisi']}",
-                     f"Devamsız: {tot['devamsizlik_gun']}",
-                     tot["izin_gunleri_label"]]
+                     tot["toplam_eksik_label"],
+                     f"Devamsız: {tot['devamsizlik_gun']} gün · "
+                     f"{tot['izin_gunleri_label']}"]
         ws.append(total_row)
         for c in ws[ws.max_row]:
             c.font = bold

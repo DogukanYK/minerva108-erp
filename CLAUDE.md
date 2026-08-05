@@ -110,9 +110,13 @@ saati); kişi bazlı **versiyonlu haftalık program** (`pdks_schedules`,
 kalır), izinler (`pdks_leaves`, aralık satırı) ve ortak resmi tatiller
 (`pdks_holidays`) üzerinden aylık puantaj CANLI hesaplanır (saklanan agregat
 yok). Hesap motoru `core/pdks.py` SAF fonksiyonlardır (DB'siz, unit-test
-edilebilir): 5 dk geç/erken toleransı,
-tatil/izin/hafta tatilinde çalışılan her dakika fazla mesai, açık çift ("çıkış
-eksik") 0 sayılır ve yönetici düzeltene kadar toplam dışıdır. **work_date =
+edilebilir): tatil/izin/hafta tatilinde çalışılan her dakika fazla mesai, açık
+çift ("çıkış eksik") 0 sayılır ve yönetici düzeltene kadar toplam dışıdır.
+**Geç gelme / erken çıkma bayrağı YOKTUR** (kullanıcı kararı, 2026-08-03:
+"dakika dakikasına bakma") — saatler dakika dakika kaydedilir ama kimse
+işaretlenmez; puantajda giriş/çıkış saati, çalışma, fazla mesai ve eksik süre
+görünür. `late_minutes`/`early_leave_minutes`/`gec_sayisi` alanları
+KALDIRILDI; geri eklemeden önce bu kararı teyit et. **work_date =
 TR-yerel gün** — `'in'` kendi TR günü, `'out'` kapattığı açık `'in'` <16
 saatlikse ONUN günü (gece yarısı kuralı; router `_work_date_for` + check
 akışı aynı sabiti kullanır). **Cross-cutting — NOT domain-scoped** (CRM/Drive
@@ -172,7 +176,33 @@ açıkken **üçü birden** sağlanmadan yazılmaz — sıra: **IP → QR → ko
 2. **Konum** — tarayıcı geolocation, `haversine_m` ile ofis koordinatına
    uzaklık; tolerans `radius_m + min(accuracy, 100)`. `Permissions-Policy`
    bu yüzden `geolocation=(self)` (eskiden `()` idi = tüm sayfalarda kapalı).
-3. **Canlı QR** — `/pdks-qr` kiosk sayfası (perm **`pdks.kiosk`**, yalnız özel
+3. **QR** — İKİ MOD var, `AppSetting pdks.checkin.qr_mode`:
+   **(a) `static` — VARSAYILAN, girişe asılan BASILI QR** (müşterinin girişte
+   açık tutabileceği ekranı yok). İçerik sabit: `PDKSQRS1:<kod>`, kod 8 karakter
+   ve karışan harfler yok (`STATIC_CODE_ALPHABET`: 0/O, 1/I/L, 5/S, 8/B içermez)
+   — afişte yazılı olduğu için kamerası çalışmayan personel **elle de girebilir**
+   (`normalize_static_code`: büyük/küçük harf, boşluk, tire toleranslı). Kod
+   yalnız yönetici "yeni kod üret" deyince değişir (`POST /api/pdks/qr/static/
+   regenerate`, audit'li) ve o an **eski afiş geçersizleşir**. Afiş: `/pdks-qr-
+   yazdir` (perm `pdks.manage`, A4 `@media print`). **static_code personele
+   ASLA gönderilmez** — `_today_status` yalnız `{enforce, qr_mode}` paylaşır;
+   sızarsa ofise gelmeden imza atılabilirdi. Elle giriş `_code_fails` kaba
+   kuvvet limitine tabidir. Basılı kod fotoğraflanabilir → **kabul edilmiş
+   risk**; asıl güvence IP + konumdur, QR "kapıya kadar geldim" kanıtıdır.
+   **TUZAK — `normalize_static_code` `isascii()` de filtrelemeli**: yalnız
+   `isalnum()` Unicode harfleri (Ç,Ğ,Ş…) geçirir, sonraki
+   `hmac.compare_digest` ASCII-dışı str'de TypeError atıp isteği 500'e
+   düşürür (Türkçe klavyeyle 'g' yerine 'ğ' yazan personel — kardeş
+   fonksiyonlar `verify_qr_token`/`verify_numeric_code` buna zaten korumalı).
+   **TUZAK — `templates/pdks_qr_yazdir.html`'e içerik eklersen `--print-to-pdf`
+   ile sayfa sayısını doğrula**: A4 tek-sayfa bütçesi dar (kullanılabilir
+   ~281mm); ekran görünümünü bozmadan yalnız `@media print` bloğundaki
+   marj/boyut kısıtlamalarıyla sığdırılıyor. Ayrıca arka-plan-renkli öğeler
+   (adım rozetleri, ayraç çizgisi) tarayıcının "Arka plan grafikleri"
+   varsayılan KAPALI ayarında kaybolur — print bloğunda `border` tabanlı
+   alternatifleri kullan, `background-color`'a güvenme.
+   **(b) `rotating` — kiosk ekranı** (tablet varsa; daha güvenli):
+   `/pdks-qr` kiosk sayfası (perm **`pdks.kiosk`**, yalnız özel
    cihaz hesabına per-user override ile verilir) 30 sn'de bir yenilenen imzalı
    token gösterir: `PDKSQR1:<bucket>:<hmac16>`, `bucket = unix//30`, HMAC
    domain prefix `pdks-qr:`, secret `core.auth.SECRET_KEY`. Sunucu ±1 bucket
@@ -195,9 +225,11 @@ açıkken **üçü birden** sağlanmadan yazılmaz — sıra: **IP → QR → ko
    var (`_code_fails`, 5 hata / 5 dk → **429**; doğru kod sayacı sıfırlar, QR
    yolu bundan etkilenmez). Sayaç süreç belleğinde — restart'ta sıfırlanır
    (kabul edilebilir: saldırgan zaten ofis ağında + ofis konumunda olmalı).
-Ayarlar `AppSetting`'te: `pdks.checkin.enforce|allowed_ips|lat|lon|radius_m`;
-UI PDKS → **Doğrulama** sekmesi (`pdks.manage`), uçlar
-`GET/PUT /api/pdks/checkin-config`. **enforce KAPALI başlar**; kapatmak tek
+Ayarlar `AppSetting`'te: `pdks.checkin.enforce|allowed_ips|lat|lon|radius_m|
+qr_mode|static_code`; UI PDKS → **Doğrulama** sekmesi (`pdks.manage`), uçlar
+`GET/PUT /api/pdks/checkin-config` + `GET /api/pdks/qr/static`.
+Statik modda **kod üretilmeden enforce açılamaz** (PUT 400 döner).
+**enforce KAPALI başlar**; kapatmak tek
 PUT'tur (deploysuz anında geri dönüş) ve `/checkin-config` doğrulamadan
 etkilenmez — yönetici kendini kilitleyemez. **Yönetici manuel olay girişi
 bilinçli olarak MUAF** (kasıtlı fallback). Olaylara `geo_lat/geo_lon/

@@ -583,6 +583,18 @@ def pdks_qr_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse("pdks_qr.html", _page_ctx(request, payload, user))
 
 
+@app.get("/pdks-qr-yazdir", response_class=HTMLResponse)
+def pdks_qr_print_page(request: Request, db: Session = Depends(get_db)):
+    """Girişe asılacak BASILI QR afişi (A4) — ekranı olmayan ofisler için.
+    Yönetici yazdırır; içerik sabit koddan üretilir (pdks.manage)."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "pdks", "manage"):
+        return RedirectResponse(url="/", status_code=302)
+    return templates.TemplateResponse("pdks_qr_yazdir.html", _page_ctx(request, payload, user))
+
+
 @app.get("/shopify-sync", response_class=HTMLResponse)
 def shopify_sync_page(request: Request, db: Session = Depends(get_db)):
     """Shopify stok senkron paneli (admin.view) — 3 mağaza durumu + elle tetik."""

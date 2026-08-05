@@ -371,8 +371,8 @@
           </div>
           <div class="card2-body" style="overflow-x:auto;">
             <table>
-              <thead><tr><th>Personel</th><th>Çalışma</th><th>Fazla Mesai</th><th>Eksik</th><th>Geç</th><th>Devamsızlık</th><th>Eksik Çıkış</th><th>İzin Günleri</th></tr></thead>
-              <tbody id="repBody"><tr><td colspan="8" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
+              <thead><tr><th>Personel</th><th>Çalışma</th><th>Fazla Mesai</th><th>Eksik</th><th>Devamsızlık</th><th>Eksik Çıkış</th><th>İzin Günleri</th></tr></thead>
+              <tbody id="repBody"><tr><td colspan="7" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
             </table>
             <p class="muted" style="margin:0.7rem 0 0;">Satıra tıklayınca gün dökümü açılır. "Çıkış eksik" işaretli günler düzeltilene kadar toplamlara dahil edilmez.</p>
           </div>
@@ -391,9 +391,8 @@
             </div>
             <p class="muted" style="margin:0.9rem 0 1.2rem;">
               Açıkken imza (giriş/çıkış) yalnızca <b>üçü birden</b> sağlanınca atılır:
-              ofis internetine bağlı olmak · ofis konumunda bulunmak · girişteki ekrandaki
-              <b>canlı QR</b> kodunu kamerayla okutmak (kamera çalışmazsa QR'ın altında yazan
-              <b>6 haneli kodu</b> elle girmek de olur — o da 30 sn'de bir yenilenir).
+              ofis internetine bağlı olmak · ofis konumunda bulunmak · girişteki
+              <b>QR kodunu</b> kamerayla okutmak (kamera çalışmazsa kodu elle girmek de olur).
               Yönetici manuel olay girişi bundan etkilenmez.
             </p>
 
@@ -427,14 +426,58 @@
             </div>
 
             <div style="border-top:1px solid #f0ece4;margin-top:1.2rem;padding-top:1.1rem;">
-              <label class="lbl">3 · Giriş Ekranı (QR Kiosk)</label>
-              <p class="muted" style="margin:0 0 0.6rem;">
-                Girişe koyacağınız tablet/telefonda <a href="/pdks-qr" target="_blank"><b>/pdks-qr</b></a> sayfasını
-                tam ekran açık bırakın — kod 30 saniyede bir yenilenir, ekran görüntüsü/fotoğraf işe yaramaz.
-                Cihaz, yalnız <b>Kiosk (QR Ekranı)</b> yetkisi verilmiş özel bir hesapla giriş yapmalı.
-                Ekranda QR'ın altında ayrıca <b>6 haneli yedek kod</b> yazar; kamerası olmayan/çalışmayan
-                personel bunu elle girerek imza atabilir.
-              </p>
+              <label class="lbl">3 · Girişteki QR Kodu</label>
+              <div style="display:flex;gap:1.2rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+                <label style="display:flex;align-items:flex-start;gap:0.45rem;cursor:pointer;flex:1;min-width:250px;">
+                  <input type="radio" name="cfgQrMode" value="static" style="margin-top:0.25rem;" />
+                  <span><b>Basılı QR</b> <span class="muted">(ekran gerekmez)</span><br/>
+                    <span class="muted" style="font-size:0.8rem;">Girişe kağıt QR asılır. Kod ancak siz
+                    yenileyince değişir.</span></span>
+                </label>
+                <label style="display:flex;align-items:flex-start;gap:0.45rem;cursor:pointer;flex:1;min-width:250px;">
+                  <input type="radio" name="cfgQrMode" value="rotating" style="margin-top:0.25rem;" />
+                  <span><b>Ekranda dönen QR</b> <span class="muted">(tablet gerekir)</span><br/>
+                    <span class="muted" style="font-size:0.8rem;">30 sn'de bir yenilenir; fotoğrafı işe
+                    yaramaz. Daha güvenli.</span></span>
+                </label>
+              </div>
+
+              <!-- Basılı QR paneli -->
+              <div id="cfgStaticBox" style="display:none;background:#faf8f4;border-radius:10px;padding:1rem;">
+                <div style="display:flex;gap:1.2rem;flex-wrap:wrap;align-items:center;">
+                  <div id="cfgStaticQr" style="width:150px;height:150px;background:#fff;border-radius:10px;
+                       padding:0.6rem;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                    <span class="muted" style="font-size:0.78rem;">—</span>
+                  </div>
+                  <div style="flex:1;min-width:230px;">
+                    <div id="cfgStaticCode" class="muted" style="font-family:monospace;font-size:1.1rem;
+                         letter-spacing:0.12em;color:#232E6E;font-weight:700;margin-bottom:0.5rem;">—</div>
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                      <a class="btn-o" id="cfgPrintBtn" href="/pdks-qr-yazdir" target="_blank"><i class="bi bi-printer"></i> Afişi Yazdır</a>
+                      <button class="btn-o" onclick="cfgRegenStatic()"><i class="bi bi-arrow-clockwise"></i> Yeni kod üret</button>
+                    </div>
+                    <p class="muted" style="margin:0.6rem 0 0;font-size:0.78rem;">
+                      Kamerası çalışmayan personel afişteki kodu <b>elle</b> de girebilir.
+                      Yeni kod ürettiğinizde eski çıktı geçersizleşir, afişi yeniden basın.
+                    </p>
+                  </div>
+                </div>
+                <p class="muted" style="margin:0.8rem 0 0;font-size:0.78rem;border-top:1px solid #eee6d8;padding-top:0.6rem;">
+                  <i class="bi bi-info-circle"></i> Basılı kod fotoğraflanabilir; bu yüzden asıl güvence
+                  <b>ofis ağı + ofis konumu</b> şartlarıdır. QR, "kapıya kadar geldim" kanıtıdır.
+                </p>
+              </div>
+
+              <!-- Kiosk paneli -->
+              <div id="cfgKioskBox" style="display:none;">
+                <p class="muted" style="margin:0 0 0.6rem;">
+                  Girişe koyacağınız tablet/telefonda <a href="/pdks-qr" target="_blank"><b>/pdks-qr</b></a> sayfasını
+                  tam ekran açık bırakın — kod 30 saniyede bir yenilenir, ekran görüntüsü/fotoğraf işe yaramaz.
+                  Cihaz, yalnız <b>Kiosk (QR Ekranı)</b> yetkisi verilmiş özel bir hesapla giriş yapmalı.
+                  Ekranda QR'ın altında ayrıca <b>6 haneli yedek kod</b> yazar; kamerası olmayan/çalışmayan
+                  personel bunu elle girerek imza atabilir.
+                </p>
+              </div>
             </div>
 
             <div style="border-top:1px solid #f0ece4;margin-top:1.1rem;padding-top:1.1rem;display:flex;gap:0.9rem;flex-wrap:wrap;align-items:center;">
@@ -597,12 +640,11 @@
         <button class="ico-del" onclick="codeClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
       </div>
       <div class="ovl-body" style="text-align:center;">
-        <p class="muted" style="margin:0 0 1rem;">
-          Girişteki ekranda <b>QR kodun altında</b> yazan 6 haneli kodu girin.
-          Kod 30 saniyede bir yenilenir.
+        <p class="muted" id="codeIntro" style="margin:0 0 1rem;">
+          Girişteki QR'ın yanında yazan kodu girin.
         </p>
-        <input type="text" id="codeInput" class="ipt code-input" inputmode="numeric"
-               autocomplete="one-time-code" maxlength="6" placeholder="––––––"
+        <input type="text" id="codeInput" class="ipt code-input"
+               autocomplete="one-time-code" maxlength="8" placeholder="––––––"
                onkeydown="if(event.key==='Enter') codeSubmit()" />
         <p class="muted" id="codeHint" style="margin:0.8rem 0 0;font-size:0.82rem;">&nbsp;</p>
       </div>
@@ -657,8 +699,6 @@
     function flags(d){
       let out = '';
       if (d.missing_checkout) out += '<span class="flag flag-miss">Çıkış eksik</span>';
-      if (d.late_minutes > 0) out += `<span class="flag flag-late">Geç ${d.late_minutes} dk</span>`;
-      if (d.early_leave_minutes > 0) out += `<span class="flag flag-early">Erken ${d.early_leave_minutes} dk</span>`;
       if (d.overtime_minutes > 0) out += `<span class="flag flag-ot">+${esc(d.overtime_label)}</span>`;
       if (d.holiday_name) out += `<span class="flag" style="background:#e5e7eb;color:#6b7280;">${esc(d.holiday_name)}</span>`;
       return out || '<span class="muted">—</span>';
@@ -696,12 +736,13 @@
       const hero = document.getElementById('checkHero');
       const inside = st.state === 'iceride';
       window._pdksEnforce = !!(st.checkin && st.checkin.enforce);
+      window._pdksQrMode = (st.checkin && st.checkin.qr_mode) || 'static';
       const sched = st.schedule
         ? `Bugünkü mesai: <b>${esc(st.schedule.start)} – ${esc(st.schedule.end)}</b>`
           + (st.break_minutes_total ? ` · mola ${st.break_minutes_total} dk` : '')
         : 'Bugün için tanımlı çalışma programı yok.';
       const guard = window._pdksEnforce
-        ? `<div class="check-guard"><i class="bi bi-shield-check"></i> Doğrulama aktif: ofis ağı · konum · girişteki QR kodu</div>`
+        ? `<div class="check-guard"><i class="bi bi-shield-check"></i> Doğrulama aktif: ofis ağı · konum · girişteki ${window._pdksQrMode === 'static' ? 'QR afişi' : 'ekranda dönen QR'}</div>`
         : '';
       hero.innerHTML = `
         <div class="state-badge ${inside ? 'state-in' : 'state-out'}">
@@ -811,7 +852,16 @@
       _codeType = type;
       document.getElementById('codeTitle').textContent =
         type === 'out' ? 'Kod ile Çıkış' : 'Kod ile Giriş';
+      // Basılı QR modunda kod afişte yazan sabit harf-rakam kodudur; kiosk
+      // modunda ekranda dönen 6 haneli sayıdır.
+      const isStatic = (window._pdksQrMode || 'static') === 'static';
+      document.getElementById('codeIntro').innerHTML = isStatic
+        ? 'Girişteki <b>afişte QR\'ın altında</b> yazan kodu girin.'
+        : 'Girişteki ekranda <b>QR kodun altında</b> yazan 6 haneli kodu girin. Kod 30 saniyede bir yenilenir.';
       const inp = document.getElementById('codeInput');
+      inp.setAttribute('inputmode', isStatic ? 'text' : 'numeric');
+      inp.setAttribute('maxlength', isStatic ? '10' : '6');
+      inp.placeholder = isStatic ? '––––––––' : '––––––';
       inp.value = '';
       document.getElementById('codeHint').innerHTML = '&nbsp;';
       document.getElementById('codeModal').classList.add('open');
@@ -824,9 +874,13 @@
     async function codeSubmit(){
       const inp = document.getElementById('codeInput');
       const hint = document.getElementById('codeHint');
-      const code = (inp.value || '').replace(/\D/g, '');
-      if (code.length !== 6) {
-        hint.textContent = 'Kod 6 haneli olmalı.';
+      const isStatic = (window._pdksQrMode || 'static') === 'static';
+      // Basılı kod: harf+rakam (boşluk/tire serbest). Kiosk kodu: 6 hane sayı.
+      const code = isStatic
+        ? (inp.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+        : (inp.value || '').replace(/\D/g, '');
+      if (isStatic ? code.length < 4 : code.length !== 6) {
+        hint.textContent = isStatic ? 'Afişteki kodu eksiksiz girin.' : 'Kod 6 haneli olmalı.';
         return;
       }
       const okBtn = document.getElementById('codeOkBtn');
@@ -878,7 +932,7 @@
         <td colspan="5">TOPLAM</td>
         <td>${esc(t.toplam_calisma_label)}</td>
         <td>${esc(t.toplam_fazla_mesai_label)}</td>
-        <td class="muted">Geç: ${t.gec_sayisi} · Devamsız: ${t.devamsizlik_gun} gün · İzin: ${esc(t.izin_gunleri_label)}</td>
+        <td class="muted">Devamsız: ${t.devamsizlik_gun} gün · İzin: ${esc(t.izin_gunleri_label)}</td>
       </tr>`);
       tb.innerHTML = rows.join('');
     }
@@ -1261,10 +1315,10 @@
       document.getElementById('repMonthLabel').textContent = `${MONTHS[repM]} ${repY}`;
       document.getElementById('repExcelBtn').href = `/api/pdks/report/excel?year=${repY}&month=${repM}`;
       const tb = document.getElementById('repBody');
-      tb.innerHTML = '<tr><td colspan="8" class="muted" style="padding:1rem;">Hesaplanıyor…</td></tr>';
+      tb.innerHTML = '<tr><td colspan="7" class="muted" style="padding:1rem;">Hesaplanıyor…</td></tr>';
       try {
         const d = await api(`/api/pdks/report?year=${repY}&month=${repM}`);
-        if (!d.employees.length) { tb.innerHTML = '<tr><td colspan="8" class="muted" style="padding:1rem;">Aktif personel yok.</td></tr>'; return; }
+        if (!d.employees.length) { tb.innerHTML = '<tr><td colspan="7" class="muted" style="padding:1rem;">Aktif personel yok.</td></tr>'; return; }
         tb.innerHTML = d.employees.map((item, i) => {
           const t = item.month.totals;
           return `<tr class="day-row" onclick="repToggle(${i})">
@@ -1272,12 +1326,11 @@
             <td><b>${esc(t.toplam_calisma_label)}</b></td>
             <td>${esc(t.toplam_fazla_mesai_label)}</td>
             <td>${esc(t.toplam_eksik_label)}</td>
-            <td>${t.gec_sayisi}</td>
             <td>${t.devamsizlik_gun}</td>
             <td>${t.eksik_cikis_sayisi ? '<span class="flag flag-miss">' + t.eksik_cikis_sayisi + '</span>' : '0'}</td>
             <td class="muted">${esc(t.izin_gunleri_label)}</td>
           </tr>
-          <tr id="repDetail${i}" style="display:none;"><td colspan="8" style="padding:0;">
+          <tr id="repDetail${i}" style="display:none;"><td colspan="7" style="padding:0;">
             <div style="padding:0.6rem 1rem;background:#faf8f4;overflow-x:auto;">
               <table><thead><tr><th>Tarih</th><th>Gün</th><th>Durum</th><th>Giriş</th><th>Çıkış</th><th>Çalışma</th><th>Fazla Mesai</th><th>Bayraklar</th></tr></thead>
               <tbody>${item.month.days.map(x => `<tr>
@@ -1289,7 +1342,7 @@
             </div>
           </td></tr>`;
         }).join('');
-      } catch (e) { tb.innerHTML = `<tr><td colspan="8" class="muted" style="padding:1rem;">${esc(e.message)}</td></tr>`; }
+      } catch (e) { tb.innerHTML = `<tr><td colspan="7" class="muted" style="padding:1rem;">${esc(e.message)}</td></tr>`; }
     }
     function repToggle(i){
       const el = document.getElementById('repDetail' + i);
@@ -1308,11 +1361,57 @@
         document.getElementById('cfgEnforce').checked = !!c.enforce;
         document.getElementById('cfgDetectedIp').textContent =
           c.detected_ip ? `Şu anki IP'niz: ${c.detected_ip}` : '';
+        const mode = c.qr_mode || 'static';
+        const radio = document.querySelector(`input[name=cfgQrMode][value="${mode}"]`);
+        if (radio) radio.checked = true;
+        cfgApplyMode(mode);
         const box = document.getElementById('cfgStateBox');
         box.classList.toggle('on', !!c.enforce);
         box.innerHTML = c.enforce
-          ? '<b>Doğrulama açık.</b> Giriş/çıkış yalnızca ofis ağı + ofis konumu + canlı QR ile yapılabiliyor.'
+          ? `<b>Doğrulama açık.</b> Giriş/çıkış yalnızca ofis ağı + ofis konumu + ${mode === 'static' ? 'girişteki basılı QR' : 'ekrandaki canlı QR'} ile yapılabiliyor.`
           : '<b>Doğrulama kapalı.</b> Giriş/çıkış her yerden yapılabiliyor.';
+      } catch (e) { toastFn(e.message); }
+    }
+    /* QR modu: hangi panel görünecek + basılı QR yükle */
+    function cfgApplyMode(mode){
+      const isStatic = mode === 'static';
+      document.getElementById('cfgStaticBox').style.display = isStatic ? '' : 'none';
+      document.getElementById('cfgKioskBox').style.display = isStatic ? 'none' : '';
+      if (isStatic) loadStaticQr();
+    }
+    document.querySelectorAll('input[name=cfgQrMode]').forEach(r =>
+      r.addEventListener('change', () => cfgApplyMode(r.value)));
+
+    async function loadStaticQr(){
+      const box = document.getElementById('cfgStaticQr');
+      const codeEl = document.getElementById('cfgStaticCode');
+      const printBtn = document.getElementById('cfgPrintBtn');
+      try {
+        const d = await api('/api/pdks/qr/static');
+        if (!d.exists) {
+          box.innerHTML = '<span class="muted" style="font-size:0.78rem;text-align:center;">Kod<br/>yok</span>';
+          codeEl.textContent = 'Henüz kod üretilmedi';
+          printBtn.style.display = 'none';
+          return;
+        }
+        box.innerHTML = d.svg;
+        const svg = box.querySelector('svg');
+        if (svg) { svg.style.width = '100%'; svg.style.height = '100%'; }
+        codeEl.textContent = d.code;
+        printBtn.style.display = '';
+      } catch (e) {
+        box.innerHTML = '<span class="muted" style="font-size:0.75rem;">Yüklenemedi</span>';
+        codeEl.textContent = e.message;
+      }
+    }
+    async function cfgRegenStatic(){
+      const cur = document.getElementById('cfgStaticCode').textContent;
+      if (cur && cur !== '—' && cur !== 'Henüz kod üretilmedi' &&
+          !confirm('Yeni kod üretilsin mi?\n\nMevcut basılı afiş ANINDA geçersiz olur; yeni afişi yazdırıp asmanız gerekir.')) return;
+      try {
+        const d = await jpost('/api/pdks/qr/static/regenerate', {});
+        toastFn(d.message || 'Yeni kod üretildi.', 'success');
+        loadStaticQr();
       } catch (e) { toastFn(e.message); }
     }
     async function cfgAddMyIp(){
@@ -1344,6 +1443,7 @@
         lat: lat === '' ? null : parseFloat(lat),
         lon: lon === '' ? null : parseFloat(lon),
         radius_m: parseInt(document.getElementById('cfgRadius').value || '150'),
+        qr_mode: (document.querySelector('input[name=cfgQrMode]:checked') || {}).value || 'static',
       };
       const btn = document.getElementById('cfgSaveBtn');
       btn.disabled = true;

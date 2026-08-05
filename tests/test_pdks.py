@@ -63,16 +63,15 @@ def test_overtime_single_pair():
     assert d["worked_minutes"] == 585
     assert d["expected_minutes"] == 465
     assert d["overtime_minutes"] == 120
-    assert d["late_minutes"] == 0 and d["early_leave_minutes"] == 0
     assert d["break_deducted"] is True and d["break_minutes"] == 75
     assert d["status"] == "calisti"
 
 
-def test_late_and_early():
-    # Giriş 09:20 → geç 15 dk (5 dk tolerans); çıkış 17:30 → erken 25 dk
+def test_no_late_early_flags():
+    """Geç/erken bayrağı KALDIRILDI (bilinçli): saat kaydedilir, kimse
+    'geç geldi' diye işaretlenmez — yalnız süre ve eksik görünür."""
     d = std_day([ev("in", tr(2026, 7, 6, 9, 20)), ev("out", tr(2026, 7, 6, 17, 30))])
-    assert d["late_minutes"] == 15
-    assert d["early_leave_minutes"] == 25
+    assert "late_minutes" not in d and "early_leave_minutes" not in d
     # brüt 490 − 75 dk mola = 415; eksik = 465 − 415 = 50
     assert d["worked_minutes"] == 415
     assert d["missing_minutes"] == 50
@@ -118,7 +117,6 @@ def test_standard_workday_nets_eight_hours():
     assert d["expected_minutes"] == 480          # 8 saat
     assert d["worked_minutes"] == 480            # tam mesai → eksik/mesai yok
     assert d["missing_minutes"] == 0 and d["overtime_minutes"] == 0
-    assert d["late_minutes"] == 0 and d["early_leave_minutes"] == 0
     # Molaların hepsi mesai penceresinin İÇİNDE olmalı (şema tutarlılığı)
     for b in BREAKS:
         assert DEFAULT_WORK_START < b["start"] < DEFAULT_WORK_END
@@ -143,7 +141,6 @@ def test_midnight_crossing_pair():
     # Giriş 20:00 TR, çıkış ertesi gün 01:30 TR — aynı work_date'e yazılmış
     d = std_day([ev("in", tr(2026, 7, 6, 20)), ev("out", tr(2026, 7, 7, 1, 30))])
     assert d["worked_minutes"] == 330          # 5,5 saat, kesintisiz (<6 sa)
-    assert d["early_leave_minutes"] == 0       # ertesi güne taşan çıkış erken sayılmaz
     assert d["status"] == "calisti"
 
 
@@ -497,8 +494,8 @@ def test_report_json_with_leave(authed_client, db_session):
 # ─── İnceleme bulgusu regresyonları ─────────────────────────────────────────
 
 def test_half_day_no_late_early():
-    # Yarım gün tatilde geç/erken hesaplanmaz; beklenen süreyi dolduran
-    # personel "295 dk erken çıkış" görünmemeli.
+    # Yarım gün tatilde beklenen süre yarıya iner; dolduran personel
+    # "eksik" görünmemeli.
     half = {"name": "Arefe", "is_half_day": True}
     # 09:00–14:00 → brüt 300 − 60 mola (kahvaltı 15 + öğle 45) = 240 net;
     # yarım gün beklenen (540 − 75) // 2 = 232 → dolduruldu
@@ -506,7 +503,6 @@ def test_half_day_no_late_early():
                 holiday=half)
     assert d["expected_minutes"] == 232
     assert d["worked_minutes"] == 240
-    assert d["late_minutes"] == 0 and d["early_leave_minutes"] == 0
     assert d["missing_minutes"] == 0
 
 
@@ -725,12 +721,18 @@ def test_real_client_ip_spoof_guard():
 
 # ─── API ────────────────────────────────────────────────────────────────────
 
-def _enforce_on(db, ips="testclient", lat=41.06, lon=29.0, radius=150):
-    """Üçlü doğrulamayı AppSetting üzerinden aç."""
+def _enforce_on(db, ips="testclient", lat=41.06, lon=29.0, radius=150,
+                qr_mode="rotating"):
+    """Üçlü doğrulamayı AppSetting üzerinden aç.
+
+    qr_mode VARSAYILANI 'rotating': bu yardımcıyı kullanan testler kiosk
+    ekranındaki dönen QR/6 haneli kod akışını sınar.  Ürün varsayılanı ise
+    'static' (ekranı olmayan ofis) — o akışın testleri en altta."""
     for key, val in (("pdks.checkin.enforce", "true"),
                      ("pdks.checkin.allowed_ips", ips),
                      ("pdks.checkin.lat", str(lat)),
                      ("pdks.checkin.lon", str(lon)),
+                     ("pdks.checkin.qr_mode", qr_mode),
                      ("pdks.checkin.radius_m", str(radius))):
         row = db.query(AppSetting).filter(AppSetting.key == key).first()
         if row:
@@ -913,7 +915,12 @@ def test_checkin_config_rbac_and_roundtrip(staff_employee_client, db_session):
                                 "lon": 29.0, "radius_m": 200},
                           headers=ORIGIN)
     assert r.status_code == 200 and r.json()["radius_m"] == 200
+    # Varsayılan mod 'static' → basılı kod üretilmeden enforce AÇILAMAZ
     r = authed_client.put("/api/pdks/checkin-config", json={"enforce": True}, headers=ORIGIN)
+    assert r.status_code == 400 and "basılı QR" in r.json()["detail"]
+    # Kiosk moduna geçince (ekran var) kod şartı aranmaz
+    r = authed_client.put("/api/pdks/checkin-config",
+                          json={"enforce": True, "qr_mode": "rotating"}, headers=ORIGIN)
     assert r.status_code == 200 and r.json()["enforce"] is True
     assert r.json()["allowed_ips"] == "testclient"     # dokunulmayan alan korundu
     # Yarıçap sınırları
@@ -988,3 +995,139 @@ def test_kiosk_token_accepted_by_check(staff_employee_client, db_session):
                      "lat": 41.06, "lon": 29.0, "accuracy": 8},
                headers=ORIGIN)
     assert r.status_code == 200, r.text
+
+
+# ═══ Basılı (sabit) QR — kiosk ekranı olmayan ofisler ═══════════════════════
+
+def test_static_code_helpers():
+    from core.pdks import (STATIC_CODE_LEN, make_static_token,
+                           normalize_static_code, verify_static_code,
+                           verify_static_token)
+    code = "K7P2M9QX"
+    # Elle girişte büyük/küçük harf, boşluk ve tire toleranslı
+    assert normalize_static_code(" k7p2-m9qx ") == code
+    assert verify_static_code(code, "k7p2 m9qx") == "ok"
+    assert verify_static_code(code, "K7P2M9QY") == "invalid"
+    # Kod üretilmemişse ASLA geçme (fail-closed)
+    assert verify_static_code("", code) == "invalid"
+    assert verify_static_code(code, "") == "invalid"
+    # QR metni: önek zorunlu — ofisteki başka bir barkod okutulursa tutmaz
+    assert verify_static_token(code, make_static_token(code)) == "ok"
+    assert verify_static_token(code, code) == "invalid"
+    assert verify_static_token(code, "PDKSQR1:123:abc") == "invalid"
+    assert verify_static_token(code, "ŞİRKET MENÜSÜ") == "invalid"
+    assert len(code) == STATIC_CODE_LEN
+    # ASCII olmayan girdi 500 DEĞİL invalid dönmeli (compare_digest TypeError
+    # tuzağı — verify_qr_token/verify_numeric_code'daki kardeş kural burada da
+    # geçerli olmalı)
+    assert verify_static_code(code, "çğüşöü") == "invalid"
+    assert verify_static_code("çğüşöü", code) == "invalid"
+
+
+def _enforce_static(db, client, ips="testclient"):
+    """Basılı QR modunda doğrulamayı aç; üretilen kodu döndür."""
+    r = client.post("/api/pdks/qr/static/regenerate", headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    code = r.json()["code"]
+    r = client.put("/api/pdks/checkin-config",
+                   json={"qr_mode": "static", "allowed_ips": ips,
+                         "lat": 41.06, "lon": 29.0, "enforce": True},
+                   headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    assert r.json()["qr_mode"] == "static"
+    return code
+
+
+def test_static_qr_generate_and_print_page(staff_employee_client, db_session):
+    c, _ = staff_employee_client
+    # Personel ne kodu görebilir ne afişi
+    assert c.get("/api/pdks/qr/static").status_code == 403
+    assert c.post("/api/pdks/qr/static/regenerate", headers=ORIGIN).status_code == 403
+    assert c.get("/pdks-qr-yazdir", follow_redirects=False).status_code == 302
+
+    admin = _login(c, "dogukan")
+    # Henüz kod yok
+    assert admin.get("/api/pdks/qr/static").json()["exists"] is False
+    r = admin.post("/api/pdks/qr/static/regenerate", headers=ORIGIN)
+    assert r.status_code == 201 or r.status_code == 200, r.text
+    d = r.json()
+    assert d["exists"] is True and len(d["code"]) == 8
+    assert d["token"] == f"PDKSQRS1:{d['code']}"
+    assert 'viewBox=' in d["svg"] and "width=" not in d["svg"][:d["svg"].index(">")]
+    assert "no-store" in r.headers.get("cache-control", "")
+    assert admin.get("/pdks-qr-yazdir").status_code == 200
+    # Yenileme eski kodu geçersiz kılar
+    old = d["code"]
+    new = admin.post("/api/pdks/qr/static/regenerate", headers=ORIGIN).json()["code"]
+    assert new != old
+    assert admin.get("/api/pdks/qr/static").json()["code"] == new
+
+
+def test_static_mode_check_flow(staff_employee_client, db_session):
+    c, emp_id = staff_employee_client
+    admin = _login(c, "dogukan")
+    code = _enforce_static(db_session, admin)
+    _login(c, "personel1")
+
+    geo = {"lat": 41.06, "lon": 29.0, "accuracy": 10}
+    # QR/kod yok → net hata
+    r = c.post("/api/pdks/check", json={"type": "in", **geo}, headers=ORIGIN)
+    assert r.status_code == 400 and "QR kod okutulmadı" in r.json()["detail"]
+    # Yanlış kod
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "qr_token": "PDKSQRS1:YANLIS12", **geo}, headers=ORIGIN)
+    assert r.status_code == 400 and "geçersiz" in r.json()["detail"]
+    # Dönen (kiosk) token'ı basılı modda KABUL EDİLMEZ
+    rot = make_qr_token(SECRET_KEY, qr_bucket(time.time()))
+    r = c.post("/api/pdks/check", json={"type": "in", "qr_token": rot, **geo}, headers=ORIGIN)
+    assert r.status_code == 400
+    # Doğru QR → giriş
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "qr_token": f"PDKSQRS1:{code}", **geo}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "iceride"
+    assert r.json()["checkin"]["qr_mode"] == "static"
+    # Elle kod ile çıkış (kamera çalışmıyor senaryosu) — küçük harf/tire toleranslı
+    typed = code.lower()[:4] + "-" + code.lower()[4:]
+    r = c.post("/api/pdks/check",
+               json={"type": "out", "manual_code": typed, **geo}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "disarida"
+
+
+def test_static_code_never_leaks_to_staff(staff_employee_client, db_session):
+    """Kod /me/today ile personele SIZMAMALI — sızarsa evden imza atılır."""
+    c, _ = staff_employee_client
+    admin = _login(c, "dogukan")
+    code = _enforce_static(db_session, admin)
+    _login(c, "personel1")
+    body = c.get("/api/pdks/me/today").text
+    assert code not in body
+    assert c.get("/api/pdks/checkin-config").status_code == 403
+
+
+def test_enforce_static_requires_code(staff_employee_client, db_session):
+    c, _ = staff_employee_client
+    admin = _login(c, "dogukan")
+    r = admin.put("/api/pdks/checkin-config",
+                  json={"qr_mode": "static", "allowed_ips": "testclient",
+                        "lat": 41.06, "lon": 29.0, "enforce": True},
+                  headers=ORIGIN)
+    assert r.status_code == 400
+    assert "basılı QR" in r.json()["detail"]
+
+
+def test_static_manual_code_nonascii_is_400_not_500(staff_employee_client, db_session):
+    """Türkçe klavyeli personel afişteki kodu yazarken 'g' yerine 'ğ' gibi
+    yazarsa 500 DEĞİL düzgün Türkçe 400 dönmeli (compare_digest TypeError
+    tuzağı — kardeş fonksiyonlarda zaten korunuyordu, burada eksikti)."""
+    c, _ = staff_employee_client
+    admin = _login(c, "dogukan")
+    _enforce_static(db_session, admin)
+    _login(c, "personel1")
+    r = c.post("/api/pdks/check",
+              json={"type": "in", "manual_code": "ÇĞÜŞÖÇĞÜ",
+                    "lat": 41.06, "lon": 29.0, "accuracy": 10},
+              headers=ORIGIN)
+    assert r.status_code == 400
+    assert "geçersiz" in r.json()["detail"]

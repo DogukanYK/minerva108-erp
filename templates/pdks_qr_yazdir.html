@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDKS — Giriş/Çıkış QR Afişi</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Jost:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    :root{ --navy:#232E6E; --gold:#C9AC6F; }
+    *,*::before,*::after{ box-sizing:border-box; }
+    body{ margin:0; font-family:'Jost',sans-serif; background:#f3f0ea; color:#111827; }
+    .toolbar{ display:flex; gap:0.6rem; align-items:center; padding:0.9rem 1.2rem;
+      background:#fff; border-bottom:1px solid #e5e1d8; position:sticky; top:0; z-index:5; }
+    .toolbar .sp{ margin-left:auto; }
+    .btn{ display:inline-flex; align-items:center; gap:0.45rem; padding:0.55rem 1.1rem;
+      border-radius:9px; border:1.5px solid #e5e7eb; background:#fff; color:var(--navy);
+      font-family:'Jost',sans-serif; font-size:0.9rem; font-weight:600; cursor:pointer; text-decoration:none; }
+    .btn.primary{ background:var(--navy); color:#fff; border-color:var(--navy); }
+    .btn:hover{ border-color:var(--navy); }
+
+    /* ── A4 afiş ── */
+    .sheet{ width:210mm; min-height:297mm; margin:1.5rem auto; background:#fff; padding:22mm 18mm;
+      box-shadow:0 6px 30px rgba(0,0,0,0.12); display:flex; flex-direction:column;
+      align-items:center; text-align:center; }
+    .brand{ font-family:'Playfair Display',serif; font-size:26pt; font-weight:700; color:var(--navy);
+      letter-spacing:0.06em; }
+    .brand-sub{ font-size:12pt; color:var(--gold); letter-spacing:0.18em; text-transform:uppercase;
+      margin-top:2mm; font-weight:600; }
+    .rule{ width:60mm; height:2px; background:var(--gold); margin:7mm auto; }
+    .headline{ font-family:'Playfair Display',serif; font-size:22pt; font-weight:700; color:#111827;
+      margin:0 0 3mm; }
+    .lede{ font-size:12pt; color:#4b5563; max-width:150mm; line-height:1.55; margin:0 0 8mm; }
+    .qr-wrap{ width:105mm; height:105mm; border:2px solid #e5e1d8; border-radius:6mm; padding:6mm;
+      display:flex; align-items:center; justify-content:center; }
+    .qr-wrap svg{ width:100%; height:100%; display:block; }
+    .code-label{ margin-top:7mm; font-size:10pt; color:#6b7280; letter-spacing:0.06em; text-transform:uppercase; }
+    .code{ font-family:'Jost',monospace; font-size:30pt; font-weight:700; letter-spacing:0.22em;
+      color:var(--navy); margin-top:1mm; }
+    .code-hint{ font-size:10pt; color:#6b7280; margin-top:2mm; }
+    .steps{ margin-top:10mm; text-align:left; max-width:150mm; width:100%; }
+    .step{ display:flex; gap:5mm; align-items:flex-start; margin-bottom:5mm; font-size:11.5pt; }
+    .step .n{ flex-shrink:0; width:9mm; height:9mm; border-radius:50%; background:var(--navy); color:#fff;
+      font-weight:700; font-size:11pt; display:flex; align-items:center; justify-content:center; }
+    .foot{ margin-top:auto; padding-top:8mm; font-size:8.5pt; color:#9ca3af; }
+    .msg{ padding:3rem 1rem; text-align:center; color:#6b7280; }
+    .msg a{ color:var(--navy); font-weight:600; }
+
+    @media print{
+      .toolbar{ display:none !important; }
+      body{ background:#fff; }
+      .sheet{ margin:0; box-shadow:none; width:auto; min-height:auto; padding:14mm 12mm; }
+      /* Tek sayfaya sığdırma — ölçüldü: düzeltmeden ~305mm (A4 kullanılabilir
+         alan 281mm'yi aşıyor, dipnot 2. sayfaya taşıyordu). Ekran görünümü
+         (yukarıdaki temel kurallar) bu bloktan etkilenmez. */
+      .lede{ margin-bottom:5mm; }
+      .qr-wrap{ width:95mm; height:95mm; }
+      .code-label{ margin-top:4mm; }
+      .steps{ margin-top:6mm; }
+      .step{ margin-bottom:3mm; }
+      .foot{ padding-top:5mm; }
+      /* Tarayıcıların "Arka plan grafikleri" yazdırma seçeneği VARSAYILAN
+         KAPALI — background-color basılmaz ama color aynen kalır.  Adım
+         numaraları beyaz-üstü-beyaz kaybolmasın diye baskıda kenarlıklı
+         rozete, altın çizgi de border'a dönüşür (arka plana hiç bağımlı değil). */
+      .step .n{ background:transparent; color:var(--navy); border:1.5px solid var(--navy); }
+      .rule{ margin:4mm auto; height:0; border-top:2px solid var(--gold); background:none; }
+      @page{ size:A4; margin:8mm; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <a class="btn" href="/pdks"><i class="bi bi-arrow-left"></i> PDKS</a>
+    <span class="sp"></span>
+    <button class="btn primary" onclick="window.print()"><i class="bi bi-printer"></i> Yazdır</button>
+  </div>
+
+  <div id="root">
+    <div class="msg">Yükleniyor…</div>
+  </div>
+
+  <script>
+    function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+    async function load(){
+      const root = document.getElementById('root');
+      let d;
+      try {
+        const r = await fetch('/api/pdks/qr/static', { cache: 'no-store' });
+        if (r.status === 401 || r.status === 403) {
+          root.innerHTML = '<div class="msg">Bu sayfa için yetkiniz yok. <a href="/pdks">PDKS\'ye dön</a></div>';
+          return;
+        }
+        d = await r.json();
+      } catch {
+        root.innerHTML = '<div class="msg">Bağlantı kurulamadı — sayfayı yenileyin.</div>';
+        return;
+      }
+      if (!d || !d.exists) {
+        root.innerHTML = '<div class="msg">Henüz basılı QR kodu üretilmemiş.<br/><br/>'
+          + '<a href="/pdks">PDKS → Doğrulama</a> sekmesinden <b>"Yeni kod üret"</b>e basın.</div>';
+        return;
+      }
+      root.innerHTML = `
+        <div class="sheet">
+          <div class="brand">MINERVA 108</div>
+          <div class="brand-sub">Vegan Cosmetics</div>
+          <div class="rule"></div>
+          <h1 class="headline">Personel Giriş / Çıkış</h1>
+          <p class="lede">Mesaiye başlarken ve çıkarken telefonunuzdaki <b>PDKS</b> sayfasından
+            Giriş/Çıkış butonuna basıp aşağıdaki kodu okutun.</p>
+          <div class="qr-wrap">${d.svg}</div>
+          <div class="code-label">Kamera okumazsa bu kodu elle girin</div>
+          <div class="code">${esc(d.code)}</div>
+          <div class="code-hint">Büyük/küçük harf farketmez.</div>
+          <div class="steps">
+            <div class="step"><span class="n">1</span><span>Ofis Wi-Fi'sine bağlı olduğunuzdan emin olun
+              (<b>Minerva108</b> / <b>minerva108cosmetics</b>).</span></div>
+            <div class="step"><span class="n">2</span><span>IMS → <b>PDKS</b> sayfasını açın,
+              <b>GİRİŞ YAP</b> / <b>ÇIKIŞ YAP</b> butonuna basın.</span></div>
+            <div class="step"><span class="n">3</span><span>Konum izni isterse <b>izin verin</b>,
+              ardından kamerayı bu QR koda tutun.</span></div>
+          </div>
+          <div class="foot">Bu afişi girişte, göz hizasında ve iyi aydınlatılmış bir yere asın ·
+            Kod değiştirilirse bu çıktı geçersiz olur, yenisini yazdırın.</div>
+        </div>`;
+    }
+    load();
+  </script>
+</body>
+</html>

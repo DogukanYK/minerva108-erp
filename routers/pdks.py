@@ -12,6 +12,7 @@ core/pdks.py'de (saf fonksiyonlar); burada yalnız DB I/O + doğrulama +
 serileştirme var.  Self giriş/çıkışta zaman damgası DAİMA sunucu saatidir.
 Manuel düzeltmeler audit-log'a yazılır; olay silme soft-delete'tir (iz kalır).
 """
+import secrets
 import time
 from datetime import date, datetime, timedelta
 from typing import Dict, Optional
@@ -33,10 +34,12 @@ from core.pdks import (
     LEAVE_TYPES, LEAVE_TYPE_LABELS, DAY_STATUS_LABELS,
     WEEKDAY_LABELS, MONTH_LABELS, OPEN_PAIR_MAX_HOURS,
     NUMERIC_CODE_LEN, QR_BUCKET_SECONDS, TOTAL_BREAK_MINUTES, breaks_view,
+    STATIC_CODE_ALPHABET, STATIC_CODE_LEN,
     compute_day, compute_month, fmt_minutes,
     geo_within, haversine_m, ip_allowed, leave_for, make_numeric_code,
-    make_qr_token, qr_bucket, schedule_for, tr_date_of, validate_template,
-    verify_numeric_code, verify_qr_token,
+    make_qr_token, make_static_token, qr_bucket, schedule_for, tr_date_of,
+    validate_template, verify_numeric_code, verify_qr_token,
+    verify_static_code, verify_static_token,
 )
 
 router = APIRouter(prefix="/api/pdks", tags=["pdks"])
@@ -69,7 +72,12 @@ _CFG_IPS = "pdks.checkin.allowed_ips"
 _CFG_LAT = "pdks.checkin.lat"
 _CFG_LON = "pdks.checkin.lon"
 _CFG_RADIUS = "pdks.checkin.radius_m"
+# QR kaynağı: "static" = girişe asılan BASILI kod (ekran gerekmez, varsayılan)
+# | "rotating" = kiosk ekranında 30 sn'de bir dönen kod (cihaz gerekir).
+_CFG_QR_MODE = "pdks.checkin.qr_mode"
+_CFG_STATIC_CODE = "pdks.checkin.static_code"
 _DEFAULT_RADIUS_M = 150
+_QR_MODES = ("static", "rotating")
 
 _SOURCE_LABELS = {"self": "Kendi cihazı", "manual": "Manuel (yönetici)"}
 _TYPE_LABELS = {"in": "Giriş", "out": "Çıkış"}
@@ -94,6 +102,7 @@ class CheckinConfigBody(BaseModel):
     lat: Optional[float] = Field(None, ge=-90, le=90)
     lon: Optional[float] = Field(None, ge=-180, le=180)
     radius_m: Optional[int] = Field(None, ge=10, le=5000)
+    qr_mode: Optional[str] = Field(None, pattern="^(static|rotating)$")
 
 
 class EmployeeBody(BaseModel):
@@ -179,12 +188,17 @@ def _checkin_cfg(db: Session) -> dict:
         radius = int(float(_get_setting(db, _CFG_RADIUS) or _DEFAULT_RADIUS_M))
     except (TypeError, ValueError):
         radius = _DEFAULT_RADIUS_M
+    mode = (_get_setting(db, _CFG_QR_MODE) or "static").lower()
+    if mode not in _QR_MODES:
+        mode = "static"
     return {
         "enforce": (_get_setting(db, _CFG_ENFORCE) or "false").lower() == "true",
         "allowed_ips": _get_setting(db, _CFG_IPS) or "",
         "lat": _f(_CFG_LAT),
         "lon": _f(_CFG_LON),
         "radius_m": max(10, radius),
+        "qr_mode": mode,
+        "static_code": _get_setting(db, _CFG_STATIC_CODE) or "",
     }
 
 
@@ -355,8 +369,6 @@ def _day_view(day: dict) -> dict:
         "overtime_minutes": day["overtime_minutes"],
         "overtime_label": fmt_minutes(day["overtime_minutes"]),
         "missing_minutes": day["missing_minutes"],
-        "late_minutes": day["late_minutes"],
-        "early_leave_minutes": day["early_leave_minutes"],
         "missing_checkout": day["missing_checkout"],
         "orphan_out": day["orphan_out"],
         "break_deducted": day["break_deducted"],
@@ -487,7 +499,9 @@ def _today_status(db: Session, emp: Employee) -> dict:
         "schedule": sched,
         "events": [_event_view(e) for e in events],
         # İstemci (pdks.html) bu bayrağa göre konum+QR akışını devreye alır.
-        "checkin": {"enforce": cfg["enforce"]},
+        # DİKKAT: static_code ASLA buraya konmaz — personele sızarsa ofise
+        # gelmeden imza atılabilirdi.  Yalnız akışı belirleyen mod paylaşılır.
+        "checkin": {"enforce": cfg["enforce"], "qr_mode": cfg["qr_mode"]},
         # Mola şeması şirket geneli sabit — personel ekranda görsün.
         "breaks": breaks_view(),
         "break_minutes_total": TOTAL_BREAK_MINUTES,
@@ -530,7 +544,28 @@ def check_in_out(
             return _err(400, "Ofis internetine bağlı değilsiniz — giriş/çıkış "
                              "yalnızca ofis ağından (Minerva108 Wi-Fi) yapılabilir.")
         now_unix = time.time()
-        if data.qr_token:
+        if cfg["qr_mode"] == "static":
+            # Basılı QR: içerik sabit, süre dolmaz.  Kamera okuyamazsa personel
+            # afişteki kodu elle yazabilir (aynı kod, aynı doğrulama).
+            given = data.qr_token or data.manual_code
+            if not given:
+                return _err(400, "QR kod okutulmadı — girişteki QR kodu okutun "
+                                 "ya da afişteki kodu elle girin.")
+            if not cfg["static_code"]:
+                return _err(400, "PDKS doğrulama ayarları eksik — yöneticinize "
+                                 "başvurun.")
+            if _code_fail_blocked(emp.id, now_unix):
+                return _err(429, "Çok fazla hatalı deneme — birkaç dakika sonra "
+                                 "tekrar deneyin.")
+            state = (verify_static_token(cfg["static_code"], given)
+                     if data.qr_token else
+                     verify_static_code(cfg["static_code"], given))
+            if state != "ok":
+                _code_fail_record(emp.id, now_unix)
+                return _err(400, "QR kod geçersiz — girişteki Minerva PDKS "
+                                 "kodunu okutun.")
+            _code_fails.pop(emp.id, None)
+        elif data.qr_token:
             qr_state = verify_qr_token(SECRET_KEY, data.qr_token, now_unix)
             if qr_state == "expired":
                 return _err(400, "QR kodun süresi dolmuş — ekrandaki güncel kodu "
@@ -1244,24 +1279,14 @@ def kiosk_qr(
     _: dict = Depends(require_permission("pdks", "kiosk")),
 ):
     """Girişteki ekranın çektiği uç — 30 sn'de bir yenilenen imzalı QR.
-    Kiosk cihazı, yalnız `pdks.kiosk` yetkisi olan özel bir hesapla girer."""
-    import segno
-    import io as _io
-
+    Kiosk cihazı, yalnız `pdks.kiosk` yetkisi olan özel bir hesapla girer.
+    (Ekranı olmayan ofisler bunun yerine basılı QR kullanır: /qr/static.)"""
     now = time.time()
     bucket = qr_bucket(now)
     token = make_qr_token(SECRET_KEY, bucket)
-    buf = _io.BytesIO()
-    # omitsize=True ŞART: sabit width/height yerine viewBox üretir.  viewBox'sız
-    # kök <svg>'de CSS width/height yalnız viewport'u değiştirir, koordinat
-    # sistemi 1:1 px kalır ve sembol karta sığmayıp KIRPILIR → QR decode
-    # edilemez (kiosk ekranı işe yaramaz).  Testte de sabitlendi.
-    segno.make(token, error="m").save(buf, kind="svg", xmldecl=False,
-                                      scale=12, dark="#111827", border=2,
-                                      omitsize=True)
     seconds_left = QR_BUCKET_SECONDS - int(now) % QR_BUCKET_SECONDS
     return JSONResponse(
-        content={"token": token, "svg": buf.getvalue().decode("utf-8"),
+        content={"token": token, "svg": _qr_svg(token),
                  # Kamerası olmayan/okumayan personel için yedek: QR ile aynı
                  # pencerede döner, ayrı HMAC domain'inden türetilir.
                  "code": make_numeric_code(SECRET_KEY, bucket),
@@ -1269,6 +1294,64 @@ def kiosk_qr(
         # Canlı token — ara katman/tarayıcı önbelleğinde tutulmasın
         headers={"Cache-Control": "no-store, max-age=0"},
     )
+
+
+def _qr_svg(text: str) -> str:
+    """QR'ı SVG olarak üret.  omitsize=True ŞART — yoksa sabit width/height
+    yazılır, viewBox olmaz ve sembol kartın içinde kırpılıp okunamaz hale
+    gelir (bkz. CLAUDE.md tuzağı + test_qr_svg_is_scalable_not_clipped)."""
+    import io as _io
+
+    import segno
+
+    buf = _io.BytesIO()
+    segno.make(text, error="m").save(buf, kind="svg", xmldecl=False,
+                                     scale=12, dark="#111827", border=2,
+                                     omitsize=True)
+    return buf.getvalue().decode("utf-8")
+
+
+def _static_qr_payload(cfg: dict) -> dict:
+    code = cfg.get("static_code") or ""
+    if not code:
+        return {"exists": False, "code": "", "token": "", "svg": ""}
+    token = make_static_token(code)
+    return {"exists": True, "code": code, "token": token, "svg": _qr_svg(token)}
+
+
+@router.get("/qr/static")
+def static_qr(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("pdks", "manage")),
+):
+    """Girişe asılacak BASILI QR (kiosk ekranı olmayan ofisler için).
+    İçerik sabittir; yalnız yönetici yenilediğinde değişir."""
+    return JSONResponse(content=_static_qr_payload(_checkin_cfg(db)),
+                        headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.post("/qr/static/regenerate")
+def regenerate_static_qr(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("pdks", "manage")),
+):
+    """Yeni basılı kod üret — ESKİ ÇIKTI ANINDA GEÇERSİZ olur, afiş yeniden
+    basılmalı.  Kod kaybolduğunda/sızdığında kullanılır."""
+    code = "".join(secrets.choice(STATIC_CODE_ALPHABET) for _ in range(STATIC_CODE_LEN))
+    _set_setting(db, _CFG_STATIC_CODE, code)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        return _err(500, "Kod üretilemedi.")
+    log_admin_event(db, request, actor=current_user, action="pdks.qr_static.regenerate",
+                    target_type="integration", target_name="pdks",
+                    details={"not": "yeni basılı QR kodu üretildi, eski çıktı geçersiz"})
+    payload = _static_qr_payload(_checkin_cfg(db))
+    payload["message"] = "Yeni kod üretildi — afişi yeniden yazdırın."
+    return JSONResponse(content=payload,
+                        headers={"Cache-Control": "no-store, max-age=0"})
 
 
 @router.get("/checkin-config")
@@ -1294,9 +1377,15 @@ def update_checkin_config(
     new_ips = cur["allowed_ips"] if data.allowed_ips is None else data.allowed_ips
     new_lat = cur["lat"] if data.lat is None else data.lat
     new_lon = cur["lon"] if data.lon is None else data.lon
+    new_mode = cur["qr_mode"] if data.qr_mode is None else data.qr_mode
     if new_enforce and (not (new_ips or "").strip() or new_lat is None or new_lon is None):
         return _err(400, "Önce ofis IP ve konum ayarlarını kaydedin — "
                          "doğrulama ondan sonra açılabilir.")
+    if new_enforce and new_mode == "static" and not cur["static_code"]:
+        return _err(400, "Önce basılı QR kodunu oluşturup afişi yazdırın — "
+                         "doğrulama ondan sonra açılabilir.")
+    if data.qr_mode is not None:
+        _set_setting(db, _CFG_QR_MODE, data.qr_mode)
     if data.enforce is not None:
         _set_setting(db, _CFG_ENFORCE, "true" if data.enforce else "false")
     if data.allowed_ips is not None:
@@ -1315,7 +1404,8 @@ def update_checkin_config(
     log_admin_event(db, request, actor=current_user, action="pdks.checkin_config",
                     target_type="integration", target_name="pdks",
                     details={"enforce": data.enforce, "allowed_ips": data.allowed_ips,
-                             "lat": data.lat, "lon": data.lon, "radius_m": data.radius_m})
+                             "lat": data.lat, "lon": data.lon, "radius_m": data.radius_m,
+                             "qr_mode": data.qr_mode})
     result = _checkin_cfg(db)
     result["detected_ip"] = _real_client_ip(request)
     return result

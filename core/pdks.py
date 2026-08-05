@@ -31,8 +31,9 @@ Kurallar (tek kaynak — UI ve Excel bu modülün çıktısını gösterir):
     Standart mesai 08:30–17:45 → 555 − 75 = net 480 dk (8 saat).
   • Fazla mesai = max(0, çalışılan − beklenen) → tatil/izin/hafta tatilinde
     çalışılan her dakika mesaidir.
-  • Geç/erken: TR duvar saatiyle, LATE_TOLERANCE_MIN dakika toleransla
-    (simetrik — geç gelmede de erken çıkmada da aynı tolerans).
+  • Geç gelme / erken çıkma BAYRAĞI YOK (bilinçli karar): saatler dakika
+    dakika kaydedilir ama kimse "geç geldi" diye işaretlenmez; puantajda
+    giriş-çıkış saati, toplam çalışma, fazla mesai ve eksik süre görünür.
   • Açık çift (çıkış unutulmuş) 0 dakika sayılır ve missing_checkout bayrağı
     kalkar — yönetici düzeltene kadar toplamlara girmez (bilinçli zorlayıcı).
   • Gün durumu önceliği: resmi_tatil > izinli > hafta_tatili > eksik_cikis >
@@ -65,8 +66,6 @@ DEFAULT_WORK_END = "17:45"
 # Geriye dönük: eski kayıtlarda tek 'öğle molası' alanı vardı.  Artık
 # kullanılmıyor; sabit tutuluyor ki eski import/testler kırılmasın.
 LUNCH_AUTO_DEDUCT_MIN_MINUTES = 360
-# Geç gelme / erken çıkma toleransı (dakika, simetrik).
-LATE_TOLERANCE_MIN = 5
 # Bir 'out' bu süreden (saat) eski bir açık 'in'i kapatmaz — router'ın
 # work_date atama kuralı da aynı sabiti kullanır.
 OPEN_PAIR_MAX_HOURS = 16
@@ -319,24 +318,8 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None):
     # Eksik süre: çıkış eksikse hesaplanamaz (gün zaten toplam dışı bayraklı).
     missing = 0 if missing_checkout else max(0, expected - worked)
 
-    # Geç / erken — yalnız programlı iş gününde ve fiilen gelinmişse (TR saati).
     first_in = min((p["in"]["ts_utc"] for p in pairs if p["in"]), default=None)
     last_out = max((p["out"]["ts_utc"] for p in pairs if p["out"]), default=None)
-    # Resmi tatilde (yarım gün dahil) geç/erken hesaplanmaz — yarım günün hangi
-    # yarısının tatil olduğu şemada tutulmadığından tam-gün saatlerine göre
-    # ölçüm yanıltıcı olur (295 dk "erken çıkış" gibi).
-    late = early = 0
-    if day_schedule and not leave_type and not holiday:
-        if first_in is not None:
-            arr = to_tr(first_in)
-            arr_m = arr.hour * 60 + arr.minute
-            late = max(0, arr_m - _hm_to_minutes(day_schedule["start"]) - LATE_TOLERANCE_MIN)
-        if last_out is not None and not missing_checkout:
-            dep = to_tr(last_out)
-            dep_m = dep.hour * 60 + dep.minute
-            # Gece yarısını aşan çıkış (dep tarihi work_date'ten sonra) erken sayılmaz.
-            if dep.date() == work_date:
-                early = max(0, _hm_to_minutes(day_schedule["end"]) - dep_m - LATE_TOLERANCE_MIN)
 
     # Durum — öncelik sırası sabit (modül docstring'i).
     if holiday:
@@ -365,8 +348,6 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None):
         "expected_minutes": expected,
         "overtime_minutes": overtime,
         "missing_minutes": missing,
-        "late_minutes": late,
-        "early_leave_minutes": early,
         "missing_checkout": missing_checkout,
         "orphan_out": orphan_out,
         "break_deducted": break_deducted,
@@ -398,7 +379,7 @@ def compute_month(year, month, schedules, events_by_date, leaves, holidays, toda
     days = []
     totals = {
         "toplam_calisma": 0, "toplam_fazla_mesai": 0, "toplam_eksik": 0,
-        "gec_sayisi": 0, "devamsizlik_gun": 0, "eksik_cikis_sayisi": 0,
+        "devamsizlik_gun": 0, "eksik_cikis_sayisi": 0,
         "izin_gunleri": {k: 0 for k in LEAVE_TYPES},
     }
     for dnum in range(1, ndays + 1):
@@ -410,7 +391,7 @@ def compute_month(year, month, schedules, events_by_date, leaves, holidays, toda
                 "leave_type": None, "holiday_name": None,
                 "first_in": None, "last_out": None,
                 "worked_minutes": 0, "expected_minutes": 0, "overtime_minutes": 0,
-                "missing_minutes": 0, "late_minutes": 0, "early_leave_minutes": 0,
+                "missing_minutes": 0,
                 "missing_checkout": False, "orphan_out": False,
                 "break_deducted": False, "break_minutes": 0, "pairs": [],
             })
@@ -427,8 +408,6 @@ def compute_month(year, month, schedules, events_by_date, leaves, holidays, toda
         totals["toplam_calisma"] += day["worked_minutes"]
         totals["toplam_fazla_mesai"] += day["overtime_minutes"]
         totals["toplam_eksik"] += day["missing_minutes"]
-        if day["late_minutes"] > 0:
-            totals["gec_sayisi"] += 1
         if day["status"] == "devamsiz":
             totals["devamsizlik_gun"] += 1
         if day["missing_checkout"]:
@@ -545,6 +524,59 @@ def verify_numeric_code(secret: str, code, now_unix,
         if hmac.compare_digest(make_numeric_code(secret, now_b + d), code):
             return "expired"
     return "invalid"
+
+
+# ─── Sabit (basılı) QR — kiosk ekranı olmayan ofisler için ───────────────────
+# Girişe asılan KAĞIT QR.  Dönmez: içeriği tek bir gizli koddur ve kod ancak
+# yönetici "yeni kod üret" dediğinde değişir (o an eski çıktı geçersizleşir).
+# Ekran gerektirmemesi karşılığında zayıflığı fotoğraflanabilir olmasıdır —
+# bu yüzden ASIL güvenlik ofis IP'si + konumdur; QR "kapıya kadar geldim"
+# kanıtıdır.  Kod, kamerası çalışmayan personel için elle de girilebilsin diye
+# kısa ve karışmayan harflerden seçilir (0/O, 1/I/L, 5/S, 8/B yok).
+
+QR_STATIC_PREFIX = "PDKSQRS1"
+STATIC_CODE_ALPHABET = "ACDEFGHJKMNPQRTUVWXYZ2346789"
+STATIC_CODE_LEN = 8
+
+
+def normalize_static_code(raw) -> str:
+    """Elle girilen kodu karşılaştırılabilir hale getir: büyük harf, boşluk ve
+    tire atılır (personel 'k7p2-m9qx' yazsa da tutar).  isascii() ŞART —
+    isalnum() Unicode harfleri de (Ç, Ğ, Ş…) geçirir; sonraki
+    hmac.compare_digest ASCII olmayan str'de TypeError atar (kardeş
+    fonksiyonlar verify_qr_token/verify_numeric_code aynı tuzağa karşı
+    korumalı, burada da aynı kural geçerli)."""
+    if not isinstance(raw, str):
+        return ""
+    return "".join(ch for ch in raw.upper() if ch.isalnum() and ch.isascii())
+
+
+def make_static_token(code: str) -> str:
+    """Basılı QR'ın içeriği — 'PDKSQRS1:<kod>'."""
+    return f"{QR_STATIC_PREFIX}:{code}"
+
+
+def verify_static_code(expected_code: str, given) -> str:
+    """Sabit kodu doğrula.  Dönüş: 'ok' | 'invalid'.
+
+    expected_code boşsa (yönetici henüz kod üretmedi) DAİMA 'invalid' —
+    yapılandırılmamış doğrulama sessizce geçmemeli."""
+    exp = normalize_static_code(expected_code)
+    got = normalize_static_code(given)
+    if not exp or not got:
+        return "invalid"
+    return "ok" if hmac.compare_digest(exp, got) else "invalid"
+
+
+def verify_static_token(expected_code: str, token) -> str:
+    """Okutulan QR metnini doğrula.  'PDKSQRS1:' öneki zorunlu — böylece
+    ofisteki başka bir barkod/QR yanlışlıkla okutulursa net hata verilir."""
+    if not isinstance(token, str) or not token.isascii():
+        return "invalid"
+    parts = token.split(":", 1)
+    if len(parts) != 2 or parts[0] != QR_STATIC_PREFIX:
+        return "invalid"
+    return verify_static_code(expected_code, parts[1])
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
