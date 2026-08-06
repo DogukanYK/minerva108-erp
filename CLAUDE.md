@@ -276,6 +276,28 @@ butonu ekranda yok ve tıklanamaz oldu (modül haftalarca kullanılamadı; sın�
 `check-action` olarak yeniden adlandırıldı). Bootstrap yüklü şablonlarda
 `btn-*` önekli ad KULLANMA. `test_no_bootstrap_shadowed_class_names` kilitler.
 
+**Amazon ürün görselleri — public uç nginx'te İZOLE** (`routers/product_images.py`,
+2026-08-06). `/public/product-images/<SKU>.MAIN.jpg` kimlik doğrulaması olmayan,
+Amazon'un flat-file'ının kendi sunucusundan çektiği bir yol. **uvicorn TEK
+süreçte çalışıyor** (systemd `minerva`, worker sayısı yok) — auth'suz + rate
+limit'ten muaf bir uç aynı süreçte kalırsa, biri bombaladığında tüm ERP
+(login dahil) etkilenirdi. Çözüm: nginx `sites-available/minerva` bu yolu
+Python'a HİÇ SORMADAN disk'ten servis eder (`alias` + `core/product_images.
+FILENAME_RE` ile AYNI regex, `limit_req zone=pubimg rate=60r/s burst=120`).
+**TUZAK — nginx regex'inde `{n,m}` gibi süslü parantez varsa regex'i ÇİFT
+TIRNAKLA sarmalamak ŞART**, yoksa nginx'in kendi config tokenlayıcısı `{`'yi
+blok başlangıcı sanıp "pcre_compile() failed: missing )" hatası verir (regex
+tamamen doğru olsa bile). Python route'u SİLİNMEDİ — lokal `make dev`'de
+(nginx yok) ve nginx config'i devre dışı kalırsa tek doğrulama katmanı bu;
+`tests/test_product_images.py` doğrudan Python route'a karşı çalışır, nginx
+tarafını doğrulama `curl -sI .../public/product-images/<ad>.jpg` ile ETag
+formatına bak (nginx: `"mtime-boyut"` hex; Python/Starlette: 32 haneli md5 —
+farklıysa nginx servis ediyor demektir). nginx yedeği `/root/minerva-nginx.bak.*`.
+Yüklenen görseller `product_images/` dizininde, git'e girmez (`.gitignore`);
+`ops/snapshot/minerva-snapshot.sh` günde bir tarball alır (Drive ile aynı kalıp).
+**AÇIK NOT:** uvicorn `User=root` ile çalışıyor (systemd) — bu ayrı, daha büyük
+bir sertleştirme konusu, bilinçli olarak ertelendi.
+
 **Middleware stack** (api_main.py): `SecurityHeadersMiddleware` (CSP + headers),
 `CSRFMiddleware` (Origin/Referer check on mutating verbs; exempts `/api/login`,
 `/api/logout`), `SlowAPIMiddleware` (rate limiting). Auth is JWT in an HttpOnly +

@@ -27,6 +27,19 @@ FILENAME_RE` beyaz listesine uyan adlar, yalnız JPEG, dizin dışına çıkış
 `safe_path()` ile iki kat engelli.  Yüklenen dosyadan EXIF/GPS/yorum
 segmentleri sıyrılır (`strip_jpeg_metadata`) — public adresten konum bilgisi
 sızmasın.  Dosya listeleme ucu public DEĞİL.
+
+PROD İZOLASYONU (2026-08-06) — bu route'un GET/HEAD handler'ı prod'da FİİLEN
+ÇALIŞMIYOR.  `sites-available/minerva` nginx config'i `/public/product-images/
+<ad>` isteklerini bu Python sürecine hiç sormadan doğrudan disk'ten servis
+ediyor (`alias` + aynı `FILENAME_RE` regex'i, ayrıca `limit_req` ile IP başına
+60r/s sınırlı).  Sebep: uvicorn TEK süreçte çalışıyor (systemd `minerva`, worker
+sayısı yok) — kimlik doğrulaması olmayan ve rate-limit'ten muaf bir uç aynı
+süreçte kalsaydı, biri bombaladığında tüm ERP (login dahil) etkilenirdi.
+nginx regex'e uymayan istekler (bozuk ad, traversal, yanlış uzantı) buraya
+düşer ve Python kendi 404'ünü döner — iki katlı whitelist.
+Bu Python route'u SİLİNMEDİ: lokal `make dev`'de (nginx yok) ve nginx config'i
+bir sebeple devre dışı kalırsa tek doğrulama katmanı budur; testler de
+doğrudan buna karşı çalışır.  nginx yedeği: `/root/minerva-nginx.bak.*`.
 """
 import os
 from typing import List, Optional
