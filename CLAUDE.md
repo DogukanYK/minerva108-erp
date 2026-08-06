@@ -189,6 +189,14 @@ açıkken **üçü birden** sağlanmadan yazılmaz — sıra: **IP → QR → ko
    sızarsa ofise gelmeden imza atılabilirdi. Elle giriş `_code_fails` kaba
    kuvvet limitine tabidir. Basılı kod fotoğraflanabilir → **kabul edilmiş
    risk**; asıl güvence IP + konumdur, QR "kapıya kadar geldim" kanıtıdır.
+   **TUZAK — QR üretiminde `segno.make_qr()` kullan, `segno.make()` DEĞİL**
+   (`_qr_svg`): `make()` en küçük sembolü seçer ve kısa metinlerde **Micro QR**
+   (M1–M4) üretir; Micro QR'ı telefon kameraları, html5-qrcode, OpenCV ve jsQR
+   OKUMAZ → basılı afiş hiç taranmaz (SAHADA YAŞANDI 2026-08-05: `PDKSQRS1:
+   <8 hane>` = 17 karakter → M4; kiosk token'ı 33 karakter olduğu için normal
+   QR'a düşüyordu, bu yüzden yalnız basılı afiş bozuktu). `test_qr_is_not_
+   micro_qr` kilitler. **Bir QR değişikliğini yalnız "SVG üretildi mi" ile
+   doğrulama — gerçek bir decoder'la okut** (`cv2.QRCodeDetector`).
    **TUZAK — `normalize_static_code` `isascii()` de filtrelemeli**: yalnız
    `isalnum()` Unicode harfleri (Ç,Ğ,Ş…) geçirir, sonraki
    `hmac.compare_digest` ASCII-dışı str'de TypeError atıp isteği 500'e

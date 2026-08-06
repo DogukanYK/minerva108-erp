@@ -966,6 +966,36 @@ def test_qr_svg_is_scalable_not_clipped(authed_client):
         f"sabit boyut ölçeklemeyi engeller: {head}"
 
 
+def test_qr_is_not_micro_qr(staff_employee_client, db_session):
+    """QR'lar NORMAL QR olmalı, Micro QR (M1–M4) OLMAMALI.
+
+    SAHADA YAŞANDI: `segno.make()` en küçük sembolü seçer ve kısa metinlerde
+    Micro QR üretir.  Micro QR'ı telefon kameraları ve html5-qrcode/OpenCV/
+    jsQR OKUMAZ — basılı afiş hiç taranmadı.  Çözüm `segno.make_qr()`.
+    Bu testi 'svg üretildi mi' kontrolleri yakalayamıyordu."""
+    import segno
+    from routers.pdks import _qr_svg
+
+    c, _ = staff_employee_client
+    admin = _login(c, "dogukan")
+    code = admin.post("/api/pdks/qr/static/regenerate", headers=ORIGIN).json()["code"]
+    rot_token = admin.get("/api/pdks/qr").json()["token"]
+
+    # Her iki modun token'ı da normal QR'a kodlanmalı
+    for label, token in (("basılı", f"PDKSQRS1:{code}"), ("kiosk", rot_token)):
+        sym = segno.make_qr(token, error="m")
+        assert not sym.is_micro, f"{label} QR micro olmamalı"
+
+    # _qr_svg gerçekten make_qr kullanıyor mu — üretilen SVG'nin modül sayısı
+    # normal QR sınırında mı (micro en fazla 17 modül, normal en az 21)
+    svg = _qr_svg("PDKSQRS1:" + code)
+    vb = svg[svg.index("viewBox=") + 9:]
+    vb = vb[:vb.index('"')].split()
+    modules = int(float(vb[2])) // 12          # scale=12
+    assert modules >= 21 + 2 * 2, \
+        f"Micro QR üretiliyor (modül={modules}) — segno.make_qr() kullanılmalı"
+
+
 def test_kiosk_override_user_can_only_show_qr(client, db_session):
     """Kiosk cihazı: yalnız pdks.kiosk yetkili özel hesap."""
     perms = {"pdks": {"check": False, "view_own": False, "view_all": False,

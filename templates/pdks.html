@@ -785,7 +785,9 @@
         openBarcodeScanner(text => resolve(String(text || '').trim()), {
           qrbox: { width: 240, height: 240 },
           title: 'PDKS QR Doğrulama',
-          hint: 'Girişteki ekranda görünen QR kodu kameraya gösterin.',
+          hint: (window._pdksQrMode || 'static') === 'static'
+            ? 'Girişteki QR afişini kameraya gösterin.'
+            : 'Girişteki ekranda görünen QR kodu kameraya gösterin.',
           onClose: () => reject(new Error('__cancel__')),
         });
       });
@@ -836,7 +838,9 @@
         else if (e && e.message === '__noscanner__') {
           // Kamera modülü yüklenemedi (eski tarayıcı / kamera izni yok) —
           // personeli boşuna uğraştırma, doğrudan kod akışına al.
-          toastFn('Kamera açılamadı — ekrandaki kodu girin.', 'info');
+          toastFn((window._pdksQrMode || 'static') === 'static'
+            ? 'Kamera açılamadı — afişteki kodu elle girin.'
+            : 'Kamera açılamadı — ekrandaki kodu girin.', 'info');
           codeOpen(type);
         }
         else if (e && (typeof e.code === 'number' || e.message === '__nogeo__')) toastFn(geoErrMessage(e));

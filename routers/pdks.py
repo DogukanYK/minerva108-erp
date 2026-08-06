@@ -1297,15 +1297,23 @@ def kiosk_qr(
 
 
 def _qr_svg(text: str) -> str:
-    """QR'ı SVG olarak üret.  omitsize=True ŞART — yoksa sabit width/height
-    yazılır, viewBox olmaz ve sembol kartın içinde kırpılıp okunamaz hale
-    gelir (bkz. CLAUDE.md tuzağı + test_qr_svg_is_scalable_not_clipped)."""
+    """QR'ı SVG olarak üret.
+
+    İKİ ŞART birden gerekli, ikisi de sahada yaşandı:
+    1. `make_qr()` — `make()` DEĞİL.  make() en küçük sembolü seçer ve kısa
+       metinlerde **Micro QR**'a (M1–M4) düşer; Micro QR'ı telefon kameraları
+       ve html5-qrcode/OpenCV/jsQR OKUMAZ → basılı afiş taranmaz.  make_qr()
+       her zaman normal QR üretir.
+    2. `omitsize=True` — yoksa sabit width/height yazılır, viewBox olmaz ve
+       sembol kartın içinde kırpılıp okunamaz hale gelir.
+    Regresyon: test_qr_svg_is_scalable_not_clipped + test_qr_is_not_micro_qr.
+    """
     import io as _io
 
     import segno
 
     buf = _io.BytesIO()
-    segno.make(text, error="m").save(buf, kind="svg", xmldecl=False,
+    segno.make_qr(text, error="m").save(buf, kind="svg", xmldecl=False,
                                      scale=12, dark="#111827", border=2,
                                      omitsize=True)
     return buf.getvalue().decode("utf-8")
