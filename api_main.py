@@ -22,7 +22,7 @@ import os
 from typing import Optional
 
 from fastapi import FastAPI, Request, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -36,7 +36,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions, get_role_labels
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router, shopify as shopify_router, pdks as pdks_router, retention as retention_router
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router, shopify as shopify_router, pdks as pdks_router, retention as retention_router, product_images as product_images_router
 from core.domain import get_active_domain, domain_label
 
 
@@ -220,6 +220,22 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
 # ─── Static + templates ─────────────────────────────────────────────────────
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+def robots_txt():
+    """Arama motoru yönergesi.
+
+    `/public/` AÇIKÇA serbest: Amazon ürün görsellerini oradan çekiyor ve
+    yolun engellenmemesi Amazon'un teknik şartı.  ERP'nin geri kalanı kapalı.
+    """
+    return (
+        "User-agent: *\n"
+        "Allow: /public/\n"
+        "Disallow: /api/\n"
+        "Disallow: /s/\n"
+        "Disallow: /\n"
+    )
 templates = Jinja2Templates(directory="templates")
 
 
@@ -290,6 +306,9 @@ app.include_router(returns_router.router)
 app.include_router(sample_analysis_router.router)
 app.include_router(pdks_router.router)
 app.include_router(retention_router.router)
+app.include_router(product_images_router.router)
+# PUBLIC — kimlik doğrulaması YOK (Amazon görselleri kendi sunucusundan çeker)
+app.include_router(product_images_router.public_router)
 app.include_router(shopify_router.router)
 app.include_router(shopify_router.public_router)
 app.include_router(distributors_router.router)
@@ -552,6 +571,17 @@ def numune_analiz_page(request: Request, db: Session = Depends(get_db)):
     ctx["sample_properties"] = SAMPLE_PROPERTIES   # tek kaynak — form satırları
     ctx["sample_form_code"] = FORM_CODE
     return templates.TemplateResponse("numune_analiz.html", ctx)
+
+
+@app.get("/urun-gorselleri", response_class=HTMLResponse)
+def urun_gorselleri_page(request: Request, db: Session = Depends(get_db)):
+    """Amazon ürün görselleri — yükleme + public adres listesi + flat-file CSV."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "items", "import"):
+        return RedirectResponse(url="/", status_code=302)
+    return templates.TemplateResponse("urun_gorselleri.html", _page_ctx(request, payload, user))
 
 
 @app.get("/sahit-numune", response_class=HTMLResponse)

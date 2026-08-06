@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 # Her korumalı sayfa + minimum gerekli izin (SuperAdmin hepsine erişebilir)
 PAGES = [
     "/sahit-numune",
+    "/urun-gorselleri",
     "/",
     "/items",
     "/suppliers",
