@@ -37,13 +37,14 @@ REASON_LABELS = {
     "diger":   "Diğer",
 }
 
-MOVEMENT_TYPES = ("giris", "cikis", "imha", "konum", "duzeltme")
+MOVEMENT_TYPES = ("giris", "cikis", "imha", "konum", "duzeltme", "kontrol")
 MOVEMENT_LABELS = {
     "giris":    "Dolaba yerleştirildi",
     "cikis":    "Dolaptan çıkarıldı",
     "imha":     "İmha edildi",
     "konum":    "Konum değişti",
     "duzeltme": "Düzeltme",
+    "kontrol":  "Periyodik kontrol",
 }
 
 STATUS_LABELS = {
@@ -54,6 +55,53 @@ STATUS_LABELS = {
 
 # Saklama bitişine bu kadar gün kalınca "yaklaşıyor" sayılır (UI rozeti)
 DUE_SOON_DAYS = 90
+
+
+# ─── Periyodik kontrol ───────────────────────────────────────────────────────
+# Numune dolaptan alınıp gözlemlendiğinde doldurulan kalemler.  Kullanıcı
+# kararı: SABİT 5 kalem, serbest satır eklenmiyor.  Bu yüzden DB'ye yalnız
+# `key` yazılır, etiket metni buradan okunur (core/qc_questions.py kuralı) —
+# etiket değişirse eski kayıtlar da yeni metinle görünür, drift olmaz.
+#
+# NOT: kullanıcı "sabit aralık yok, sistem hatırlatma çıkarmasın" dedi →
+# planlama alanı (`next_check_due`), scheduler job'ı ve push BİLİNÇLİ olarak
+# YOK.  Kontrol yapıldığında kaydedilir, sistem kimseyi dürtmez.
+CHECK_ITEMS = (
+    {"key": "gorunum", "label": "Görünüm"},
+    {"key": "koku",    "label": "Koku"},
+    {"key": "renk",    "label": "Renk"},
+    {"key": "ayrisma", "label": "Ayrışma"},
+    {"key": "ambalaj", "label": "Ambalaj durumu"},
+)
+CHECK_ITEM_KEYS = tuple(x["key"] for x in CHECK_ITEMS)
+CHECK_ITEM_LABELS = {x["key"]: x["label"] for x in CHECK_ITEMS}
+
+# Kalem durumu.  'state' adı bilinçli — RetentionSample.status (stored/
+# depleted/destroyed) ile karışmasın.
+CHECK_STATES = ("normal", "degisim")
+CHECK_STATE_LABELS = {"normal": "Normal", "degisim": "Değişim var"}
+
+CHECK_RESULTS = ("uygun", "uygun_degil")
+CHECK_RESULT_LABELS = {"uygun": "UYGUN", "uygun_degil": "UYGUN DEĞİL"}
+
+# Sayım aktarımında belirsiz kalan kayıtların notuna gömülen işaret.
+# `needs_review` bayrağının geriye dönük doldurulması bunu arar
+# (database._backfill_retention_needs_review).
+REVIEW_MARKERS = ("TEYİT BEKLİYOR",)
+
+
+def check_item_label(key) -> str:
+    """Bilinmeyen anahtar anahtarın kendisine düşer — kalem listesi ileride
+    değişirse eski kayıtlar okunur kalır (core/qc_report.parse_qc_form kuralı)."""
+    return CHECK_ITEM_LABELS.get(key or "", key or "—")
+
+
+def check_state_label(state) -> str:
+    return CHECK_STATE_LABELS.get(state or "", state or "—")
+
+
+def check_result_label(result) -> str:
+    return CHECK_RESULT_LABELS.get(result or "", result or "—")
 
 
 def add_months(d: date, months: int) -> date:

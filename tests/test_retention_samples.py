@@ -21,8 +21,8 @@ from core.brands import cabinet_of, lot_code
 from core.lots import format_lot, normalize_lot, parse_sequence
 from core.retention import add_months, expiry_state, retention_until
 from database import (AdminAuditLog, Inventory, Item, ProductionHistory, Recipe,
-                      RecipeIngredient, RetentionSample, RetentionSampleMovement,
-                      Transaction)
+                      RecipeIngredient, RetentionSample, RetentionSampleCheck,
+                      RetentionSampleMovement, Transaction, User)
 
 _HDR = {"Origin": "http://testserver"}
 
@@ -390,3 +390,335 @@ def test_manual_sample_creation(authed_client, db_session):
     db_session.expire_all()
     # Elle kayıt stoğa DOKUNMAZ (adet zaten current_stock içinde)
     assert db_session.query(Item).get(tgt.id).current_stock == before
+
+
+# ═══ Bilgi girişi turu ═══════════════════════════════════════════════════════
+# Kayıt silme ≠ imha · toplu konum · periyodik kontrol · teyit bayrağı
+
+def _check_payload(**over):
+    from core.retention import CHECK_ITEM_KEYS
+    p = {"items": [{"key": k, "state": "normal", "note": ""} for k in CHECK_ITEM_KEYS],
+         "result": "uygun", "result_note": "ilk kontrol"}
+    p.update(over)
+    return p
+
+
+# ─── Kayıt silme: İMHADAN farkı (asıl regresyon kilidi) ─────────────────────
+
+def test_record_delete_does_not_touch_stock(authed_client, db_session):
+    """Yanlış girilen kaydı silmek stoğa DOKUNMAZ — imhadan farkı budur."""
+    rec, tgt = _recipe(db_session, suffix="RD")
+    r = authed_client.post("/api/retention/samples",
+                           json={"item_id": tgt.id, "lot_number": "ELLE-001", "quantity": 3},
+                           headers=_HDR)
+    assert r.status_code == 201, r.text
+    sid = r.json()["id"]
+    before = db_session.query(Item).get(tgt.id).current_stock
+    tx_before = db_session.query(Transaction).filter(Transaction.item_id == tgt.id).count()
+
+    d = authed_client.request("DELETE", f"/api/retention/samples/{sid}",
+                              json={"reason": "yanlış ürüne girdim"}, headers=_HDR)
+    assert d.status_code == 200, d.text
+    db_session.expire_all()
+    assert db_session.query(Item).get(tgt.id).current_stock == before      # stok SABİT
+    assert db_session.query(Transaction).filter(
+        Transaction.item_id == tgt.id).count() == tx_before                # yeni Transaction YOK
+    row = db_session.query(RetentionSample).get(sid)
+    assert row.is_active is False and row.quantity == 3                    # adet korunur, gizlenir
+    # Her yerden gizlenmiş olmalı
+    assert authed_client.get(f"/api/retention/samples/{sid}").status_code == 404
+    assert all(x["id"] != sid for x in authed_client.get("/api/retention/samples").json()["rows"])
+    assert authed_client.post(f"/api/retention/samples/{sid}/checkout",
+                              json={"quantity": 1, "reason": "lab"}, headers=_HDR).status_code == 404
+
+
+def test_destroy_still_reduces_stock(authed_client, db_session):
+    """İmha DAVRANIŞI DEĞİŞMEDİ — silme eklendi diye imha bozulmamalı."""
+    rs, tgt = _make_sample(authed_client, db_session, suffix="DS2")
+    before = db_session.query(Item).get(tgt.id).current_stock
+    r = authed_client.post(f"/api/retention/samples/{rs.id}/destroy",
+                           json={"note": "süre doldu"}, headers=_HDR)
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    assert db_session.query(Item).get(tgt.id).current_stock == before - 5   # stok DÜŞTÜ
+    assert db_session.query(Transaction).filter(
+        Transaction.item_id == tgt.id,
+        Transaction.transaction_type == "Output").count() == 1
+
+
+def test_delete_blocked_for_production_source(authed_client, db_session):
+    """Üretimden gelen kayıt silinemez — yolu İmha/QC reddidir."""
+    rs, _ = _make_sample(authed_client, db_session, suffix="PS")
+    assert rs.source == "production"
+    d = authed_client.request("DELETE", f"/api/retention/samples/{rs.id}",
+                              json={"reason": "olmadı"}, headers=_HDR)
+    assert d.status_code == 400 and "Üretimden gelen" in d.json()["detail"]
+    db_session.expire_all()
+    assert db_session.query(RetentionSample).get(rs.id).is_active is True
+
+
+def test_delete_blocked_after_checkout(authed_client, db_session):
+    """Çıkış görmüş kayıt stok defterine yazılmıştır — gizlenemez."""
+    rec, tgt = _recipe(db_session, suffix="DC")
+    sid = authed_client.post("/api/retention/samples",
+                             json={"item_id": tgt.id, "lot_number": "ELLE-002", "quantity": 4},
+                             headers=_HDR).json()["id"]
+    assert authed_client.post(f"/api/retention/samples/{sid}/checkout",
+                              json={"quantity": 1, "reason": "lab"}, headers=_HDR).status_code == 200
+    d = authed_client.request("DELETE", f"/api/retention/samples/{sid}",
+                              json={"reason": "silinsin"}, headers=_HDR)
+    assert d.status_code == 400 and "çıkış/imha" in d.json()["detail"]
+    db_session.expire_all()
+    assert db_session.query(RetentionSample).get(sid).is_active is True
+
+
+def test_delete_rbac(client, authed_client, db_session):
+    """Silme `retention.destroy` ister — LabTech'te kapalı."""
+    rec, tgt = _recipe(db_session, suffix="DR")
+    sid = authed_client.post("/api/retention/samples",
+                             json={"item_id": tgt.id, "lot_number": "ELLE-003", "quantity": 2},
+                             headers=_HDR).json()["id"]
+    client.post("/api/login", json={"username": "meltem", "password": "minerva123"}, headers=_HDR)
+    assert client.request("DELETE", f"/api/retention/samples/{sid}",
+                          json={"reason": "dene"}, headers=_HDR).status_code == 403
+
+
+# ─── Toplu konum ────────────────────────────────────────────────────────────
+
+def test_bulk_location_updates_many(authed_client, db_session):
+    ids = []
+    for i in range(3):
+        rec, tgt = _recipe(db_session, suffix=f"BL{i}")
+        ids.append(authed_client.post("/api/retention/samples",
+                                      json={"item_id": tgt.id, "lot_number": f"BL{i}-1",
+                                            "quantity": 2}, headers=_HDR).json()["id"])
+    r = authed_client.put("/api/retention/samples/bulk-location", headers=_HDR,
+                          json={"rows": [{"id": ids[0], "shelf": "1", "slot": "A"},
+                                         {"id": ids[1], "shelf": "1", "slot": "B"},
+                                         {"id": ids[2], "shelf": "2", "slot": ""}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["updated"] == 3 and r.json()["skipped"] == 0
+    db_session.expire_all()
+    rows = {i: db_session.query(RetentionSample).get(i) for i in ids}
+    assert (rows[ids[0]].shelf, rows[ids[0]].slot) == ("1", "A")
+    assert (rows[ids[2]].shelf, rows[ids[2]].slot) == ("2", None)   # "" → temizle
+    # Değişen her satıra bir 'konum' hareketi
+    for i in ids:
+        assert sum(1 for m in db_session.query(RetentionSample).get(i).movements
+                   if m.movement_type == "konum") == 1
+
+    # İkinci kez AYNI değerlerle → hiçbir şey değişmedi, hareket yazılmadı
+    r2 = authed_client.put("/api/retention/samples/bulk-location", headers=_HDR,
+                           json={"rows": [{"id": ids[0], "shelf": "1", "slot": "A"}]})
+    assert r2.json()["updated"] == 0
+    db_session.expire_all()
+    assert sum(1 for m in db_session.query(RetentionSample).get(ids[0]).movements
+               if m.movement_type == "konum") == 1
+
+
+def test_bulk_location_does_not_touch_stock(authed_client, db_session):
+    rs, tgt = _make_sample(authed_client, db_session, suffix="BS")
+    before = db_session.query(Item).get(tgt.id).current_stock
+    tx_before = db_session.query(Transaction).count()
+    assert authed_client.put("/api/retention/samples/bulk-location", headers=_HDR,
+                             json={"rows": [{"id": rs.id, "shelf": "9"}]}).status_code == 200
+    db_session.expire_all()
+    assert db_session.query(Item).get(tgt.id).current_stock == before
+    assert db_session.query(Transaction).count() == tx_before
+
+
+def test_bulk_location_domain_isolated(authed_client, db_session):
+    """Başka panelin numunesine yazılamaz — sessizce atlanır."""
+    rs, _ = _make_sample(authed_client, db_session, suffix="BD")
+    authed_client.post("/api/domain/switch", json={"domain": "supplement"}, headers=_HDR)
+    r = authed_client.put("/api/retention/samples/bulk-location", headers=_HDR,
+                          json={"rows": [{"id": rs.id, "shelf": "X"}]})
+    assert r.status_code == 200
+    assert r.json()["updated"] == 0 and r.json()["skipped"] == 1
+    db_session.expire_all()
+    assert db_session.query(RetentionSample).get(rs.id).shelf is None      # DOKUNULMADI
+
+
+def test_partial_put_does_not_wipe_slot(authed_client, db_session):
+    """Yalnız `shelf` gönderen istek `slot`'u SİLMEMELİ (eski hatanın kilidi)."""
+    rs, _ = _make_sample(authed_client, db_session, suffix="PW")
+    authed_client.put(f"/api/retention/samples/{rs.id}",
+                      json={"shelf": "3", "slot": "C"}, headers=_HDR)
+    db_session.expire_all()
+    assert (db_session.query(RetentionSample).get(rs.id).shelf,
+            db_session.query(RetentionSample).get(rs.id).slot) == ("3", "C")
+    # Sadece shelf gönder → slot korunmalı
+    authed_client.put(f"/api/retention/samples/{rs.id}", json={"shelf": "4"}, headers=_HDR)
+    db_session.expire_all()
+    row = db_session.query(RetentionSample).get(rs.id)
+    assert row.shelf == "4" and row.slot == "C", "slot silindi — kısmi güncelleme hatası"
+    # Açıkça boş gönderilirse TEMİZLENİR
+    authed_client.put(f"/api/retention/samples/{rs.id}", json={"slot": ""}, headers=_HDR)
+    db_session.expire_all()
+    assert db_session.query(RetentionSample).get(rs.id).slot is None
+
+
+# ─── Periyodik kontrol ──────────────────────────────────────────────────────
+
+def test_check_roundtrip_preserves_observations(authed_client, db_session):
+    """Gözlemler birebir geri okunmalı — Türkçe karakter bozulmadan."""
+    rs, _ = _make_sample(authed_client, db_session, suffix="CK")
+    payload = _check_payload(result="uygun_degil", result_note="hafif renk değişimi")
+    payload["items"][2] = {"key": "renk", "state": "degisim", "note": "sarıya çalıyor"}
+    r = authed_client.post(f"/api/retention/samples/{rs.id}/checks",
+                           json=payload, headers=_HDR)
+    assert r.status_code == 201, r.text
+    d = authed_client.get(f"/api/retention/samples/{rs.id}").json()
+    assert len(d["checks"]) == 1
+    c = d["checks"][0]
+    assert c["result"] == "uygun_degil" and c["result_label"] == "UYGUN DEĞİL"
+    renk = [x for x in c["items"] if x["key"] == "renk"][0]
+    assert renk["state"] == "degisim" and renk["note"] == "sarıya çalıyor"
+    assert renk["label"] == "Renk" and renk["state_label"] == "Değişim var"
+    assert len(c["items"]) == 5
+
+
+def test_check_does_not_change_stock_or_status(authed_client, db_session):
+    """'Uygun değil' bile stoğa/duruma DOKUNMAZ — otomatik imha yok."""
+    rs, tgt = _make_sample(authed_client, db_session, suffix="CS")
+    before = db_session.query(Item).get(tgt.id).current_stock
+    tx_before = db_session.query(Transaction).count()
+    assert authed_client.post(f"/api/retention/samples/{rs.id}/checks",
+                              json=_check_payload(result="uygun_degil"),
+                              headers=_HDR).status_code == 201
+    db_session.expire_all()
+    row = db_session.query(RetentionSample).get(rs.id)
+    assert row.status == "stored" and row.quantity == 5
+    assert db_session.query(Item).get(tgt.id).current_stock == before
+    assert db_session.query(Transaction).count() == tx_before
+
+
+def test_check_validation(authed_client, db_session):
+    rs, _ = _make_sample(authed_client, db_session, suffix="CV")
+    url = f"/api/retention/samples/{rs.id}/checks"
+    bad_key = _check_payload()
+    bad_key["items"][0] = {"key": "viskozite", "state": "normal"}
+    assert authed_client.post(url, json=bad_key, headers=_HDR).status_code == 400
+    bad_state = _check_payload()
+    bad_state["items"][0] = {"key": "gorunum", "state": "belki"}
+    assert authed_client.post(url, json=bad_state, headers=_HDR).status_code == 400
+    eksik = _check_payload()
+    eksik["items"] = eksik["items"][:3]                       # 5 kalem dolmalı
+    assert authed_client.post(url, json=eksik, headers=_HDR).status_code == 400
+    assert authed_client.post(url, json=_check_payload(result="belki"),
+                              headers=_HDR).status_code == 400
+    ileri = _check_payload(checked_on=(date.today() + timedelta(days=1)).isoformat())
+    assert authed_client.post(url, json=ileri, headers=_HDR).status_code == 400
+    db_session.expire_all()
+    assert db_session.query(RetentionSample).get(rs.id).checks == []   # hiçbiri yazılmadı
+
+
+def test_check_blocked_on_destroyed_sample(authed_client, db_session):
+    rs, _ = _make_sample(authed_client, db_session, suffix="CB")
+    authed_client.post(f"/api/retention/samples/{rs.id}/destroy", json={}, headers=_HDR)
+    r = authed_client.post(f"/api/retention/samples/{rs.id}/checks",
+                           json=_check_payload(), headers=_HDR)
+    assert r.status_code == 400 and "kontrol edilemez" in r.json()["detail"]
+
+
+def test_check_shows_in_timeline_and_list(authed_client, db_session):
+    """Kontrol hareket çizelgesinde görünür; listede EN YENİ sonuç yazar."""
+    rs, _ = _make_sample(authed_client, db_session, suffix="CT")
+    authed_client.post(f"/api/retention/samples/{rs.id}/checks",
+                       json=_check_payload(checked_on="2026-01-10", result="uygun"), headers=_HDR)
+    authed_client.post(f"/api/retention/samples/{rs.id}/checks",
+                       json=_check_payload(checked_on="2026-06-20", result="uygun_degil"), headers=_HDR)
+    d = authed_client.get(f"/api/retention/samples/{rs.id}").json()
+    assert [m["type"] for m in d["movements"]].count("kontrol") == 2
+    assert d["movements"][-1]["type_label"] == "Periyodik kontrol"
+    row = [x for x in authed_client.get("/api/retention/samples").json()["rows"]
+           if x["id"] == rs.id][0]
+    assert row["check_count"] == 2
+    assert row["last_check_on"] == "20.06.2026"                # en yenisi
+    assert row["last_check_result"] == "uygun_degil"
+
+
+def test_check_rbac_and_domain(client, authed_client, db_session):
+    rs, _ = _make_sample(authed_client, db_session, suffix="CR")
+    url = f"/api/retention/samples/{rs.id}/checks"
+    # Staff (retention.edit yok) yazamaz
+    su = db_session.query(User).filter(User.username == "melek.kaya").first()
+    if su:
+        client.post("/api/login", json={"username": su.username, "password": "minerva123"},
+                    headers=_HDR)
+        assert client.post(url, json=_check_payload(), headers=_HDR).status_code == 403
+    # Domain izolasyonu
+    authed_client.post("/api/domain/switch", json={"domain": "supplement"}, headers=_HDR)
+    assert authed_client.post(url, json=_check_payload(), headers=_HDR).status_code == 404
+
+
+def test_unchecked_filter(authed_client, db_session):
+    a, _ = _make_sample(authed_client, db_session, suffix="U1")
+    b, _ = _make_sample(authed_client, db_session, suffix="U2")
+    authed_client.post(f"/api/retention/samples/{a.id}/checks",
+                       json=_check_payload(), headers=_HDR)
+    ids = [x["id"] for x in authed_client.get(
+        "/api/retention/samples?unchecked=1").json()["rows"]]
+    assert b.id in ids and a.id not in ids
+
+
+# ─── Teyit bayrağı ──────────────────────────────────────────────────────────
+
+def test_needs_review_filter_and_clear(authed_client, db_session):
+    rs, _ = _make_sample(authed_client, db_session, suffix="NR")
+    db_session.query(RetentionSample).filter(RetentionSample.id == rs.id).update(
+        {"needs_review": True, "note": "SKT belirsiz — TEYİT BEKLİYOR"})
+    db_session.commit()
+    rows = authed_client.get("/api/retention/samples?needs_review=1").json()["rows"]
+    assert [x["id"] for x in rows] == [rs.id] and rows[0]["needs_review"] is True
+    # Teyit et → filtreden çıkar
+    assert authed_client.put(f"/api/retention/samples/{rs.id}",
+                             json={"needs_review": False}, headers=_HDR).status_code == 200
+    db_session.expire_all()
+    assert db_session.query(RetentionSample).get(rs.id).needs_review is False
+    assert authed_client.get("/api/retention/samples?needs_review=1").json()["rows"] == []
+
+
+def test_backfill_is_idempotent_and_respects_clearing(authed_client, db_session):
+    """Backfill BİR KEZ koşar — kullanıcı bayrağı temizleyince geri getirmez.
+
+    init_db her açılışta çalıştığı için bu kritik: koşulsuz bir UPDATE her
+    deploy'da teyit edilmiş kayıtları yeniden 'bekliyor'a döndürürdü.
+    """
+    from database import _backfill_retention_needs_review, AppSetting
+    rs, _ = _make_sample(authed_client, db_session, suffix="BF")
+    db_session.query(RetentionSample).filter(RetentionSample.id == rs.id).update(
+        {"note": "TEYİT BEKLİYOR"})
+    db_session.query(AppSetting).filter(
+        AppSetting.key == "retention.review_backfill_done").delete()
+    db_session.commit()
+
+    _backfill_retention_needs_review()
+    db_session.expire_all()
+    assert db_session.query(RetentionSample).get(rs.id).needs_review is True
+
+    # Kullanıcı teyit etti (not metni yerinde duruyor) → ikinci koşu DOKUNMAMALI
+    db_session.query(RetentionSample).filter(RetentionSample.id == rs.id).update(
+        {"needs_review": False})
+    db_session.commit()
+    _backfill_retention_needs_review()
+    db_session.expire_all()
+    assert db_session.query(RetentionSample).get(rs.id).needs_review is False
+
+
+def test_put_recomputes_retention_until_from_produced_at(authed_client, db_session):
+    rs, _ = _make_sample(authed_client, db_session, suffix="PR")
+    r = authed_client.put(f"/api/retention/samples/{rs.id}",
+                          json={"produced_at": "2026-01-15"}, headers=_HDR)
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    # 24 + 6 ay varsayılan → 15.07.2028
+    assert db_session.query(RetentionSample).get(rs.id).retention_until == date(2028, 7, 15)
+
+
+def test_manual_create_rejects_duplicate_lot(authed_client, db_session):
+    rec, tgt = _recipe(db_session, suffix="DL")
+    body = {"item_id": tgt.id, "lot_number": "dup-1", "quantity": 2}
+    assert authed_client.post("/api/retention/samples", json=body, headers=_HDR).status_code == 201
+    r2 = authed_client.post("/api/retention/samples", json=body, headers=_HDR)
+    assert r2.status_code == 400 and "zaten kayıtlı" in r2.json()["detail"]

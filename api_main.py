@@ -592,9 +592,16 @@ def sahit_numune_page(request: Request, db: Session = Depends(get_db)):
     user = _resolve_active_user(payload, db)
     if not _user_can(user, "retention", "view"):
         return RedirectResponse(url="/", status_code=302)
-    from core.retention import CHECKOUT_REASONS, reason_label
+    from core.retention import (CHECK_ITEMS, CHECK_RESULT_LABELS, CHECK_RESULTS,
+                                CHECK_STATE_LABELS, CHECK_STATES,
+                                CHECKOUT_REASONS, reason_label)
     ctx = _page_ctx(request, payload, user)
     ctx["retention_reasons"] = [{"key": k, "label": reason_label(k)} for k in CHECKOUT_REASONS]
+    # Periyodik kontrol kalemleri TEK KAYNAK core/retention.py — şablon kendi
+    # listesini tutmaz (core/qc_questions.py kalıbı).
+    ctx["retention_check_items"] = [dict(x) for x in CHECK_ITEMS]
+    ctx["retention_check_states"] = [{"key": k, "label": CHECK_STATE_LABELS[k]} for k in CHECK_STATES]
+    ctx["retention_check_results"] = [{"key": k, "label": CHECK_RESULT_LABELS[k]} for k in CHECK_RESULTS]
     return templates.TemplateResponse("sahit_numune.html", ctx)
 
 

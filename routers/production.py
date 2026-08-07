@@ -111,7 +111,8 @@ def _mark_retention_rejected(db: Session, inv: Inventory, actor: str, reason: st
     reddedilmiş bir numune dolapta duruyormuş gibi görünürdü.
     """
     row = (db.query(RetentionSample)
-           .filter(RetentionSample.inventory_id == inv.id).first())
+           .filter(RetentionSample.inventory_id == inv.id,
+                   RetentionSample.is_active == True).first())      # noqa: E712
     if not row:
         return
     qty = row.quantity or 0.0

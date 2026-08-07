@@ -15,9 +15,11 @@ STOĞA DOKUNMAZ.  Dolaptaki numuneler `Item.current_stock` içinde sayılmaya
 devam eder (kullanıcı kararı); bu script hiçbir `Transaction` yazmaz, hiçbir
 bakiye değiştirmez.  Yalnız dolap görünürlüğü + lot sayacı.
 
-İDEMPOTENT: her çalıştırmada source in ('backfill','sayim') kayıtlarını
-silip sayımdan yeniden kurar.  `production` kaynaklı kayıtlara (yeni
-üretimlerden gelenler) DOKUNMAZ.
+⚠ YIKICI — "yeniden kur" script'idir, idempotent DEĞİL.  source in
+('backfill','sayim') kayıtlarını SİLİP sayımdan yeniden kurar.  Elle girilmiş
+raf/göz, teyit durumu ve periyodik kontrol kayıtları BU SIRADA KAYBOLUR.
+Bu yüzden koruma var: böyle veri varsa script `--force-wipe` olmadan durur.
+`production` kaynaklı kayıtlara DOKUNMAZ.
 
 Kullanım:
     venv/bin/python scripts/import_retention_count.py            # kuru çalıştırma
@@ -31,10 +33,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from database import (SessionLocal, Item, RetentionSample,          # noqa: E402
-                      RetentionSampleMovement)
+                      RetentionSampleCheck, RetentionSampleMovement)
 from core.brands import cabinet_of                                  # noqa: E402
 
 COMMIT = "--commit" in sys.argv
+FORCE_WIPE = "--force-wipe" in sys.argv
 DATA = Path(__file__).resolve().parent.parent / "data" / "sahit_sayim_20260803.json"
 COUNT_DATE = "03.08.2026"
 
@@ -72,8 +75,29 @@ def main() -> int:
         # ── ② Dolap kayıtları — önceki sayım/backfill kayıtlarını tazele ──
         old = (db.query(RetentionSample)
                .filter(RetentionSample.source.in_(("backfill", "sayim"))).all())
+
+        # ── KORUMA: elle girilmiş veriyi sessizce silme ──
+        # Bu script kayıtları SİLİP yeniden kuruyor.  Kullanıcı 126 satıra
+        # raf/göz girdikten veya kontrol kaydı açtıktan sonra çalıştırılırsa
+        # o emek yok olur.  Böyle veri varsa açık onay iste.
+        old_ids = [o.id for o in old]
+        n_located = sum(1 for o in old if (o.shelf or o.slot))
+        n_checked = (db.query(RetentionSampleCheck)
+                     .filter(RetentionSampleCheck.sample_id.in_(old_ids)).count()
+                     if old_ids else 0)
+        if (n_located or n_checked) and not FORCE_WIPE:
+            print(f"\n⛔ DURDURULDU — bu script mevcut {len(old)} kaydı SİLİP yeniden kurar.")
+            if n_located:
+                print(f"   • {n_located} kayıtta elle girilmiş raf/göz bilgisi var")
+            if n_checked:
+                print(f"   • {n_checked} periyodik kontrol kaydı var")
+            print("   Bunlar geri getirilemez.  Yine de devam etmek için: --force-wipe\n")
+            return 2
+
         if COMMIT:
             for o in old:
+                db.query(RetentionSampleCheck).filter(
+                    RetentionSampleCheck.sample_id == o.id).delete()
                 db.query(RetentionSampleMovement).filter(
                     RetentionSampleMovement.sample_id == o.id).delete()
                 db.delete(o)

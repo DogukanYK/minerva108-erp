@@ -11,6 +11,9 @@
     window.CAN_CHECKOUT = {{ 'true' if can('retention','checkout') else 'false' }};
     window.CAN_DESTROY  = {{ 'true' if can('retention','destroy') else 'false' }};
     window.REASONS      = {{ retention_reasons | tojson }};
+    window.CHECK_ITEMS   = {{ retention_check_items | tojson }};
+    window.CHECK_STATES  = {{ retention_check_states | tojson }};
+    window.CHECK_RESULTS = {{ retention_check_results | tojson }};
     window.can = function (category, action) {
       const cat = window.PERMS && window.PERMS[category];
       return !!(cat && cat[action]);
@@ -129,6 +132,19 @@
     .mini.danger:hover{ border-color:#b91c1c; }
     .act-cell{ white-space:nowrap; }
     code{ background:#f8f6f2; padding:0.1rem 0.4rem; border-radius:5px; font-size:0.84rem; }
+
+    .match-row{ padding:0.45rem 0.6rem; border-bottom:1px solid #f3f0ea; cursor:pointer;
+      display:flex; justify-content:space-between; gap:0.5rem; font-size:0.88rem; }
+    .match-row:hover{ background:#faf8f4; }
+    .warn-box{ background:#fef2f2; border:1px solid #fecaca; border-radius:9px;
+      padding:0.7rem 0.9rem; font-size:0.85rem; color:#7f1d1d; line-height:1.6; }
+    .loc-in{ width:58px; padding:0.25rem 0.4rem; border:1.5px solid #e5e7eb; border-radius:6px;
+      font-family:inherit; font-size:0.84rem; }
+    .loc-in:focus{ border-color:var(--gold); outline:none; }
+    .loc-in.dirty{ border-color:#16a34a; background:#f0fdf4; }
+    .pill.rev{ background:#fef3c7; color:#92400e; }
+    .radio-row{ display:flex; gap:1rem; align-items:center; }
+    .radio-row label{ display:inline-flex; align-items:center; gap:0.3rem; font-size:0.85rem; cursor:pointer; }
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
@@ -213,9 +229,26 @@
           <div class="cab-row" id="cabRow"><span class="muted">Yükleniyor…</span></div>
           <div class="filter-row">
             <input type="text" id="qInput" class="ipt" placeholder="Ürün adı veya lot ara…" maxlength="100" />
-            <label class="chk"><input type="checkbox" id="expiredOnly" /> Yalnız süresi dolanlar</label>
+            <label class="chk"><input type="checkbox" id="expiredOnly" /> Süresi dolanlar</label>
+            <label class="chk"><input type="checkbox" id="reviewOnly" /> Teyit bekleyenler</label>
+            <label class="chk"><input type="checkbox" id="uncheckedOnly" /> Hiç kontrol edilmemiş</label>
             <span class="muted" id="rowCount"></span>
           </div>
+          {% if can('retention','edit') %}
+          <div class="filter-row" style="margin-top:0.7rem;border-top:1px solid #f0ece4;padding-top:0.7rem;">
+            <button class="btn-g" onclick="addOpen()"><i class="bi bi-plus-lg"></i> Elle Numune Ekle</button>
+            <label class="chk"><input type="checkbox" id="locMode" onchange="loadRows()" />
+              <b>Hızlı konum girişi</b></label>
+            <span id="locTools" style="display:none;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+              <input type="text" id="locBulkShelf" class="ipt" style="max-width:110px;" placeholder="Raf" maxlength="20" />
+              <button class="mini" onclick="locFillAll()">Görünenlere yaz</button>
+              <button class="mini" onclick="locAutoSlots()">Gözleri A,B,C…</button>
+              <button class="btn-g" id="locSaveBtn" onclick="locSaveAll()">
+                <i class="bi bi-check-lg"></i> Konumları Kaydet <span id="locDirty"></span>
+              </button>
+            </span>
+          </div>
+          {% endif %}
         </div>
       </div>
 
@@ -226,10 +259,10 @@
             <thead>
               <tr>
                 <th>Ürün</th><th>Lot</th><th>Adet</th><th>Raf / Göz</th>
-                <th>Üretim</th><th>Saklama sonu</th><th>Durum</th><th></th>
+                <th>Üretim</th><th>Saklama sonu</th><th>Son kontrol</th><th>Durum</th><th></th>
               </tr>
             </thead>
-            <tbody id="rowsBody"><tr><td colspan="8" class="muted">Yükleniyor…</td></tr></tbody>
+            <tbody id="rowsBody"><tr><td colspan="9" class="muted">Yükleniyor…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -272,7 +305,7 @@
   <div class="ovl" id="locModal" onclick="if(event.target===this) locClose()">
     <div class="ovl-card" style="max-width:420px;">
       <div class="ovl-head">
-        <h3>Dolap Konumu</h3>
+        <h3>Numune Düzenle</h3>
         <button class="ico-del" onclick="locClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
       </div>
       <div class="ovl-body">
@@ -280,9 +313,20 @@
           <div style="flex:1;"><label class="lbl">Raf</label><input type="text" id="locShelf" class="ipt" maxlength="20" /></div>
           <div style="flex:1;"><label class="lbl">Göz</label><input type="text" id="locSlot" class="ipt" maxlength="20" /></div>
         </div>
-        <div style="margin-bottom:0.8rem;">
-          <label class="lbl">Saklama sonu</label>
-          <input type="date" id="locUntil" class="ipt" />
+        <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+          <div style="flex:1;min-width:140px;">
+            <label class="lbl">Üretim tarihi</label>
+            <input type="date" id="locProduced" class="ipt" />
+            <span class="muted" style="font-size:0.76rem;">Değiştirilirse saklama sonu yeniden hesaplanır</span>
+          </div>
+          <div style="flex:1;min-width:140px;">
+            <label class="lbl">Saklama sonu</label>
+            <input type="date" id="locUntil" class="ipt" />
+          </div>
+        </div>
+        <div id="locReviewBox" style="display:none;margin-bottom:0.8rem;">
+          <label class="chk"><input type="checkbox" id="locReviewed" /> <b>Teyit edildi</b>
+            <span class="muted">— bu kaydın tarihleri kağıtla doğrulandı</span></label>
         </div>
         <div>
           <label class="lbl">Not</label>
@@ -292,6 +336,117 @@
       <div style="display:flex;gap:0.6rem;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
         <button class="btn-g" onclick="locSubmit()"><i class="bi bi-check-lg"></i> Kaydet</button>
         <button class="btn-o" style="margin-left:auto;" onclick="locClose()">Vazgeç</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Elle numune ekleme modalı ── -->
+  <div class="ovl" id="addModal" onclick="if(event.target===this) addClose()">
+    <div class="ovl-card" style="max-width:560px;">
+      <div class="ovl-head">
+        <h3>Elle Numune Ekle</h3>
+        <button class="ico-del" onclick="addClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
+      </div>
+      <div class="ovl-body">
+        <p class="muted" style="margin:0 0 0.9rem;">
+          Dolapta olup listede olmayan numune için. <b>Stoğa dokunmaz</b> — adet zaten
+          stok içindedir, bu kayıt yalnız dolap görünürlüğü ekler.
+        </p>
+        <div style="margin-bottom:0.8rem;position:relative;">
+          <label class="lbl">Ürün *</label>
+          <input type="text" id="addItemSearch" class="ipt" autocomplete="off"
+                 placeholder="Ada göre ara… (Türkçe / İngilizce / barkod)" />
+          <div id="addMatches" style="position:absolute;z-index:20;left:0;right:0;background:#fff;
+               border:1px solid #e5e7eb;border-radius:8px;max-height:260px;overflow-y:auto;display:none;"></div>
+          <div id="addItemPicked" class="muted" style="margin-top:0.35rem;"></div>
+        </div>
+        <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+          <div style="flex:2;min-width:150px;"><label class="lbl">Parti / Lot No *</label>
+            <input type="text" id="addLot" class="ipt" maxlength="100" placeholder="MNR006" /></div>
+          <div style="flex:1;min-width:90px;"><label class="lbl">Adet *</label>
+            <input type="number" id="addQty" class="ipt" min="0" step="1" value="2" /></div>
+        </div>
+        <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+          <div style="flex:1;min-width:150px;"><label class="lbl">Üretim tarihi</label>
+            <input type="date" id="addProduced" class="ipt" /></div>
+          <div style="flex:1;min-width:150px;"><label class="lbl">Saklama sonu</label>
+            <input type="date" id="addUntil" class="ipt" />
+            <span class="muted" style="font-size:0.76rem;">Boş bırakılırsa üretim + 30 ay</span></div>
+        </div>
+        <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+          <div style="flex:1;min-width:90px;"><label class="lbl">Raf</label>
+            <input type="text" id="addShelf" class="ipt" maxlength="20" /></div>
+          <div style="flex:1;min-width:90px;"><label class="lbl">Göz</label>
+            <input type="text" id="addSlot" class="ipt" maxlength="20" /></div>
+        </div>
+        <div><label class="lbl">Not</label>
+          <input type="text" id="addNote" class="ipt" maxlength="500" /></div>
+      </div>
+      <div style="display:flex;gap:0.6rem;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
+        <button class="btn-g" id="addOk" onclick="addSubmit()"><i class="bi bi-check-lg"></i> Kaydet</button>
+        <button class="btn-o" style="margin-left:auto;" onclick="addClose()">Vazgeç</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Periyodik kontrol modalı ── -->
+  <div class="ovl" id="checkModal" onclick="if(event.target===this) checkClose()">
+    <div class="ovl-card" style="max-width:620px;">
+      <div class="ovl-head">
+        <h3 id="checkTitle">Periyodik Kontrol</h3>
+        <button class="ico-del" onclick="checkClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
+      </div>
+      <div class="ovl-body">
+        <p class="muted" id="checkInfo" style="margin:0 0 0.9rem;"></p>
+        <div style="max-width:200px;margin-bottom:0.9rem;">
+          <label class="lbl">Kontrol tarihi</label>
+          <input type="date" id="checkDate" class="ipt" />
+        </div>
+        <table>
+          <thead><tr><th>Kalem</th><th style="width:230px;">Durum</th><th>Not</th></tr></thead>
+          <tbody id="checkRows"></tbody>
+        </table>
+        <div style="margin-top:1rem;border-top:1px solid #f0ece4;padding-top:0.9rem;">
+          <label class="lbl">Genel sonuç *</label>
+          <div id="checkResults" style="display:flex;gap:1.2rem;flex-wrap:wrap;margin-bottom:0.7rem;"></div>
+          <label class="lbl">Değerlendirme</label>
+          <input type="text" id="checkNote" class="ipt" maxlength="1000" placeholder="Opsiyonel açıklama" />
+        </div>
+        <p class="muted" style="margin:0.9rem 0 0;font-size:0.82rem;">
+          Kontrol kaydı <b>stoğa dokunmaz</b>. "Uygun değil" işaretlemek numuneyi imha
+          etmez — gerekiyorsa ayrıca <b>İmha</b> işlemini kullanın.
+        </p>
+      </div>
+      <div style="display:flex;gap:0.6rem;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
+        <button class="btn-g" id="checkOk" onclick="checkSubmit()"><i class="bi bi-check-lg"></i> Kontrolü Kaydet</button>
+        <button class="btn-o" style="margin-left:auto;" onclick="checkClose()">Vazgeç</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Kayıt silme modalı (İMHA DEĞİL) ── -->
+  <div class="ovl" id="delModal" onclick="if(event.target===this) delClose()">
+    <div class="ovl-card" style="max-width:480px;">
+      <div class="ovl-head">
+        <h3>Kaydı Sil</h3>
+        <button class="ico-del" onclick="delClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
+      </div>
+      <div class="ovl-body">
+        <p class="muted" id="delInfo" style="margin:0 0 0.9rem;"></p>
+        <div class="warn-box">
+          <b>Bu bir imha değildir.</b> Yanlış girilmiş bir dolap kaydını gizler —
+          <b>stok DEĞİŞMEZ</b>, hiçbir stok hareketi yazılmaz.<br/>
+          Numuneyi fiilen yok ettiyseniz bunu değil <b>İmha</b>'yı kullanın (o stoktan düşer).
+        </div>
+        <div style="margin-top:0.9rem;">
+          <label class="lbl">Sebep *</label>
+          <input type="text" id="delReason" class="ipt" maxlength="300"
+                 placeholder="ör. yanlış ürüne girildi" />
+        </div>
+      </div>
+      <div style="display:flex;gap:0.6rem;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
+        <button class="btn-g" id="delOk" onclick="delSubmit()"><i class="bi bi-trash3"></i> Kaydı Sil</button>
+        <button class="btn-o" style="margin-left:auto;" onclick="delClose()">Vazgeç</button>
       </div>
     </div>
   </div>
@@ -309,6 +464,11 @@
           <thead><tr><th>Tarih</th><th>Hareket</th><th>Adet</th><th>Kim</th><th>Not</th></tr></thead>
           <tbody id="detBody"></tbody>
         </table>
+        <div id="detChecksWrap" style="display:none;margin-top:1.2rem;">
+          <div class="card2-head" style="padding:0 0 0.5rem;"><i class="bi bi-clipboard-check"></i>
+            <h2 style="font-size:0.95rem;">Kontrol Geçmişi</h2></div>
+          <div id="detChecks"></div>
+        </div>
       </div>
       <div style="display:flex;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
         <button class="btn-o" style="margin-left:auto;" onclick="detClose()">Kapat</button>
@@ -374,14 +534,21 @@
       const q = document.getElementById('qInput').value.trim();
       if (q) params.set('q', q);
       if (document.getElementById('expiredOnly').checked) params.set('expired', '1');
+      if (document.getElementById('reviewOnly')?.checked) params.set('needs_review', '1');
+      if (document.getElementById('uncheckedOnly')?.checked) params.set('unchecked', '1');
+      const lm = document.getElementById('locMode');
+      _locMode = !!(lm && lm.checked);
+      const tools = document.getElementById('locTools');
+      if (tools) tools.style.display = _locMode ? 'flex' : 'none';
+      _locDirty = {};  markDirty();
       try {
         const d = await api('/api/retention/samples?' + params.toString());
         _rows = d.rows || [];
         document.getElementById('rowCount').textContent = `${d.count} kayıt`;
         tb.innerHTML = _rows.length ? _rows.map(rowHtml).join('')
-          : '<tr><td colspan="8" class="muted">Bu dolapta kayıt yok.</td></tr>';
+          : '<tr><td colspan="9" class="muted">Bu dolapta kayıt yok.</td></tr>';
       } catch (e) {
-        tb.innerHTML = `<tr><td colspan="8" class="muted">${esc(e.message)}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="9" class="muted">${esc(e.message)}</td></tr>`;
       }
     }
     function untilBadge(r) {
@@ -392,23 +559,91 @@
       const acts = [];
       if (window.CAN_CHECKOUT && r.status === 'stored')
         acts.push(`<button class="mini" onclick="actOpen(${r.id},'cikis')"><i class="bi bi-box-arrow-up"></i> Çıkış</button>`);
+      if (window.CAN_EDIT && r.status === 'stored')
+        acts.push(`<button class="mini" onclick="checkOpen(${r.id})"><i class="bi bi-clipboard-check"></i> Kontrol</button>`);
       if (window.CAN_DESTROY && r.status === 'stored')
-        acts.push(`<button class="mini danger" onclick="actOpen(${r.id},'imha')"><i class="bi bi-trash3"></i> İmha</button>`);
+        acts.push(`<button class="mini danger" onclick="actOpen(${r.id},'imha')"><i class="bi bi-fire"></i> İmha</button>`);
       if (window.CAN_EDIT)
-        acts.push(`<button class="mini" onclick="locOpen(${r.id})"><i class="bi bi-geo-alt"></i> Konum</button>`);
+        acts.push(`<button class="mini" onclick="locOpen(${r.id})"><i class="bi bi-pencil"></i> Düzenle</button>`);
+      if (window.CAN_DESTROY && r.source !== 'production')
+        acts.push(`<button class="mini danger" onclick="delOpen(${r.id})"><i class="bi bi-x-circle"></i> Sil</button>`);
       acts.push(`<button class="mini" onclick="detOpen(${r.id})"><i class="bi bi-list-ul"></i> Detay</button>`);
+
       const qc = r.qc_status === 'rejected' ? ' <span class="pill bad">QC RED</span>' : '';
+      const rev = r.needs_review ? ' <span class="pill rev">teyit bekliyor</span>' : '';
+      // Konum hücresi: hızlı girişte iki input, normalde metin
+      const loc = _locMode
+        ? `<input class="loc-in shelf-in" data-sample="${r.id}" value="${esc(r.shelf)}"
+                  placeholder="raf" maxlength="20" oninput="markDirty(this)" />
+           <input class="loc-in slot-in" data-sample="${r.id}" value="${esc(r.slot)}"
+                  placeholder="göz" maxlength="20" oninput="markDirty(this)" />`
+        : esc(r.location_label);
+      const lastChk = r.last_check_on
+        ? `<span class="pill ${r.last_check_result === 'uygun' ? 'ok' : 'bad'}">${esc(r.last_check_on)}</span>`
+        : '<span class="muted">—</span>';
       return `<tr>
         <td><b>${esc(r.item_name)}</b><br/><span class="muted" style="font-size:0.8rem;">${esc(r.brand)}</span></td>
-        <td><code>${esc(r.lot_number)}</code></td>
+        <td><code>${esc(r.lot_number)}</code>${rev}</td>
         <td><b>${r.quantity}</b> <span class="muted">${esc(r.unit)}</span></td>
-        <td>${esc(r.location_label)}</td>
+        <td>${loc}</td>
         <td>${esc(r.produced_at || '—')}</td>
         <td>${untilBadge(r)}</td>
+        <td>${lastChk}${r.check_count > 1 ? `<span class="muted" style="font-size:0.75rem;"> ·${r.check_count}</span>` : ''}</td>
         <td>${esc(r.status_label)}${qc}</td>
         <td class="act-cell">${acts.join(' ')}</td>
       </tr>`;
     }
+
+    /* ── Hızlı konum girişi ──
+       Kalıp: static/distributors.js fiyat matrisi — satır içi input + data-*,
+       tek "Kaydet" ile toplanıp TEK isteğe konur.  126 satır için modal
+       başına 1 tık kabul edilemezdi. */
+    let _locMode = false, _locDirty = {};
+    function markDirty(el) {
+      if (el) {
+        const id = el.getAttribute('data-sample');
+        _locDirty[id] = true;
+        el.classList.add('dirty');
+      }
+      const n = Object.keys(_locDirty).length;
+      const b = document.getElementById('locDirty');
+      if (b) b.textContent = n ? `(${n})` : '';
+    }
+    function locFillAll() {
+      const v = document.getElementById('locBulkShelf').value.trim();
+      if (!v) { toastFn('Önce raf değeri yazın.'); return; }
+      document.querySelectorAll('#rowsBody .shelf-in').forEach(inp => {
+        inp.value = v; markDirty(inp);
+      });
+      toastFn('Görünen satırlara yazıldı — kaydetmeyi unutmayın.', 'info');
+    }
+    function locAutoSlots() {
+      const AB = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      document.querySelectorAll('#rowsBody .slot-in').forEach((inp, i) => {
+        inp.value = AB[i % 26] + (i >= 26 ? Math.floor(i / 26) + 1 : '');
+        markDirty(inp);
+      });
+    }
+    async function locSaveAll() {
+      const ids = Object.keys(_locDirty);
+      if (!ids.length) { toastFn('Değişiklik yok.', 'info'); return; }
+      const rows = ids.map(id => ({
+        id: parseInt(id, 10),
+        shelf: document.querySelector(`.shelf-in[data-sample="${id}"]`)?.value.trim() ?? '',
+        slot: document.querySelector(`.slot-in[data-sample="${id}"]`)?.value.trim() ?? '',
+      }));
+      const btn = document.getElementById('locSaveBtn'); btn.disabled = true;
+      try {
+        const d = await jpost('/api/retention/samples/bulk-location', { rows }, 'PUT');
+        toastFn(d.message, 'success');
+        _locDirty = {}; markDirty();
+        loadRows();
+      } catch (e) { toastFn(e.message); }
+      finally { btn.disabled = false; }
+    }
+    window.addEventListener('beforeunload', (e) => {
+      if (Object.keys(_locDirty).length) { e.preventDefault(); e.returnValue = ''; }
+    });
 
     /* ── Çıkış / İmha ── */
     function actOpen(id, mode) {
@@ -454,18 +689,30 @@
       document.getElementById('locSlot').value = r.slot || '';
       document.getElementById('locUntil').value = r.retention_until || '';
       document.getElementById('locNote').value = r.note || '';
+      // ISO üretim tarihi listede yok → detaydan çekmek yerine boş bırak;
+      // kullanıcı doldurursa sunucu saklama sonunu yeniden hesaplar.
+      document.getElementById('locProduced').value = '';
+      const rb = document.getElementById('locReviewBox');
+      rb.style.display = r.needs_review ? '' : 'none';
+      document.getElementById('locReviewed').checked = false;
       document.getElementById('locModal').classList.add('open');
     }
     function locClose() { document.getElementById('locModal').classList.remove('open'); _locId = null; }
     async function locSubmit() {
       if (!_locId) return;
       try {
-        await jpost(`/api/retention/samples/${_locId}`, {
+        // Kısmi güncelleme: yalnız DOLU alanlar gönderilir — sunucu
+        // gönderilmeyene dokunmaz (model_fields_set sözleşmesi).
+        const body = {
           shelf: document.getElementById('locShelf').value.trim(),
           slot: document.getElementById('locSlot').value.trim(),
           retention_until: document.getElementById('locUntil').value || null,
           note: document.getElementById('locNote').value.trim(),
-        }, 'PUT');
+        };
+        const prod = document.getElementById('locProduced').value;
+        if (prod) { body.produced_at = prod; delete body.retention_until; }
+        if (document.getElementById('locReviewed').checked) body.needs_review = false;
+        await jpost(`/api/retention/samples/${_locId}`, body, 'PUT');
         toastFn('Kaydedildi.', 'success');
         locClose(); loadRows();
       } catch (e) { toastFn(e.message); }
@@ -487,8 +734,167 @@
             <td>${m.quantity || '—'}</td><td>${esc(m.performed_by)}</td>
             <td class="muted">${esc(m.reason_label ? m.reason_label + (m.note ? ' · ' + m.note : '') : m.note)}</td>
           </tr>`).join('') : '<tr><td colspan="5" class="muted">Hareket yok.</td></tr>';
+        const cs = d.checks || [];
+        document.getElementById('detChecksWrap').style.display = cs.length ? '' : 'none';
+        document.getElementById('detChecks').innerHTML = cs.map(c => `
+          <div style="border:1px solid #f0ece4;border-radius:9px;padding:0.7rem 0.9rem;margin-bottom:0.6rem;">
+            <div style="display:flex;gap:0.6rem;align-items:center;margin-bottom:0.4rem;">
+              <b>${esc(c.checked_on_label)}</b>
+              <span class="pill ${c.result === 'uygun' ? 'ok' : 'bad'}">${esc(c.result_label)}</span>
+              <span class="muted" style="margin-left:auto;font-size:0.78rem;">${esc(c.checked_by)}</span>
+            </div>
+            <div style="font-size:0.84rem;line-height:1.7;">
+              ${c.items.map(it => `${esc(it.label)}: <b>${esc(it.state_label)}</b>${it.note ? ` <span class="muted">(${esc(it.note)})</span>` : ''}`).join(' · ')}
+            </div>
+            ${c.result_note ? `<div class="muted" style="margin-top:0.35rem;font-size:0.82rem;">${esc(c.result_note)}</div>` : ''}
+          </div>`).join('');
         document.getElementById('detModal').classList.add('open');
       } catch (e) { toastFn(e.message); }
+    }
+
+    /* ── Elle numune ekleme ──
+       Ürün seçici kalıbı: templates/delivery.html çift-dilli arama (TR+EN+barkod,
+       min 2 karakter, ilk 15, dışarı tıkla-kapat).  Fark: ham fetch yerine
+       cache'li window.fetchItems + trSortBy. */
+    let _items = [], _pickedItem = null;
+    async function ensureItems() {
+      if (_items.length) return _items;
+      // defer gotcha: items-cache.js bu inline script'ten SONRA yüklenir
+      const all = window.fetchItems
+        ? await window.fetchItems()
+        : await fetch('/api/items').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+      const list = (Array.isArray(all) ? all : (all.items || []))
+        .filter(x => (x.category || '') === 'Bitmiş Ürün' && !x.is_parent);
+      _items = window.trSortBy ? window.trSortBy(list, 'name') : list;
+      return _items;
+    }
+    function addOpen() {
+      _pickedItem = null;
+      ['addLot', 'addShelf', 'addSlot', 'addNote', 'addProduced', 'addUntil'].forEach(
+        id => { document.getElementById(id).value = ''; });
+      document.getElementById('addQty').value = 2;
+      document.getElementById('addItemSearch').value = '';
+      document.getElementById('addItemPicked').textContent = '';
+      document.getElementById('addMatches').style.display = 'none';
+      document.getElementById('addModal').classList.add('open');
+      ensureItems().catch(e => toastFn(e.message));
+      setTimeout(() => document.getElementById('addItemSearch').focus(), 50);
+    }
+    function addClose() { document.getElementById('addModal').classList.remove('open'); }
+    function pickItem(id) {
+      _pickedItem = _items.find(x => x.id === id) || null;
+      document.getElementById('addItemPicked').innerHTML = _pickedItem
+        ? `Seçili: <b>${esc(_pickedItem.name)}</b>` : '';
+      document.getElementById('addItemSearch').value = _pickedItem ? _pickedItem.name : '';
+      document.getElementById('addMatches').style.display = 'none';
+    }
+    async function addSubmit() {
+      if (!_pickedItem) { toastFn('Önce ürün seçin.'); return; }
+      const lot = document.getElementById('addLot').value.trim();
+      const qty = parseFloat(document.getElementById('addQty').value || '0');
+      if (!lot) { toastFn('Parti / lot no zorunlu.'); return; }
+      if (!(qty > 0)) { toastFn('Adet 0’dan büyük olmalı.'); return; }
+      const btn = document.getElementById('addOk'); btn.disabled = true;
+      try {
+        const d = await jpost('/api/retention/samples', {
+          item_id: _pickedItem.id, lot_number: lot, quantity: qty,
+          shelf: document.getElementById('addShelf').value.trim() || null,
+          slot: document.getElementById('addSlot').value.trim() || null,
+          produced_at: document.getElementById('addProduced').value || null,
+          retention_until: document.getElementById('addUntil').value || null,
+          note: document.getElementById('addNote').value.trim() || null,
+        });
+        toastFn(`${esc(d.lot_number)} dolaba eklendi.`, 'success');
+        addClose(); loadCabinets(); loadRows();
+      } catch (e) { toastFn(e.message); }
+      finally { btn.disabled = false; }
+    }
+
+    /* ── Periyodik kontrol ── */
+    let _checkId = null;
+    function checkOpen(id) {
+      const r = _rows.find(x => x.id === id);
+      if (!r) return;
+      _checkId = id;
+      document.getElementById('checkInfo').innerHTML =
+        `<b>${esc(r.item_name)}</b> · Lot ${esc(r.lot_number)} · ${esc(r.brand)}`;
+      document.getElementById('checkDate').value = new Date().toISOString().slice(0, 10);
+      document.getElementById('checkNote').value = '';
+      // Kalemler tek kaynaktan (core/retention.CHECK_ITEMS)
+      document.getElementById('checkRows').innerHTML = (window.CHECK_ITEMS || []).map(it => `
+        <tr>
+          <td><b>${esc(it.label)}</b></td>
+          <td><div class="radio-row">${(window.CHECK_STATES || []).map((st, i) => `
+            <label><input type="radio" name="st_${esc(it.key)}" value="${esc(st.key)}"
+              ${i === 0 ? 'checked' : ''} onchange="checkStateChanged()" /> ${esc(st.label)}</label>`).join('')}
+          </div></td>
+          <td><input type="text" class="ipt chk-note" data-key="${esc(it.key)}" maxlength="300" /></td>
+        </tr>`).join('');
+      document.getElementById('checkResults').innerHTML = (window.CHECK_RESULTS || []).map((rs, i) => `
+        <label style="display:inline-flex;align-items:center;gap:0.35rem;cursor:pointer;">
+          <input type="radio" name="chkResult" value="${esc(rs.key)}" ${i === 0 ? 'checked' : ''} />
+          <b>${esc(rs.label)}</b></label>`).join('');
+      document.getElementById('checkModal').classList.add('open');
+    }
+    function checkClose() { document.getElementById('checkModal').classList.remove('open'); _checkId = null; }
+    function checkStateChanged() {
+      // Herhangi bir kalemde "değişim var" → genel sonucu ön-seç (KİLİTLEMEZ;
+      // karar operatörün — hafif değişim kabul edilebilir olabilir).
+      const any = (window.CHECK_ITEMS || []).some(it =>
+        document.querySelector(`input[name="st_${it.key}"]:checked`)?.value === 'degisim');
+      const target = any ? 'uygun_degil' : 'uygun';
+      const el = document.querySelector(`input[name="chkResult"][value="${target}"]`);
+      if (el) el.checked = true;
+    }
+    async function checkSubmit() {
+      if (!_checkId) return;
+      const items = (window.CHECK_ITEMS || []).map(it => ({
+        key: it.key,
+        state: document.querySelector(`input[name="st_${it.key}"]:checked`)?.value || 'normal',
+        note: document.querySelector(`.chk-note[data-key="${it.key}"]`)?.value.trim() || '',
+      }));
+      const btn = document.getElementById('checkOk'); btn.disabled = true;
+      try {
+        const d = await jpost(`/api/retention/samples/${_checkId}/checks`, {
+          checked_on: document.getElementById('checkDate').value || null,
+          items,
+          result: document.querySelector('input[name="chkResult"]:checked')?.value || 'uygun',
+          result_note: document.getElementById('checkNote').value.trim() || null,
+        });
+        toastFn(d.message, 'success');
+        checkClose(); loadRows();
+      } catch (e) { toastFn(e.message); }
+      finally { btn.disabled = false; }
+    }
+
+    /* ── Kayıt silme (İMHA DEĞİL — stoğa dokunmaz) ── */
+    let _delId = null;
+    function delOpen(id) {
+      const r = _rows.find(x => x.id === id);
+      if (!r) return;
+      _delId = id;
+      document.getElementById('delInfo').innerHTML =
+        `<b>${esc(r.item_name)}</b> · Lot ${esc(r.lot_number)} · ${r.quantity} ${esc(r.unit)}`;
+      document.getElementById('delReason').value = '';
+      document.getElementById('delModal').classList.add('open');
+    }
+    function delClose() { document.getElementById('delModal').classList.remove('open'); _delId = null; }
+    async function delSubmit() {
+      if (!_delId) return;
+      const reason = document.getElementById('delReason').value.trim();
+      if (reason.length < 3) { toastFn('Sebep yazın (en az 3 karakter).'); return; }
+      const btn = document.getElementById('delOk'); btn.disabled = true;
+      try {
+        const r = await fetch(`/api/retention/samples/${_delId}`, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Silinemedi.');
+        toastFn(d.message, 'success');
+        delClose(); loadCabinets(); loadRows();
+      } catch (e) { toastFn(e.message); }
+      finally { btn.disabled = false; }
     }
 
     /* ── Başlat ── */
@@ -497,6 +903,30 @@
       clearTimeout(_t); _t = setTimeout(loadRows, 250);
     });
     document.getElementById('expiredOnly').addEventListener('change', loadRows);
+    document.getElementById('reviewOnly')?.addEventListener('change', loadRows);
+    document.getElementById('uncheckedOnly')?.addEventListener('change', loadRows);
+    // Ürün arama — TR+EN+barkod, min 2 karakter (delivery.html kalıbı)
+    document.getElementById('addItemSearch')?.addEventListener('input', async function () {
+      const box = document.getElementById('addMatches');
+      const q = this.value.trim().toLocaleLowerCase('tr');
+      if (q.length < 2) { box.style.display = 'none'; return; }
+      const list = await ensureItems();
+      const hits = list.filter(x =>
+        (x.name || '').toLocaleLowerCase('tr').includes(q) ||
+        (x.name_tr || '').toLocaleLowerCase('tr').includes(q) ||
+        (x.barcode || '').toLowerCase().includes(q)).slice(0, 15);
+      box.innerHTML = hits.length
+        ? hits.map(x => `<div class="match-row" onclick="pickItem(${x.id})">
+             <span>${esc(x.name)}${x.name_tr ? ` <span class="muted">· ${esc(x.name_tr)}</span>` : ''}</span>
+           </div>`).join('')
+        : '<div class="match-row muted">Eşleşme yok</div>';
+      box.style.display = 'block';
+    });
+    document.addEventListener('click', e => {
+      const box = document.getElementById('addMatches');
+      const inp = document.getElementById('addItemSearch');
+      if (box && !box.contains(e.target) && e.target !== inp) box.style.display = 'none';
+    });
     document.getElementById('logoutBtn')?.addEventListener('click', async () => {
       await fetch('/api/logout', { method: 'POST' }); location.href = '/login';
     });

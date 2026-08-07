@@ -22,8 +22,9 @@ STOK KURALI — dar ve net:
 Transaction tipi SADECE Output (core/snapshots.py yalnız Input/Output/
 Adjustment tanır — başka tip yazmak aylık stok rekonstrüksiyonunu bozar).
 """
+import json
 from datetime import date, datetime
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
@@ -32,15 +33,19 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from database import (get_db, to_tr, AppSetting, Inventory, Item,
-                      RetentionSample, RetentionSampleMovement, Transaction)
+                      RetentionSample, RetentionSampleCheck,
+                      RetentionSampleMovement, Transaction)
 from core.audit import log_admin_event
 from core.brands import cabinet_of
 from core.domain import active_domain
 from core.permissions import require_permission
-from core.retention import (CFG_EXTRA, CFG_SHELF_LIFE, CHECKOUT_REASONS,
+from core.retention import (CFG_EXTRA, CFG_SHELF_LIFE, CHECK_ITEM_KEYS,
+                            CHECK_RESULTS, CHECK_STATES, CHECKOUT_REASONS,
                             DEFAULT_EXTRA_MONTHS, DEFAULT_SHELF_LIFE_MONTHS,
-                            expiry_state, location_label, movement_label,
-                            reason_label, retention_until, status_label)
+                            check_item_label, check_result_label,
+                            check_state_label, expiry_state, location_label,
+                            movement_label, reason_label, retention_until,
+                            status_label)
 
 router = APIRouter(prefix="/api", tags=["retention"])
 
@@ -59,10 +64,49 @@ class DestroyBody(BaseModel):
 
 
 class SampleUpdateBody(BaseModel):
+    """Kısmi güncelleme — "gönderilmedi" ile "null gönderildi" AYRI şeydir.
+
+    Alan gönderilmediyse dokunulmaz; `null`/`""` gönderildiyse TEMİZLENİR.
+    Ayrım `model_fields_set` ile yapılır (pydantic v2).
+
+    Bu ayrım olmadan eski davranış hatalıydı: yalnız `shelf` gönderen bir
+    istek `slot`'u sessizce siliyordu (`data.slot` None → temizle).  Mevcut
+    şablon dört alanı birden yolladığı için gizli kalmıştı; hızlı/kısmi
+    konum girişiyle gerçek veri kaybına dönüşürdü.
+    """
     shelf: Optional[str] = Field(None, max_length=20)
     slot: Optional[str] = Field(None, max_length=20)
+    produced_at: Optional[date] = None
     retention_until: Optional[date] = None
     note: Optional[str] = Field(None, max_length=500)
+    needs_review: Optional[bool] = None
+
+
+class LocationRow(BaseModel):
+    id: int
+    shelf: Optional[str] = Field(None, max_length=20)
+    slot: Optional[str] = Field(None, max_length=20)
+
+
+class BulkLocationBody(BaseModel):
+    rows: List[LocationRow] = Field(..., min_length=1, max_length=500)
+
+
+class CheckItemRow(BaseModel):
+    key: str = Field(..., max_length=40)
+    state: str = Field(..., max_length=20)          # normal | degisim
+    note: Optional[str] = Field(None, max_length=300)
+
+
+class CheckCreateBody(BaseModel):
+    checked_on: Optional[date] = None               # boş = bugün
+    items: List[CheckItemRow] = Field(..., min_length=1, max_length=20)
+    result: str = Field(..., max_length=20)         # uygun | uygun_degil
+    result_note: Optional[str] = Field(None, max_length=1000)
+
+
+class DeleteBody(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=300)
 
 
 class SampleCreateBody(BaseModel):
@@ -97,7 +141,36 @@ def _cfg_months(db: Session) -> tuple:
     return _read(CFG_SHELF_LIFE, DEFAULT_SHELF_LIFE_MONTHS), _read(CFG_EXTRA, DEFAULT_EXTRA_MONTHS)
 
 
-def _view(r: RetentionSample) -> dict:
+def _check_view(c: RetentionSampleCheck) -> dict:
+    """Kontrol kaydı görünümü.  `properties` bozuk JSON ise BOŞ liste —
+    500'e düşmez (routers/sample_analysis.py:60-63 kalıbı)."""
+    try:
+        items = json.loads(c.properties or "[]")
+        if not isinstance(items, list):
+            items = []
+    except (TypeError, ValueError):
+        items = []
+    return {
+        "id": c.id,
+        "checked_on": c.checked_on.isoformat() if c.checked_on else "",
+        "checked_on_label": c.checked_on.strftime("%d.%m.%Y") if c.checked_on else "—",
+        "result": c.result,
+        "result_label": check_result_label(c.result),
+        "result_note": c.result_note or "",
+        "checked_by": c.checked_by or "",
+        "created_at": to_tr(c.created_at).strftime("%d.%m.%Y %H:%M") if c.created_at else "",
+        "items": [{
+            "key": (it or {}).get("key", ""),
+            "label": check_item_label((it or {}).get("key")),
+            "state": (it or {}).get("state", ""),
+            "state_label": check_state_label((it or {}).get("state")),
+            "note": (it or {}).get("note") or "",
+        } for it in items],
+    }
+
+
+def _view(r: RetentionSample, last_check: Optional[RetentionSampleCheck] = None,
+          check_count: int = 0) -> dict:
     st = expiry_state(r.retention_until)
     return {
         "id": r.id,
@@ -121,6 +194,15 @@ def _view(r: RetentionSample) -> dict:
         "source": r.source,
         "placed_by": r.placed_by or "",
         "note": r.note or "",
+        "needs_review": bool(r.needs_review),
+        # Son kontrol — denormalize kolon YOK; liste ucu tek gruplanmış
+        # sorguyla doldurur, detay ucu tam listeyi verir.
+        "last_check_on": (last_check.checked_on.strftime("%d.%m.%Y")
+                          if last_check and last_check.checked_on else ""),
+        "last_check_result": last_check.result if last_check else "",
+        "last_check_result_label": (check_result_label(last_check.result)
+                                    if last_check else ""),
+        "check_count": check_count,
     }
 
 
@@ -141,7 +223,8 @@ def _movement_view(m: RetentionSampleMovement) -> dict:
 def _get(db: Session, sample_id: int, domain: str) -> Optional[RetentionSample]:
     return (db.query(RetentionSample)
             .filter(RetentionSample.id == sample_id,
-                    RetentionSample.domain == domain).first())
+                    RetentionSample.domain == domain,
+                    RetentionSample.is_active == True).first())      # noqa: E712
 
 
 def _consume(db: Session, sample: RetentionSample, qty: float, note: str,
@@ -182,6 +265,7 @@ def list_cabinets(
     """Marka bazlı dolap özeti — sekme çubuğu + KPI şeridi."""
     rows = (db.query(RetentionSample)
             .filter(RetentionSample.domain == domain,
+                    RetentionSample.is_active == True,                # noqa: E712
                     RetentionSample.status == "stored").all())
     today = date.today()
     by_brand: dict = {}
@@ -212,12 +296,16 @@ def list_samples(
     q: Optional[str] = Query(None, max_length=100),
     status: Optional[str] = Query(None),
     expired: Optional[int] = Query(None),
+    needs_review: Optional[int] = Query(None),
+    unchecked: Optional[int] = Query(None),
     limit: int = Query(300, ge=1, le=1000),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("retention", "view")),
     domain: str = Depends(active_domain),
 ):
-    query = db.query(RetentionSample).filter(RetentionSample.domain == domain)
+    query = db.query(RetentionSample).filter(
+        RetentionSample.domain == domain,
+        RetentionSample.is_active == True)                            # noqa: E712
     if brand:
         query = query.filter(RetentionSample.brand == brand)
     if status:
@@ -232,9 +320,29 @@ def list_samples(
         query = query.filter(RetentionSample.retention_until.isnot(None),
                              RetentionSample.retention_until < date.today(),
                              RetentionSample.status == "stored")
+    if needs_review:
+        query = query.filter(RetentionSample.needs_review == True)    # noqa: E712
+    if unchecked:
+        # Hiç kontrol edilmemişler — KULLANICI TETİKLEMELİ bir mercek.
+        # KPI şeridinde kalıcı sayaç yok; kullanıcı "sistem dürtmesin" dedi.
+        query = query.filter(~db.query(RetentionSampleCheck)
+                             .filter(RetentionSampleCheck.sample_id == RetentionSample.id)
+                             .exists())
     rows = (query.order_by(RetentionSample.retention_until.asc().nullslast(),
                            RetentionSample.id.desc()).limit(limit).all())
-    return {"rows": [_view(r) for r in rows], "count": len(rows)}
+
+    # Son kontrol özeti — TEK ek sorgu (N+1 yok, denormalize kolon yok).
+    last, counts = {}, {}
+    if rows:
+        ids = [r.id for r in rows]
+        for c in (db.query(RetentionSampleCheck)
+                  .filter(RetentionSampleCheck.sample_id.in_(ids))
+                  .order_by(RetentionSampleCheck.checked_on.asc(),
+                            RetentionSampleCheck.id.asc()).all()):
+            last[c.sample_id] = c                      # son yazan kazanır
+            counts[c.sample_id] = counts.get(c.sample_id, 0) + 1
+    return {"rows": [_view(r, last.get(r.id), counts.get(r.id, 0)) for r in rows],
+            "count": len(rows)}
 
 
 @router.get("/retention/samples/{sample_id}")
@@ -247,8 +355,10 @@ def get_sample(
     r = _get(db, sample_id, domain)
     if not r:
         return _err(404, "Numune kaydı bulunamadı.")
-    out = _view(r)
+    checks = sorted(r.checks, key=lambda c: (c.checked_on or date.min, c.id))
+    out = _view(r, checks[-1] if checks else None, len(checks))
     out["movements"] = [_movement_view(m) for m in r.movements]
+    out["checks"] = [_check_view(c) for c in reversed(checks)]   # en yeni üstte
     return out
 
 
@@ -350,6 +460,70 @@ def destroy_sample(
     return out
 
 
+# DİKKAT: bu route "/retention/samples/{sample_id}" PUT'unun ÜSTÜNDE kalmalı —
+# altına taşınırsa "bulk-location" sample_id sanılıp int'e çevrilmeye
+# çalışılır ve 422 döner (aynı tuzak /production/next-lot'ta yaşandı).
+@router.put("/retention/samples/bulk-location")
+def bulk_update_location(
+    data: BulkLocationBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("retention", "edit")),
+    domain: str = Depends(active_domain),
+):
+    """Çok sayıda numunenin raf/göz bilgisini TEK istekte yaz.
+
+    126 satırı tek tek PUT etmek yerine bunun sebebi: (a) atomiklik — yarım
+    kalmış ağ isteği yarı dolu bir dolap bırakmaz, (b) denetim defteri —
+    N×PUT `admin_audit_log`'a 126 satır yazardı, bu tek satır yazar.
+
+    STOĞA DOKUNMAZ, Transaction YAZMAZ.  `konum` hareketi yalnız FİİLEN
+    değişen satırlar için yazılır (değişmeyen satır geçmişi kirletmez).
+    Alan sözleşmesi PUT ile aynı: gönderilmeyen alan korunur, boş/null temizler.
+    """
+    sent_by_id = {row.id: row.model_fields_set for row in data.rows}
+    ids = list(sent_by_id.keys())
+    rows = (db.query(RetentionSample)
+            .filter(RetentionSample.id.in_(ids),
+                    RetentionSample.domain == domain,          # domain izolasyonu ŞART
+                    RetentionSample.is_active == True).all())  # noqa: E712
+    by_id = {r.id: r for r in rows}
+    actor = _actor(current_user)
+    updated = 0
+    skipped = len(ids) - len(rows)          # domain dışı / silinmiş / yok
+    try:
+        for row in data.rows:
+            r = by_id.get(row.id)
+            if r is None:
+                continue
+            if r.status == "destroyed":     # imha edilmişe konum yazmak anlamsız
+                skipped += 1
+                continue
+            sent = sent_by_id[row.id]
+            new_shelf = ((row.shelf or "").strip() or None) if "shelf" in sent else r.shelf
+            new_slot = ((row.slot or "").strip() or None) if "slot" in sent else r.slot
+            if new_shelf == r.shelf and new_slot == r.slot:
+                continue                    # değişmedi → hareket yazma
+            r.shelf, r.slot = new_shelf, new_slot
+            db.add(RetentionSampleMovement(
+                sample_id=r.id, movement_type="konum", quantity=0,
+                note=location_label(r.shelf, r.slot), performed_by=actor))
+            updated += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        return _err(500, "Konumlar kaydedilemedi.")
+
+    if updated:
+        log_admin_event(db, request, actor=current_user, action="retention.bulk_location",
+                        target_type="retention_sample", target_id=None,
+                        target_name=f"{updated} numune",
+                        details={"updated": updated, "skipped": skipped})
+    return {"updated": updated, "skipped": skipped,
+            "message": f"{updated} satırın konumu kaydedildi"
+                       + (f", {skipped} atlandı" if skipped else "")}
+
+
 @router.put("/retention/samples/{sample_id}")
 def update_sample(
     sample_id: int,
@@ -359,20 +533,34 @@ def update_sample(
     current_user: dict = Depends(require_permission("retention", "edit")),
     domain: str = Depends(active_domain),
 ):
-    """Raf/göz, saklama sonu, not — stoğa DOKUNMAZ, Transaction yazmaz."""
+    """Raf/göz, üretim/saklama tarihi, not, teyit — stoğa DOKUNMAZ, Transaction yazmaz.
+
+    KISMİ güncelleme: yalnız GÖNDERİLEN alanlara dokunulur (`model_fields_set`).
+    Gönderilmeyen alan korunur, `null`/`""` gönderilen alan temizlenir.
+    """
     r = _get(db, sample_id, domain)
     if not r:
         return _err(404, "Numune kaydı bulunamadı.")
+    sent = data.model_fields_set
     moved = False
-    if data.shelf is not None or data.slot is not None:
-        new_shelf = (data.shelf or "").strip() or None
-        new_slot = (data.slot or "").strip() or None
+    if "shelf" in sent or "slot" in sent:
+        new_shelf = ((data.shelf or "").strip() or None) if "shelf" in sent else r.shelf
+        new_slot = ((data.slot or "").strip() or None) if "slot" in sent else r.slot
         moved = (new_shelf != r.shelf) or (new_slot != r.slot)
         r.shelf, r.slot = new_shelf, new_slot
-    if data.retention_until is not None:
+    if "produced_at" in sent:
+        r.produced_at = (datetime.combine(data.produced_at, datetime.min.time())
+                         if data.produced_at else None)
+        # Üretim tarihi düzeltildi ve saklama sonu ayrıca verilmediyse yeniden hesapla
+        if "retention_until" not in sent and r.produced_at:
+            shelf_life, extra = _cfg_months(db)
+            r.retention_until = retention_until(r.produced_at, shelf_life, extra)
+    if "retention_until" in sent:
         r.retention_until = data.retention_until
-    if data.note is not None:
-        r.note = data.note.strip() or None
+    if "note" in sent:
+        r.note = (data.note or "").strip() or None
+    if "needs_review" in sent and data.needs_review is not None:
+        r.needs_review = bool(data.needs_review)
     try:
         if moved:
             db.add(RetentionSampleMovement(
@@ -388,6 +576,131 @@ def update_sample(
                     target_name=r.lot_number,
                     details={"shelf": r.shelf, "slot": r.slot})
     return _view(r)
+
+
+@router.post("/retention/samples/{sample_id}/checks", status_code=201)
+def create_check(
+    sample_id: int,
+    data: CheckCreateBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("retention", "edit")),
+    domain: str = Depends(active_domain),
+):
+    """Periyodik kontrol kaydı — GMP gözlemi.  APPEND-ONLY.
+
+    Sonuç 'uygun değil' olsa bile stoğa/duruma DOKUNULMAZ: otomatik imha yok.
+    Operatör görür, kararı kendisi verir ve gerekiyorsa ayrıca İmha basar.
+    """
+    r = _get(db, sample_id, domain)
+    if not r:
+        return _err(404, "Numune kaydı bulunamadı.")
+    if r.status != "stored":
+        return _err(400, f"'{status_label(r.status)}' durumundaki numune kontrol edilemez.")
+    if data.result not in CHECK_RESULTS:
+        return _err(400, "Geçersiz sonuç.")
+
+    checked_on = data.checked_on or date.today()
+    if checked_on > date.today():
+        return _err(400, "Kontrol tarihi gelecekte olamaz.")
+
+    seen, items = set(), []
+    for it in data.items:
+        key = (it.key or "").strip()
+        if key not in CHECK_ITEM_KEYS:
+            return _err(400, f"Bilinmeyen kontrol kalemi: {key}")
+        if key in seen:
+            return _err(400, f"Kalem iki kez gönderildi: {key}")
+        if it.state not in CHECK_STATES:
+            return _err(400, f"Geçersiz durum: {it.state}")
+        seen.add(key)
+        items.append({"key": key, "state": it.state,
+                      "note": (it.note or "").strip() or ""})
+    missing = [k for k in CHECK_ITEM_KEYS if k not in seen]
+    if missing:
+        return _err(400, "Tüm kalemler doldurulmalı — eksik: "
+                         + ", ".join(check_item_label(k) for k in missing))
+
+    actor = _actor(current_user)
+    try:
+        c = RetentionSampleCheck(
+            sample_id=r.id, checked_on=checked_on,
+            properties=json.dumps(items, ensure_ascii=False),   # TR karakter escape'lenmesin
+            result=data.result,
+            result_note=(data.result_note or "").strip() or None,
+            checked_by=actor,
+        )
+        db.add(c)
+        # Zaman çizelgesi izi — Detay ekranındaki hareket tablosu kontrolü de göstersin
+        db.add(RetentionSampleMovement(
+            sample_id=r.id, movement_type="kontrol", quantity=0,
+            note=f"Periyodik kontrol — {check_result_label(data.result)}",
+            performed_by=actor))
+        db.commit()
+        db.refresh(c)
+    except Exception:
+        db.rollback()
+        return _err(500, "Kontrol kaydedilemedi.")
+
+    log_admin_event(db, request, actor=current_user, action="retention.check",
+                    target_type="retention_sample", target_id=r.id,
+                    target_name=r.lot_number,
+                    details={"result": data.result, "checked_on": checked_on.isoformat(),
+                             "item": r.item_name})
+    out = _check_view(c)
+    out["message"] = f"Kontrol kaydedildi — {check_result_label(data.result)}."
+    return out
+
+
+@router.delete("/retention/samples/{sample_id}")
+def delete_sample(
+    sample_id: int,
+    data: DeleteBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("retention", "destroy")),
+    domain: str = Depends(active_domain),
+):
+    """YANLIŞ GİRİLEN kaydı gizle (soft-delete).
+
+    İMHA DEĞİLDİR — stoğa, `Inventory`'ye ve Transaction defterine HİÇ
+    dokunmaz.  Ürün fiilen yok edildiyse `/destroy` kullanılır (o stoktan düşer).
+
+    Guard'lar:
+      • `source='production'` → silinemez.  Üretimin açtığı kayıt veri giriş
+        hatası olamaz; yanlışsa yolu İmha ya da QC reddidir.  Ayrıca o kaydın
+        `inventory_id`'si var, silmek `-S` lotunu görünmez yapardı.
+      • Çıkış/imha hareketi görmüş kayıt → silinemez.  O adetler stok defterine
+        yazılmıştır; kaydı gizlemek defteri yetim bırakır.
+    """
+    r = _get(db, sample_id, domain)
+    if not r:
+        return _err(404, "Numune kaydı bulunamadı.")
+    if r.source == "production":
+        return _err(400, "Üretimden gelen kayıt silinemez — fiilen imha edildiyse "
+                         "'İmha' işlemini kullanın.")
+    blocking = [m.movement_type for m in r.movements if m.movement_type in ("cikis", "imha")]
+    if blocking:
+        return _err(400, "Bu kayıtta çıkış/imha hareketi var — stok defterine "
+                         "yazılmış, silinemez.")
+
+    actor = _actor(current_user)
+    reason = data.reason.strip()
+    try:
+        r.is_active = False
+        db.add(RetentionSampleMovement(
+            sample_id=r.id, movement_type="duzeltme", quantity=0,
+            note=f"Kayıt silindi — {reason}"[:500], performed_by=actor))
+        db.commit()
+    except Exception:
+        db.rollback()
+        return _err(500, "Kayıt silinemedi.")
+
+    log_admin_event(db, request, actor=current_user, action="retention.delete",
+                    target_type="retention_sample", target_id=r.id,
+                    target_name=r.lot_number,
+                    details={"item": r.item_name, "reason": reason, "brand": r.brand})
+    return {"message": "Kayıt silindi — stok değişmedi."}
 
 
 @router.post("/retention/samples", status_code=201)
@@ -407,12 +720,23 @@ def create_sample(
             .filter(Item.id == data.item_id, Item.domain == domain).first())
     if not item:
         return _err(404, "Ürün bulunamadı.")
+    lot = data.lot_number.strip().upper()
+    # Çift kayıt guard'ı — elle 126 kayıt girilen bir dolapta aynı numuneyi
+    # iki kez girmek gerçek bir hata; sessizce ikinci satır açmak yanıltır.
+    dup = (db.query(RetentionSample)
+           .filter(RetentionSample.item_id == item.id,
+                   RetentionSample.lot_number == lot,
+                   RetentionSample.status == "stored",
+                   RetentionSample.is_active == True).first())      # noqa: E712
+    if dup:
+        return _err(400, f"Bu ürün için {lot} lotu dolapta zaten kayıtlı "
+                         f"(#{dup.id}, {dup.quantity:g} adet).")
     shelf_life, extra = _cfg_months(db)
     produced = (datetime.combine(data.produced_at, datetime.min.time())
                 if data.produced_at else datetime.utcnow())
     r = RetentionSample(
         item_id=item.id, item_name=item.name,
-        lot_number=data.lot_number.strip().upper(),
+        lot_number=lot,
         brand=cabinet_of(item.name), shelf=(data.shelf or "").strip() or None,
         slot=(data.slot or "").strip() or None,
         quantity=data.quantity, initial_quantity=data.quantity, unit=item.unit,

@@ -577,6 +577,14 @@ class RetentionSample(Base):
     source = Column(String(20), nullable=False, default="production")  # production | backfill | manual
     placed_by = Column(String(80), nullable=True)
     note = Column(Text, nullable=True)
+    # Sayım aktarımında SKT'si belirsiz kalan kayıtlar için yapısal bayrak.
+    # Eskiden not METNİNE "TEYİT BEKLİYOR" gömülüydü — filtrelenemiyordu ve
+    # "teyit edildi" durumu hiçbir yerde saklanmıyordu.
+    needs_review = Column(Boolean, nullable=False, default=False)
+    # Soft-delete: YANLIŞ GİRİLEN kaydı gizler.  Fiziksel imhadan (status=
+    # 'destroyed', stoktan düşer) tamamen ayrı bir kavramdır — bu bayrak
+    # stoğa/Transaction defterine ASLA dokunmaz.
+    is_active = Column(Boolean, nullable=False, default=True)
     domain = Column(String(20), default="cosmetics", nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -585,6 +593,9 @@ class RetentionSample(Base):
     movements = relationship("RetentionSampleMovement", back_populates="sample",
                              cascade="all, delete-orphan",
                              order_by="RetentionSampleMovement.created_at")
+    checks = relationship("RetentionSampleCheck", back_populates="sample",
+                          cascade="all, delete-orphan",
+                          order_by="RetentionSampleCheck.checked_on")
 
 
 class RetentionSampleMovement(Base):
@@ -599,7 +610,7 @@ class RetentionSampleMovement(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     sample_id = Column(Integer, ForeignKey("retention_samples.id"), nullable=False, index=True)
-    movement_type = Column(String(20), nullable=False)   # giris|cikis|imha|konum|duzeltme
+    movement_type = Column(String(20), nullable=False)   # giris|cikis|imha|konum|duzeltme|kontrol
     quantity = Column(Float, nullable=False, default=0.0)
     reason = Column(String(40), nullable=True)           # test|musteri|denetim|lab|diger
     note = Column(Text, nullable=True)
@@ -607,6 +618,42 @@ class RetentionSampleMovement(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     sample = relationship("RetentionSample", back_populates="movements")
+
+
+class RetentionSampleCheck(Base):
+    """Şahit numunenin periyodik kontrol kaydı (GMP gözlemi).
+
+    Numune dolaptan alınıp bakıldığında doldurulur: görünüm/koku/renk/ayrışma/
+    ambalaj için 'normal | değişim var' + not, sonunda genel sonuç.
+
+    Neden AYRI TABLO (`RetentionSampleMovement`'a gömülmedi): hareket tablosu
+    "kim/ne zaman/neden/**kaç adet**" için; kontrolün adedi yok, `quantity`
+    semantiği bozulurdu.  Ayrıca `note` alanına JSON gömmek Detay ekranında
+    ham JSON gösterirdi ve "son kontrol sonucu" sorgulanamazdı.
+    `Inventory.qc_form_data` kalıbı da uymuyor — o TEK seferlik/lot-başına-tek
+    form (kolon üzerine yazılır); kontrol ise N kayıt × 1 numunedir.
+
+    Gözlem tablosu `SampleAnalysis.properties` kalıbı: JSON string.  Etiket
+    metni YAZILMAZ, yalnız `key` — kalem listesi `core/retention.CHECK_ITEMS`
+    tek kaynağından okunur.
+
+    APPEND-ONLY: kontrol kaydı düzenlenmez/silinmez.  Yanlış girilen kontrol
+    için yeni kayıt açılır — KK gözleminde doğru olan budur.
+    `domain` kolonu YOK: erişim daima ebeveyn numune üzerinden (`_get`) geçer,
+    o da domain-scoped'tur.
+    """
+    __tablename__ = "retention_sample_checks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sample_id = Column(Integer, ForeignKey("retention_samples.id"), nullable=False, index=True)
+    checked_on = Column(Date, nullable=False)            # kontrolün YAPILDIĞI gün (kullanıcı girer)
+    properties = Column(Text, nullable=False, default="[]")   # JSON [{key,state,note}]
+    result = Column(String(20), nullable=False)          # uygun | uygun_degil
+    result_note = Column(Text, nullable=True)
+    checked_by = Column(String(80), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)  # sunucu damgası
+
+    sample = relationship("RetentionSample", back_populates="checks")
 
 
 class AdminAuditLog(Base):
@@ -1285,6 +1332,42 @@ def log_system_event(event_type: str, detail: str = None) -> None:
         pass
 
 
+def _backfill_retention_needs_review():
+    """Sayım aktarımında belirsiz kalan kayıtları `needs_review` ile işaretle.
+
+    BİR KEZ çalışır — `AppSetting` sentinel'i ile korunur.  Bu şart:
+    `init_db()` HER AÇILIŞTA koşuyor, dolayısıyla koşulsuz bir
+    `UPDATE … WHERE note LIKE '%TEYİT BEKLİYOR%'` kullanıcının temizlediği
+    bayrakları her deploy'da geri getirirdi (not metni yerinde durduğu için).
+
+    Kalıp: `_backfill_drive_folders()` — idempotent, hata-toleranslı.
+    """
+    from core.retention import REVIEW_MARKERS
+
+    SENTINEL = "retention.review_backfill_done"
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter(AppSetting.key == SENTINEL).first():
+            return                                  # zaten koştu → O(1) no-op
+        rows = db.query(RetentionSample).filter(
+            RetentionSample.needs_review == False).all()      # noqa: E712
+        n = 0
+        for r in rows:
+            note = r.note or ""
+            if any(m in note for m in REVIEW_MARKERS):
+                r.needs_review = True
+                n += 1
+        db.add(AppSetting(key=SENTINEL, value=str(n)))
+        db.commit()
+        if n:
+            print(f"[init_db] retention needs_review backfill: {n} kayıt işaretlendi")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _backfill_drive_folders():
     """original_name'inde '/' olan DriveFile'ları gerçek klasör ağacına yerleştir.
 
@@ -1463,11 +1546,23 @@ def init_db():
             # gelir; bunlar mevcut tablolara eklenen kolonlar.
             "ALTER TABLE items ADD COLUMN lot_seq INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE production_history ADD COLUMN witness_quantity DOUBLE PRECISION NOT NULL DEFAULT 0",
+            # Şahit numune — bilgi girişi turu: teyit bayrağı + soft-delete.
+            # DİKKAT: deploy.sh alembic ÇALIŞTIRMIYOR; prod şeması fiilen bu
+            # blokla evriliyor.  Migration dosyası alembic geçmişi + temiz
+            # kurulum içindir — kolonu buraya yazmazsan canlıya ULAŞMAZ.
+            "ALTER TABLE retention_samples ADD COLUMN needs_review BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE retention_samples ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE",
         ):
             alter_safe(stmt)
 
     # Eski Drive klasör-yüklemelerini (adında '/' olanlar) gerçek klasör ağacına
     # çevir — idempotent ('/' kalmayınca no-op).
+    # Şahit numune teyit bayrağı — sentinel'li, bir kez koşar.
+    try:
+        _backfill_retention_needs_review()
+    except Exception:
+        pass
+
     try:
         _backfill_drive_folders()
     except Exception:
