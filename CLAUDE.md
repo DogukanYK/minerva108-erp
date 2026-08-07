@@ -112,6 +112,25 @@ kalır), izinler (`pdks_leaves`, aralık satırı) ve ortak resmi tatiller
 yok). Hesap motoru `core/pdks.py` SAF fonksiyonlardır (DB'siz, unit-test
 edilebilir): tatil/izin/hafta tatilinde çalışılan her dakika fazla mesai, açık
 çift ("çıkış eksik") 0 sayılır ve yönetici düzeltene kadar toplam dışıdır.
+
+**Unutulan çıkış — iki mekanizma:**
+1. **Açık 'in' ne zaman düşer** (`core.pdks.open_in_still_valid`): 16 saatten
+   (`OPEN_PAIR_MAX_HOURS`) eski olmayacak VE **önceki güne aitse** 12 saatten
+   (`FORGOTTEN_AFTER_HOURS`) eski olmayacak. İkinci kural şart: akşam 17:00
+   girip çıkışı unutan personel ertesi sabah 08:30'da hâlâ "içeride"
+   sayılırsa bastığı çıkış dünkü güne 15 saatlik hayalî mesai yazardı.
+   Bu kuralla dün "Çıkış eksik" kalır, bugün temiz giriş yapılır. Gece
+   vardiyası (20:00→05:00 ≈ 9 sa) 12 saatin altında kaldığı için bozulmaz;
+   aynı gün içindeki uzun mesai (08:00→22:00) da etkilenmez.
+2. **Personel bildirimi** (`pdks_requests`, migration `d2f4a6c8e1b3`):
+   personel `POST /api/pdks/requests` ile saat + gerekçe bildirir (ofis
+   şartı ARANMAZ — zaten ofis dışından yapılır), yönetici
+   `/requests/{id}/approve|reject` ile karara bağlar. **Onaya kadar puantajda
+   sıfır etki**; onayda `source='request'` olan gerçek olay yazılır ve
+   `_work_date_for` + `_resync_out_work_dates` normal yoldan çalışır.
+   Güvenliği sağlayan şey onaydır, doğrulama zayıflamaz. Sınırlar: gelecek
+   zaman yasak, en fazla `REQUEST_MAX_AGE_DAYS`=14 gün geriye, aynı
+   gün+tip için tek bekleyen bildirim.
 **Geç gelme / erken çıkma bayrağı YOKTUR** (kullanıcı kararı, 2026-08-03:
 "dakika dakikasına bakma") — saatler dakika dakika kaydedilir ama kimse
 işaretlenmez; puantajda giriş/çıkış saati, çalışma, fazla mesai ve eksik süre

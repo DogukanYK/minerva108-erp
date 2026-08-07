@@ -69,6 +69,11 @@ LUNCH_AUTO_DEDUCT_MIN_MINUTES = 360
 # Bir 'out' bu süreden (saat) eski bir açık 'in'i kapatmaz — router'ın
 # work_date atama kuralı da aynı sabiti kullanır.
 OPEN_PAIR_MAX_HOURS = 16
+# ÖNCEKİ güne ait ve bu kadar eski bir açık 'in' artık "içerideyim" değil,
+# UNUTULMUŞ ÇIKIŞ sayılır.  Gece vardiyası (20:00→05:00 ≈ 9 sa) bu eşiğin
+# altında kaldığı için bozulmaz; akşam girip çıkışı unutan personel ise
+# ertesi sabah dünkü güne 15 saatlik hayalî mesai yazdırmaz.
+FORGOTTEN_AFTER_HOURS = 12
 
 LEAVE_TYPES = ("yillik", "raporlu", "ucretsiz", "diger")
 
@@ -246,6 +251,31 @@ def schedule_for(schedules, work_date):
         "break_minutes": break_minutes_within(day["start"], day["end"]),
         "span_minutes": max(0, end_m - start_m),
     }
+
+
+def open_in_still_valid(in_ts_utc, in_work_date, now_utc) -> bool:
+    """Açık bir 'in' olayı hâlâ "içerideyim" sayılmalı mı?
+
+    İki koşul birden gerekir:
+      • 16 saatten (OPEN_PAIR_MAX_HOURS) eski olmayacak, VE
+      • ÖNCEKİ bir güne aitse 12 saatten (FORGOTTEN_AFTER_HOURS) eski olmayacak.
+
+    İkinci kural unutulmuş çıkış içindir: akşam 17:00'de girip çıkışı unutan
+    personel ertesi sabah 08:30'da uygulamayı açtığında sistem onu hâlâ
+    "içeride" sayarsa, bastığı çıkış dünkü güne 15 saatlik hayalî bir mesai
+    yazar.  Bu kuralla dünkü gün "Çıkış eksik" olarak açık kalır (yönetici
+    düzeltir) ve personel bugüne temiz bir giriş yapar.
+
+    Gece vardiyası korunur: 20:00→05:00 arası 9 saat, 12 saatlik eşiğin
+    altında olduğu için çift normal şekilde kapanır."""
+    delta = now_utc - in_ts_utc
+    if not (timedelta(0) <= delta < timedelta(hours=OPEN_PAIR_MAX_HOURS)):
+        return False
+    if (in_work_date is not None
+            and in_work_date < tr_date_of(now_utc)
+            and delta >= timedelta(hours=FORGOTTEN_AFTER_HOURS)):
+        return False
+    return True
 
 
 # ─── Olay eşleme + gün hesabı ────────────────────────────────────────────────

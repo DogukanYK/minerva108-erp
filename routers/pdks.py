@@ -25,7 +25,8 @@ from sqlalchemy.orm import Session
 
 from database import (
     TR_OFFSET, get_db, to_tr, User, AppSetting,
-    Employee, EmployeeSchedule, AttendanceEvent, LeaveRecord, PublicHoliday,
+    Employee, EmployeeSchedule, AttendanceEvent, AttendanceRequest,
+    LeaveRecord, PublicHoliday,
 )
 from core.audit import log_admin_event
 from core.auth import SECRET_KEY
@@ -37,7 +38,8 @@ from core.pdks import (
     STATIC_CODE_ALPHABET, STATIC_CODE_LEN,
     compute_day, compute_month, fmt_minutes,
     geo_within, haversine_m, ip_allowed, leave_for, make_numeric_code,
-    make_qr_token, make_static_token, qr_bucket, schedule_for, tr_date_of,
+    make_qr_token, make_static_token, open_in_still_valid, qr_bucket,
+    schedule_for, tr_date_of,
     validate_template, verify_numeric_code, verify_qr_token,
     verify_static_code, verify_static_token,
 )
@@ -79,7 +81,10 @@ _CFG_STATIC_CODE = "pdks.checkin.static_code"
 _DEFAULT_RADIUS_M = 150
 _QR_MODES = ("static", "rotating")
 
-_SOURCE_LABELS = {"self": "Kendi cihazı", "manual": "Manuel (yönetici)"}
+_SOURCE_LABELS = {"self": "Kendi cihazı", "manual": "Manuel (yönetici)",
+                  "request": "Personel bildirimi (onaylı)"}
+# Personel en fazla bu kadar geriye dönük bildirim yapabilir (gün).
+REQUEST_MAX_AGE_DAYS = 14
 _TYPE_LABELS = {"in": "Giriş", "out": "Çıkış"}
 
 
@@ -94,6 +99,18 @@ class CheckBody(BaseModel):
     lat: Optional[float] = Field(None, ge=-90, le=90)
     lon: Optional[float] = Field(None, ge=-180, le=180)
     accuracy: Optional[float] = Field(None, ge=0)
+
+
+class RequestBody(BaseModel):
+    """Personelin "unuttum" bildirimi — TR duvar saati verilir."""
+    event_type: str = Field(..., pattern="^(in|out)$")
+    date: date
+    time: str = Field(..., pattern="^[0-2][0-9]:[0-5][0-9]$")
+    note: str = Field(..., min_length=3, max_length=300)
+
+
+class DecisionBody(BaseModel):
+    note: Optional[str] = Field(None, max_length=300)
 
 
 class CheckinConfigBody(BaseModel):
@@ -260,12 +277,14 @@ def _last_event(db: Session, employee_id: int) -> Optional[AttendanceEvent]:
 
 
 def _open_in(db: Session, employee_id: int, now_utc: datetime) -> Optional[AttendanceEvent]:
-    """Kapanmamış güncel 'in' olayı — son aktif olay 'in' ve <16 saatlikse.
-    Alt sınır (>= 0) şart: gelecek tarihli (hatalı) bir olay negatif delta
-    üretir ve korumaları ters yüz ederdi."""
+    """Kapanmamış güncel 'in' olayı.
+
+    Kural core.pdks.open_in_still_valid'de (saf, test edilebilir): 16 saatten
+    eski olmayacak VE önceki güne aitse 12 saatten eski olmayacak — böylece
+    unutulmuş çıkış ertesi gün hayalî mesai yazmaz, gece vardiyası bozulmaz."""
     last = _last_event(db, employee_id)
     if (last and last.event_type == "in"
-            and timedelta(0) <= now_utc - last.ts_utc < timedelta(hours=OPEN_PAIR_MAX_HOURS)):
+            and open_in_still_valid(last.ts_utc, last.work_date, now_utc)):
         return last
     return None
 
@@ -1360,6 +1379,192 @@ def regenerate_static_qr(
     payload["message"] = "Yeni kod üretildi — afişi yeniden yazdırın."
     return JSONResponse(content=payload,
                         headers={"Cache-Control": "no-store, max-age=0"})
+
+
+# ─── Unutulan giriş/çıkış bildirimi (personel → yönetici onayı) ─────────────
+
+_REQ_STATUS_LABELS = {"pending": "Onay bekliyor", "approved": "Onaylandı",
+                      "rejected": "Reddedildi"}
+
+
+def _request_view(r: AttendanceRequest, db: Session) -> dict:
+    emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
+    tr_ts = to_tr(r.ts_utc)
+    return {
+        "id": r.id,
+        "employee_id": r.employee_id,
+        "employee_name": emp.full_name if emp else "—",
+        "event_type": r.event_type,
+        "type_label": _TYPE_LABELS.get(r.event_type, r.event_type),
+        "date": r.work_date.isoformat(),
+        "date_label": r.work_date.strftime("%d.%m.%Y"),
+        "weekday_label": WEEKDAY_LABELS[r.work_date.weekday()],
+        "time": tr_ts.strftime("%H:%M") if tr_ts else "",
+        "note": r.note,
+        "status": r.status,
+        "status_label": _REQ_STATUS_LABELS.get(r.status, r.status),
+        "created_at": to_tr(r.created_at).strftime("%d.%m.%Y %H:%M") if r.created_at else "",
+        "decided_by": r.decided_by or "",
+        "decided_at": to_tr(r.decided_at).strftime("%d.%m.%Y %H:%M") if r.decided_at else "",
+        "decision_note": r.decision_note or "",
+    }
+
+
+@router.post("/requests", status_code=201)
+def create_request(
+    data: RequestBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("pdks", "check")),
+):
+    """Personel kendi unuttuğu giriş/çıkışı bildirir — ONAYA DÜŞER, puantaja
+    doğrudan işlemez.  Ofis ağı/konum/QR şartı ARANMAZ (zaten ofis dışından
+    yapılıyor); güvenliği sağlayan şey yöneticinin onayıdır."""
+    emp = _employee_for_user(db, current_user)
+    if not emp:
+        return _err(404, "Personel kaydınız bulunamadı — yöneticinize başvurun.")
+    try:
+        ts = _tr_wall_to_utc(data.date, data.time)
+    except ValueError:
+        return _err(400, "Geçersiz saat.")
+    now = datetime.utcnow()
+    if ts > now + timedelta(minutes=5):
+        return _err(400, "Gelecek bir zaman bildirilemez.")
+    today = tr_date_of(now)
+    if (today - data.date).days > REQUEST_MAX_AGE_DAYS:
+        return _err(400, f"En fazla {REQUEST_MAX_AGE_DAYS} gün geriye bildirim "
+                         f"yapabilirsiniz — daha eskisi için yöneticinize başvurun.")
+    if data.date > today:
+        return _err(400, "İleri tarihli bildirim yapılamaz.")
+    dup = (db.query(AttendanceRequest)
+           .filter(AttendanceRequest.employee_id == emp.id,
+                   AttendanceRequest.work_date == data.date,
+                   AttendanceRequest.event_type == data.event_type,
+                   AttendanceRequest.status == "pending").first())
+    if dup:
+        return _err(400, "Bu gün için zaten onay bekleyen bir bildiriminiz var.")
+    req = AttendanceRequest(
+        employee_id=emp.id, event_type=data.event_type, ts_utc=ts,
+        work_date=data.date, note=data.note.strip(), status="pending",
+    )
+    try:
+        db.add(req)
+        db.commit()
+    except Exception:
+        db.rollback()
+        return _err(500, "Bildirim kaydedilemedi.")
+    log_admin_event(db, request, actor=current_user, action="pdks.request.create",
+                    target_type="pdks_request", target_id=req.id,
+                    target_name=emp.full_name,
+                    details={"tip": _TYPE_LABELS[data.event_type],
+                             "zaman": f"{data.date.isoformat()} {data.time}",
+                             "not": data.note})
+    return {"id": req.id,
+            "message": "Bildiriminiz yöneticiye iletildi — onaylanınca puantaja işlenir."}
+
+
+@router.get("/requests/mine")
+def my_requests(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("pdks", "view_own")),
+):
+    emp = _employee_for_user(db, current_user)
+    if not emp:
+        return {"requests": []}
+    rows = (db.query(AttendanceRequest)
+            .filter(AttendanceRequest.employee_id == emp.id)
+            .order_by(AttendanceRequest.id.desc()).limit(20).all())
+    return {"requests": [_request_view(r, db) for r in rows]}
+
+
+@router.get("/requests")
+def list_requests(
+    status: str = "pending",
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("pdks", "view_all")),
+):
+    q = db.query(AttendanceRequest)
+    if status in ("pending", "approved", "rejected"):
+        q = q.filter(AttendanceRequest.status == status)
+    rows = q.order_by(AttendanceRequest.id.desc()).limit(200).all()
+    return {"requests": [_request_view(r, db) for r in rows],
+            "pending_count": db.query(AttendanceRequest)
+                               .filter(AttendanceRequest.status == "pending").count()}
+
+
+@router.post("/requests/{request_id}/approve")
+def approve_request(
+    request_id: int,
+    data: DecisionBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("pdks", "manage")),
+):
+    """Onay → GERÇEK olay yazılır (source='request').  Manuel girişle aynı
+    yoldan geçer: work_date kuralı + komşu çıkışların yeniden senkronu."""
+    req = (db.query(AttendanceRequest)
+           .filter(AttendanceRequest.id == request_id,
+                   AttendanceRequest.status == "pending").first())
+    if not req:
+        return _err(404, "Bekleyen bildirim bulunamadı.")
+    emp = _get_employee(db, req.employee_id)
+    if not emp:
+        return _err(404, "Personel bulunamadı.")
+    _lock_employee(db, emp.id)
+    ev = AttendanceEvent(
+        employee_id=emp.id, event_type=req.event_type, ts_utc=req.ts_utc,
+        work_date=_work_date_for(db, emp.id, req.event_type, req.ts_utc),
+        source="request", created_by_user_id=_uid(current_user) or None,
+        correction_note=f"Personel bildirimi: {req.note}",
+    )
+    req.status = "approved"
+    req.decided_by = _actor(current_user)
+    req.decided_at = datetime.utcnow()
+    req.decision_note = (data.note or "").strip() or None
+    try:
+        db.add(ev)
+        db.flush()
+        req.event_id = ev.id
+        _resync_out_work_dates(db, emp.id, [req.ts_utc])
+        db.commit()
+    except Exception:
+        db.rollback()
+        return _err(500, "Onay kaydedilemedi.")
+    log_admin_event(db, request, actor=current_user, action="pdks.request.approve",
+                    target_type="pdks_request", target_id=req.id,
+                    target_name=emp.full_name,
+                    details={"tip": _TYPE_LABELS[req.event_type],
+                             "zaman": to_tr(req.ts_utc).strftime("%d.%m.%Y %H:%M"),
+                             "olay_id": ev.id})
+    return {"id": req.id, "event_id": ev.id, "message": "Bildirim onaylandı ve puantaja işlendi."}
+
+
+@router.post("/requests/{request_id}/reject")
+def reject_request(
+    request_id: int,
+    data: DecisionBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("pdks", "manage")),
+):
+    req = (db.query(AttendanceRequest)
+           .filter(AttendanceRequest.id == request_id,
+                   AttendanceRequest.status == "pending").first())
+    if not req:
+        return _err(404, "Bekleyen bildirim bulunamadı.")
+    req.status = "rejected"
+    req.decided_by = _actor(current_user)
+    req.decided_at = datetime.utcnow()
+    req.decision_note = (data.note or "").strip() or None
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        return _err(500, "İşlem kaydedilemedi.")
+    log_admin_event(db, request, actor=current_user, action="pdks.request.reject",
+                    target_type="pdks_request", target_id=req.id,
+                    details={"not": req.decision_note})
+    return {"id": req.id, "message": "Bildirim reddedildi."}
 
 
 @router.get("/checkin-config")

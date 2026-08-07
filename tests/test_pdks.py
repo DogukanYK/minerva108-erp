@@ -12,11 +12,13 @@ import pytest
 from core.auth import SECRET_KEY
 from core.pdks import (
     NUMERIC_CODE_LEN, compute_day, compute_month, geo_within, haversine_m,
-    ip_allowed, make_numeric_code, make_qr_token, pair_events, qr_bucket,
+    ip_allowed, make_numeric_code, make_qr_token, open_in_still_valid,
+    pair_events, qr_bucket,
     schedule_for, tr_date_of, verify_numeric_code, verify_qr_token,
 )
 from database import (
-    AdminAuditLog, AppSetting, AttendanceEvent, Employee, EmployeeSchedule,
+    AdminAuditLog, AppSetting, AttendanceEvent, AttendanceRequest,
+    Employee, EmployeeSchedule,
     LeaveRecord, User,
 )
 
@@ -1161,3 +1163,150 @@ def test_static_manual_code_nonascii_is_400_not_500(staff_employee_client, db_se
               headers=ORIGIN)
     assert r.status_code == 400
     assert "geçersiz" in r.json()["detail"]
+
+
+# ═══ Unutulan çıkış: açık 'in' ne zaman geçersiz sayılır ════════════════════
+
+def test_open_in_still_valid_rules():
+    """Gece vardiyası korunur, unutulmuş çıkış ertesi gün hayalî mesai yazmaz."""
+    # Gece vardiyası: 20:00 giriş (Pzt), 05:00 çıkış (Salı) = 9 saat → HÂLÂ AÇIK
+    in_ts = tr(2026, 8, 3, 20)                 # Pzt 20:00 TR
+    assert open_in_still_valid(in_ts, date(2026, 8, 3), tr(2026, 8, 4, 5)) is True
+
+    # Akşam girip çıkışı unutan: 17:00 (Pzt) → ertesi 08:30 = 15,5 saat
+    # 16 saatin altında ama ÖNCEKİ güne ait ve 12 saati aşmış → ARTIK AÇIK DEĞİL
+    in_ts2 = tr(2026, 8, 3, 17)
+    assert open_in_still_valid(in_ts2, date(2026, 8, 3), tr(2026, 8, 4, 8, 30)) is False
+
+    # Aynı gün uzun mesai: 08:00 → 22:00 = 14 saat, aynı TR günü → AÇIK kalır
+    in_ts3 = tr(2026, 8, 3, 8)
+    assert open_in_still_valid(in_ts3, date(2026, 8, 3), tr(2026, 8, 3, 22)) is True
+
+    # 16 saati aşan her durum kapalı (sabah girip ertesi sabah gelen)
+    in_ts4 = tr(2026, 8, 3, 9)
+    assert open_in_still_valid(in_ts4, date(2026, 8, 3), tr(2026, 8, 4, 8, 30)) is False
+
+    # Gelecek tarihli (bozuk) olay negatif delta → asla açık sayılmaz
+    assert open_in_still_valid(tr(2026, 8, 4, 9), date(2026, 8, 4), tr(2026, 8, 3, 9)) is False
+
+
+def test_forgotten_checkout_lets_next_day_checkin(staff_employee_client, db_session):
+    """Akşam çıkışı unutulduysa personel ertesi sabah normal GİRİŞ yapabilmeli;
+    dünkü gün 'Çıkış eksik' kalmalı (uydurma 15 saatlik mesai YAZILMAMALI)."""
+    c, emp_id = staff_employee_client
+    now = datetime.utcnow()
+    # Dün akşam 17:00 TR'de açık kalmış bir giriş kur
+    yesterday = tr_date_of(now) - timedelta(days=1)
+    stale_in = datetime(yesterday.year, yesterday.month, yesterday.day, 17, 0) - timedelta(hours=3)
+    db_session.add(AttendanceEvent(employee_id=emp_id, event_type="in",
+                                   ts_utc=stale_in, work_date=yesterday, source="self"))
+    db_session.commit()
+
+    st = c.get("/api/pdks/me/today").json()
+    assert st["state"] == "disarida", "dünkü açık giriş bugüne taşınmamalı"
+
+    r = c.post("/api/pdks/check", json={"type": "in"}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "iceride"
+
+    db_session.expire_all()
+    evs = (db_session.query(AttendanceEvent)
+           .filter_by(employee_id=emp_id).order_by(AttendanceEvent.ts_utc).all())
+    assert len(evs) == 2
+    assert evs[0].work_date == yesterday          # dünkü giriş dünde kaldı
+    assert evs[1].work_date == tr_date_of(now)    # bugünkü giriş bugüne yazıldı
+
+
+# ═══ "Unuttum" bildirimi → yönetici onayı ═══════════════════════════════════
+
+def test_request_flow_end_to_end(staff_employee_client, db_session):
+    c, emp_id = staff_employee_client
+    today = tr_date_of(datetime.utcnow())
+    yesterday = today - timedelta(days=1)
+
+    # Personel bildirimi gönderir — ofis şartı ARANMAZ (ofis dışından yapılır)
+    r = c.post("/api/pdks/requests",
+               json={"event_type": "out", "date": yesterday.isoformat(),
+                     "time": "18:15", "note": "çıkarken okutmayı unuttum"},
+               headers=ORIGIN)
+    assert r.status_code == 201, r.text
+    req_id = r.json()["id"]
+
+    # Kendi bildirimlerinde görünür, durumu 'onay bekliyor'
+    mine = c.get("/api/pdks/requests/mine").json()["requests"]
+    assert mine[0]["id"] == req_id and mine[0]["status"] == "pending"
+
+    # Aynı gün + aynı tip için ikinci bekleyen bildirim engellenir
+    r = c.post("/api/pdks/requests",
+               json={"event_type": "out", "date": yesterday.isoformat(),
+                     "time": "18:30", "note": "tekrar"}, headers=ORIGIN)
+    assert r.status_code == 400 and "zaten onay bekleyen" in r.json()["detail"]
+
+    # Personel onaylayamaz
+    assert c.post(f"/api/pdks/requests/{req_id}/approve", json={},
+                  headers=ORIGIN).status_code == 403
+
+    # Onaya kadar puantajda HİÇBİR etki yok
+    assert db_session.query(AttendanceEvent).filter_by(employee_id=emp_id).count() == 0
+
+    # Yönetici bekleyenleri görür ve onaylar
+    admin = _login(c, "dogukan")
+    pend = admin.get("/api/pdks/requests?status=pending").json()
+    assert pend["pending_count"] == 1
+    r = admin.post(f"/api/pdks/requests/{req_id}/approve", json={}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+
+    # Gerçek olay yazıldı: doğru gün, doğru saat, izlenebilir kaynak
+    ev = db_session.query(AttendanceEvent).filter_by(employee_id=emp_id).one()
+    assert ev.event_type == "out" and ev.source == "request"
+    assert ev.work_date == yesterday
+    assert (ev.ts_utc + timedelta(hours=3)).strftime("%H:%M") == "18:15"
+    assert "çıkarken okutmayı unuttum" in (ev.correction_note or "")
+
+    db_session.expire_all()
+    req = db_session.query(AttendanceRequest).get(req_id)
+    assert req.status == "approved" and req.event_id == ev.id and req.decided_by
+    actions = {a.action for a in db_session.query(AdminAuditLog).all()}
+    assert {"pdks.request.create", "pdks.request.approve"} <= actions
+
+
+def test_request_reject_and_validation(staff_employee_client, db_session):
+    c, emp_id = staff_employee_client
+    today = tr_date_of(datetime.utcnow())
+
+    # İleri tarih reddedilir
+    r = c.post("/api/pdks/requests",
+               json={"event_type": "out", "date": (today + timedelta(days=1)).isoformat(),
+                     "time": "18:00", "note": "yarın"}, headers=ORIGIN)
+    assert r.status_code == 400
+
+    # Çok eski tarih reddedilir (14 gün sınırı)
+    r = c.post("/api/pdks/requests",
+               json={"event_type": "out", "date": (today - timedelta(days=40)).isoformat(),
+                     "time": "18:00", "note": "çok eski"}, headers=ORIGIN)
+    assert r.status_code == 400 and "geriye bildirim" in r.json()["detail"]
+
+    # Bugün için İLERİ saat de reddedilir (testin koştuğu saatten bağımsız
+    # olsun diye 23:59 — sunucu 'gelecek zaman' kontrolü yapar)
+    r = c.post("/api/pdks/requests",
+               json={"event_type": "in", "date": today.isoformat(),
+                     "time": "23:59", "note": "gece"}, headers=ORIGIN)
+    assert r.status_code == 400 and "Gelecek" in r.json()["detail"]
+
+    # Geçerli bildirim (dün) → yönetici reddeder → olay OLUŞMAZ
+    r = c.post("/api/pdks/requests",
+               json={"event_type": "in", "date": (today - timedelta(days=1)).isoformat(),
+                     "time": "09:00", "note": "sabah okutamadım"}, headers=ORIGIN)
+    assert r.status_code == 201, r.text
+    req_id = r.json()["id"]
+    admin = _login(c, "dogukan")
+    r = admin.post(f"/api/pdks/requests/{req_id}/reject",
+                   json={"note": "kamera kaydında görünmüyorsun"}, headers=ORIGIN)
+    assert r.status_code == 200
+    assert db_session.query(AttendanceEvent).filter_by(employee_id=emp_id).count() == 0
+    db_session.expire_all()
+    req = db_session.query(AttendanceRequest).get(req_id)
+    assert req.status == "rejected" and "kamera kaydında" in req.decision_note
+    # Aynı bildirim ikinci kez işlenemez
+    assert admin.post(f"/api/pdks/requests/{req_id}/approve", json={},
+                      headers=ORIGIN).status_code == 404

@@ -126,6 +126,13 @@
     .totals-row td{ font-weight:700; background:#faf8f4; border-top:2px solid #e8e2d6; }
     .emp-row{ cursor:pointer; } .emp-row:hover{ background:#faf8f4; }
     .day-row{ cursor:pointer; } .day-row:hover{ background:#faf8f4; }
+    .req-list{ margin-top:0.9rem; padding-top:0.7rem; border-top:1px solid #f3f0ea; font-size:0.85rem; }
+    .req-list b{ display:block; margin-bottom:0.4rem; color:#6b7280; font-size:0.74rem; text-transform:uppercase; letter-spacing:0.04em; }
+    .req-item{ display:flex; align-items:center; justify-content:space-between; gap:0.6rem; padding:0.3rem 0; }
+    .req-pending{ background:#fffbeb; border-left:4px solid #f59e0b; border-radius:9px; padding:0.9rem 1rem; margin-bottom:1rem; }
+    .req-pending .rp-row{ display:flex; align-items:center; gap:0.7rem; flex-wrap:wrap; padding:0.5rem 0; border-top:1px solid #fde68a; }
+    .req-pending .rp-row:first-of-type{ border-top:none; }
+    .req-pending .rp-main{ flex:1; min-width:200px; }
     .cfg-warn{ padding:0.7rem 1rem; border-radius:9px; font-size:0.9rem; background:#f3f4f6; color:#4b5563; border-left:4px solid #9ca3af; }
     .cfg-warn.on{ background:#dcfce7; color:#15803d; border-left-color:#22c55e; }
     .check-guard{ margin-top:0.9rem; font-size:0.83rem; color:#6b7280; }
@@ -246,6 +253,7 @@
             <table>
               <thead><tr><th>Saat</th><th>Tip</th><th>Kaynak</th></tr></thead>
               <tbody id="todayEvents"><tr><td colspan="3" class="muted">—</td></tr></tbody>
+              <tfoot><tr><td colspan="3" style="border:none;padding:0;"><div id="myReqBox"></div></td></tr></tfoot>
             </table>
           </div>
         </div>
@@ -275,6 +283,7 @@
       {% if can('pdks','view_all') %}
       <!-- ── 3 · Günlük Durum ── -->
       <section class="pdks-panel" id="panel-day">
+        <div id="pendingReqBox"></div>
         <div class="card2">
           <div class="card2-head" style="justify-content:space-between;">
             <div style="display:flex;align-items:center;gap:0.6rem;"><i class="bi bi-people"></i><h2>Günlük Durum</h2></div>
@@ -634,6 +643,48 @@
   {% endif %}
 
   {% if can('pdks','check') %}
+  <!-- ── Unuttuğum giriş/çıkışı bildir (yönetici onayına gider) ── -->
+  <div class="ovl" id="reqModal" onclick="if(event.target===this) reqClose()">
+    <div class="ovl-card" style="max-width:460px;">
+      <div class="ovl-head">
+        <h3>Unuttuğum Giriş/Çıkışı Bildir</h3>
+        <button class="ico-del" onclick="reqClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
+      </div>
+      <div class="ovl-body">
+        <p class="muted" style="margin:0 0 1rem;">
+          Bildiriminiz <b>yöneticinin onayına</b> düşer; onaylanınca puantajınıza işlenir.
+          Ofiste olmanız gerekmez.
+        </p>
+        <div style="display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+          <div style="flex:1;min-width:120px;">
+            <label class="lbl">Ne unuttum? *</label>
+            <select id="reqType" class="ipt">
+              <option value="out">Çıkış</option>
+              <option value="in">Giriş</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:130px;">
+            <label class="lbl">Tarih *</label>
+            <input type="date" id="reqDate" class="ipt" />
+          </div>
+          <div style="flex:1;min-width:110px;">
+            <label class="lbl">Saat *</label>
+            <input type="time" id="reqTime" class="ipt" />
+          </div>
+        </div>
+        <div>
+          <label class="lbl">Gerekçe *</label>
+          <input type="text" id="reqNote" class="ipt" maxlength="300"
+                 placeholder="ör. çıkarken okutmayı unuttum" />
+        </div>
+      </div>
+      <div style="display:flex;gap:0.6rem;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
+        <button class="btn-g" id="reqSendBtn" onclick="reqSubmit()"><i class="bi bi-send"></i> Gönder</button>
+        <button class="btn-o" style="margin-left:auto;" onclick="reqClose()">Vazgeç</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Yedek kod modalı (kamera çalışmadığında) ── -->
   <div class="ovl" id="codeModal" onclick="if(event.target===this) codeClose()">
     <div class="ovl-card" style="max-width:420px;">
@@ -762,11 +813,36 @@
                </button>
              </div>`
           : ''}
+        <div class="check-alt">
+          <button type="button" onclick="reqOpen()">
+            <i class="bi bi-clock-history"></i> Giriş/çıkış yapmayı unuttum — bildir
+          </button>
+        </div>
         ${guard}`;
       const tb = document.getElementById('todayEvents');
       tb.innerHTML = (st.events && st.events.length)
         ? st.events.map(e => `<tr><td><b>${esc(e.time)}</b></td><td>${esc(e.type_label)}</td><td class="muted">${esc(e.source_label)}${e.correction_note ? ' · ' + esc(e.correction_note) : ''}</td></tr>`).join('')
         : '<tr><td colspan="3" class="muted">Bugün henüz hareket yok.</td></tr>';
+      loadMyRequests();
+    }
+
+    /* Personelin kendi bildirimleri (onay bekleyen / sonuçlanan) */
+    async function loadMyRequests(){
+      const box = document.getElementById('myReqBox');
+      if (!box) return;
+      try {
+        const d = await api('/api/pdks/requests/mine');
+        const rows = (d.requests || []).slice(0, 5);
+        if (!rows.length) { box.innerHTML = ''; return; }
+        box.innerHTML = '<div class="req-list"><b>Bildirimlerim</b>' + rows.map(r => {
+          const cls = r.status === 'pending' ? 'st-bekliyor'
+                    : r.status === 'approved' ? 'st-calisti' : 'st-devamsiz';
+          return `<div class="req-item">
+            <span>${esc(r.date_label)} · ${esc(r.type_label)} ${esc(r.time)}</span>
+            <span class="badge-st ${cls}">${esc(r.status_label)}</span>
+          </div>`;
+        }).join('') + '</div>';
+      } catch { box.innerHTML = ''; }
     }
     /* Konum — Permissions-Policy geolocation=(self) ile açık (api_main.py). */
     function getPosition(){
@@ -850,6 +926,74 @@
         return { ok: false, err: e };
       }
       finally { _checkBusy = false; }
+    }
+
+    /* ── "Unuttum" bildirimi (personel) ── */
+    function reqOpen(){
+      const d = document.getElementById('reqDate');
+      if (!d.value) d.value = trToday();
+      document.getElementById('reqTime').value = '';
+      document.getElementById('reqNote').value = '';
+      document.getElementById('reqType').value = 'out';
+      document.getElementById('reqModal').classList.add('open');
+    }
+    function reqClose(){ document.getElementById('reqModal').classList.remove('open'); }
+    async function reqSubmit(){
+      const body = {
+        event_type: document.getElementById('reqType').value,
+        date: document.getElementById('reqDate').value,
+        time: document.getElementById('reqTime').value,
+        note: document.getElementById('reqNote').value.trim(),
+      };
+      if (!body.date || !body.time) { toastFn('Tarih ve saat zorunlu.'); return; }
+      if (body.note.length < 3) { toastFn('Kısa bir gerekçe yazın.'); return; }
+      const btn = document.getElementById('reqSendBtn');
+      btn.disabled = true;
+      try {
+        const d = await jpost('/api/pdks/requests', body);
+        toastFn(d.message || 'Bildirim gönderildi.', 'success');
+        reqClose();
+        loadMyRequests();
+      } catch (e) { toastFn(e.message); }
+      finally { btn.disabled = false; }
+    }
+
+    /* ── Bekleyen bildirimler (yönetici) ── */
+    async function loadPendingRequests(){
+      const box = document.getElementById('pendingReqBox');
+      if (!box || !window.CAN_VIEW_ALL) return;
+      try {
+        const d = await api('/api/pdks/requests?status=pending');
+        const rows = d.requests || [];
+        if (!rows.length) { box.innerHTML = ''; return; }
+        box.innerHTML = `<div class="req-pending">
+          <b><i class="bi bi-bell"></i> Onay bekleyen bildirimler (${rows.length})</b>
+          ${rows.map(r => `<div class="rp-row">
+            <span class="rp-main"><b>${esc(r.employee_name)}</b> · ${esc(r.date_label)}
+              ${esc(r.weekday_label)} · <b>${esc(r.type_label)} ${esc(r.time)}</b>
+              <span class="muted">— ${esc(r.note)}</span></span>
+            ${window.CAN_MANAGE ? `<span style="display:flex;gap:0.4rem;">
+              <button class="btn-o" style="padding:0.3rem 0.7rem;" onclick="reqDecide(${r.id},'approve')">
+                <i class="bi bi-check-lg"></i> Onayla</button>
+              <button class="btn-o" style="padding:0.3rem 0.7rem;color:#b91c1c;" onclick="reqDecide(${r.id},'reject')">
+                <i class="bi bi-x-lg"></i> Reddet</button>
+            </span>` : ''}
+          </div>`).join('')}
+        </div>`;
+      } catch { box.innerHTML = ''; }
+    }
+    async function reqDecide(id, action){
+      let note = null;
+      if (action === 'reject') {
+        note = prompt('Red gerekçesi (personel görecek, opsiyonel):', '');
+        if (note === null) return;
+      }
+      try {
+        const d = await jpost(`/api/pdks/requests/${id}/${action}`, { note: note || null });
+        toastFn(d.message || 'İşlendi.', 'success');
+        loadPendingRequests();
+        loadDay();
+      } catch (e) { toastFn(e.message); }
     }
 
     /* ── Yedek kod modalı ── */
@@ -951,6 +1095,7 @@
     let _dayRows = [], _dayDateStr = null;
     async function loadDay(){
       if (!window.CAN_VIEW_ALL) return;
+      loadPendingRequests();
       const inp = document.getElementById('dayDate');
       if (!inp.value) inp.value = trToday();
       const tb = document.getElementById('dayBody');

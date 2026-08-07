@@ -1244,6 +1244,31 @@ class PublicHoliday(Base):
     created_at   = Column(DateTime, default=datetime.utcnow)
 
 
+class AttendanceRequest(Base):
+    """Personelin "giriş/çıkış yapmayı unuttum" bildirimi — YÖNETİCİ ONAYLI.
+
+    Doğrulama (ofis ağı + konum + QR) açıkken personel ofis dışından imza
+    atamaz; bu kasıtlıdır.  Unutulan çıkış için tek yol yöneticinin manuel
+    düzeltmesiydi — bu tablo o talebi personelin kendisinin başlatmasını
+    sağlar: saat + gerekçe bildirilir, yönetici onaylayınca GERÇEK
+    AttendanceEvent (source='request') yazılır.  Onaysız hiçbir puantaj
+    etkisi YOKTUR — güvenlik zayıflamaz, yalnız yöneticinin işi kolaylaşır."""
+    __tablename__ = "pdks_requests"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    employee_id   = Column(Integer, ForeignKey("pdks_employees.id"), nullable=False, index=True)
+    event_type    = Column(String(10), nullable=False)        # 'in' | 'out'
+    ts_utc        = Column(DateTime, nullable=False)          # bildirilen an (UTC)
+    work_date     = Column(Date, nullable=False, index=True)  # TR-yerel gün
+    note          = Column(String(300), nullable=False)       # personelin gerekçesi
+    status        = Column(String(12), nullable=False, default="pending", index=True)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    decided_by    = Column(String(100), nullable=True)
+    decided_at    = Column(DateTime, nullable=True)
+    decision_note = Column(String(300), nullable=True)
+    event_id      = Column(Integer, ForeignKey("pdks_events.id"), nullable=True)  # onayda oluşan olay
+
+
 def log_system_event(event_type: str, detail: str = None) -> None:
     """Bir sistem olayını (örn. 'app_start') kaydet.
 
