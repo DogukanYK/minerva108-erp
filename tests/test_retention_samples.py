@@ -722,3 +722,195 @@ def test_manual_create_rejects_duplicate_lot(authed_client, db_session):
     assert authed_client.post("/api/retention/samples", json=body, headers=_HDR).status_code == 201
     r2 = authed_client.post("/api/retention/samples", json=body, headers=_HDR)
     assert r2.status_code == 400 and "zaten kayıtlı" in r2.json()["detail"]
+
+
+# ─── Boy (varyasyon) ayrımı ─────────────────────────────────────────────────
+#
+# Aynı ürünün 200 ml'si ve 500 ml'si AYRI partiler hâlinde üretiliyor ve her
+# boydan ayrı şahit numune saklanıyor (kullanıcı teyidi + 03.08.2026 sayım
+# belgesi: aynı üretim tarihinde 500 ml EV002, 200 ml EV006 numarasını almış).
+# Boy ayrı bir kolon DEĞİL — boy, varyasyon `Item` satırının kendisidir.
+
+def _family(db: Session, *, suffix="F", brand="Evanira", domain="cosmetics"):
+    """Ana ürün + iki boy varyasyonu.  (ana, küçük, büyük) döner."""
+    parent = Item(name=f"{brand} Losyon {suffix}", sku=f"p-{suffix}",
+                  category="Bitmiş Ürün", unit="adet", current_stock=0, domain=domain)
+    db.add(parent); db.flush()
+    small = Item(name=f"{brand} Losyon {suffix} 200ml", sku=f"s-{suffix}",
+                 category="Bitmiş Ürün", unit="adet", current_stock=20,
+                 parent_id=parent.id, variation_name="200ml", domain=domain)
+    big = Item(name=f"{brand} Losyon {suffix} 500ml", sku=f"b-{suffix}",
+               category="Bitmiş Ürün", unit="adet", current_stock=7,
+               parent_id=parent.id, variation_name="500ml", domain=domain)
+    db.add_all([small, big]); db.commit()
+    return parent, small, big
+
+
+def _cabinet_row(db: Session, item: Item, lot: str, qty=2.0):
+    """Sayımdan gelmiş gibi bir dolap kaydı — `inventory_id` YOK, stok bağı yok."""
+    r = RetentionSample(item_id=item.id, item_name=item.name, lot_number=lot,
+                        brand=cabinet_of(item.name), quantity=qty, initial_quantity=qty,
+                        unit="adet", status="stored", source="sayim",
+                        placed_by="sayım", domain=item.domain or "cosmetics")
+    db.add(r); db.commit()
+    return r
+
+
+def test_create_rejects_parent_item(authed_client, db_session):
+    """Ana ürün SOYUT — fiziksel numunesi olamaz.  21 kayıtlık hatanın kapısı."""
+    parent, small, _ = _family(db_session, suffix="RP")
+    r = authed_client.post("/api/retention/samples",
+                           json={"item_id": parent.id, "lot_number": "EV001", "quantity": 2},
+                           headers=_HDR)
+    assert r.status_code == 400 and "ana üründür" in r.json()["detail"]
+    assert db_session.query(RetentionSample).filter(
+        RetentionSample.item_id == parent.id).count() == 0
+    # Varyasyona yazmak serbest
+    assert authed_client.post("/api/retention/samples",
+                              json={"item_id": small.id, "lot_number": "EV001", "quantity": 2},
+                              headers=_HDR).status_code == 201
+
+
+def test_list_exposes_size_fields(authed_client, db_session):
+    parent, small, big = _family(db_session, suffix="LS")
+    _cabinet_row(db_session, small, "EV006")
+    _cabinet_row(db_session, parent, "EV002")          # boyu belirsiz (eski sayım)
+    rows = authed_client.get("/api/retention/samples").json()["rows"]
+    by_lot = {r["lot_number"]: r for r in rows}
+    assert by_lot["EV006"]["variation_name"] == "200ml"
+    assert by_lot["EV006"]["parent_name"] == parent.name
+    assert by_lot["EV006"]["is_parent"] is False
+    assert by_lot["EV002"]["variation_name"] == ""
+    assert by_lot["EV002"]["is_parent"] is True        # → arayüzde "boy seçilmedi"
+    # Boy seçicisi için iki varyasyon da listede
+    assert {v["variation_name"] for v in by_lot["EV002"]["variants"]} == {"200ml", "500ml"}
+
+
+def test_set_variation_moves_record_and_leaves_stock_alone(authed_client, db_session):
+    """Boy düzeltmesi kaydın ÜRÜNÜNÜ değiştirir — stoğa/ledger'a DOKUNMAZ."""
+    parent, small, big = _family(db_session, suffix="MV")
+    rs = _cabinet_row(db_session, parent, "EV003")
+    stock_before = (small.current_stock, big.current_stock, parent.current_stock)
+    tx_before = db_session.query(Transaction).count()
+
+    r = authed_client.put(f"/api/retention/samples/{rs.id}/variation",
+                          json={"item_id": big.id}, headers=_HDR)
+    assert r.status_code == 200, r.text
+    assert r.json()["variation_name"] == "500ml"
+    db_session.expire_all()
+
+    moved = db_session.query(RetentionSample).get(rs.id)
+    assert moved.item_id == big.id and moved.item_name == big.name
+    assert moved.quantity == 2.0                        # adet aynı
+    # STOK ve LEDGER değişmedi — asıl regresyon kilidi
+    assert (db_session.query(Item).get(small.id).current_stock,
+            db_session.query(Item).get(big.id).current_stock,
+            db_session.query(Item).get(parent.id).current_stock) == stock_before
+    assert db_session.query(Transaction).count() == tx_before
+    # İz bırakır
+    assert db_session.query(RetentionSampleMovement).filter(
+        RetentionSampleMovement.sample_id == rs.id,
+        RetentionSampleMovement.movement_type == "duzeltme").count() == 1
+
+
+def test_set_variation_rejects_foreign_and_parent_targets(authed_client, db_session):
+    parent, small, _ = _family(db_session, suffix="FT")
+    other_parent, other_small, _ = _family(db_session, suffix="FT2")
+    rs = _cabinet_row(db_session, parent, "EV004")
+
+    bad = authed_client.put(f"/api/retention/samples/{rs.id}/variation",
+                            json={"item_id": other_small.id}, headers=_HDR)
+    assert bad.status_code == 400 and "boy değil" in bad.json()["detail"]
+
+    par = authed_client.put(f"/api/retention/samples/{rs.id}/variation",
+                            json={"item_id": other_parent.id}, headers=_HDR)
+    assert par.status_code == 400
+    db_session.expire_all()
+    assert db_session.query(RetentionSample).get(rs.id).item_id == parent.id
+
+
+def test_set_variation_blocked_for_production_sample(authed_client, db_session):
+    """Üretim kaydı `-S` Inventory lotuna bağlı; ürünü değişirse çıkışta
+    yanlış ürünün stoğu düşerdi."""
+    rs, _ = _make_sample(authed_client, db_session, suffix="PB")
+    assert rs.inventory_id is not None
+    r = authed_client.put(f"/api/retention/samples/{rs.id}/variation",
+                          json={"item_id": rs.item_id}, headers=_HDR)
+    assert r.status_code == 400 and "Üretimden gelen" in r.json()["detail"]
+
+
+def test_bulk_variation(authed_client, db_session):
+    parent, small, big = _family(db_session, suffix="BV")
+    a = _cabinet_row(db_session, parent, "EV005")
+    b = _cabinet_row(db_session, parent, "EV006")
+    other_parent, other_small, _ = _family(db_session, suffix="BV2")
+    c = _cabinet_row(db_session, other_parent, "EV007")
+
+    r = authed_client.put("/api/retention/samples/bulk-variation", headers=_HDR, json={
+        "rows": [{"id": a.id, "item_id": small.id},
+                 {"id": b.id, "item_id": big.id},
+                 {"id": c.id, "item_id": small.id}]})     # yabancı aile → atlanır
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["updated"] == 2 and d["skipped"] == 1 and d["errors"]
+    db_session.expire_all()
+    assert db_session.query(RetentionSample).get(a.id).item_id == small.id
+    assert db_session.query(RetentionSample).get(b.id).item_id == big.id
+    assert db_session.query(RetentionSample).get(c.id).item_id == other_parent.id
+
+
+def test_cabinets_product_breakdown(authed_client, db_session):
+    parent, small, big = _family(db_session, suffix="CB")
+    _cabinet_row(db_session, small, "EV006", qty=2)
+    _cabinet_row(db_session, big, "EV002", qty=3)
+    _cabinet_row(db_session, parent, "EV009", qty=1)      # boyu belirsiz
+    d = authed_client.get("/api/retention/cabinets").json()
+    cab = next(c for c in d["cabinets"] if c["brand"] == cabinet_of(parent.name))
+    got = {(p["variation_name"], p["quantity"], p["is_parent"]) for p in cab["products"]}
+    assert ("200ml", 2.0, False) in got
+    assert ("500ml", 3.0, False) in got
+    assert ("", 1.0, True) in got                         # ana ürüne yazılmış kayıt
+    assert cab["unsized"] == 1 and d["totals"]["unsized"] == 1
+
+
+def test_unsized_and_item_id_filters(authed_client, db_session):
+    parent, small, _ = _family(db_session, suffix="UF")
+    _cabinet_row(db_session, small, "EV006")
+    unsized = _cabinet_row(db_session, parent, "EV002")
+
+    rows = authed_client.get("/api/retention/samples?unsized=1").json()["rows"]
+    assert [r["id"] for r in rows] == [unsized.id]
+
+    rows = authed_client.get(f"/api/retention/samples?item_id={small.id}").json()["rows"]
+    assert [r["lot_number"] for r in rows] == ["EV006"]
+
+
+def test_variation_rbac(client, authed_client, db_session):
+    """Boy düzeltmesi `retention.edit` ister.
+
+    Tohumlanan dört kullanıcının hiçbirinde bu izin KAPALI değil (SuperAdmin /
+    Manager / LabLead / LabTech hepsinde açık — dolabı fiilen laborant
+    kullanıyor), o yüzden burada LabTech'in yazabildiği doğrulanır.  İznin
+    gerçekten aranması `require_permission` bağımlılığıyla garanti; kapalı rol
+    davranışı `test_delete_rbac`'te (destroy LabTech'te kapalı) kilitli.
+    """
+    parent, small, _ = _family(db_session, suffix="VR")
+    rs = _cabinet_row(db_session, parent, "EV008")
+    client.post("/api/login", json={"username": "meltem", "password": "minerva123"},
+                headers=_HDR)
+    assert client.put(f"/api/retention/samples/{rs.id}/variation",
+                      json={"item_id": small.id}, headers=_HDR).status_code == 200
+    db_session.expire_all()
+    assert db_session.query(RetentionSample).get(rs.id).item_id == small.id
+
+
+def test_variation_domain_isolation(authed_client, db_session):
+    """Supplement panelinden kozmetik numunesine dokunulamaz."""
+    parent, small, _ = _family(db_session, suffix="VD")
+    rs = _cabinet_row(db_session, parent, "EV010")
+    authed_client.post("/api/domain/switch", json={"domain": "supplement"}, headers=_HDR)
+    r = authed_client.put(f"/api/retention/samples/{rs.id}/variation",
+                          json={"item_id": small.id}, headers=_HDR)
+    assert r.status_code == 404
+    db_session.expire_all()
+    assert db_session.query(RetentionSample).get(rs.id).item_id == parent.id

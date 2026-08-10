@@ -109,6 +109,19 @@ class DeleteBody(BaseModel):
     reason: str = Field(..., min_length=3, max_length=300)
 
 
+class VariationBody(BaseModel):
+    item_id: int                                     # hedef varyasyon (boy)
+
+
+class VariationRow(BaseModel):
+    id: int
+    item_id: int
+
+
+class BulkVariationBody(BaseModel):
+    rows: List[VariationRow] = Field(..., min_length=1, max_length=500)
+
+
 class SampleCreateBody(BaseModel):
     item_id: int
     lot_number: str = Field(..., min_length=1, max_length=100)
@@ -169,15 +182,71 @@ def _check_view(c: RetentionSampleCheck) -> dict:
     }
 
 
+def _size_map(db: Session, rows) -> dict:
+    """{item_id: {variation_name, parent_id, parent_name, is_parent}} — sabit 3 sorgu.
+
+    BOY AYRI BİR KOLON DEĞİL.  Bu sistemde boy, varyasyon `Item` satırının
+    kendisidir (`parent_id` + `variation_name`); dolap kaydı yalnız `item_id`
+    tutar.  Burada okunur, KOPYALANMAZ — ürün yeniden adlandırılsa da dolap
+    doğru boyu göstermeye devam eder ve tek doğruluk kaynağı `Item` kalır.
+
+    `is_parent` = kaydın işaret ettiği ürünün alt varyasyonu var demektir; yani
+    o kaydın boyu BELİRSİZ (soyut ana ürüne yazılmış).  03.08.2026 sayımından
+    gelen 21 kayıt bu durumda — el yazısı listede boy yazmıyordu.
+    """
+    ids = {r.item_id for r in rows if r.item_id}
+    if not ids:
+        return {}
+    items = {i.id: i for i in db.query(Item).filter(Item.id.in_(ids)).all()}
+    parent_ids = {i.parent_id for i in items.values() if i.parent_id}
+    parents = ({p.id: p for p in db.query(Item).filter(Item.id.in_(parent_ids)).all()}
+               if parent_ids else {})
+    # Ailenin yaprakları — arayüzdeki "Boy" seçicisini besler.  Aile kökü
+    # `parent_id or id`, böylece ana ürüne yazılmış kayıt da kardeşlerini görür.
+    roots = {(i.parent_id or i.id) for i in items.values()}
+    by_root: dict = {}
+    for c in (db.query(Item)
+              .filter(Item.parent_id.in_(roots),
+                      Item.is_active == True)                  # noqa: E712
+              .order_by(Item.name).all()):
+        by_root.setdefault(c.parent_id, []).append(c)
+    with_children = {row[0] for row in db.query(Item.parent_id)
+                     .filter(Item.parent_id.in_(ids)).distinct().all()}
+    out = {}
+    for iid, it in items.items():
+        parent = parents.get(it.parent_id)
+        out[iid] = {
+            "variation_name": it.variation_name or "",
+            "parent_id": it.parent_id,
+            "parent_name": parent.name if parent else "",
+            "is_parent": iid in with_children,
+            "variants": [{"item_id": v.id, "name": v.name,
+                          "variation_name": v.variation_name or ""}
+                         for v in by_root.get(it.parent_id or it.id, [])],
+        }
+    return out
+
+
 def _view(r: RetentionSample, last_check: Optional[RetentionSampleCheck] = None,
-          check_count: int = 0) -> dict:
+          check_count: int = 0, size: Optional[dict] = None) -> dict:
     st = expiry_state(r.retention_until)
+    size = size or {}
     return {
         "id": r.id,
         "item_id": r.item_id,
         "item_name": r.item_name or (r.item.name if r.item else ""),
         "lot_number": r.lot_number,
         "brand": r.brand,
+        # Boy — `Item`'dan okunur (bkz. _size_map).  `is_parent` True ise bu
+        # kaydın boyu seçilmemiştir ve arayüz uyarı rozeti gösterir.
+        "variation_name": size.get("variation_name", ""),
+        "parent_id": size.get("parent_id"),
+        "parent_name": size.get("parent_name", ""),
+        "is_parent": bool(size.get("is_parent")),
+        "variants": size.get("variants", []),
+        # Üretimden gelen kayıt `-S` Inventory lotuna bağlıdır; boyu
+        # değiştirilemez (arayüz butonu da gizler).
+        "inventory_bound": bool(r.inventory_id),
         "shelf": r.shelf or "",
         "slot": r.slot or "",
         "location_label": location_label(r.shelf, r.slot),
@@ -262,30 +331,59 @@ def list_cabinets(
     _: dict = Depends(require_permission("retention", "view")),
     domain: str = Depends(active_domain),
 ):
-    """Marka bazlı dolap özeti — sekme çubuğu + KPI şeridi."""
+    """Marka bazlı dolap özeti + her markanın içinde ÜRÜN×BOY kırılımı.
+
+    Kırılım şart, çünkü aynı ürünün 200 ml'si ve 500 ml'si AYRI batch'lerde
+    üretiliyor ve her boydan ayrı şahit numune saklanıyor — tek "marka" kovası
+    ikisini tek rakamda topluyordu.
+    """
     rows = (db.query(RetentionSample)
             .filter(RetentionSample.domain == domain,
                     RetentionSample.is_active == True,                # noqa: E712
                     RetentionSample.status == "stored").all())
     today = date.today()
+    sizes = _size_map(db, rows)
     by_brand: dict = {}
-    total = expired = due_soon = 0.0
+    total = expired = due_soon = unsized = 0.0
     for r in rows:
         b = by_brand.setdefault(r.brand, {"brand": r.brand, "samples": 0,
-                                          "quantity": 0.0, "expired": 0})
+                                          "quantity": 0.0, "expired": 0,
+                                          "unsized": 0, "_products": {}})
+        sz = sizes.get(r.item_id) or {}
+        is_parent = bool(sz.get("is_parent"))
+        p = b["_products"].setdefault(r.item_id, {
+            "item_id": r.item_id,
+            "name": sz.get("parent_name") or r.item_name or "",
+            "variation_name": sz.get("variation_name", ""),
+            "is_parent": is_parent,
+            "samples": 0, "quantity": 0.0, "expired": 0,
+        })
         b["samples"] += 1
         b["quantity"] += r.quantity or 0.0
+        p["samples"] += 1
+        p["quantity"] += r.quantity or 0.0
         total += r.quantity or 0.0
+        if is_parent:                       # boyu seçilmemiş kayıt
+            b["unsized"] += 1
+            unsized += 1
         st = expiry_state(r.retention_until, today)
         if st == "expired":
             b["expired"] += 1
+            p["expired"] += 1
             expired += 1
         elif st == "due_soon":
             due_soon += 1
+    cabinets = []
+    for b in sorted(by_brand.values(), key=lambda x: x["brand"]):
+        prods = b.pop("_products")
+        b["products"] = sorted(prods.values(),
+                               key=lambda p: (p["name"], p["variation_name"]))
+        cabinets.append(b)
     return {
-        "cabinets": sorted(by_brand.values(), key=lambda x: x["brand"]),
+        "cabinets": cabinets,
         "totals": {"quantity": total, "samples": len(rows),
-                   "expired": int(expired), "due_soon": int(due_soon)},
+                   "expired": int(expired), "due_soon": int(due_soon),
+                   "unsized": int(unsized)},
         "reasons": [{"key": k, "label": reason_label(k)} for k in CHECKOUT_REASONS],
     }
 
@@ -298,6 +396,8 @@ def list_samples(
     expired: Optional[int] = Query(None),
     needs_review: Optional[int] = Query(None),
     unchecked: Optional[int] = Query(None),
+    item_id: Optional[int] = Query(None),
+    unsized: Optional[int] = Query(None),
     limit: int = Query(300, ge=1, le=1000),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("retention", "view")),
@@ -320,6 +420,14 @@ def list_samples(
         query = query.filter(RetentionSample.retention_until.isnot(None),
                              RetentionSample.retention_until < date.today(),
                              RetentionSample.status == "stored")
+    if item_id:
+        query = query.filter(RetentionSample.item_id == item_id)
+    if unsized:
+        # Boyu seçilmemişler: kayıt SOYUT ana ürüne yazılmış, yani o ürünün
+        # alt varyasyonları var.  `unchecked` filtresindeki EXISTS kalıbı.
+        query = query.filter(db.query(Item.id)
+                             .filter(Item.parent_id == RetentionSample.item_id)
+                             .exists())
     if needs_review:
         query = query.filter(RetentionSample.needs_review == True)    # noqa: E712
     if unchecked:
@@ -341,7 +449,9 @@ def list_samples(
                             RetentionSampleCheck.id.asc()).all()):
             last[c.sample_id] = c                      # son yazan kazanır
             counts[c.sample_id] = counts.get(c.sample_id, 0) + 1
-    return {"rows": [_view(r, last.get(r.id), counts.get(r.id, 0)) for r in rows],
+    sizes = _size_map(db, rows)
+    return {"rows": [_view(r, last.get(r.id), counts.get(r.id, 0),
+                           sizes.get(r.item_id)) for r in rows],
             "count": len(rows)}
 
 
@@ -356,7 +466,8 @@ def get_sample(
     if not r:
         return _err(404, "Numune kaydı bulunamadı.")
     checks = sorted(r.checks, key=lambda c: (c.checked_on or date.min, c.id))
-    out = _view(r, checks[-1] if checks else None, len(checks))
+    out = _view(r, checks[-1] if checks else None, len(checks),
+                _size_map(db, [r]).get(r.item_id))
     out["movements"] = [_movement_view(m) for m in r.movements]
     out["checks"] = [_check_view(c) for c in reversed(checks)]   # en yeni üstte
     return out
@@ -407,7 +518,7 @@ def checkout_sample(
                     target_name=r.lot_number,
                     details={"item": r.item_name, "quantity": qty,
                              "reason": data.reason, "brand": r.brand})
-    out = _view(r)
+    out = _view(r, size=_size_map(db, [r]).get(r.item_id))
     out["message"] = f"{qty:g} adet çıkış kaydedildi — stoktan da düşüldü."
     return out
 
@@ -455,7 +566,7 @@ def destroy_sample(
                     target_type="retention_sample", target_id=r.id,
                     target_name=r.lot_number,
                     details={"item": r.item_name, "quantity": qty, "brand": r.brand})
-    out = _view(r)
+    out = _view(r, size=_size_map(db, [r]).get(r.item_id))
     out["message"] = f"{qty:g} adet imha edildi."
     return out
 
@@ -524,6 +635,134 @@ def bulk_update_location(
                        + (f", {skipped} atlandı" if skipped else "")}
 
 
+def _variation_target(db: Session, r: RetentionSample, target_item_id: int,
+                      domain: str):
+    """Hedef boy geçerli mi?  → (Item, None) ya da (None, hata metni).
+
+    Kural: hedef, kaydın ürün AİLESİNE ait bir yaprak olmalı.  Aile kökü
+    `parent_id or id`; böylece hem ana ürüne yazılmış kayıt bir varyasyona,
+    hem de yanlış varyasyona yazılmış kayıt kardeşine taşınabilir.
+    """
+    cur = db.query(Item).filter(Item.id == r.item_id).first()
+    if cur is None:
+        return None, "Kaydın ürünü bulunamadı."
+    tgt = (db.query(Item)
+           .filter(Item.id == target_item_id, Item.domain == domain).first())
+    if tgt is None:
+        return None, "Hedef ürün bulunamadı."
+    if (tgt.parent_id or tgt.id) != (cur.parent_id or cur.id):
+        return None, f"«{tgt.name}» bu numunenin ürününe ait bir boy değil."
+    if db.query(Item.id).filter(Item.parent_id == tgt.id).first() is not None:
+        return None, f"«{tgt.name}» bir ana üründür — boy olarak seçilemez."
+    return tgt, None
+
+
+def _apply_variation(db: Session, r: RetentionSample, tgt: Item, actor: str) -> bool:
+    """Kaydı hedef boya taşı.  Stoğa DOKUNMAZ, Transaction YAZMAZ.
+
+    Yalnız hangi ürün satırına ait olduğu düzeltilir; adet dolapta aynı kalır.
+    Sonraki bir çıkış/imha artık DOĞRU boyun stoğundan düşer — asıl kazanç bu.
+    """
+    if tgt.id == r.item_id:
+        return False
+    old = r.item_name or ""
+    r.item_id = tgt.id
+    r.item_name = tgt.name
+    db.add(RetentionSampleMovement(
+        sample_id=r.id, movement_type="duzeltme", quantity=0,
+        note=f"Boy düzeltildi: {old} → {tgt.name}", performed_by=actor))
+    return True
+
+
+# DİKKAT: "/retention/samples/{sample_id}" PUT'unun ÜSTÜNDE kalmalı —
+# altına taşınırsa "bulk-variation" sample_id sanılır ve 422 döner
+# (aynı tuzak bulk-location ve /production/next-lot'ta yaşandı).
+@router.put("/retention/samples/bulk-variation")
+def bulk_update_variation(
+    data: BulkVariationBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("retention", "edit")),
+    domain: str = Depends(active_domain),
+):
+    """Çok sayıda numunenin boyunu TEK istekte düzelt (bulk-location kalıbı)."""
+    ids = [row.id for row in data.rows]
+    rows = (db.query(RetentionSample)
+            .filter(RetentionSample.id.in_(ids),
+                    RetentionSample.domain == domain,
+                    RetentionSample.is_active == True).all())        # noqa: E712
+    by_id = {r.id: r for r in rows}
+    actor = _actor(current_user)
+    updated, skipped, errors = 0, len(ids) - len(rows), []
+    try:
+        for row in data.rows:
+            r = by_id.get(row.id)
+            if r is None:
+                continue
+            if r.inventory_id:
+                skipped += 1
+                errors.append(f"#{r.id}: üretim kaydı, boyu değiştirilemez")
+                continue
+            tgt, err = _variation_target(db, r, row.item_id, domain)
+            if err:
+                skipped += 1
+                errors.append(f"#{r.id}: {err}")
+                continue
+            if _apply_variation(db, r, tgt, actor):
+                updated += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        return _err(500, "Boylar kaydedilemedi.")
+
+    if updated:
+        log_admin_event(db, request, actor=current_user, action="retention.bulk_variation",
+                        target_type="retention_sample", target_id=None,
+                        target_name=f"{updated} numune",
+                        details={"updated": updated, "skipped": skipped})
+    return {"updated": updated, "skipped": skipped, "errors": errors[:20],
+            "message": f"{updated} numunenin boyu kaydedildi"
+                       + (f", {skipped} atlandı" if skipped else "")}
+
+
+@router.put("/retention/samples/{sample_id}/variation")
+def set_variation(
+    sample_id: int,
+    data: VariationBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("retention", "edit")),
+    domain: str = Depends(active_domain),
+):
+    """Tek numunenin boyunu seç/düzelt — stoğa DOKUNMAZ."""
+    r = _get(db, sample_id, domain)
+    if not r:
+        return _err(404, "Numune kaydı bulunamadı.")
+    if r.inventory_id:
+        # Üretimden gelen kayıt `-S` Inventory lotuna bağlı; ürünü değiştirmek
+        # o lotu sahipsiz bırakır ve çıkışta yanlış ürünün stoğu düşerdi.
+        # Bu kayıtların boyu zaten `recipe.target_item_id`'den doğru geliyor.
+        return _err(400, "Üretimden gelen numunenin boyu değiştirilemez.")
+    tgt, err = _variation_target(db, r, data.item_id, domain)
+    if err:
+        return _err(400, err)
+    changed = _apply_variation(db, r, tgt, _actor(current_user))
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        return _err(500, "Boy kaydedilemedi.")
+
+    if changed:
+        log_admin_event(db, request, actor=current_user, action="retention.variation",
+                        target_type="retention_sample", target_id=r.id,
+                        target_name=r.lot_number,
+                        details={"item": r.item_name, "item_id": r.item_id})
+    out = _view(r, size=_size_map(db, [r]).get(r.item_id))
+    out["message"] = f"Boy güncellendi: {r.item_name}" if changed else "Boy zaten buydu."
+    return out
+
+
 @router.put("/retention/samples/{sample_id}")
 def update_sample(
     sample_id: int,
@@ -575,7 +814,7 @@ def update_sample(
                     target_type="retention_sample", target_id=r.id,
                     target_name=r.lot_number,
                     details={"shelf": r.shelf, "slot": r.slot})
-    return _view(r)
+    return _view(r, size=_size_map(db, [r]).get(r.item_id))
 
 
 @router.post("/retention/samples/{sample_id}/checks", status_code=201)
@@ -720,6 +959,12 @@ def create_sample(
             .filter(Item.id == data.item_id, Item.domain == domain).first())
     if not item:
         return _err(404, "Ürün bulunamadı.")
+    # Ana ürün SOYUTTUR — fiziksel numunesi olamaz.  03.08.2026 sayımından
+    # gelen 21 kayıt tam olarak bu yüzden boyu belirsiz kaldı (el yazısı
+    # listede boy yazmıyordu); tekrarını burada kesiyoruz.
+    if db.query(Item.id).filter(Item.parent_id == item.id).first() is not None:
+        return _err(400, f"«{item.name}» bir ana üründür — numunenin boyunu "
+                         f"seçin (ör. 200 ml / 500 ml).")
     lot = data.lot_number.strip().upper()
     # Çift kayıt guard'ı — elle 126 kayıt girilen bir dolapta aynı numuneyi
     # iki kez girmek gerçek bir hata; sessizce ikinci satır açmak yanıltır.
@@ -761,4 +1006,4 @@ def create_sample(
                     target_name=r.lot_number,
                     details={"item": r.item_name, "quantity": data.quantity,
                              "brand": r.brand})
-    return _view(r)
+    return _view(r, size=_size_map(db, [r]).get(r.item_id))

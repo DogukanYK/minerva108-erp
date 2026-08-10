@@ -142,6 +142,12 @@
       font-family:inherit; font-size:0.84rem; }
     .loc-in:focus{ border-color:var(--gold); outline:none; }
     .loc-in.dirty{ border-color:#16a34a; background:#f0fdf4; }
+    .mini.warn{ color:#92400e; border-color:#fcd34d; background:#fffbeb; }
+    .mini.warn:hover{ border-color:#d97706; }
+    .size-in{ padding:0.25rem 0.4rem; border:1.5px solid #e5e7eb; border-radius:6px;
+              font-size:0.83rem; font-family:inherit; background:#fff; max-width:130px; }
+    .size-in:focus{ border-color:var(--gold); outline:none; }
+    .size-in.dirty{ border-color:#16a34a; background:#f0fdf4; }
     .pill.rev{ background:#fef3c7; color:#92400e; }
     .radio-row{ display:flex; gap:1rem; align-items:center; }
     .radio-row label{ display:inline-flex; align-items:center; gap:0.3rem; font-size:0.85rem; cursor:pointer; }
@@ -227,11 +233,14 @@
       <div class="card2">
         <div class="card2-body">
           <div class="cab-row" id="cabRow"><span class="muted">Yükleniyor…</span></div>
+          <div class="cab-row" id="prodRow" style="display:none;margin-top:0.5rem;"></div>
           <div class="filter-row">
             <input type="text" id="qInput" class="ipt" placeholder="Ürün adı veya lot ara…" maxlength="100" />
             <label class="chk"><input type="checkbox" id="expiredOnly" /> Süresi dolanlar</label>
             <label class="chk"><input type="checkbox" id="reviewOnly" /> Teyit bekleyenler</label>
             <label class="chk"><input type="checkbox" id="uncheckedOnly" /> Hiç kontrol edilmemiş</label>
+            <label class="chk"><input type="checkbox" id="unsizedOnly" /> Boyu belirsiz
+              <span class="cab-x" id="unsizedN" style="display:none;"></span></label>
             <span class="muted" id="rowCount"></span>
           </div>
           {% if can('retention','edit') %}
@@ -239,6 +248,13 @@
             <button class="btn-g" onclick="addOpen()"><i class="bi bi-plus-lg"></i> Elle Numune Ekle</button>
             <label class="chk"><input type="checkbox" id="locMode" onchange="loadRows()" />
               <b>Hızlı konum girişi</b></label>
+            <label class="chk"><input type="checkbox" id="sizeMode" onchange="loadRows()" />
+              <b>Hızlı boy girişi</b></label>
+            <span id="sizeTools" style="display:none;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+              <button class="btn-g" id="sizeSaveBtn" onclick="sizeSaveAll()">
+                <i class="bi bi-check-lg"></i> Boyları Kaydet <span id="sizeDirty"></span>
+              </button>
+            </span>
             <span id="locTools" style="display:none;gap:0.5rem;align-items:center;flex-wrap:wrap;">
               <input type="text" id="locBulkShelf" class="ipt" style="max-width:110px;" placeholder="Raf" maxlength="20" />
               <button class="mini" onclick="locFillAll()">Görünenlere yaz</button>
@@ -258,11 +274,11 @@
           <table>
             <thead>
               <tr>
-                <th>Ürün</th><th>Lot</th><th>Adet</th><th>Raf / Göz</th>
+                <th>Ürün</th><th>Boy</th><th>Lot</th><th>Adet</th><th>Raf / Göz</th>
                 <th>Üretim</th><th>Saklama sonu</th><th>Son kontrol</th><th>Durum</th><th></th>
               </tr>
             </thead>
-            <tbody id="rowsBody"><tr><td colspan="9" class="muted">Yükleniyor…</td></tr></tbody>
+            <tbody id="rowsBody"><tr><td colspan="10" class="muted">Yükleniyor…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -336,6 +352,29 @@
       <div style="display:flex;gap:0.6rem;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
         <button class="btn-g" onclick="locSubmit()"><i class="bi bi-check-lg"></i> Kaydet</button>
         <button class="btn-o" style="margin-left:auto;" onclick="locClose()">Vazgeç</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Boy (varyasyon) modalı ── -->
+  <div class="ovl" id="sizeModal" onclick="if(event.target===this) sizeClose()">
+    <div class="ovl-card" style="max-width:460px;">
+      <div class="ovl-head">
+        <h3>Numunenin Boyu</h3>
+        <button class="ico-del" onclick="sizeClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
+      </div>
+      <div class="ovl-body">
+        <div id="sizeInfo" style="margin-bottom:0.8rem;"></div>
+        <p class="muted" style="font-size:0.83rem;margin:0 0 0.6rem;">
+          Aynı ürünün boyları ayrı partiler hâlinde üretiliyor ve her boydan ayrı
+          şahit numune saklanıyor. Bu kaydın hangi boya ait olduğunu seçin —
+          <b>stok değişmez</b>, yalnız kaydın ürünü düzeltilir.
+        </p>
+        <div id="sizeOpts"></div>
+      </div>
+      <div style="display:flex;gap:0.6rem;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
+        <button class="btn-g" onclick="sizeSubmit()"><i class="bi bi-check-lg"></i> Kaydet</button>
+        <button class="btn-o" style="margin-left:auto;" onclick="sizeClose()">Vazgeç</button>
       </div>
     </div>
   </div>
@@ -485,8 +524,10 @@
     const toastFn = (m, t) => (window.showToast ? window.showToast(m, t || 'error') : alert(m));
 
     let _brand = '';          // seçili dolap ('' = tümü)
+    let _itemId = '';         // seçili ürün+boy ('' = hepsi)
     let _rows = [];
     let _act = null;          // {id, mode:'cikis'|'imha', max}
+    let _sizeId = null;       // Boy modalındaki kayıt
 
     async function api(url, opts) {
       const r = await fetch(url, opts);
@@ -513,6 +554,11 @@
         document.getElementById('kpiCount').textContent = (t.samples ?? 0);
         document.getElementById('kpiSoon').textContent = (t.due_soon ?? 0);
         document.getElementById('kpiExpired').textContent = (t.expired ?? 0);
+        const un = document.getElementById('unsizedN');
+        if (un) {
+          un.textContent = t.unsized || '';
+          un.style.display = t.unsized ? '' : 'none';
+        }
         const cabs = d.cabinets || [];
         const chips = [`<button type="button" class="cab ${_brand ? '' : 'on'}" onclick="pickCab('')">Tümü</button>`]
           .concat(cabs.map(c => `<button type="button" class="cab ${_brand === c.brand ? 'on' : ''}" onclick="pickCab('${esc(c.brand)}')">
@@ -520,11 +566,29 @@
               ${c.expired ? `<span class="cab-x">${c.expired}</span>` : ''}
             </button>`));
         document.getElementById('cabRow').innerHTML = chips.join('');
+        // Seçili dolabın ÜRÜN × BOY kırılımı — aynı ürünün 200/500 ml'si ayrı
+        // satır.  Marka kovası ikisini tek rakamda topluyordu.
+        const box = document.getElementById('prodRow');
+        const cab = cabs.find(c => c.brand === _brand);
+        if (!cab) { box.innerHTML = ''; box.style.display = 'none'; }
+        else {
+          box.style.display = '';
+          box.innerHTML = [`<button type="button" class="cab ${_itemId ? '' : 'on'}" onclick="pickProd('')">Hepsi</button>`]
+            .concat((cab.products || []).map(p => {
+              const sz = p.variation_name
+                ? ` <span class="pill ok">${esc(p.variation_name)}</span>`
+                : (p.is_parent ? ' <span class="pill warn">boy yok</span>' : '');
+              return `<button type="button" class="cab ${String(_itemId) === String(p.item_id) ? 'on' : ''}"
+                        onclick="pickProd(${p.item_id})">${esc(p.name)}${sz}
+                        <span class="cab-n">${p.quantity}</span></button>`;
+            })).join('');
+        }
       } catch (e) {
         document.getElementById('cabRow').innerHTML = `<span class="muted">${esc(e.message)}</span>`;
       }
     }
-    function pickCab(b) { _brand = b; loadCabinets(); loadRows(); }
+    function pickCab(b) { _brand = b; _itemId = ''; loadCabinets(); loadRows(); }
+    function pickProd(id) { _itemId = id || ''; loadCabinets(); loadRows(); }
 
     /* ── Liste ── */
     async function loadRows() {
@@ -536,19 +600,26 @@
       if (document.getElementById('expiredOnly').checked) params.set('expired', '1');
       if (document.getElementById('reviewOnly')?.checked) params.set('needs_review', '1');
       if (document.getElementById('uncheckedOnly')?.checked) params.set('unchecked', '1');
+      if (document.getElementById('unsizedOnly')?.checked) params.set('unsized', '1');
+      if (_itemId) params.set('item_id', _itemId);
       const lm = document.getElementById('locMode');
       _locMode = !!(lm && lm.checked);
       const tools = document.getElementById('locTools');
       if (tools) tools.style.display = _locMode ? 'flex' : 'none';
+      const sm = document.getElementById('sizeMode');
+      _sizeMode = !!(sm && sm.checked);
+      const stools = document.getElementById('sizeTools');
+      if (stools) stools.style.display = _sizeMode ? 'flex' : 'none';
       _locDirty = {};  markDirty();
+      _sizeDirty = {}; markSizeDirty();
       try {
         const d = await api('/api/retention/samples?' + params.toString());
         _rows = d.rows || [];
         document.getElementById('rowCount').textContent = `${d.count} kayıt`;
         tb.innerHTML = _rows.length ? _rows.map(rowHtml).join('')
-          : '<tr><td colspan="9" class="muted">Bu dolapta kayıt yok.</td></tr>';
+          : '<tr><td colspan="10" class="muted">Bu dolapta kayıt yok.</td></tr>';
       } catch (e) {
-        tb.innerHTML = `<tr><td colspan="9" class="muted">${esc(e.message)}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="10" class="muted">${esc(e.message)}</td></tr>`;
       }
     }
     function untilBadge(r) {
@@ -563,6 +634,8 @@
         acts.push(`<button class="mini" onclick="checkOpen(${r.id})"><i class="bi bi-clipboard-check"></i> Kontrol</button>`);
       if (window.CAN_DESTROY && r.status === 'stored')
         acts.push(`<button class="mini danger" onclick="actOpen(${r.id},'imha')"><i class="bi bi-fire"></i> İmha</button>`);
+      if (window.CAN_EDIT && (r.variants || []).length && !r.inventory_bound)
+        acts.push(`<button class="mini${r.is_parent ? ' warn' : ''}" onclick="sizeOpen(${r.id})"><i class="bi bi-rulers"></i> Boy</button>`);
       if (window.CAN_EDIT)
         acts.push(`<button class="mini" onclick="locOpen(${r.id})"><i class="bi bi-pencil"></i> Düzenle</button>`);
       if (window.CAN_DESTROY && r.source !== 'production')
@@ -581,8 +654,22 @@
       const lastChk = r.last_check_on
         ? `<span class="pill ${r.last_check_result === 'uygun' ? 'ok' : 'bad'}">${esc(r.last_check_on)}</span>`
         : '<span class="muted">—</span>';
+      // Boy hücresi: hızlı boy girişinde açılır menü, normalde rozet.
+      // `is_parent` = kayıt soyut ana ürüne yazılmış → boyu seçilmemiş.
+      const vs = r.variants || [];
+      const size = (_sizeMode && vs.length)
+        ? `<select class="size-in" data-sample="${r.id}" onchange="markSizeDirty(this)">
+             ${r.is_parent ? '<option value="">— seç —</option>' : ''}
+             ${vs.map(v => `<option value="${v.item_id}" ${v.item_id === r.item_id ? 'selected' : ''}>${esc(v.variation_name || v.name)}</option>`).join('')}
+           </select>`
+        : (r.variation_name
+            ? `<span class="pill ok">${esc(r.variation_name)}</span>`
+            : (r.is_parent ? '<span class="pill warn">boy seçilmedi</span>'
+                           : '<span class="muted">—</span>'));
+      const famName = r.parent_name || r.item_name;
       return `<tr>
-        <td><b>${esc(r.item_name)}</b><br/><span class="muted" style="font-size:0.8rem;">${esc(r.brand)}</span></td>
+        <td><b>${esc(famName)}</b><br/><span class="muted" style="font-size:0.8rem;">${esc(r.brand)}</span></td>
+        <td>${size}</td>
         <td><code>${esc(r.lot_number)}</code>${rev}</td>
         <td><b>${r.quantity}</b> <span class="muted">${esc(r.unit)}</span></td>
         <td>${loc}</td>
@@ -642,8 +729,70 @@
       finally { btn.disabled = false; }
     }
     window.addEventListener('beforeunload', (e) => {
-      if (Object.keys(_locDirty).length) { e.preventDefault(); e.returnValue = ''; }
+      if (Object.keys(_locDirty).length || Object.keys(_sizeDirty).length) {
+        e.preventDefault(); e.returnValue = '';
+      }
     });
+
+    /* ── Hızlı boy girişi ──
+       Konum girişiyle aynı kalıp: satır içi <select> + data-sample, tek
+       PUT bulk-variation.  Boyu belirsiz 21 kaydı modal başına 1 tıkla
+       düzeltmek kabul edilemezdi. */
+    let _sizeMode = false, _sizeDirty = {};
+    function markSizeDirty(el) {
+      if (el) {
+        _sizeDirty[el.getAttribute('data-sample')] = true;
+        el.classList.add('dirty');
+      }
+      const n = Object.keys(_sizeDirty).length;
+      const b = document.getElementById('sizeDirty');
+      if (b) b.textContent = n ? `(${n})` : '';
+    }
+    async function sizeSaveAll() {
+      const rows = [];
+      Object.keys(_sizeDirty).forEach(id => {
+        const v = document.querySelector(`.size-in[data-sample="${id}"]`)?.value;
+        if (v) rows.push({ id: parseInt(id, 10), item_id: parseInt(v, 10) });
+      });
+      if (!rows.length) { toastFn('Değişiklik yok — boy seçin.', 'info'); return; }
+      const btn = document.getElementById('sizeSaveBtn'); btn.disabled = true;
+      try {
+        const d = await jpost('/api/retention/samples/bulk-variation', { rows }, 'PUT');
+        toastFn(d.message, 'success');
+        if ((d.errors || []).length) toastFn(d.errors.join(' · '));
+        _sizeDirty = {}; markSizeDirty();
+        loadCabinets(); loadRows();
+      } catch (e) { toastFn(e.message); }
+      finally { btn.disabled = false; }
+    }
+
+    /* ── Tek kayıt boy seçimi ── */
+    function sizeOpen(id) {
+      const r = _rows.find(x => x.id === id);
+      if (!r) return;
+      _sizeId = id;
+      document.getElementById('sizeInfo').innerHTML =
+        `<b>${esc(r.parent_name || r.item_name)}</b> · Lot ${esc(r.lot_number)} · ${r.quantity} ${esc(r.unit)}`;
+      document.getElementById('sizeOpts').innerHTML = (r.variants || []).map(v =>
+        `<label class="chk" style="display:block;padding:0.35rem 0;">
+           <input type="radio" name="sizePick" value="${v.item_id}" ${v.item_id === r.item_id ? 'checked' : ''} />
+           <b>${esc(v.variation_name || v.name)}</b>
+           <span class="muted" style="font-size:0.8rem;"> — ${esc(v.name)}</span>
+         </label>`).join('') || '<span class="muted">Bu ürünün tek boyu var.</span>';
+      document.getElementById('sizeModal').classList.add('open');
+    }
+    function sizeClose() { document.getElementById('sizeModal').classList.remove('open'); _sizeId = null; }
+    async function sizeSubmit() {
+      if (!_sizeId) return;
+      const pick = document.querySelector('input[name="sizePick"]:checked');
+      if (!pick) { toastFn('Bir boy seçin.'); return; }
+      try {
+        const d = await jpost(`/api/retention/samples/${_sizeId}/variation`,
+                              { item_id: parseInt(pick.value, 10) }, 'PUT');
+        toastFn(d.message, 'success');
+        sizeClose(); loadCabinets(); loadRows();
+      } catch (e) { toastFn(e.message); }
+    }
 
     /* ── Çıkış / İmha ── */
     function actOpen(id, mode) {
@@ -784,7 +933,9 @@
     function pickItem(id) {
       _pickedItem = _items.find(x => x.id === id) || null;
       document.getElementById('addItemPicked').innerHTML = _pickedItem
-        ? `Seçili: <b>${esc(_pickedItem.name)}</b>` : '';
+        ? `Seçili: <b>${esc(_pickedItem.name)}</b>`
+          + (_pickedItem.variation_name ? ` <span class="pill ok">${esc(_pickedItem.variation_name)}</span>` : '')
+        : '';
       document.getElementById('addItemSearch').value = _pickedItem ? _pickedItem.name : '';
       document.getElementById('addMatches').style.display = 'none';
     }
@@ -905,6 +1056,7 @@
     document.getElementById('expiredOnly').addEventListener('change', loadRows);
     document.getElementById('reviewOnly')?.addEventListener('change', loadRows);
     document.getElementById('uncheckedOnly')?.addEventListener('change', loadRows);
+    document.getElementById('unsizedOnly')?.addEventListener('change', loadRows);
     // Ürün arama — TR+EN+barkod, min 2 karakter (delivery.html kalıbı)
     document.getElementById('addItemSearch')?.addEventListener('input', async function () {
       const box = document.getElementById('addMatches');
@@ -917,7 +1069,7 @@
         (x.barcode || '').toLowerCase().includes(q)).slice(0, 15);
       box.innerHTML = hits.length
         ? hits.map(x => `<div class="match-row" onclick="pickItem(${x.id})">
-             <span>${esc(x.name)}${x.name_tr ? ` <span class="muted">· ${esc(x.name_tr)}</span>` : ''}</span>
+             <span>${esc(x.name)}${x.variation_name ? ` <span class="pill ok">${esc(x.variation_name)}</span>` : ''}${x.name_tr ? ` <span class="muted">· ${esc(x.name_tr)}</span>` : ''}</span>
            </div>`).join('')
         : '<div class="match-row muted">Eşleşme yok</div>';
       box.style.display = 'block';
