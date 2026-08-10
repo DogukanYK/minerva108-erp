@@ -914,3 +914,28 @@ def test_variation_domain_isolation(authed_client, db_session):
     assert r.status_code == 404
     db_session.expire_all()
     assert db_session.query(RetentionSample).get(rs.id).item_id == parent.id
+
+
+def test_lot_message_when_counter_came_from_count(authed_client, db_session):
+    """Üretim kaydı yokken sayaç ilerlemişse "ilk üretim" DEMEZ.
+
+    Şahit numune sayımı `Item.lot_seq`'i labın gerçek numarasına çekiyor;
+    o üründen sistemde hiç üretim yapılmamış olabilir.  Eskiden mesaj
+    "Bu üründen ilk üretim — lot EV009" diyordu; sayı doğru, cümle yanlıştı.
+    """
+    from core.lots import suggest
+    rec, tgt = _recipe(db_session, brand="Evanira", suffix="LM")
+    tgt.lot_seq = 8                                   # sayımdan gelmiş sayaç
+    db_session.commit()
+
+    out = suggest(db_session, db_session.query(Item).get(tgt.id))
+    assert out["lot_number"] == "EV009"
+    assert out["last_lot"] is None                    # üretim geçmişi yok
+    assert "ilk üretim" not in out["message"]
+    assert "EV008" in out["message"] and "sayımından" in out["message"]
+
+    # Sayaç sıfırken eski cümle korunur
+    tgt.lot_seq = 0
+    db_session.commit()
+    first = suggest(db_session, db_session.query(Item).get(tgt.id))
+    assert first["lot_number"] == "EV001" and "ilk üretim" in first["message"]

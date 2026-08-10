@@ -135,6 +135,13 @@ def suggest(db: Session, item: Item) -> dict:
         when = to_tr(last_at).strftime("%d.%m.%Y") if last_at else ""
         msg = (f"Bu üründen en son {last_lot} numaralı lotu ürettiniz"
                + (f" ({when})" if when else "") + f" — bu {lot} olmalı.")
+    elif seq > 1:
+        # Üretim kaydı yok ama sayaç ilerlemiş — numara şahit numune
+        # sayımından geliyor (lab sistemden önce üretmiş).  "İlk üretim"
+        # demek yanıltıcı olurdu: EV009 önerirken "ilk üretim" yazıyordu.
+        msg = (f"Sistemde bu ürünün üretim kaydı yok, ancak sayaç "
+               f"{format_lot(prefix, seq - 1)} numarasında (şahit numune "
+               f"sayımından) — bu {lot} olmalı.")
     else:
         msg = f"Bu üründen ilk üretim — lot {lot} olarak açılıyor."
     return {

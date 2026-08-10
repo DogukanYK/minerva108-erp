@@ -137,10 +137,6 @@ def main() -> int:
             if dup_id in KEEP_ACTIVE:
                 print(f"  id={dup_id:3} {it.name[:46]:46}  → ANA ÜRÜN olarak korunuyor")
                 continue
-            if dup_id in LEAVE_ALONE:
-                print(f"  id={dup_id:3} {it.name[:46]:46}  → kopya değil, "
-                      f"DOKUNULMUYOR (stok {it.current_stock:g}, barkod bekliyor)")
-                continue
             if main_id is None:
                 print(f"  id={dup_id:3} {it.name[:46]:46}  → eşleşme yok, "
                       f"stok {it.current_stock:g}, pasife çekiliyor")
