@@ -12,7 +12,7 @@
       return !!(cat && cat[action]);
     };
   </script>
-  <title>Minerva108 ERP — Distribütörler</title>
+  <title>Minerva108 ERP — Yorumlar</title>
   <link rel="icon" type="image/png" href="/static/images/favicon.png" />
   <link rel="manifest" href="/static/manifest.json" />
   <meta name="theme-color" content="#232E6E" />
@@ -63,6 +63,7 @@
     .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem; gap: 0.75rem; flex-wrap: wrap; }
     .page-title { font-size: 1.5rem; font-weight: 600; color: var(--navy); margin: 0; }
     .page-sub { color: #6b7280; font-size: 0.9rem; margin: 0.15rem 0 0; }
+    .section-title { font-size: 1.05rem; font-weight: 600; color: var(--navy); margin: 2rem 0 0.75rem; }
 
     .table-card { background: #fff; border: 1px solid #ece6d8; border-radius: 14px; overflow: hidden; box-shadow: 0 1px 3px rgba(35,46,110,0.05); }
     table { width: 100%; border-collapse: collapse; }
@@ -77,11 +78,14 @@
     .badge-cur { background: #eef1fb; color: var(--navy); border-radius: 6px; padding: 0.15rem 0.5rem; font-size: 0.78rem; font-weight: 600; }
     .badge-on { background: #e8f7ee; color: #15803d; border-radius: 6px; padding: 0.15rem 0.5rem; font-size: 0.78rem; font-weight: 600; }
     .badge-off { background: #f3f4f6; color: #6b7280; border-radius: 6px; padding: 0.15rem 0.5rem; font-size: 0.78rem; font-weight: 600; }
+    .badge-warn { background: #fff4e0; color: #9a5b00; border-radius: 6px; padding: 0.15rem 0.5rem; font-size: 0.78rem; font-weight: 600; }
 
     .form-label { font-size: 0.82rem; font-weight: 600; color: #4b5563; margin-bottom: 0.25rem; display: block; }
     .form-control, .form-select { width: 100%; border: 1.5px solid #e5e7eb; border-radius: 8px; padding: 0.55rem 0.8rem; font-family: inherit; font-size: 0.92rem; }
     .form-control:focus, .form-select:focus { border-color: var(--navy); outline: none; }
     .muted { color: #9ca3af; font-size: 0.85rem; }
+    .hint { color: #9ca3af; font-size: 0.82rem; margin: 1rem 0 0; }
+    code.tok { background: #f3f4f6; border-radius: 6px; padding: 0.1rem 0.4rem; font-size: 0.8rem; }
   </style>
 </head>
 <body>
@@ -102,13 +106,13 @@
       <a href="/sahit-numune" class="nav-link-item"><i class="bi bi-archive nav-icon"></i>Şahit Numune</a>
       <a href="/urun-gorselleri" class="nav-link-item"><i class="bi bi-images nav-icon"></i>Ürün Görselleri</a>
       <a href="/pdks" class="nav-link-item"><i class="bi bi-fingerprint nav-icon"></i>PDKS</a>
-      <a href="/yorumlar" class="nav-link-item"><i class="bi bi-chat-square-text nav-icon"></i>Yorumlar</a>
+      <a href="/yorumlar" class="nav-link-item active"><i class="bi bi-chat-square-text nav-icon"></i>Yorumlar</a>
       <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
       <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
       <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
       <a href="/drive" class="nav-link-item"><i class="bi bi-folder-fill nav-icon"></i>Dosya Paylaşım</a>
       {% if can('crm','view') %}<a href="/crm" class="nav-link-item"><i class="bi bi-people-fill nav-icon"></i>CRM</a>{% endif %}
-      <a href="/distributors" class="nav-link-item active"><i class="bi bi-shop nav-icon"></i>Distribütörler</a>
+      <a href="/distributors" class="nav-link-item"><i class="bi bi-shop nav-icon"></i>Distribütörler</a>
       <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
       <a href="/admin" class="nav-link-item"><i class="bi bi-shield-lock nav-icon"></i>Yönetim Paneli</a>
       <a href="/shopify-sync" class="nav-link-item"><i class="bi bi-bag-check nav-icon"></i>Shopify Senkron</a>
@@ -116,7 +120,7 @@
   </aside>
 
   <header class="topnav">
-    <div class="topnav-title">Distribütörler</div>
+    <div class="topnav-title">Yorumlar</div>
     <div class="topnav-right">
       <span class="user-chip"><span class="user-avatar">{{ (full_name or username or '?')[0] | upper }}</span>
         <span class="user-name">{{ full_name or username }} · {{ role_label }}</span></span>
@@ -128,11 +132,11 @@
     <div class="content-inner">
       <div class="page-header">
         <div>
-          <h1 class="page-title">Distribütörler</h1>
-          <p class="page-sub">Sipariş portalı hesapları ve distribütöre özel fiyat listeleri.</p>
+          <h1 class="page-title">Ürün Yorumları</h1>
+          <p class="page-sub">Hediye ürün ve doğrulanmış alışveriş davetleri — sesli not destekli yorum toplama.</p>
         </div>
-        {% if can('distributors','create') %}
-        <button class="btn-primary-gold" onclick="openCreate()"><i class="bi bi-plus-lg"></i> Yeni Distribütör</button>
+        {% if can('reviews','invite') %}
+        <button class="btn-primary-gold" onclick="openInvite()"><i class="bi bi-plus-lg"></i> Yeni Davet</button>
         {% endif %}
       </div>
 
@@ -140,63 +144,69 @@
         <div class="table-responsive">
           <table>
             <thead><tr>
-              <th>Firma</th><th>Kullanıcı</th><th>Para birimi</th><th>Sipariş</th><th>Durum</th><th style="text-align:right;">İşlem</th>
+              <th>Ürün</th><th>Alıcı</th><th>Tür</th><th>Durum</th><th>Oluşturulma</th><th style="text-align:right;">Bağlantı</th>
             </tr></thead>
-            <tbody id="distBody"><tr><td colspan="6" class="muted" style="text-align:center;padding:2rem;">Yükleniyor…</td></tr></tbody>
+            <tbody id="inviteBody"><tr><td colspan="6" class="muted" style="text-align:center;padding:2rem;">Yükleniyor…</td></tr></tbody>
           </table>
         </div>
       </div>
+
+      <h2 class="section-title">Gelen Yorumlar</h2>
+      <div class="table-card">
+        <div class="table-responsive">
+          <table>
+            <thead><tr>
+              <th>Ürün</th><th>Yazar</th><th>Puan</th><th>Kaynak</th><th>Durum</th><th>Tarih</th>
+            </tr></thead>
+            <tbody id="reviewBody"><tr><td colspan="6" class="muted" style="text-align:center;padding:2rem;">Yükleniyor…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <p class="hint"><i class="bi bi-info-circle"></i> Dinleme, transkript ve onay/red ekranı ayrı bir turda eklenecek — burada yalnız liste görünür.</p>
     </div>
   </main>
 
-  <!-- Create/Edit modal -->
-  <div id="distModal" style="display:none;position:fixed;inset:0;background:rgba(20,25,50,.5);z-index:500;align-items:flex-start;justify-content:center;padding:2rem 1rem;overflow:auto;">
+  <!-- Yeni davet modalı -->
+  <div id="inviteModal" style="display:none;position:fixed;inset:0;background:rgba(20,25,50,.5);z-index:500;align-items:flex-start;justify-content:center;padding:2rem 1rem;overflow:auto;">
     <div style="background:#fff;border-radius:16px;max-width:560px;width:100%;padding:1.5rem;">
-      <h3 id="distModalTitle" style="margin:0 0 1rem;color:var(--navy);">Yeni Distribütör</h3>
-      <input type="hidden" id="distId" />
+      <h3 style="margin:0 0 0.3rem;color:var(--navy);">Yeni Hediye Ürün Daveti</h3>
+      <p class="muted" style="margin:0 0 1rem;">Ürünü hediye gönderdiğiniz kişiye bu link ile davet oluşturun. Doğrulanmış alıcı daveti sipariş sonrası otomatik üretilecek (ayrı bir iş kalemi).</p>
       <div class="row" style="display:grid;grid-template-columns:1fr 1fr;gap:0.8rem;">
-        <div><label class="form-label">Firma adı *</label><input class="form-control" id="fCompany" /></div>
-        <div><label class="form-label">Para birimi</label>
-          <select class="form-select" id="fCurrency"><option>TRY</option><option>USD</option><option>EUR</option></select></div>
-        <div id="wUser"><label class="form-label">Kullanıcı adı *</label><input class="form-control" id="fUsername" autocomplete="off" /></div>
-        <div id="wPass"><label class="form-label">Şifre * (min 10)</label><input class="form-control" type="text" id="fPassword" autocomplete="new-password" /></div>
-        <div><label class="form-label">İlgili kişi</label><input class="form-control" id="fContact" /></div>
-        <div><label class="form-label">Telefon</label><input class="form-control" id="fPhone" /></div>
-        <div><label class="form-label">E-posta</label><input class="form-control" id="fEmail" /></div>
-        <div><label class="form-label">Ülke</label><input class="form-control" id="fCountry" /></div>
-        <div><label class="form-label">Vergi No</label><input class="form-control" id="fVat" /></div>
-        <div><label class="form-label">Durum</label><select class="form-select" id="fActive"><option value="true">Aktif</option><option value="false">Pasif</option></select></div>
-        <div style="grid-column:1/-1;"><label class="form-label">Adres</label><textarea class="form-control" id="fAddress" rows="2"></textarea></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;gap:0.5rem;margin-top:1.2rem;">
-        <button class="btn-sm-soft" id="btnResetPw" style="display:none;" onclick="resetPw()"><i class="bi bi-key"></i> Şifre Sıfırla</button>
-        <div style="margin-left:auto;display:flex;gap:0.5rem;">
-          <button class="btn-sm-soft" onclick="closeModal('distModal')">İptal</button>
-          <button class="btn-primary-gold" onclick="saveDist()">Kaydet</button>
+        <div style="grid-column:1/-1;"><label class="form-label">Shopify Ürün ID *</label>
+          <input class="form-control" id="fProductId" type="number" placeholder="8023875190832" />
+          <span class="muted">Admin → Products → ürün URL'sindeki sayı, ya da <code class="tok">gid://shopify/Product/&lt;id&gt;</code>'nin sonu.</span>
         </div>
+        <div style="grid-column:1/-1;"><label class="form-label">Ürün başlığı</label><input class="form-control" id="fProductTitle" /></div>
+        <div style="grid-column:1/-1;"><label class="form-label">Ürün handle (opsiyonel)</label><input class="form-control" id="fProductHandle" /></div>
+        <div><label class="form-label">Alıcı adı</label><input class="form-control" id="fRecipientName" /></div>
+        <div><label class="form-label">Alıcı e-posta</label><input class="form-control" id="fRecipientEmail" type="email" /></div>
+        <div><label class="form-label">Dil</label>
+          <select class="form-select" id="fLocale">
+            <option value="tr">Türkçe</option><option value="en">English</option>
+            <option value="de">Deutsch</option><option value="es">Español</option><option value="fr">Français</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1.2rem;">
+        <button class="btn-sm-soft" onclick="closeModal('inviteModal')">İptal</button>
+        <button class="btn-primary-gold" onclick="createInvite()">Davet Oluştur</button>
       </div>
     </div>
   </div>
 
-  <!-- Prices modal -->
-  <div id="priceModal" style="display:none;position:fixed;inset:0;background:rgba(20,25,50,.5);z-index:500;align-items:flex-start;justify-content:center;padding:2rem 1rem;overflow:auto;">
-    <div style="background:#fff;border-radius:16px;max-width:680px;width:100%;padding:1.5rem;">
-      <h3 style="margin:0 0 0.3rem;color:var(--navy);">Fiyat Listesi — <span id="priceCompany"></span></h3>
-      <p class="muted" style="margin:0 0 1rem;">Fiyat girilen ürünler distribütörün kataloğunda görünür (<span id="priceCur"></span>). Boş/0 → katalogdan çıkar. Aktif panel: <b>{{ domain_label }}</b>.</p>
-      <div class="table-card"><div class="table-responsive" style="max-height:50vh;overflow:auto;">
-        <table><thead><tr><th>Ürün</th><th>SKU</th><th style="width:150px;">Birim Fiyat</th></tr></thead>
-          <tbody id="priceBody"></tbody></table>
-      </div></div>
-      <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1.2rem;">
-        <button class="btn-sm-soft" onclick="closeModal('priceModal')">İptal</button>
-        <button class="btn-primary-gold" onclick="savePrices()">Fiyatları Kaydet</button>
-      </div>
+  <!-- QR modalı -->
+  <div id="qrModal" style="display:none;position:fixed;inset:0;background:rgba(20,25,50,.5);z-index:500;align-items:center;justify-content:center;padding:2rem 1rem;">
+    <div style="background:#fff;border-radius:16px;max-width:340px;width:100%;padding:1.5rem;text-align:center;">
+      <h3 style="margin:0 0 1rem;color:var(--navy);">Davet QR</h3>
+      <div id="qrBox" style="margin:0 auto 1rem;max-width:260px;"></div>
+      <p class="muted" id="qrUrl" style="word-break:break-all;"></p>
+      <button class="btn-sm-soft" onclick="closeModal('qrModal')">Kapat</button>
     </div>
   </div>
 
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/toast.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
-  <script src="/static/distributors.js" defer></script>
+  <script src="/static/yorumlar.js" defer></script>
 </body>
 </html>

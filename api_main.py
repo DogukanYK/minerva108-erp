@@ -36,7 +36,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions, get_role_labels
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router, shopify as shopify_router, pdks as pdks_router, retention as retention_router, product_images as product_images_router
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router, shopify as shopify_router, pdks as pdks_router, retention as retention_router, product_images as product_images_router, reviews as reviews_router
 from core.domain import get_active_domain, domain_label
 
 
@@ -234,6 +234,7 @@ def robots_txt():
         "Allow: /public/\n"
         "Disallow: /api/\n"
         "Disallow: /s/\n"
+        "Disallow: /yorum/\n"
         "Disallow: /\n"
     )
 templates = Jinja2Templates(directory="templates")
@@ -313,6 +314,8 @@ app.include_router(shopify_router.router)
 app.include_router(shopify_router.public_router)
 app.include_router(distributors_router.router)
 app.include_router(portal_router.router)
+app.include_router(reviews_router.router)
+# public_router (davet linki formu + ses yükleme) sonraki fazda eklenecek.
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────
@@ -621,6 +624,17 @@ def pdks_page(request: Request, db: Session = Depends(get_db)):
     ctx.update(pdks_breaks=breaks_view(), pdks_break_total=TOTAL_BREAK_MINUTES,
                pdks_work_start=DEFAULT_WORK_START, pdks_work_end=DEFAULT_WORK_END)
     return templates.TemplateResponse("pdks.html", ctx)
+
+
+@app.get("/yorumlar", response_class=HTMLResponse)
+def reviews_page(request: Request, db: Session = Depends(get_db)):
+    """Ürün yorumları — davet üretimi + (ileride) moderasyon."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "reviews", "view"):
+        return RedirectResponse(url="/", status_code=302)
+    return templates.TemplateResponse("yorumlar.html", _page_ctx(request, payload, user))
 
 
 @app.get("/pdks-qr", response_class=HTMLResponse)

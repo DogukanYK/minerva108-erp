@@ -111,6 +111,10 @@ PERMISSION_CATEGORIES = {
     # Şahit numune dolabı — üretimden ayrılan numunelerin saklanması.
     # checkout = dolaptan numune alma (stoktan da düşer), destroy = imha.
     "retention":     ["view", "edit", "checkout", "destroy"],
+    # Ürün yorumları (mağaza vitrini, sesli not destekli) — cross-cutting.
+    # invite = davet linki üretme, moderate = onay/red/yayından kaldırma,
+    # delete = KVKK silme (metaobject+dosya Shopify'dan da kalkar).
+    "reviews":       ["view", "invite", "moderate", "delete"],
 }
 
 # Default permission set per role — used when a user's `permissions` JSON is null.
@@ -133,6 +137,7 @@ _DEFAULT_PERMISSIONS = {
         "distributors":  {"view": True,  "create": True,  "edit": True,  "prices": True},
         "pdks":          {"check": True, "view_own": True, "view_all": True, "manage": True, "report": True, "kiosk": False},
         "retention":          {"view": True,  "edit": True,  "checkout": True,  "destroy": True},
+        "reviews":       {"view": True,  "invite": True,  "moderate": True,  "delete": True},
     },
     "LabLead": {
         "items":      {"view": True,  "create": True,  "edit": True,  "delete": True,  "import": True},
@@ -147,6 +152,7 @@ _DEFAULT_PERMISSIONS = {
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
         "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False, "kiosk": False},
         "retention":       {"view": True,  "edit": True,  "checkout": True,  "destroy": True},
+        "reviews":         {"view": False, "invite": False, "moderate": False, "delete": False},
     },
     "LabTech": {
         "items":      {"view": True,  "create": True,  "edit": False, "delete": False, "import": False},
@@ -161,6 +167,7 @@ _DEFAULT_PERMISSIONS = {
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
         "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False, "kiosk": False},
         "retention":       {"view": True,  "edit": True,  "checkout": True,  "destroy": False},
+        "reviews":         {"view": False, "invite": False, "moderate": False, "delete": False},
     },
     "Staff": {
         # Read-only baseline
@@ -176,6 +183,7 @@ _DEFAULT_PERMISSIONS = {
         "admin":      {"view": False, "create": False, "edit": False, "delete": False, "import_excel": False, "view_audit": False, "backup": False},
         "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False, "kiosk": False},
         "retention":       {"view": True,  "edit": False, "checkout": False, "destroy": False},
+        "reviews":         {"view": False, "invite": False, "moderate": False, "delete": False},
     },
     "Distributor": {
         # Dışa dönük distribütör — YALNIZ sipariş portalı, ERP'ye hiçbir erişim yok.
@@ -193,6 +201,7 @@ _DEFAULT_PERMISSIONS = {
         "distributors": {"view": False, "create": False, "edit": False, "prices": False},
         "pdks":         {"check": False, "view_own": False, "view_all": False, "manage": False, "report": False, "kiosk": False},
         "retention":         {"view": False, "edit": False, "checkout": False, "destroy": False},
+        "reviews":           {"view": False, "invite": False, "moderate": False, "delete": False},
     },
 }
 

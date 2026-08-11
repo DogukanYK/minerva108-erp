@@ -1171,8 +1171,103 @@ class ShopifyOrder(Base):
     parasut_doc_id = Column(BigInteger, nullable=True)
     trackable_job_id = Column(String(80), nullable=True)           # asenkron e-belge takibi
     lines_json = Column(Text, nullable=True)
+    # Doğrulanmış-alıcı yorum daveti bu siparişten üretildi mi — idempotency
+    # bayrağı (webhook redelivery / retry_order aynı siparişe iki davet üretmesin).
+    invites_created = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ─── Ürün yorumları (Shopify mağaza vitrini) — sesli not destekli ───────────
+# Cross-cutting (CRM/Drive/PDKS gibi): IMS domain kolonuyla İLGİSİZ — bu,
+# Shopify ürünlerine (ims Item değil) bağlı bir mağaza-vitrini özelliği.
+# Gerçeğin kaynağı burası; onay sonrası Shopify'a (metaobject + Files) itilir.
+# Moderasyon burada tutulur çünkü: (a) sesli not için transkript zorunluluğu
+# gibi kurallar burada uygulanır, (b) bir yorumu geri çekmek tek yerden olur,
+# (c) mağaza vitrini IMS'e runtime bağımlı OLMAZ — burada TUTULAN veri, orada
+# YAYINLANAN verinin kaynağıdır, ikisi aynı şey değildir.
+
+
+class ReviewInvite(Base):
+    """Tek kullanımlık yorum davet linki — hediye ürün ya da doğrulanmış
+    alışveriş sonrası üretilir.  Token URL'de taşınır (`/yorum/{token}`),
+    şifre yok — token'ın kendisi sır.  `used_at`, review INSERT'iyle AYNI
+    transaction'da ve satır kilidiyle (`with_for_update`, bkz.
+    core.shopify._decrement_stock aynı deseni kullanır) yazılır; iki eşzamanlı
+    submit aynı davetten iki yorum üretemez."""
+    __tablename__ = "review_invites"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String(64), nullable=False, unique=True, index=True)
+    kind = Column(String(20), nullable=False)                      # gifted | verified_buyer
+    store_key = Column(String(20), nullable=False, index=True)     # minerva/evanira/serenida
+    shopify_product_id = Column(BigInteger, nullable=False)
+    product_title = Column(String(255), nullable=True)
+    product_handle = Column(String(255), nullable=True)
+    shopify_order_id = Column(BigInteger, nullable=True)           # yalnız verified_buyer
+    order_number = Column(String(40), nullable=True)
+    recipient_email = Column(String(150), nullable=True)
+    recipient_name = Column(String(150), nullable=True)
+    locale = Column(String(10), nullable=False, default="tr")
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_by = Column(String(100), nullable=True)                # hediye daveti: personel kullanıcı adı; otomatikse NULL
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ProductReview(Base):
+    """Ürün yorumu — IMS'te toplanır/moderasyon edilir, onayda Shopify'a
+    (metaobject + Files) itilir.  `publish_step`, itme akışının hangi adımda
+    olduğunu tutar; `is_published`, etkiyle AYNI commit'te yazılan ayrı bir
+    bayraktır (ShopifyOrder.stock_applied ile birebir aynı gerekçe: rollback
+    `publish_step`'i geri sarabilir ama etkiyle birlikte commit'lenmiş bir
+    bayrağı geri alamaz — bu olmadan yarıda kalan bir retry puanı iki kez
+    sayardı).  `status` durumları: pending → approved → publishing →
+    published; ayrıca rejected, unpublished, publish_failed, deleted."""
+    __tablename__ = "product_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    invite_id = Column(Integer, ForeignKey("review_invites.id"), nullable=False, index=True)
+    store_key = Column(String(20), nullable=False, index=True)
+    shopify_product_id = Column(BigInteger, nullable=False, index=True)
+    product_title = Column(String(255), nullable=True)
+
+    source = Column(String(20), nullable=False)                    # verified_buyer | gifted
+    author_name = Column(String(60), nullable=False)
+    author_email = Column(String(150), nullable=True)
+    rating = Column(Integer, nullable=False)
+    body = Column(Text, nullable=True)
+    locale = Column(String(10), nullable=False, default="tr")
+
+    audio_stored_name = Column(String(80), nullable=True)          # core.reviews.save_audio üretir; disk dosya adı
+    audio_mime = Column(String(60), nullable=True)
+    audio_bytes = Column(Integer, nullable=True)
+    audio_duration_s = Column(Integer, nullable=True)
+    transcript = Column(Text, nullable=True)                       # ses varsa yayın için ZORUNLU (WCAG 1.2.1)
+
+    consent_voice = Column(Boolean, nullable=False, default=False)
+    consent_text_version = Column(String(20), nullable=True)
+    consent_ip = Column(String(45), nullable=True)
+    consent_at = Column(DateTime, nullable=True)
+
+    status = Column(String(24), nullable=False, default="pending", index=True)
+    publish_step = Column(String(30), nullable=True)                # file_staged/file_created/file_ready/metaobject/metafields
+    is_published = Column(Boolean, nullable=False, default=False)   # bkz. sınıf docstring'i — etkiyle AYNI commit'te yazılır
+
+    moderation_note = Column(Text, nullable=True)
+    moderated_by = Column(String(100), nullable=True)
+    moderated_at = Column(DateTime, nullable=True)
+
+    shopify_metaobject_id = Column(String(80), nullable=True)
+    shopify_file_id = Column(String(80), nullable=True)
+    shopify_file_url = Column(String(500), nullable=True)
+    publish_error = Column(String(500), nullable=True)
+    publish_attempts = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    invite = relationship("ReviewInvite", foreign_keys=[invite_id])
 
 
 # ─── PDKS — Personel Devam Takip Sistemi ─────────────────────────────────────
@@ -1552,6 +1647,11 @@ def init_db():
             # kurulum içindir — kolonu buraya yazmazsan canlıya ULAŞMAZ.
             "ALTER TABLE retention_samples ADD COLUMN needs_review BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE retention_samples ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE",
+            # Ürün yorumları — review_invites/product_reviews tabloları create_all
+            # ile gelir; shopify_orders'a eklenen tek kolon burada.  Doğrulanmış-
+            # alıcı daveti sipariş işleme akışında bu bayrakla idempotent üretilir
+            # (webhook redelivery / retry_order aynı siparişe iki davet üretmesin).
+            "ALTER TABLE shopify_orders ADD COLUMN invites_created BOOLEAN NOT NULL DEFAULT FALSE",
         ):
             alter_safe(stmt)
 
