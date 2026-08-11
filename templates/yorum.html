@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="{{ invite.locale if invite else 'tr' }}">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Yorum Bırakın · Minerva108</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    :root{ --navy:#232E6E; --gold:#C9AC6F; --cream:#f5f0e8; --white:#fff; --err:#b91c1c; }
+    *,*::before,*::after{ box-sizing:border-box; }
+    body{ margin:0; font-family:'Jost',sans-serif; background:var(--cream); color:#1f2937; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:3vh 1rem; }
+    .card{ background:var(--white); border-radius:16px; box-shadow:0 12px 48px rgba(44,44,115,0.12); max-width:560px; width:100%; overflow:hidden; }
+    .head{ background:var(--navy); padding:1.5rem 1.75rem; color:#fff; display:flex; align-items:center; gap:0.9rem; }
+    .head img{ height:34px; opacity:0.96; }
+    .head h1{ font-family:'Playfair Display',serif; font-size:1.15rem; font-weight:700; margin:0; }
+    .body{ padding:1.5rem 1.75rem 1.9rem; }
+    .lead{ font-family:'Playfair Display',serif; font-size:1.3rem; font-weight:700; color:var(--navy); margin:0 0 0.3rem; }
+    .sub{ font-size:0.86rem; color:#6b7280; margin:0 0 1.2rem; }
+    .state{ text-align:center; padding:1.5rem 0.5rem; }
+    .state i{ font-size:2.4rem; color:var(--gold); display:block; margin-bottom:0.7rem; }
+    .state h2{ font-family:'Playfair Display',serif; font-size:1.2rem; color:var(--navy); margin:0 0 0.3rem; }
+    .state p{ font-size:0.88rem; color:#6b7280; margin:0; }
+    .err{ background:#fef2f2; color:var(--err); border:1px solid #fecaca; border-radius:8px; padding:0.6rem 0.85rem; font-size:0.85rem; margin-bottom:1rem; }
+    .gift-note{ background:#f5f2ea; border:1px solid #e9e3d3; border-radius:8px; padding:0.65rem 0.9rem; font-size:0.82rem; color:#57544a; margin-bottom:1.2rem; display:flex; gap:0.5rem; align-items:flex-start; }
+    .gift-note i{ color:var(--gold); margin-top:0.15rem; }
+
+    .field{ margin-bottom:1.15rem; }
+    .field label.flabel{ display:block; font-size:0.82rem; font-weight:600; color:#4b5563; margin-bottom:0.35rem; }
+    .field input[type=text], .field textarea{ width:100%; padding:0.7rem 0.9rem; border:1.5px solid #e5e7eb; border-radius:9px; font-family:inherit; font-size:0.94rem; }
+    .field input[type=text]:focus, .field textarea:focus{ outline:none; border-color:var(--navy); }
+    .field textarea{ resize:vertical; min-height:90px; }
+
+    .stars{ display:flex; flex-direction:row-reverse; justify-content:flex-end; gap:0.15rem; font-size:1.9rem; }
+    .stars input{ position:absolute; opacity:0; pointer-events:none; }
+    .stars label{ color:#e2ddd0; cursor:pointer; transition:color .1s; }
+    .stars input:checked ~ label,
+    .stars label:hover, .stars label:hover ~ label{ color:var(--gold); }
+
+    .rec-box{ border:1.5px dashed #dcd5c6; border-radius:10px; padding:1rem; text-align:center; }
+    .rec-btn{ display:inline-flex; align-items:center; gap:0.5rem; background:var(--navy); color:#fff; border:none; border-radius:999px; padding:0.6rem 1.2rem; font-family:inherit; font-size:0.9rem; font-weight:600; cursor:pointer; min-height:44px; }
+    .rec-btn:hover{ background:#1a2456; }
+    .rec-btn.stop{ background:var(--err); }
+    .rec-status{ font-size:0.82rem; color:#6b7280; margin-top:0.6rem; min-height:1.2em; }
+    .rec-player{ margin-top:0.8rem; display:none; }
+    .rec-player audio{ width:100%; }
+    .rec-actions{ margin-top:0.6rem; display:flex; gap:0.5rem; justify-content:center; }
+    .rec-link-btn{ background:none; border:none; color:var(--navy); font-size:0.82rem; text-decoration:underline; cursor:pointer; padding:0.3rem; }
+    .fallback-file{ margin-top:0.6rem; }
+
+    .consent{ display:flex; gap:0.6rem; align-items:flex-start; font-size:0.82rem; color:#4b5563; line-height:1.5; margin-bottom:1.3rem; }
+    .consent input{ margin-top:0.2rem; min-width:18px; min-height:18px; }
+
+    .btn-submit{ width:100%; padding:0.85rem 1rem; background:var(--navy); color:#fff; border:none; border-radius:9px; font-family:inherit; font-size:0.98rem; font-weight:600; cursor:pointer; min-height:44px; }
+    .btn-submit:hover{ background:#1a2456; }
+    .btn-submit:disabled{ opacity:0.6; cursor:not-allowed; }
+    .foot{ text-align:center; font-size:0.72rem; color:#9ca3af; margin-top:1.1rem; }
+
+    @media (prefers-reduced-motion: reduce){ * { transition:none !important; } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <img src="/static/images/logo_sidebar.png" alt="Minerva 108" />
+      <h1>Minerva108 — Yorumunuz</h1>
+    </div>
+    <div class="body">
+      {% if state == 'open' %}
+        <p class="lead">{{ invite.product_title or 'Bu ürün' }} hakkında ne düşünüyorsunuz?</p>
+        <p class="sub">Değerlendirmeniz incelendikten sonra ürün sayfasında yayınlanır.</p>
+
+        {% if error %}<div class="err">{{ error }}</div>{% endif %}
+
+        {% if invite.kind == 'gifted' %}
+        <div class="gift-note"><i class="bi bi-gift-fill"></i>
+          <span>Bu ürün, değerlendirme yapılması için ücretsiz gönderilmiştir.</span>
+        </div>
+        {% endif %}
+
+        <form method="post" action="/yorum/{{ token }}/gonder" enctype="multipart/form-data" id="reviewForm">
+          <div class="field">
+            <label class="flabel">Puanınız</label>
+            <div class="stars" id="starPicker">
+              <input type="radio" name="rating" id="rs5" value="5" {% if form_rating == 5 or not form_rating %}checked{% endif %}><label for="rs5">★</label>
+              <input type="radio" name="rating" id="rs4" value="4" {% if form_rating == 4 %}checked{% endif %}><label for="rs4">★</label>
+              <input type="radio" name="rating" id="rs3" value="3" {% if form_rating == 3 %}checked{% endif %}><label for="rs3">★</label>
+              <input type="radio" name="rating" id="rs2" value="2" {% if form_rating == 2 %}checked{% endif %}><label for="rs2">★</label>
+              <input type="radio" name="rating" id="rs1" value="1" {% if form_rating == 1 %}checked{% endif %}><label for="rs1">★</label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="flabel" for="author_name">Adınız</label>
+            <input type="text" id="author_name" name="author_name" maxlength="60"
+                   value="{{ form_name or invite.recipient_name or '' }}" required />
+          </div>
+
+          <div class="field">
+            <label class="flabel" for="body">Yazılı yorumunuz <span style="font-weight:400;color:#9ca3af;">(opsiyonel — sesli not da bırakabilirsiniz)</span></label>
+            <textarea id="body" name="body" maxlength="1200">{{ form_body or '' }}</textarea>
+          </div>
+
+          <div class="field">
+            <label class="flabel">Sesli not <span style="font-weight:400;color:#9ca3af;">(opsiyonel, en fazla 2 dk)</span></label>
+            <div class="rec-box" id="recBox">
+              <button type="button" class="rec-btn" id="recBtn"><i class="bi bi-mic-fill"></i><span id="recBtnLabel">Kaydet</span></button>
+              <div class="rec-status" id="recStatus"></div>
+              <div class="rec-player" id="recPlayer">
+                <audio controls id="recAudio"></audio>
+                <div class="rec-actions"><button type="button" class="rec-link-btn" id="recRedo">Yeniden kaydet</button></div>
+              </div>
+              <div class="fallback-file" id="recFallback" style="display:none;">
+                <input type="file" accept="audio/*" capture name="audio" id="recFileInput" />
+              </div>
+            </div>
+          </div>
+
+          <label class="consent">
+            <input type="checkbox" name="consent" required />
+            <span>
+              Ses kaydımın ürün sayfasında herkese açık olarak yayınlanmasına, bu kaydın
+              Shopify altyapısında (Türkiye ve AB dışında) barındırılmasına ve yazıya
+              dökülmesine açık rıza gösteriyorum. Bu rızayı dilediğim zaman geri
+              çekebilirim. <span style="color:#9ca3af;">(Sesli not eklemiyorsanız bu kutu yalnızca yorumunuzu göndermek için onay içindir.)</span>
+            </span>
+          </label>
+
+          <button type="submit" class="btn-submit" id="submitBtn">Yorumu Gönder</button>
+        </form>
+
+        <script src="/static/m108-voice-recorder.js" defer></script>
+
+      {% elif state == 'used' %}
+        <div class="state">
+          <i class="bi bi-check-circle-fill"></i>
+          <h2>Teşekkürler!</h2>
+          <p>Yorumunuz alındı. İncelendikten sonra ürün sayfasında yayınlanacak.</p>
+        </div>
+
+      {% elif state == 'expired' %}
+        <div class="state">
+          <i class="bi bi-hourglass-bottom"></i>
+          <h2>Süresi doldu</h2>
+          <p>Bu davet bağlantısının süresi dolmuş.</p>
+        </div>
+
+      {% else %}
+        <div class="state">
+          <i class="bi bi-question-circle"></i>
+          <h2>Bulunamadı</h2>
+          <p>Bu davet bağlantısı geçersiz ya da kaldırılmış.</p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  <p class="foot">Minerva108 Vegan Cosmetics</p>
+</body>
+</html>

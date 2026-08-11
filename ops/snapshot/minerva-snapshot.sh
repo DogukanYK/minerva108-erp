@@ -109,4 +109,24 @@ DELETED=$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'minerva_auto_*.dump' -mt
   fi
 } || true
 
+# ─── Ürün yorumu sesli notları — GÜNDE BİR kez tarball ──────────────────────
+# review_audio/ de DB'de değil (Drive/ürün görselleri ile aynı durum);
+# pg_dump kapsamaz.  Aynı kalıp: günde bir, hata-toleranslı, kritik DB
+# snapshot'ını asla bozmaz.  Onaylanan yorumların sesi Shopify Files'a da
+# itilir (bkz. core/reviews.py) — bu tarball IMS tarafındaki orijinal kopya
+# içindir (KVKK silme denetim izi + yeniden yayınlama).
+{
+  REVIEW_AUDIO_DIR="${MINERVA_REVIEW_AUDIO_DIR:-/var/www/minerva/review_audio}"
+  if [[ -d "$REVIEW_AUDIO_DIR" ]] && [[ -n "$(ls -A "$REVIEW_AUDIO_DIR" 2>/dev/null)" ]]; then
+    DAY="$(date -u +%Y%m%d)"
+    if ! ls "$BACKUP_DIR"/minerva_review_audio_"${DAY}"-*.tar.gz >/dev/null 2>&1; then
+      DOUT="$BACKUP_DIR/minerva_review_audio_${TS}.tar.gz"
+      tar -czf "$DOUT" -C "$(dirname "$REVIEW_AUDIO_DIR")" "$(basename "$REVIEW_AUDIO_DIR")" \
+        && chmod 600 "$DOUT" \
+        && echo "[$(date -u -Iseconds)] yorum sesi yedek ok: $DOUT ($(du -k "$DOUT" | cut -f1) KB)"
+    fi
+    find "$BACKUP_DIR" -maxdepth 1 -type f -name 'minerva_review_audio_*.tar.gz' -mtime +"$RETENTION_DAYS" -delete
+  fi
+} || true
+
 exit 0

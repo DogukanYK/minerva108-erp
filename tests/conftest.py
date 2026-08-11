@@ -32,6 +32,9 @@ os.environ["SEED_DEFAULT_PASSWORD"] = "minerva123"
 os.environ["DISABLE_SCHEDULER"] = "true"
 # Drive yüklemeleri repo'ya değil geçici dizine yazılsın (test izolasyonu)
 os.environ["MINERVA_DRIVE_DIR"] = "/tmp/minerva_test_drive"
+# Ürün yorumu sesli notları da aynı sebeple — core.reviews.REVIEW_AUDIO_DIR
+# modül IMPORT ZAMANINDA hesaplanır, bu satır ilk import'tan ÖNCE gelmeli.
+os.environ["MINERVA_REVIEW_AUDIO_DIR"] = "/tmp/minerva_test_review_audio"
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402

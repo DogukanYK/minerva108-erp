@@ -106,6 +106,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "  https://cdn.jsdelivr.net https://fonts.googleapis.com; "
             "font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com; "
             "img-src 'self' data: blob: https:; "
+            # /yorum/ sesli yorum formu: kayıt önceki dinleme <audio src="blob:...">
+            # kullanır.  media-src tanımsızken default-src'ye düşer (`'self'` —
+            # blob: kapsamaz) ve önizleme sessizce bloklanır.  Sadece blob: eklendi,
+            # dış medya kaynağı açılmadı.
+            "media-src 'self' blob:; "
             "connect-src 'self'; "
             "object-src 'none'; "
             "frame-ancestors 'none'; "
@@ -120,14 +125,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         # HSTS — sadece prod HTTPS'te anlamlı; lokalde tarayıcı kabul etmez ama zararsız
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        # Browser API gating — kamera (barkod/QR scan) + konum (PDKS check-in
-        # doğrulaması) same-origin'e açık; geri kalanı kapalı.
-        # camera AÇIKÇA yazılır: nginx de bir Permissions-Policy gönderiyor ve
+        # Browser API gating — kamera (barkod/QR scan), konum (PDKS check-in
+        # doğrulaması) ve mikrofon (/yorum/ sesli not kaydı) same-origin'e açık;
+        # geri kalanı kapalı.
+        # Her üçü AÇIKÇA yazılır: nginx de bir Permissions-Policy gönderiyor ve
         # iki header'da aynı özellik geçtiğinde en kısıtlayıcısı uygulanır.
         # nginx'teki eski değer `camera=()` idi → PDKS QR okuyucu hiç açılmıyordu
-        # (canlıda yaşandı).  İki taraf da aynı listeyi göndermeli.
+        # (canlıda yaşandı) — mikrofon için AYNI tuzak: nginx tarafı da
+        # `microphone=(self)`e güncellenmeden sesli kayıt canlıda çalışmaz.
+        # İki taraf da aynı listeyi göndermeli.
         response.headers["Permissions-Policy"] = (
-            "geolocation=(self), camera=(self), microphone=(), payment=(), usb=()"
+            "geolocation=(self), camera=(self), microphone=(self), payment=(), usb=()"
         )
         return response
 
@@ -315,7 +323,7 @@ app.include_router(shopify_router.public_router)
 app.include_router(distributors_router.router)
 app.include_router(portal_router.router)
 app.include_router(reviews_router.router)
-# public_router (davet linki formu + ses yükleme) sonraki fazda eklenecek.
+app.include_router(reviews_router.public_router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────
@@ -799,3 +807,17 @@ def share_page(token: str, request: Request, db: Session = Depends(get_db)):
     ctx["state"] = "open"
     ctx["files"] = [{"id": f.id, "name": f.original_name, "size": D.humanize(f.size_bytes)} for f in files]
     return templates.TemplateResponse("share.html", ctx)
+
+
+@app.get("/yorum/{token}", response_class=HTMLResponse)
+@limiter.limit("30/hour")
+def review_invite_page(token: str, request: Request, db: Session = Depends(get_db)):
+    """Ürün yorumu davet sayfası — auth YOK.  /s/{token} (share_page) ile
+    aynı state-makinesi deseni: notfound / expired / used / open.  İş
+    mantığı (state hesaplama) routers/reviews.py'de — bu router'ı api_main
+    zaten include ediyor, ters-yönde import döngüsü olmadan paylaşılabilir."""
+    from routers.reviews import load_invite_for_page
+    ctx = load_invite_for_page(token, db)
+    ctx.update({"request": request, "token": token, "error": None})
+    status_code = {"notfound": 404, "expired": 410}.get(ctx["state"], 200)
+    return templates.TemplateResponse("yorum.html", ctx, status_code=status_code)

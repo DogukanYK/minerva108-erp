@@ -22,6 +22,9 @@ system_reports/
 # Minerva Drive — yüklenen dosyalar (DB'de değil, diskte; ayrı yedeklenir)
 drive_files/
 
+# Ürün yorumu sesli notları (DB'de değil, diskte; ayrı yedeklenir)
+review_audio/
+
 # Env / secrets — NEVER commit
 .env
 .env.local
