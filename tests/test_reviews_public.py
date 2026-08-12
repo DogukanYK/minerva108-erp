@@ -196,6 +196,30 @@ def test_audio_with_valid_magic_bytes_accepted(client: TestClient, authed_client
     assert audio_path(review.audio_stored_name).is_file()
 
 
+def test_audio_duration_stored_when_audio_present(client: TestClient, authed_client: TestClient, db_session: Session):
+    inv = _create_invite(authed_client)
+    r = _submit(client, inv["token"], audio=("kayit.webm", io.BytesIO(WEBM), "audio/webm"),
+                audio_duration_s="47")
+    assert r.status_code == 303
+
+    review = db_session.query(ProductReview).filter(ProductReview.invite_id ==
+        db_session.query(ReviewInvite).filter(ReviewInvite.token == inv["token"]).first().id).first()
+    assert review.audio_duration_s == 47
+
+
+def test_audio_duration_ignored_without_audio_file(client: TestClient, authed_client: TestClient, db_session: Session):
+    """audio_duration_s ses dosyası OLMADAN gönderilirse yok sayılmalı —
+    süre yalnız gerçekten kaydedilmiş bir dosyayla anlamlı, sahte/tutarsız
+    veri DB'ye yazılmamalı."""
+    inv = _create_invite(authed_client)
+    r = _submit(client, inv["token"], body="Yazılı yorum, ses yok.", audio_duration_s="47")
+    assert r.status_code == 303
+
+    review = db_session.query(ProductReview).filter(ProductReview.invite_id ==
+        db_session.query(ReviewInvite).filter(ReviewInvite.token == inv["token"]).first().id).first()
+    assert review.audio_duration_s is None
+
+
 def test_audio_with_fake_extension_rejected_by_magic_bytes(client: TestClient, authed_client: TestClient, db_session: Session):
     """.webm uzantılı ama içeriği PNG olan dosya — uzantı yalanı, sihirli
     bayt kontrolü yakalamalı (core.product_images.is_jpeg'in aynı gerekçesi)."""

@@ -23,6 +23,7 @@
   var chunks = [];
   var recordedBlob = null;
   var recordedMime = '';
+  var recordedDurationMs = 0;
   var startedAt = 0;
   var timerId = null;
   var maxTimerId = null;
@@ -101,6 +102,7 @@
     mediaRecorder.onstop = function () {
       clearTimers();
       stopTracks();
+      recordedDurationMs = Date.now() - startedAt;
       recordedBlob = new Blob(chunks, { type: recordedMime || 'audio/webm' });
       var url = URL.createObjectURL(recordedBlob);
       recAudio.src = url;
@@ -153,6 +155,7 @@
     if (recordedBlob) {
       var ext = (recordedMime || '').indexOf('mp4') !== -1 ? 'm4a' : 'webm';
       fd.append('audio', recordedBlob, 'kayit.' + ext);
+      fd.append('audio_duration_s', String(Math.round(recordedDurationMs / 1000)));
     }
     // fileInputHasFile durumunda FormData(form) zaten dosyayı içeriyor
     // (recFileInput'un name'i "audio" olmalı — bkz. HTML).

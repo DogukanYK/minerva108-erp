@@ -1,18 +1,49 @@
 """
-Ürün yorumları — Faz C1: veri modeli + davet üretimi.
+Ürün yorumları — Faz C1 (veri modeli + davet üretimi) + Faz C3
+(moderasyon: dinle/transkript/onay/red).
 
-Kapsam: RBAC (reviews kategorisi), davet oluşturma/listeleme, token
-tekilliği, giriş doğrulama.  Moderasyon/yayın/ses yükleme sonraki
-fazlarda ayrı test dosyalarında eklenecek (henüz uç yok).
+Ses yükleme + tek-kullanım kilidi + public saldırı yüzeyi
+tests/test_reviews_public.py'de.  Yayın (Shopify'a itme) henüz yok —
+approve yalnız durumu değiştirir, bkz. routers/reviews.py docstring'i.
 """
 from datetime import datetime
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from database import ReviewInvite
+from database import ProductReview, ReviewInvite
 
 _HDR = {"Origin": "http://testserver"}
+
+
+def _make_review(db: Session, *, has_audio=False, status="pending", **overrides) -> ProductReview:
+    """Moderasyon testleri için doğrudan DB'ye bir davet+yorum çifti yazar —
+    submission akışı tests/test_reviews_public.py'de zaten ayrıca test
+    edildiği için burada kısayoldan gidilir."""
+    import secrets as _secrets
+    inv = ReviewInvite(
+        token="test-token-" + _secrets.token_hex(8),
+        kind="gifted", store_key="minerva", shopify_product_id=8023875190832,
+        product_title="Red Clover Night Cream",
+        expires_at=datetime(2099, 1, 1), used_at=datetime.utcnow(),
+    )
+    db.add(inv)
+    db.flush()
+    r = ProductReview(
+        invite_id=inv.id, store_key="minerva", shopify_product_id=8023875190832,
+        product_title="Red Clover Night Cream", source="gifted",
+        author_name="Test Yazar", rating=5, body="Harika bir ürün." if not has_audio else None,
+        locale="tr", status=status,
+        audio_stored_name=("fake.webm" if has_audio else None),
+        audio_mime=("audio/webm" if has_audio else None),
+        consent_voice=has_audio, consent_text_version="v1",
+    )
+    for k, v in overrides.items():
+        setattr(r, k, v)
+    db.add(r)
+    db.commit()
+    db.refresh(r)
+    return r
 
 
 def _invite_body(**overrides):
@@ -149,3 +180,124 @@ def test_reviews_page_redirects_labtech(labtech_client: TestClient):
     r = labtech_client.get("/yorumlar", follow_redirects=False)
     assert r.status_code == 302
     assert r.headers["location"] == "/"
+
+
+# ─── Moderasyon — onay ────────────────────────────────────────────────────
+
+def test_approve_text_only_review_no_transcript_needed(authed_client: TestClient, db_session: Session):
+    r = _make_review(db_session, has_audio=False)
+    resp = authed_client.post(f"/api/reviews/{r.id}/approve", json={}, headers=_HDR)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["status"] == "approved"
+    assert data["transcript"] is None
+
+
+def test_approve_audio_review_without_transcript_rejected(authed_client: TestClient, db_session: Session):
+    r = _make_review(db_session, has_audio=True)
+    resp = authed_client.post(f"/api/reviews/{r.id}/approve", json={}, headers=_HDR)
+    assert resp.status_code == 400
+    assert "transkript" in resp.text.lower()
+
+    db_session.refresh(r)
+    assert r.status == "pending"   # onay uygulanmadı
+
+
+def test_approve_audio_review_with_transcript_succeeds(authed_client: TestClient, db_session: Session):
+    r = _make_review(db_session, has_audio=True)
+    resp = authed_client.post(
+        f"/api/reviews/{r.id}/approve",
+        json={"transcript": "Ürünü çok beğendim, harika kokuyor."},
+        headers=_HDR,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["status"] == "approved"
+    assert data["transcript"] == "Ürünü çok beğendim, harika kokuyor."
+
+
+def test_approve_already_approved_review_rejected(authed_client: TestClient, db_session: Session):
+    r = _make_review(db_session, status="approved")
+    resp = authed_client.post(f"/api/reviews/{r.id}/approve", json={}, headers=_HDR)
+    assert resp.status_code == 400
+
+
+def test_approve_unknown_review_404(authed_client: TestClient):
+    resp = authed_client.post("/api/reviews/999999/approve", json={}, headers=_HDR)
+    assert resp.status_code == 404
+
+
+def test_labtech_cannot_approve(labtech_client: TestClient, db_session: Session):
+    r = _make_review(db_session)
+    resp = labtech_client.post(f"/api/reviews/{r.id}/approve", json={}, headers=_HDR)
+    assert resp.status_code == 403
+
+
+# ─── Moderasyon — red ─────────────────────────────────────────────────────
+
+def test_reject_requires_note(authed_client: TestClient, db_session: Session):
+    r = _make_review(db_session)
+    resp = authed_client.post(f"/api/reviews/{r.id}/reject", json={"moderation_note": ""}, headers=_HDR)
+    assert resp.status_code in (400, 422)
+
+    db_session.refresh(r)
+    assert r.status == "pending"
+
+
+def test_reject_whitespace_only_note_rejected(authed_client: TestClient, db_session: Session):
+    r = _make_review(db_session)
+    resp = authed_client.post(f"/api/reviews/{r.id}/reject", json={"moderation_note": "   "}, headers=_HDR)
+    assert resp.status_code == 400
+
+
+def test_reject_with_note_succeeds(authed_client: TestClient, db_session: Session):
+    r = _make_review(db_session)
+    resp = authed_client.post(
+        f"/api/reviews/{r.id}/reject",
+        json={"moderation_note": "Spam şüphesi — aynı metin başka üründe de gönderilmiş."},
+        headers=_HDR,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["status"] == "rejected"
+    assert data["moderation_note"] == "Spam şüphesi — aynı metin başka üründe de gönderilmiş."
+
+
+def test_labtech_cannot_reject(labtech_client: TestClient, db_session: Session):
+    r = _make_review(db_session)
+    resp = labtech_client.post(f"/api/reviews/{r.id}/reject", json={"moderation_note": "x"}, headers=_HDR)
+    assert resp.status_code == 403
+
+
+# ─── Dinleme (sesli not) ──────────────────────────────────────────────────
+
+def test_audio_endpoint_404_when_no_audio(authed_client: TestClient, db_session: Session):
+    r = _make_review(db_session, has_audio=False)
+    resp = authed_client.get(f"/api/reviews/{r.id}/audio")
+    assert resp.status_code == 404
+
+
+def test_audio_endpoint_404_when_file_missing_from_disk(authed_client: TestClient, db_session: Session):
+    """DB'de audio_stored_name var ama disk'te dosya yok — 404, 500 değil."""
+    r = _make_review(db_session, has_audio=True)
+    resp = authed_client.get(f"/api/reviews/{r.id}/audio")
+    assert resp.status_code == 404
+
+
+def test_labtech_cannot_access_audio(labtech_client: TestClient, db_session: Session):
+    r = _make_review(db_session, has_audio=True)
+    resp = labtech_client.get(f"/api/reviews/{r.id}/audio")
+    assert resp.status_code == 403
+
+
+def test_audio_endpoint_serves_real_file(authed_client: TestClient, db_session: Session, tmp_path, monkeypatch):
+    import core.reviews as R
+    monkeypatch.setattr(R, "REVIEW_AUDIO_DIR", tmp_path)
+    stored = "real-test-audio.webm"
+    (tmp_path / stored).write_bytes(b"\x1a\x45\xdf\xa3" + b"\x00" * 32)
+
+    r = _make_review(db_session, has_audio=True, audio_stored_name=stored, audio_mime="audio/webm")
+    resp = authed_client.get(f"/api/reviews/{r.id}/audio")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "audio/webm"
+    assert resp.content == b"\x1a\x45\xdf\xa3" + b"\x00" * 32

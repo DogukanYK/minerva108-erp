@@ -5,18 +5,18 @@
 # Bkz. LICENSE ve AUTHORS.md.
 # ─────────────────────────────────────────────────────────────────────────────
 """
-Ürün yorumları — davet üretimi + (salt-okunur) liste.
+Ürün yorumları — davet üretimi, public gönderim formu, moderasyon.
 
-Faz C1 kapsamı: yalnız auth'lu router.  Public yüzey (davet linkinin
-tıklanıp form doldurulduğu `/yorum/{token}` sayfası ve ses yükleme ucu)
-sonraki fazda `public_router` olarak eklenecek — bkz. routers/shopify.py
-ve routers/kommo.py'deki aynı ikili router deseni (router + public_router,
-ikisi de api_main.py'de ayrı ayrı include_router edilir).
+`router` (auth'lu): davet oluştur/listele, yorum listele, dinle
+(GET .../audio), onayla/reddet.  `public_router`: davet linkinin
+tıklanıp form doldurulduğu `/yorum/{token}` gönderim ucu — auth YOK
+(bkz. routers/shopify.py ve routers/kommo.py'deki aynı ikili router
+deseni, ikisi de api_main.py'de ayrı ayrı include_router edilir).
 
-Moderasyon (onay/red/yayından kaldırma/silme) ve Shopify'a itme (metaobject
-+ Files) sonraki fazlarda eklenecek.  Bu dosyadaki liste uçları şimdiden
-salt-okunur olarak var ki admin ekranı (templates/yorumlar.html) boş
-kalmasın.
+Onay Shopify'a İTMEZ — yalnız durumu 'approved'a çevirir.  Yayın
+(metaobject + Files) ve KVKK silme (metaobject+dosya Shopify'dan da
+kalkar) sonraki fazda eklenecek; bu yüzden 'approved' durumundaki
+yorumlar şu an yalnız IMS'te bekler, mağazada görünmez.
 """
 import secrets
 from datetime import datetime, timedelta
@@ -93,6 +93,7 @@ def _review_out(r: ProductReview) -> dict:
         "body": r.body,
         "locale": r.locale,
         "has_audio": bool(r.audio_stored_name),
+        "audio_url": f"/api/reviews/{r.id}/audio" if r.audio_stored_name else None,
         "audio_duration_s": r.audio_duration_s,
         "transcript": r.transcript,
         "status": r.status,
@@ -201,12 +202,122 @@ def list_reviews(
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("reviews", "view")),
 ):
-    """Salt-okunur liste.  Onay/red/yayın uçları sonraki fazda eklenecek."""
+    """Salt-okunur liste.  Yayın (Shopify'a itme) sonraki fazda eklenecek."""
     q = db.query(ProductReview)
     if status:
         q = q.filter(ProductReview.status == status)
     rows = q.order_by(ProductReview.created_at.desc()).limit(200).all()
     return {"reviews": [_review_out(r) for r in rows]}
+
+
+@router.get("/{review_id}/audio")
+def review_audio(
+    review_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("reviews", "moderate")),
+):
+    """Sesli notu dinlemek için — IMS'in ses servis ettiği TEK yer burası,
+    login arkasında (bkz. core/reviews.py'nin dosyası: DoS yüzeyi olan
+    /yorum/ public POST'undan tamamen ayrı).  FileResponse Range isteklerini
+    (audio scrubbing) kendiliğinden destekler."""
+    from fastapi.responses import FileResponse
+    from core.reviews import audio_path
+
+    r = db.query(ProductReview).filter(ProductReview.id == review_id).first()
+    if not r or not r.audio_stored_name:
+        raise HTTPException(status_code=404, detail="Sesli not bulunamadı.")
+    try:
+        path = audio_path(r.audio_stored_name)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Sesli not bulunamadı.")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Sesli not bulunamadı.")
+    return FileResponse(str(path), media_type=r.audio_mime or "application/octet-stream")
+
+
+class ReviewApprove(BaseModel):
+    transcript: Optional[str] = None
+
+
+@router.post("/{review_id}/approve")
+def approve_review(
+    review_id: int,
+    body: ReviewApprove,
+    request: Request,
+    payload: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("reviews", "moderate")),
+):
+    """Onay — Shopify'a İTMEZ (o C4'te).  Yalnız durumu 'approved'a çevirir;
+    yayın kuyruğu (core.scheduler'daki sweep) bu durumdaki satırları alıp
+    işleyecek.  TUZAK — WCAG 1.2.1: sesli not varken transkript boşsa 400."""
+    r = db.query(ProductReview).filter(ProductReview.id == review_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Yorum bulunamadı.")
+    if r.status not in ("pending", "publish_failed"):
+        raise HTTPException(status_code=400, detail=f"Bu durumda onaylanamaz: {r.status}")
+
+    transcript = (body.transcript or "").strip() or None
+    if r.audio_stored_name and not transcript:
+        raise HTTPException(
+            status_code=400,
+            detail="Sesli not içeren yorum, transkript yazılmadan onaylanamaz (erişilebilirlik şartı).",
+        )
+
+    r.transcript = transcript
+    r.status = "approved"
+    r.moderated_by = (payload.get("username") or payload.get("full_name") or None)
+    r.moderated_at = datetime.utcnow()
+    r.moderation_note = None
+    db.commit()
+
+    log_admin_event(
+        db, request, actor=payload, action="review.approve",
+        target_type="product_review", target_id=r.id,
+        target_name=r.product_title or str(r.shopify_product_id),
+    )
+    return _review_out(r)
+
+
+class ReviewReject(BaseModel):
+    moderation_note: str = Field(min_length=1)
+
+
+@router.post("/{review_id}/reject")
+def reject_review(
+    review_id: int,
+    body: ReviewReject,
+    request: Request,
+    payload: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("reviews", "moderate")),
+):
+    """Red — gerekçe ZORUNLU (Omnibus: her red gerekçelendirilebilir olmalı,
+    bkz. sınıf/dosya üstü notlar).  Ses dosyası diskte KALIR (KVKK silme
+    ayrı, kasıtlı bir işlem — burada yalnız yayından alıkonur)."""
+    r = db.query(ProductReview).filter(ProductReview.id == review_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Yorum bulunamadı.")
+    if r.status not in ("pending", "approved", "publish_failed"):
+        raise HTTPException(status_code=400, detail=f"Bu durumda reddedilemez: {r.status}")
+
+    note = (body.moderation_note or "").strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="Red gerekçesi zorunlu.")
+
+    r.status = "rejected"
+    r.moderation_note = note
+    r.moderated_by = (payload.get("username") or payload.get("full_name") or None)
+    r.moderated_at = datetime.utcnow()
+    db.commit()
+
+    log_admin_event(
+        db, request, actor=payload, action="review.reject",
+        target_type="product_review", target_id=r.id,
+        target_name=r.product_title or str(r.shopify_product_id),
+        details={"note": note},
+    )
+    return _review_out(r)
 
 
 # ─── Public — davet linkinin formu (auth YOK) ───────────────────────────────
@@ -240,6 +351,7 @@ async def submit_review(
     body: Optional[str] = Form(None),
     consent: Optional[str] = Form(None),
     audio: Optional[UploadFile] = File(None),
+    audio_duration_s: Optional[int] = Form(None),
 ):
     """Davet linkinin formu — auth YOK, herkese açık.  CSRFMiddleware bunu
     zaten muaf tutuyor (anonim gönderende access_token cookie'si yok, bkz.
@@ -312,6 +424,8 @@ async def submit_review(
         audio_stored_name=audio_stored_name,
         audio_mime=audio_mime,
         audio_bytes=audio_bytes,
+        audio_duration_s=(max(0, min(audio_duration_s, 7200))
+                          if audio_stored_name and audio_duration_s is not None else None),
         consent_voice=bool(audio_stored_name),
         consent_text_version=CONSENT_TEXT_VERSION,
         consent_ip=(request.client.host if request.client else None),

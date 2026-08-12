@@ -1,7 +1,9 @@
-/* Ürün yorumları — davet üretimi + (salt-okunur) liste.
-   Moderasyon (dinleme/transkript/onay/red) ayrı bir turda eklenecek. */
+/* Ürün yorumları — davet üretimi, liste, moderasyon (dinle/transkript/onay/red).
+   Onaylanan yorumun Shopify'a yayını (metaobject + Files) ayrı bir turda eklenecek. */
 (function () {
   'use strict';
+
+  var REVIEWS = {};   // id → son yüklenen yorum objesi (moderasyon modalı için)
 
   function notify(msg, type) { if (window.showToast) window.showToast(msg, type || 'info'); else if (type === 'error') alert(msg); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
@@ -59,11 +61,15 @@
     try {
       var data = await api('/api/reviews');
       var rows = data.reviews || [];
-      if (!rows.length) { body.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;padding:2rem;">Henüz yorum yok.</td></tr>'; return; }
+      if (!rows.length) { body.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:2rem;">Henüz yorum yok.</td></tr>'; return; }
       var statusLabel = { pending: 'Bekliyor', approved: 'Onaylandı', publishing: 'Yayınlanıyor', published: 'Yayında', rejected: 'Reddedildi', unpublished: 'Kaldırıldı', publish_failed: 'Yayın hatası', deleted: 'Silindi' };
+      var canModerate = window.can('reviews', 'moderate');
+      REVIEWS = {};
       body.innerHTML = rows.map(function (r) {
+        REVIEWS[r.id] = r;
         var stars = '★'.repeat(r.rating || 0) + '☆'.repeat(5 - (r.rating || 0));
         var source = r.source === 'gifted' ? 'Hediye' : 'Doğrulanmış alıcı';
+        var canAct = canModerate && (r.status === 'pending' || r.status === 'publish_failed');
         return '<tr>' +
           '<td><b>' + esc(r.product_title || ('#' + r.shopify_product_id)) + '</b></td>' +
           '<td>' + esc(r.author_name) + (r.has_audio ? ' <i class="bi bi-mic-fill muted" title="Sesli not"></i>' : '') + '</td>' +
@@ -71,9 +77,12 @@
           '<td>' + source + '</td>' +
           '<td>' + (statusLabel[r.status] || esc(r.status)) + '</td>' +
           '<td>' + fmtDate(r.created_at) + '</td>' +
+          '<td style="text-align:right;">' +
+            (canAct ? '<button class="btn-sm-soft" onclick="openReview(' + r.id + ')"><i class="bi bi-headphones"></i> İncele</button>' : '<span class="muted">—</span>') +
+          '</td>' +
           '</tr>';
       }).join('');
-    } catch (e) { body.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;padding:2rem;">' + esc(e.message) + '</td></tr>'; }
+    } catch (e) { body.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:2rem;">' + esc(e.message) + '</td></tr>'; }
   }
 
   window.copyInviteLink = function (token) {
@@ -121,6 +130,75 @@
       notify('Davet oluşturuldu.');
       closeModal('inviteModal');
       loadInvites();
+    } catch (e) { notify(e.message, 'error'); }
+  };
+
+  // ── Moderasyon ────────────────────────────────────────────────────────
+  var _revId = null;
+
+  window.openReview = function (id) {
+    var r = REVIEWS[id];
+    if (!r) return;
+    _revId = id;
+    el('revModalProduct').textContent = r.product_title || ('#' + r.shopify_product_id);
+    var source = r.source === 'gifted' ? 'Hediye' : 'Doğrulanmış alıcı';
+    el('revModalMeta').textContent = r.author_name + ' · ' + '★'.repeat(r.rating) + ' · ' + source + ' · ' + (r.locale || 'tr').toUpperCase();
+
+    if (r.has_audio) {
+      el('revModalAudioWrap').style.display = 'block';
+      el('revModalAudio').src = r.audio_url;
+      el('revModalTranscriptReq').textContent = '(zorunlu — sesli not var)';
+    } else {
+      el('revModalAudioWrap').style.display = 'none';
+      el('revModalAudio').removeAttribute('src');
+      el('revModalTranscriptReq').textContent = '(opsiyonel)';
+    }
+
+    if (r.body) {
+      el('revModalBodyWrap').style.display = 'block';
+      el('revModalBody').textContent = r.body;
+    } else {
+      el('revModalBodyWrap').style.display = 'none';
+    }
+
+    el('revModalTranscript').value = r.transcript || '';
+    el('revRejectBox').style.display = 'none';
+    el('revRejectNote').value = '';
+    el('reviewModal').style.display = 'flex';
+  };
+
+  window.approveReview = async function () {
+    if (!_revId) return;
+    try {
+      await api('/api/reviews/' + _revId + '/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: el('revModalTranscript').value.trim() || null }),
+      });
+      notify('Yorum onaylandı.');
+      closeModal('reviewModal');
+      loadReviews();
+    } catch (e) { notify(e.message, 'error'); }
+  };
+
+  window.openRejectPrompt = function () {
+    el('revRejectBox').style.display = 'block';
+    el('revRejectNote').focus();
+  };
+
+  window.rejectReview = async function () {
+    if (!_revId) return;
+    var note = el('revRejectNote').value.trim();
+    if (!note) { notify('Red gerekçesi zorunlu.', 'error'); return; }
+    try {
+      await api('/api/reviews/' + _revId + '/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ moderation_note: note }),
+      });
+      notify('Yorum reddedildi.');
+      closeModal('reviewModal');
+      loadReviews();
     } catch (e) { notify(e.message, 'error'); }
   };
 

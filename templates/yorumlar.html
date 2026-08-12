@@ -156,13 +156,13 @@
         <div class="table-responsive">
           <table>
             <thead><tr>
-              <th>Ürün</th><th>Yazar</th><th>Puan</th><th>Kaynak</th><th>Durum</th><th>Tarih</th>
+              <th>Ürün</th><th>Yazar</th><th>Puan</th><th>Kaynak</th><th>Durum</th><th>Tarih</th><th style="text-align:right;">İşlem</th>
             </tr></thead>
-            <tbody id="reviewBody"><tr><td colspan="6" class="muted" style="text-align:center;padding:2rem;">Yükleniyor…</td></tr></tbody>
+            <tbody id="reviewBody"><tr><td colspan="7" class="muted" style="text-align:center;padding:2rem;">Yükleniyor…</td></tr></tbody>
           </table>
         </div>
       </div>
-      <p class="hint"><i class="bi bi-info-circle"></i> Dinleme, transkript ve onay/red ekranı ayrı bir turda eklenecek — burada yalnız liste görünür.</p>
+      <p class="hint"><i class="bi bi-info-circle"></i> Onaylanan yorumlar Shopify'a otomatik itilmez — yayın (metaobject + Files) ayrı bir turda eklenecek.</p>
     </div>
   </main>
 
@@ -201,6 +201,47 @@
       <div id="qrBox" style="margin:0 auto 1rem;max-width:260px;"></div>
       <p class="muted" id="qrUrl" style="word-break:break-all;"></p>
       <button class="btn-sm-soft" onclick="closeModal('qrModal')">Kapat</button>
+    </div>
+  </div>
+
+  <!-- Moderasyon modalı -->
+  <div id="reviewModal" style="display:none;position:fixed;inset:0;background:rgba(20,25,50,.5);z-index:500;align-items:flex-start;justify-content:center;padding:2rem 1rem;overflow:auto;">
+    <div style="background:#fff;border-radius:16px;max-width:620px;width:100%;padding:1.5rem;">
+      <h3 style="margin:0 0 0.2rem;color:var(--navy);" id="revModalProduct">—</h3>
+      <p class="muted" style="margin:0 0 1rem;" id="revModalMeta">—</p>
+
+      <div id="revModalAudioWrap" style="display:none;margin-bottom:1rem;">
+        <label class="form-label">Sesli not</label>
+        <audio controls id="revModalAudio" style="width:100%;"></audio>
+      </div>
+
+      <div id="revModalBodyWrap" style="margin-bottom:1rem;">
+        <label class="form-label">Yazılı yorum</label>
+        <p id="revModalBody" style="margin:0;padding:0.7rem 0.9rem;background:#faf7f0;border-radius:8px;font-size:0.92rem;white-space:pre-wrap;"></p>
+      </div>
+
+      <div id="revModalTranscriptWrap" style="margin-bottom:1rem;">
+        <label class="form-label">Transkript <span id="revModalTranscriptReq" style="color:#b91c1c;"></span></label>
+        <textarea class="form-control" id="revModalTranscript" rows="3" placeholder="Sesli notu dinleyip buraya yazın…"></textarea>
+        <span class="muted"><i class="bi bi-info-circle"></i> Sesli not içeren yorum, transkript yazılmadan onaylanamaz (erişilebilirlik şartı).</span>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;gap:0.5rem;margin-top:1.2rem;">
+        <button class="btn-sm-soft" style="border-color:#f3c9c9;color:#b91c1c;" onclick="openRejectPrompt()"><i class="bi bi-x-lg"></i> Reddet</button>
+        <div style="margin-left:auto;display:flex;gap:0.5rem;">
+          <button class="btn-sm-soft" onclick="closeModal('reviewModal')">Kapat</button>
+          <button class="btn-primary-gold" onclick="approveReview()"><i class="bi bi-check-lg"></i> Onayla</button>
+        </div>
+      </div>
+
+      <div id="revRejectBox" style="display:none;margin-top:1rem;padding-top:1rem;border-top:1px solid #f1ece1;">
+        <label class="form-label">Red gerekçesi <span style="color:#b91c1c;">*</span></label>
+        <textarea class="form-control" id="revRejectNote" rows="2" placeholder="Neden reddediliyor? (zorunlu — her red gerekçelendirilebilir olmalı)"></textarea>
+        <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.6rem;">
+          <button class="btn-sm-soft" onclick="document.getElementById('revRejectBox').style.display='none'">Vazgeç</button>
+          <button class="btn-sm-soft" style="border-color:#f3c9c9;color:#b91c1c;" onclick="rejectReview()">Reddi Onayla</button>
+        </div>
+      </div>
     </div>
   </div>
 
