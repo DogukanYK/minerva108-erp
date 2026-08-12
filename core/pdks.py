@@ -306,7 +306,8 @@ def pair_events(events):
     return pairs
 
 
-def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None):
+def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None,
+                leave=None):
     """Bir personelin TEK gününü hesapla.
 
     events: o work_date'e yazılmış aktif olaylar (dict listesi).
@@ -314,6 +315,10 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None):
     leave_type: o günü kapsayan izin türü ya da None.
     holiday: {"name", "is_half_day"} ya da None.
     """
+    # `leave` verilirse tür ondan türetilir (not + belge no da taşınır);
+    # `leave_type=` eski çağrılar için korunuyor.
+    if leave:
+        leave_type = leave.get("leave_type") or leave_type
     pairs = pair_events(events)
     closed = [p for p in pairs if p["in"] and p["out"]]
     missing_checkout = any(p["in"] and not p["out"] for p in pairs)
@@ -371,6 +376,8 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None):
         "status_label": (LEAVE_TYPE_LABELS.get(leave_type, "İzinli")
                          if status == "izinli" else DAY_STATUS_LABELS[status]),
         "leave_type": leave_type,
+        "leave_note": (leave or {}).get("note") or "",
+        "leave_document_no": (leave or {}).get("document_no") or "",
         "holiday_name": holiday.get("name") if holiday else None,
         "first_in": first_in,
         "last_out": last_out,
@@ -387,10 +394,17 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None):
 
 
 def leave_for(leaves, work_date):
-    """work_date'i kapsayan ilk aktif iznin türü (yoksa None)."""
+    """work_date'i kapsayan ilk aktif iznin TÜRÜ (yoksa None)."""
+    lv = leave_detail_for(leaves, work_date)
+    return lv["leave_type"] if lv else None
+
+
+def leave_detail_for(leaves, work_date):
+    """work_date'i kapsayan ilk aktif iznin TAMAMI (yoksa None) — türün yanı
+    sıra not ve belge no da lazım (raporun e-rapor numarası puantajda görünsün)."""
     for lv in leaves or []:
         if lv["start_date"] <= work_date <= lv["end_date"]:
-            return lv["leave_type"]
+            return lv
     return None
 
 
@@ -418,7 +432,8 @@ def compute_month(year, month, schedules, events_by_date, leaves, holidays, toda
             days.append({
                 "date": d, "status": "bekliyor",
                 "status_label": DAY_STATUS_LABELS["bekliyor"],
-                "leave_type": None, "holiday_name": None,
+                "leave_type": None, "leave_note": "", "leave_document_no": "",
+                "holiday_name": None,
                 "first_in": None, "last_out": None,
                 "worked_minutes": 0, "expected_minutes": 0, "overtime_minutes": 0,
                 "missing_minutes": 0,
@@ -431,7 +446,7 @@ def compute_month(year, month, schedules, events_by_date, leaves, holidays, toda
             d,
             (events_by_date or {}).get(d, []),
             sched,
-            leave_type=leave_for(leaves, d),
+            leave=leave_detail_for(leaves, d),
             holiday=(holidays or {}).get(d),
         )
         days.append(day)

@@ -1342,6 +1342,11 @@ class AttendanceEvent(Base):
     geo_lat            = Column(Float, nullable=True)
     geo_lon            = Column(Float, nullable=True)
     geo_accuracy_m     = Column(Float, nullable=True)
+    # Hangi yolla doğrulandı: 'qr' (kiosk QR) | 'code' (kiosk sayısal kod)
+    # | 'static' (basılı afiş) | 'static_fallback' (rotating moddayken afiş)
+    # | 'off' (doğrulama kapalıydı).  Kesinti sonrası "kim nasıl imza attı"
+    # sorusu adli inceleme gerektirmesin diye tutuluyor.
+    verify_method      = Column(String(16), nullable=True)
     corrected_by       = Column(String(100), nullable=True)
     corrected_at       = Column(DateTime, nullable=True)
     correction_note    = Column(String(300), nullable=True)        # PUT/DELETE'te zorunlu
@@ -1363,6 +1368,9 @@ class LeaveRecord(Base):
     start_date  = Column(Date, nullable=False)
     end_date    = Column(Date, nullable=False)
     note        = Column(String(300), nullable=True)
+    # e-rapor / istirahat belgesi no — muhasebecinin SGK listesiyle
+    # eşleştirdiği anahtar.  Belgenin kendisi Drive'da durur.
+    document_no = Column(String(60), nullable=True)
     created_by  = Column(String(100), nullable=True)
     is_active   = Column(Boolean, default=True)
     created_at  = Column(DateTime, default=datetime.utcnow)
@@ -1409,6 +1417,35 @@ class AttendanceRequest(Base):
     decided_at    = Column(DateTime, nullable=True)
     decision_note = Column(String(300), nullable=True)
     event_id      = Column(Integer, ForeignKey("pdks_events.id"), nullable=True)  # onayda oluşan olay
+
+
+class LeaveRequest(Base):
+    """Personelin "izin/rapor bildirimi" — YÖNETİCİ ONAYLI.
+
+    Doğrulama (ofis ağı + konum + QR) açıkken personel ofis dışından imza
+    atamaz; hastalanan biri de evden izin giremezdi çünkü `POST /leaves`
+    `pdks.manage` istiyor.  Bu tablo talebi personelin kendisinin
+    başlatmasını sağlar: tür + tarih aralığı + gerekçe (+ e-rapor belge no)
+    bildirilir, yönetici onaylayınca GERÇEK `LeaveRecord` yazılır.
+    Onaysız hiçbir puantaj etkisi YOKTUR.
+
+    AttendanceRequest'ten farkı: bu bir ARALIK (start..end, kapsayıcı) ve
+    zaman iki yöne akar — yıllık izin gelecek, rapor geçmiş tarihlidir."""
+    __tablename__ = "pdks_leave_requests"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    employee_id   = Column(Integer, ForeignKey("pdks_employees.id"), nullable=False, index=True)
+    leave_type    = Column(String(20), nullable=False)   # yillik|raporlu|ucretsiz|diger
+    start_date    = Column(Date, nullable=False, index=True)
+    end_date      = Column(Date, nullable=False)
+    note          = Column(String(300), nullable=False)  # personelin gerekçesi (zorunlu)
+    document_no   = Column(String(60), nullable=True)    # e-rapor / belge no
+    status        = Column(String(12), nullable=False, default="pending", index=True)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    decided_by    = Column(String(100), nullable=True)
+    decided_at    = Column(DateTime, nullable=True)
+    decision_note = Column(String(300), nullable=True)
+    leave_id      = Column(Integer, ForeignKey("pdks_leaves.id"), nullable=True)
 
 
 def log_system_event(event_type: str, detail: str = None) -> None:
@@ -1637,6 +1674,13 @@ def init_db():
             "ALTER TABLE pdks_events ADD COLUMN geo_lat DOUBLE PRECISION",
             "ALTER TABLE pdks_events ADD COLUMN geo_lon DOUBLE PRECISION",
             "ALTER TABLE pdks_events ADD COLUMN geo_accuracy_m DOUBLE PRECISION",
+            # PDKS — imzanın hangi yolla doğrulandığı (qr/code/static/
+            # static_fallback/off).  deploy.sh alembic ÇALIŞTIRMIYOR; kolon
+            # prod'a yalnız bu satırla ulaşır (migration tarih içindir).
+            "ALTER TABLE pdks_events ADD COLUMN verify_method VARCHAR(16)",
+            # PDKS — izinde e-rapor/belge no (pdks_leave_requests tablosu
+            # create_all ile gelir, ayrıca ALTER gerekmez).
+            "ALTER TABLE pdks_leaves ADD COLUMN document_no VARCHAR(60)",
             # Şahit numune dolabı — retention_sample* tabloları create_all ile
             # gelir; bunlar mevcut tablolara eklenen kolonlar.
             "ALTER TABLE items ADD COLUMN lot_seq INTEGER NOT NULL DEFAULT 0",

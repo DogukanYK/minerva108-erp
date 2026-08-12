@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from database import (
     TR_OFFSET, get_db, to_tr, User, AppSetting,
     Employee, EmployeeSchedule, AttendanceEvent, AttendanceRequest,
-    LeaveRecord, PublicHoliday,
+    LeaveRecord, LeaveRequest, PublicHoliday,
 )
 from core.audit import log_admin_event
 from core.auth import SECRET_KEY
@@ -35,9 +35,10 @@ from core.pdks import (
     LEAVE_TYPES, LEAVE_TYPE_LABELS, DAY_STATUS_LABELS,
     WEEKDAY_LABELS, MONTH_LABELS, OPEN_PAIR_MAX_HOURS,
     NUMERIC_CODE_LEN, QR_BUCKET_SECONDS, TOTAL_BREAK_MINUTES, breaks_view,
-    STATIC_CODE_ALPHABET, STATIC_CODE_LEN,
+    STATIC_CODE_ALPHABET, STATIC_CODE_LEN, QR_PREFIX, QR_STATIC_PREFIX,
     compute_day, compute_month, fmt_minutes,
-    geo_within, haversine_m, ip_allowed, leave_for, make_numeric_code,
+    geo_within, haversine_m, ip_allowed, leave_detail_for, leave_for,
+    make_numeric_code,
     make_qr_token, make_static_token, open_in_still_valid, qr_bucket,
     schedule_for, tr_date_of,
     validate_template, verify_numeric_code, verify_qr_token,
@@ -78,11 +79,14 @@ _CFG_RADIUS = "pdks.checkin.radius_m"
 # | "rotating" = kiosk ekranında 30 sn'de bir dönen kod (cihaz gerekir).
 _CFG_QR_MODE = "pdks.checkin.qr_mode"
 _CFG_STATIC_CODE = "pdks.checkin.static_code"
+_CFG_STATIC_FALLBACK = "pdks.checkin.static_fallback"
 _DEFAULT_RADIUS_M = 150
 _QR_MODES = ("static", "rotating")
 
 _SOURCE_LABELS = {"self": "Kendi cihazı", "manual": "Manuel (yönetici)",
                   "request": "Personel bildirimi (onaylı)"}
+_VERIFY_LABELS = {"qr": "Ekran QR", "code": "Ekran kodu", "static": "Afiş QR",
+                  "static_fallback": "Afiş (yedek)", "off": "Doğrulama kapalı"}
 # Personel en fazla bu kadar geriye dönük bildirim yapabilir (gün).
 REQUEST_MAX_AGE_DAYS = 14
 _TYPE_LABELS = {"in": "Giriş", "out": "Çıkış"}
@@ -111,6 +115,9 @@ class RequestBody(BaseModel):
 
 class DecisionBody(BaseModel):
     note: Optional[str] = Field(None, max_length=300)
+    # İzin onayında doldurulabilir: evden yazan personelde e-rapor no henüz
+    # olmayabilir, yönetici onay anında girer.
+    document_no: Optional[str] = Field(None, max_length=60)
 
 
 class CheckinConfigBody(BaseModel):
@@ -120,6 +127,7 @@ class CheckinConfigBody(BaseModel):
     lon: Optional[float] = Field(None, ge=-180, le=180)
     radius_m: Optional[int] = Field(None, ge=10, le=5000)
     qr_mode: Optional[str] = Field(None, pattern="^(static|rotating)$")
+    static_fallback: Optional[bool] = None
 
 
 class EmployeeBody(BaseModel):
@@ -157,6 +165,16 @@ class LeaveBody(BaseModel):
     start_date: date
     end_date: date
     note: Optional[str] = Field(None, max_length=300)
+    document_no: Optional[str] = Field(None, max_length=60)
+
+
+class LeaveRequestBody(BaseModel):
+    """Personelin kendi izin/rapor bildirimi — gerekçe ZORUNLU."""
+    leave_type: str = Field(..., pattern="^(yillik|raporlu|ucretsiz|diger)$")
+    start_date: date
+    end_date: date
+    note: str = Field(..., min_length=3, max_length=300)
+    document_no: Optional[str] = Field(None, max_length=60)
 
 
 class HolidayBody(BaseModel):
@@ -167,8 +185,14 @@ class HolidayBody(BaseModel):
 
 # ─── Ortak yardımcılar ───────────────────────────────────────────────────────
 
-def _err(status: int, msg: str) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"detail": msg})
+def _err(status: int, msg: str, code: str = None) -> JSONResponse:
+    """Türkçe hata.  `detail` insanın okuduğu tek şey; opsiyonel `code`
+    istemcinin davranışını değiştirmesi için (ör. mod uyuşmazlığında ölü uç
+    yerine yol gösteren mesaj)."""
+    body = {"detail": msg}
+    if code:
+        body["code"] = code
+    return JSONResponse(status_code=status, content=body)
 
 
 # ── AppSetting KV yardımcıları (core/shopify.py:104-118 kalıbı) ─────────────
@@ -216,6 +240,11 @@ def _checkin_cfg(db: Session) -> dict:
         "radius_m": max(10, radius),
         "qr_mode": mode,
         "static_code": _get_setting(db, _CFG_STATIC_CODE) or "",
+        # Rotating moddayken basılı afiş de kabul edilsin mi.  Varsayılan
+        # KAPALI (fail-closed) — açmak bilinçli bir karardır: afişin
+        # fotoğrafı da geçerli olur, yani dönen QR'ın fotoğraf koruması
+        # devre dışı kalır.  Asıl güvence ofis IP + konum şartıdır.
+        "static_fallback": (_get_setting(db, _CFG_STATIC_FALLBACK) or "false").lower() == "true",
     }
 
 
@@ -334,8 +363,9 @@ def _leave_dicts(db: Session, employee_id: int, start: date, end: date) -> list:
                     LeaveRecord.is_active == True,                         # noqa: E712
                     LeaveRecord.start_date <= end,
                     LeaveRecord.end_date >= start).all())
-    return [{"leave_type": r.leave_type, "start_date": r.start_date,
-             "end_date": r.end_date} for r in rows]
+    return [{"id": r.id, "leave_type": r.leave_type, "start_date": r.start_date,
+             "end_date": r.end_date, "note": r.note or "",
+             "document_no": r.document_no or ""} for r in rows]
 
 
 def _holiday_map(db: Session, start: date, end: date) -> dict:
@@ -379,6 +409,8 @@ def _day_view(day: dict) -> dict:
         "status": day["status"],
         "status_label": day["status_label"],
         "leave_type": day["leave_type"],
+        "leave_note": day.get("leave_note", ""),
+        "leave_document_no": day.get("leave_document_no", ""),
         "holiday_name": day["holiday_name"],
         "first_in": _hhmm(day["first_in"]),
         "last_out": _hhmm(day["last_out"]),
@@ -406,7 +438,9 @@ def _totals_view(t: dict) -> dict:
         "toplam_fazla_mesai_label": fmt_minutes(t["toplam_fazla_mesai"]),
         "toplam_eksik_label": fmt_minutes(t["toplam_eksik"]),
         "izin_gunleri_label": ", ".join(
-            f"{LEAVE_TYPE_LABELS[k]}: {v}" for k, v in t["izin_gunleri"].items() if v
+            # .get(): compute_month bilinmeyen bir leave_type için sayaç
+            # açabiliyor; [] ile erişmek tüm aylık raporu 500'lüyordu.
+            f"{LEAVE_TYPE_LABELS.get(k, k)}: {v}" for k, v in t["izin_gunleri"].items() if v
         ) or "—",
     }
 
@@ -457,6 +491,8 @@ def _event_view(ev: AttendanceEvent) -> dict:
         "work_date": ev.work_date.isoformat() if ev.work_date else "",
         "work_date_label": ev.work_date.strftime("%d.%m.%Y") if ev.work_date else "",
         "source": ev.source, "source_label": _SOURCE_LABELS.get(ev.source, ev.source),
+        "verify_method": ev.verify_method or "",
+        "verify_label": _VERIFY_LABELS.get(ev.verify_method, ""),
         "corrected_by": ev.corrected_by or "",
         "correction_note": ev.correction_note or "",
         "is_active": bool(ev.is_active),
@@ -475,6 +511,7 @@ def _leave_view(lv: LeaveRecord, db: Session) -> dict:
         "end_date": lv.end_date.isoformat(),
         "end_date_label": lv.end_date.strftime("%d.%m.%Y"),
         "note": lv.note or "", "created_by": lv.created_by or "",
+        "document_no": lv.document_no or "",
     }
 
 
@@ -501,7 +538,7 @@ def _today_status(db: Session, emp: Employee) -> dict:
     leaves = _leave_dicts(db, emp.id, today, today)
     holidays = _holiday_map(db, today, today)
     day = compute_day(today, [_event_dict(e) for e in events], sched,
-                      leave_type=leave_for(leaves, today),
+                      leave=leave_detail_for(leaves, today),
                       holiday=holidays.get(today))
     open_ev = _open_in(db, emp.id, now)
     worked_live = day["worked_minutes"]
@@ -544,6 +581,110 @@ def _month_payload(db: Session, emp: Employee, year: int, month: int) -> dict:
 
 # ─── Self endpoint'ler ───────────────────────────────────────────────────────
 
+def _verify_proof(employee_id: int, data: "CheckBody", cfg: dict, now_unix: float):
+    """QR/kod kanıtını doğrula.  Dönüş: (verify_method, hata_yanıtı_or_None).
+
+    İki mod var (`cfg["qr_mode"]`):
+      • static   — girişe asılan BASILI afiş; içerik sabit, süre dolmaz.
+      • rotating — kiosk ekranında 30 sn'de bir dönen QR + 6 haneli yedek kod.
+
+    `static_fallback` açıkken rotating modda basılı afiş DE kabul edilir.
+    Bunun gerekçesi 11.08.2026 kesintisi: kiosk ekranını yalnız SuperAdmin
+    açabildiği için o gün hiç kimse imza atamadı.  Bedeli açıkça kabul
+    edilmiştir — afişin fotoğrafı da geçerli olur; asıl güvence ofis IP +
+    ofis konumu şartıdır (ikisi de bu fonksiyondan önce/sonra uygulanır).
+
+    Yanlış moddaki kanıt jenerik "geçersiz" yerine ne yapılacağını söyleyen
+    bir mesaj + `code="qr_mode_mismatch"` döndürür."""
+    token = (data.qr_token or "").strip() or None
+    code = (data.manual_code or "").strip() or None
+    static_code = cfg["static_code"]
+    fallback = cfg["static_fallback"]
+    is_static_mode = cfg["qr_mode"] == "static"
+    looks_static = bool(token) and token.startswith(QR_STATIC_PREFIX + ":")
+    looks_rotating = bool(token) and token.startswith(QR_PREFIX + ":")
+
+    if not token and not code:
+        if is_static_mode:
+            return None, _err(400, "QR kod okutulmadı — girişteki QR kodu okutun "
+                                   "ya da afişteki kodu elle girin.")
+        return None, _err(400, "QR kod okutulmadı — girişteki ekrandan güncel QR "
+                               "kodu okutun ya da ekrandaki sayısal kodu girin.")
+
+    # ── static mod ──────────────────────────────────────────────────────────
+    if is_static_mode:
+        if looks_rotating:
+            return None, _err(400, "Bu, ekranda dönen kiosk QR'ı — sistem şu an "
+                                   "girişteki BASILI afişi bekliyor.",
+                              code="qr_mode_mismatch")
+        if not static_code:
+            return None, _err(400, "PDKS doğrulama ayarları eksik — yöneticinize "
+                                   "başvurun.")
+        if _code_fail_blocked(employee_id, now_unix):
+            return None, _err(429, "Çok fazla hatalı deneme — birkaç dakika sonra "
+                                   "tekrar deneyin.")
+        state = (verify_static_token(static_code, token) if token
+                 else verify_static_code(static_code, code))
+        if state != "ok":
+            _code_fail_record(employee_id, now_unix)
+            return None, _err(400, "QR kod geçersiz — girişteki Minerva PDKS "
+                                   "kodunu okutun.")
+        _code_fails.pop(employee_id, None)
+        return "static", None
+
+    # ── rotating mod ────────────────────────────────────────────────────────
+    # 1) Kiosk QR'ı
+    if token and not looks_static:
+        qr_state = verify_qr_token(SECRET_KEY, token, now_unix)
+        if qr_state == "ok":
+            return "qr", None
+        if qr_state == "expired":
+            return None, _err(400, "QR kodun süresi dolmuş — ekrandaki güncel "
+                                   "kodu tekrar okutun.")
+        return None, _err(400, "QR kod geçersiz — girişteki ekrandaki canlı "
+                               "kodu okutun.")
+
+    # 2) Basılı afiş token'ı rotating moddayken
+    if looks_static:
+        if not fallback:
+            return None, _err(400, "Bu, girişteki BASILI afişin kodu — sistem şu "
+                                   "an ekranda dönen QR bekliyor. Yöneticinize "
+                                   "bildirin (PDKS → Doğrulama).",
+                              code="qr_mode_mismatch")
+        if not static_code:
+            return None, _err(400, "PDKS doğrulama ayarları eksik — yöneticinize "
+                                   "başvurun.")
+        if _code_fail_blocked(employee_id, now_unix):
+            return None, _err(429, "Çok fazla hatalı deneme — birkaç dakika sonra "
+                                   "tekrar deneyin.")
+        if verify_static_token(static_code, token) != "ok":
+            _code_fail_record(employee_id, now_unix)
+            return None, _err(400, "QR kod geçersiz — girişteki afişi okutun.")
+        _code_fails.pop(employee_id, None)
+        return "static_fallback", None
+
+    # 3) Elle kod: önce kiosk sayısal kodu, fallback açıksa afiş kodu
+    if _code_fail_blocked(employee_id, now_unix):
+        return None, _err(429, "Çok fazla hatalı kod denemesi — birkaç dakika "
+                               "sonra tekrar deneyin veya QR'ı okutun.")
+    code_state = verify_numeric_code(SECRET_KEY, code, now_unix)
+    if code_state == "ok":
+        _code_fails.pop(employee_id, None)
+        return "code", None
+    if fallback and static_code and verify_static_code(static_code, code) == "ok":
+        _code_fails.pop(employee_id, None)
+        return "static_fallback", None
+    _code_fail_record(employee_id, now_unix)
+    if code_state == "expired":
+        return None, _err(400, "Kodun süresi dolmuş — ekranda o an yazan yeni "
+                               "kodu girin.")
+    msg = (f"Kod geçersiz — girişteki ekranda yazan {NUMERIC_CODE_LEN} haneli "
+           f"kodu girin.")
+    if fallback:
+        msg += " Girişteki afişte yazan kodu da girebilirsiniz."
+    return None, _err(400, msg)
+
+
 @router.post("/check")
 def check_in_out(
     data: CheckBody,
@@ -557,59 +698,15 @@ def check_in_out(
 
     ip = _real_client_ip(request)
     cfg = _checkin_cfg(db)
+    verify_method = "off"
     if cfg["enforce"]:
-        # Sıra: IP (en ucuz) → QR (sahte token'ı erken ele) → konum.
+        # Sıra: IP (en ucuz) → QR/kod (sahte token'ı erken ele) → konum.
         if not ip_allowed(ip, cfg["allowed_ips"]):
             return _err(400, "Ofis internetine bağlı değilsiniz — giriş/çıkış "
                              "yalnızca ofis ağından (Minerva108 Wi-Fi) yapılabilir.")
-        now_unix = time.time()
-        if cfg["qr_mode"] == "static":
-            # Basılı QR: içerik sabit, süre dolmaz.  Kamera okuyamazsa personel
-            # afişteki kodu elle yazabilir (aynı kod, aynı doğrulama).
-            given = data.qr_token or data.manual_code
-            if not given:
-                return _err(400, "QR kod okutulmadı — girişteki QR kodu okutun "
-                                 "ya da afişteki kodu elle girin.")
-            if not cfg["static_code"]:
-                return _err(400, "PDKS doğrulama ayarları eksik — yöneticinize "
-                                 "başvurun.")
-            if _code_fail_blocked(emp.id, now_unix):
-                return _err(429, "Çok fazla hatalı deneme — birkaç dakika sonra "
-                                 "tekrar deneyin.")
-            state = (verify_static_token(cfg["static_code"], given)
-                     if data.qr_token else
-                     verify_static_code(cfg["static_code"], given))
-            if state != "ok":
-                _code_fail_record(emp.id, now_unix)
-                return _err(400, "QR kod geçersiz — girişteki Minerva PDKS "
-                                 "kodunu okutun.")
-            _code_fails.pop(emp.id, None)
-        elif data.qr_token:
-            qr_state = verify_qr_token(SECRET_KEY, data.qr_token, now_unix)
-            if qr_state == "expired":
-                return _err(400, "QR kodun süresi dolmuş — ekrandaki güncel kodu "
-                                 "tekrar okutun.")
-            if qr_state != "ok":
-                return _err(400, "QR kod geçersiz — girişteki ekrandaki canlı "
-                                 "kodu okutun.")
-        elif data.manual_code:
-            # Kamera yoksa/okumuyorsa: ekranda QR'ın altında yazan sayısal kod.
-            if _code_fail_blocked(emp.id, now_unix):
-                return _err(429, "Çok fazla hatalı kod denemesi — birkaç dakika "
-                                 "sonra tekrar deneyin veya QR'ı okutun.")
-            code_state = verify_numeric_code(SECRET_KEY, data.manual_code, now_unix)
-            if code_state != "ok":
-                _code_fail_record(emp.id, now_unix)
-            if code_state == "expired":
-                return _err(400, "Kodun süresi dolmuş — ekranda o an yazan yeni "
-                                 "kodu girin.")
-            if code_state != "ok":
-                return _err(400, f"Kod geçersiz — girişteki ekranda yazan "
-                                 f"{NUMERIC_CODE_LEN} haneli kodu girin.")
-            _code_fails.pop(emp.id, None)      # doğru kod → sayaç sıfırlanır
-        else:
-            return _err(400, "QR kod okutulmadı — girişteki ekrandan güncel QR "
-                             "kodu okutun ya da ekrandaki sayısal kodu girin.")
+        verify_method, proof_err = _verify_proof(emp.id, data, cfg, time.time())
+        if proof_err is not None:
+            return proof_err
         if data.lat is None or data.lon is None:
             return _err(400, "Konum bilgisi alınamadı — konum iznini verip "
                              "tekrar deneyin.")
@@ -651,6 +748,7 @@ def check_in_out(
         # Doğrulama kapalıyken de gelmişse (istemci her zaman geo göndermeyi
         # dener) kaydedilir — ileride analiz/denetim için faydalı, zararsız.
         geo_lat=data.lat, geo_lon=data.lon, geo_accuracy_m=data.accuracy,
+        verify_method=verify_method,
     )
     try:
         db.add(ev)
@@ -727,7 +825,7 @@ def day_overview(
         day = compute_day(
             d, [_event_dict(e) for e in events],
             schedule_for(_schedule_dicts(db, emp.id), d),
-            leave_type=leave_for(_leave_dicts(db, emp.id, d, d), d),
+            leave=leave_detail_for(_leave_dicts(db, emp.id, d, d), d),
             holiday=holidays.get(d),
         )
         if d > today_tr:
@@ -1106,19 +1204,23 @@ def delete_event(
 
 # ─── İzinler ─────────────────────────────────────────────────────────────────
 
-def _validate_leave(db: Session, data: LeaveBody,
+def _validate_leave(db: Session, employee_id: int, leave_type: str,
+                    start_date: date, end_date: date, note=None,
                     exclude_id: Optional[int] = None):
-    if data.leave_type not in LEAVE_TYPES:
+    """İzin kuralları — TEK kaynak.  Hem yöneticinin doğrudan girişi hem de
+    personel talebinin ONAY ANI aynı fonksiyondan geçer; aksi halde bekleyen
+    bir talep, yönetici arada çakışan bir izin girdiyse sessizce çakışır."""
+    if leave_type not in LEAVE_TYPES:
         return _err(400, "Geçersiz izin türü.")
-    if data.end_date < data.start_date:
+    if end_date < start_date:
         return _err(400, "Bitiş tarihi başlangıçtan önce olamaz.")
-    if data.leave_type == "diger" and not (data.note or "").strip():
+    if leave_type == "diger" and not (note or "").strip():
         return _err(400, "'Diğer' izin türünde açıklama zorunlu.")
     q = (db.query(LeaveRecord)
-         .filter(LeaveRecord.employee_id == data.employee_id,
+         .filter(LeaveRecord.employee_id == employee_id,
                  LeaveRecord.is_active == True,                            # noqa: E712
-                 LeaveRecord.start_date <= data.end_date,
-                 LeaveRecord.end_date >= data.start_date))
+                 LeaveRecord.start_date <= end_date,
+                 LeaveRecord.end_date >= start_date))
     if exclude_id:
         q = q.filter(LeaveRecord.id != exclude_id)
     if q.first():
@@ -1153,13 +1255,15 @@ def create_leave(
     e = _get_employee(db, data.employee_id)
     if not e:
         return _err(404, "Personel bulunamadı.")
-    err = _validate_leave(db, data)
+    err = _validate_leave(db, data.employee_id, data.leave_type,
+                          data.start_date, data.end_date, data.note)
     if err:
         return err
     lv = LeaveRecord(
         employee_id=e.id, leave_type=data.leave_type,
         start_date=data.start_date, end_date=data.end_date,
         note=(data.note or "").strip() or None, created_by=_actor(current_user),
+        document_no=(data.document_no or "").strip() or None,
     )
     try:
         db.add(lv)
@@ -1189,7 +1293,9 @@ def update_leave(
     e = _get_employee(db, data.employee_id)
     if not e:
         return _err(404, "Personel bulunamadı.")
-    err = _validate_leave(db, data, exclude_id=lv.id)
+    err = _validate_leave(db, data.employee_id, data.leave_type,
+                          data.start_date, data.end_date, data.note,
+                          exclude_id=lv.id)
     if err:
         return err
     lv.employee_id = e.id
@@ -1197,6 +1303,7 @@ def update_leave(
     lv.start_date = data.start_date
     lv.end_date = data.end_date
     lv.note = (data.note or "").strip() or None
+    lv.document_no = (data.document_no or "").strip() or None
     try:
         db.commit()
     except Exception:
@@ -1379,6 +1486,244 @@ def regenerate_static_qr(
     payload["message"] = "Yeni kod üretildi — afişi yeniden yazdırın."
     return JSONResponse(content=payload,
                         headers={"Cache-Control": "no-store, max-age=0"})
+
+
+# ─── İzin / rapor bildirimi (personel → yönetici onayı) ─────────────────────
+# Yıllık izin GELECEK, rapor GEÇMİŞ tarihlidir — bu yüzden AttendanceRequest'in
+# "gelecek yasak + 14 gün geri" kuralı burada geçerli değil.
+LEAVE_REQUEST_MAX_PAST_DAYS = 60      # kapanmış bordro ayını korur
+LEAVE_REQUEST_MAX_FUTURE_DAYS = 365
+LEAVE_REQUEST_MAX_SPAN_DAYS = 90
+
+
+def _leave_request_view(r, db: Session) -> dict:
+    emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
+    return {
+        "id": r.id, "employee_id": r.employee_id,
+        "employee_name": emp.full_name if emp else "—",
+        "leave_type": r.leave_type,
+        "leave_type_label": LEAVE_TYPE_LABELS.get(r.leave_type, r.leave_type),
+        "start_date": r.start_date.isoformat(),
+        "start_date_label": r.start_date.strftime("%d.%m.%Y"),
+        "end_date": r.end_date.isoformat(),
+        "end_date_label": r.end_date.strftime("%d.%m.%Y"),
+        "days": (r.end_date - r.start_date).days + 1,
+        "note": r.note, "document_no": r.document_no or "",
+        "status": r.status,
+        "status_label": _REQ_STATUS_LABELS.get(r.status, r.status),
+        "created_at": to_tr(r.created_at).strftime("%d.%m.%Y %H:%M") if r.created_at else "",
+        "decided_by": r.decided_by or "",
+        "decision_note": r.decision_note or "",
+    }
+
+
+@router.post("/leave-requests", status_code=201)
+def create_leave_request(
+    data: LeaveRequestBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("pdks", "check")),
+):
+    """Personel kendi iznini/raporunu bildirir — ONAYA DÜŞER.
+    Ofis ağı/konum/QR ŞARTI YOK: hasta olan zaten evdedir; güvenliği
+    sağlayan şey yöneticinin onayıdır."""
+    emp = _employee_for_user(db, current_user)
+    if not emp:
+        return _err(404, "Personel kaydınız bulunamadı — yöneticinize başvurun.")
+    if data.end_date < data.start_date:
+        return _err(400, "Bitiş tarihi başlangıçtan önce olamaz.")
+    span = (data.end_date - data.start_date).days + 1
+    if span > LEAVE_REQUEST_MAX_SPAN_DAYS:
+        return _err(400, f"En fazla {LEAVE_REQUEST_MAX_SPAN_DAYS} günlük aralık "
+                         f"bildirebilirsiniz — daha uzunu için yöneticinize başvurun.")
+    today = tr_date_of(datetime.utcnow())
+    if (today - data.start_date).days > LEAVE_REQUEST_MAX_PAST_DAYS:
+        return _err(400, f"En fazla {LEAVE_REQUEST_MAX_PAST_DAYS} gün geriye "
+                         f"bildirim yapabilirsiniz — daha eskisi için yöneticinize "
+                         f"başvurun.")
+    if (data.start_date - today).days > LEAVE_REQUEST_MAX_FUTURE_DAYS:
+        return _err(400, "Çok ileri tarihli bildirim yapılamaz.")
+    if data.leave_type == "diger" and not data.note.strip():
+        return _err(400, "'Diğer' izin türünde açıklama zorunlu.")
+    # Çakışma: hem bekleyen talep hem yürürlükteki izin
+    dup = (db.query(LeaveRequest)
+           .filter(LeaveRequest.employee_id == emp.id,
+                   LeaveRequest.status == "pending",
+                   LeaveRequest.start_date <= data.end_date,
+                   LeaveRequest.end_date >= data.start_date).first())
+    if dup:
+        return _err(400, "Bu tarihler için zaten onay bekleyen bir talebiniz var.")
+    clash = (db.query(LeaveRecord)
+             .filter(LeaveRecord.employee_id == emp.id,
+                     LeaveRecord.is_active == True,                        # noqa: E712
+                     LeaveRecord.start_date <= data.end_date,
+                     LeaveRecord.end_date >= data.start_date).first())
+    if clash:
+        return _err(400, "Bu tarihler zaten izinli görünüyor.")
+    req = LeaveRequest(
+        employee_id=emp.id, leave_type=data.leave_type,
+        start_date=data.start_date, end_date=data.end_date,
+        note=data.note.strip(),
+        document_no=(data.document_no or "").strip() or None,
+        status="pending",
+    )
+    try:
+        db.add(req)
+        db.commit()
+    except Exception:
+        db.rollback()
+        return _err(500, "Bildirim kaydedilemedi.")
+    log_admin_event(db, request, actor=current_user, action="pdks.leave_request.create",
+                    target_type="pdks_leave_request", target_id=req.id,
+                    target_name=emp.full_name,
+                    details={"tur": LEAVE_TYPE_LABELS.get(data.leave_type, data.leave_type),
+                             "aralik": f"{data.start_date} → {data.end_date}",
+                             "belge_no": req.document_no, "not": data.note})
+    return {"id": req.id,
+            "message": "Bildiriminiz yöneticiye iletildi — onaylanınca puantaja işlenir."}
+
+
+@router.get("/leave-requests/mine")
+def my_leave_requests(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("pdks", "view_own")),
+):
+    emp = _employee_for_user(db, current_user)
+    if not emp:
+        return {"requests": []}
+    rows = (db.query(LeaveRequest)
+            .filter(LeaveRequest.employee_id == emp.id)
+            .order_by(LeaveRequest.id.desc()).limit(20).all())
+    return {"requests": [_leave_request_view(r, db) for r in rows]}
+
+
+@router.get("/leaves/mine")
+def my_leaves(
+    year: int = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("pdks", "view_own")),
+):
+    """Personel kendi izinlerini görebilsin — bugüne kadar yalnız gün
+    etiketinden dolaylı görebiliyordu."""
+    emp = _employee_for_user(db, current_user)
+    if not emp:
+        return {"leaves": []}
+    q = (db.query(LeaveRecord)
+         .filter(LeaveRecord.employee_id == emp.id,
+                 LeaveRecord.is_active == True))                           # noqa: E712
+    if year:
+        q = q.filter(LeaveRecord.start_date <= date(year, 12, 31),
+                     LeaveRecord.end_date >= date(year, 1, 1))
+    rows = q.order_by(LeaveRecord.start_date.desc()).limit(100).all()
+    return {"leaves": [_leave_view(r, db) for r in rows]}
+
+
+@router.get("/leave-requests")
+def list_leave_requests(
+    status: str = "pending",
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("pdks", "view_all")),
+):
+    q = db.query(LeaveRequest)
+    if status in ("pending", "approved", "rejected"):
+        q = q.filter(LeaveRequest.status == status)
+    rows = q.order_by(LeaveRequest.id.desc()).limit(200).all()
+    return {"requests": [_leave_request_view(r, db) for r in rows],
+            "pending_count": db.query(LeaveRequest)
+                               .filter(LeaveRequest.status == "pending").count()}
+
+
+@router.post("/leave-requests/{request_id}/approve")
+def approve_leave_request(
+    request_id: int,
+    data: DecisionBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("pdks", "manage")),
+):
+    """Onay → gerçek LeaveRecord.  Kurallar ONAY ANINDA tekrar koşar: talep
+    beklerken yönetici elle çakışan bir izin girmiş olabilir.  Çakışma varsa
+    400 döner ve talep BEKLEMEDE kalır (sessizce reddedilmez)."""
+    req = (db.query(LeaveRequest)
+           .filter(LeaveRequest.id == request_id,
+                   LeaveRequest.status == "pending").first())
+    if not req:
+        return _err(404, "Bekleyen bildirim bulunamadı.")
+    emp = _get_employee(db, req.employee_id)
+    if not emp:
+        return _err(404, "Personel bulunamadı.")
+    err = _validate_leave(db, emp.id, req.leave_type, req.start_date,
+                          req.end_date, req.note)
+    if err:
+        return err
+    doc = ((data.document_no or "").strip() or req.document_no or None)
+    lv = LeaveRecord(
+        employee_id=emp.id, leave_type=req.leave_type,
+        start_date=req.start_date, end_date=req.end_date,
+        note=req.note, document_no=doc,
+        created_by=f"{_actor(current_user)} (personel bildirimi)",
+    )
+    req.status = "approved"
+    req.decided_by = _actor(current_user)
+    req.decided_at = datetime.utcnow()
+    req.decision_note = (data.note or "").strip() or None
+    if doc:
+        req.document_no = doc
+    try:
+        db.add(lv)
+        db.flush()
+        req.leave_id = lv.id
+        db.commit()
+    except Exception:
+        db.rollback()
+        return _err(500, "Onay kaydedilemedi.")
+    log_admin_event(db, request, actor=current_user, action="pdks.leave_request.approve",
+                    target_type="pdks_leave_request", target_id=req.id,
+                    target_name=emp.full_name,
+                    details={"tur": LEAVE_TYPE_LABELS.get(req.leave_type, req.leave_type),
+                             "aralik": f"{req.start_date} → {req.end_date}",
+                             "izin_id": lv.id, "belge_no": doc})
+    out = {"id": req.id, "leave_id": lv.id,
+           "message": "Bildirim onaylandı ve puantaja işlendi."}
+    # Aralıkta giriş/çıkış varsa uyar: izinli günde çalışılan sürenin TAMAMI
+    # fazla mesai sayılır (compute_day kuralı) — sürpriz olmasın.
+    worked = (db.query(AttendanceEvent)
+              .filter(AttendanceEvent.employee_id == emp.id,
+                      AttendanceEvent.is_active == True,                   # noqa: E712
+                      AttendanceEvent.work_date >= req.start_date,
+                      AttendanceEvent.work_date <= req.end_date).count())
+    if worked:
+        out["warning"] = ("Bu aralıkta giriş/çıkış kaydı var — o günlerde "
+                          "çalışılan sürenin tamamı fazla mesai sayılacak.")
+    return out
+
+
+@router.post("/leave-requests/{request_id}/reject")
+def reject_leave_request(
+    request_id: int,
+    data: DecisionBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("pdks", "manage")),
+):
+    req = (db.query(LeaveRequest)
+           .filter(LeaveRequest.id == request_id,
+                   LeaveRequest.status == "pending").first())
+    if not req:
+        return _err(404, "Bekleyen bildirim bulunamadı.")
+    req.status = "rejected"
+    req.decided_by = _actor(current_user)
+    req.decided_at = datetime.utcnow()
+    req.decision_note = (data.note or "").strip() or None
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        return _err(500, "İşlem kaydedilemedi.")
+    log_admin_event(db, request, actor=current_user, action="pdks.leave_request.reject",
+                    target_type="pdks_leave_request", target_id=req.id,
+                    details={"not": req.decision_note})
+    return {"id": req.id, "message": "Bildirim reddedildi."}
 
 
 # ─── Unutulan giriş/çıkış bildirimi (personel → yönetici onayı) ─────────────
@@ -1567,6 +1912,57 @@ def reject_request(
     return {"id": req.id, "message": "Bildirim reddedildi."}
 
 
+def _kiosk_account_exists(db: Session) -> bool:
+    """SuperAdmin DIŞINDA, aktif ve `pdks.kiosk` yetkisi olan bir hesap var mı?
+
+    SuperAdmin sayılmaz: 11.08.2026 kesintisinin tam sebebi kiosk ekranını
+    yalnız patronun açabilmesiydi — o gidince ekran yok, QR yok, imza yok."""
+    from core.permissions import _has_permission
+
+    users = (db.query(User)
+             .filter(User.is_active == True, User.role != "SuperAdmin")  # noqa: E712
+             .limit(500).all())
+    return any(_has_permission(u, "pdks", "kiosk") for u in users)
+
+
+def _checkin_health(db: Session, cfg: dict) -> list:
+    """Yapılandırmanın FİİLEN çalışıp çalışmadığını söyleyen uyarılar.
+
+    Sunucuda hesaplanır — istemci kimin `pdks.kiosk` tuttuğunu bilemez."""
+    w = []
+    if cfg["enforce"] and cfg["qr_mode"] == "rotating" \
+            and not cfg["static_fallback"] and not _kiosk_account_exists(db):
+        w.append({
+            "code": "rotating_no_kiosk_account", "level": "critical",
+            "message": "Dönen QR seçili ama ekranı açabilecek hesap yok — "
+                       "yönetici yokken kimse imza atamaz. Bir personele "
+                       "'Kiosk (QR Ekranı)' yetkisi verin ya da basılı afişi "
+                       "yedek olarak açın.",
+        })
+    if cfg["enforce"] and cfg["qr_mode"] == "static" and not cfg["static_code"]:
+        w.append({
+            "code": "enforce_static_no_code", "level": "critical",
+            "message": "Basılı QR seçili ama kod üretilmemiş — kimse imza atamaz. "
+                       "'Yeni kod üret' deyip afişi yazdırın.",
+        })
+    if cfg["enforce"] and (not (cfg["allowed_ips"] or "").strip()
+                           or cfg["lat"] is None or cfg["lon"] is None):
+        w.append({
+            "code": "enforce_no_ip_or_geo", "level": "critical",
+            "message": "Doğrulama açık ama ofis IP'si veya konumu eksik — "
+                       "kimse imza atamaz.",
+        })
+    loopback = {"127.0.0.1", "::1", "testclient", "localhost"}
+    if any(p.strip() in loopback for p in (cfg["allowed_ips"] or "").split(",")):
+        w.append({
+            "code": "ip_allowlist_loopback", "level": "critical",
+            "message": "IP listesinde 127.0.0.1 gibi yerel bir adres var — bu "
+                       "durumda ofis ağı şartı fiilen HERKESE açıktır. Listeden "
+                       "çıkarıp gerçek ofis IP'sini yazın.",
+        })
+    return w
+
+
 @router.get("/checkin-config")
 def get_checkin_config(
     request: Request,
@@ -1575,6 +1971,7 @@ def get_checkin_config(
 ):
     cfg = _checkin_cfg(db)
     cfg["detected_ip"] = _real_client_ip(request)
+    cfg["warnings"] = _checkin_health(db, cfg)
     return cfg
 
 
@@ -1591,14 +1988,29 @@ def update_checkin_config(
     new_lat = cur["lat"] if data.lat is None else data.lat
     new_lon = cur["lon"] if data.lon is None else data.lon
     new_mode = cur["qr_mode"] if data.qr_mode is None else data.qr_mode
+    new_fallback = (cur["static_fallback"] if data.static_fallback is None
+                    else data.static_fallback)
     if new_enforce and (not (new_ips or "").strip() or new_lat is None or new_lon is None):
         return _err(400, "Önce ofis IP ve konum ayarlarını kaydedin — "
                          "doğrulama ondan sonra açılabilir.")
     if new_enforce and new_mode == "static" and not cur["static_code"]:
         return _err(400, "Önce basılı QR kodunu oluşturup afişi yazdırın — "
                          "doğrulama ondan sonra açılabilir.")
+    # Fail-closed: dönen QR seçiliyken ekranı açacak kimse yoksa ve basılı
+    # afiş de yedek değilse, kaydedilen ayar HİÇ KİMSENİN imza atamayacağı
+    # bir durum yaratır (11.08.2026 kesintisi tam olarak buydu).  Yalnız
+    # SONUÇ durumuna bakılır → enforce'u kapatmak veya static'e dönmek asla
+    # engellenmez, geri dönüş yolu hep açıktır.
+    if (new_enforce and new_mode == "rotating" and not new_fallback
+            and not _kiosk_account_exists(db)):
+        return _err(400, "Bu ayarla kimse imza atamaz: dönen QR seçili ama "
+                         "ekranı açabilecek bir hesap yok. Ya bir personele "
+                         "'Kiosk (QR Ekranı)' yetkisi verin, ya basılı afişi "
+                         "yedek olarak açın, ya da basılı QR moduna geçin.")
     if data.qr_mode is not None:
         _set_setting(db, _CFG_QR_MODE, data.qr_mode)
+    if data.static_fallback is not None:
+        _set_setting(db, _CFG_STATIC_FALLBACK, "true" if data.static_fallback else "false")
     if data.enforce is not None:
         _set_setting(db, _CFG_ENFORCE, "true" if data.enforce else "false")
     if data.allowed_ips is not None:
@@ -1618,9 +2030,11 @@ def update_checkin_config(
                     target_type="integration", target_name="pdks",
                     details={"enforce": data.enforce, "allowed_ips": data.allowed_ips,
                              "lat": data.lat, "lon": data.lon, "radius_m": data.radius_m,
-                             "qr_mode": data.qr_mode})
+                             "qr_mode": data.qr_mode,
+                             "static_fallback": data.static_fallback})
     result = _checkin_cfg(db)
     result["detected_ip"] = _real_client_ip(request)
+    result["warnings"] = _checkin_health(db, result)
     return result
 
 

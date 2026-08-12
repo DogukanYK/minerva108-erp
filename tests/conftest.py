@@ -21,7 +21,13 @@ import pytest
 # core.auth SECRET_KEY'i import-time kontrol eder; database.py DATABASE_URL'i
 # import-time okur.  Bu yüzden test env'i Python interpreter'in başında set
 # edilmeli.  Aşağıdaki satırlar tüm test modülleri import edilmeden çalışır.
-os.environ["DATABASE_URL"]  = "postgresql://minerva_user:devpass123@localhost:5432/minerva_test"
+# DATABASE_URL bilerek BURADA kurulur — çağıranın env'ine güvenilmez, yoksa
+# yanlış bir DATABASE_URL ile dev/prod veritabanı drop_all edilebilir.
+# Yalnız DB ADI opt-in bir değişkenle değiştirilebilir; böylece iki oturum
+# aynı anda test koşarken birbirinin tablolarını silmez (HANDOFF'taki bilinen
+# tuzak):  MINERVA_TEST_DB=minerva_test2 .venv/bin/pytest tests/...
+_TEST_DB = os.environ.get("MINERVA_TEST_DB", "minerva_test")
+os.environ["DATABASE_URL"]  = f"postgresql://minerva_user:devpass123@localhost:5432/{_TEST_DB}"
 os.environ["SECRET_KEY"]    = "test_only_secret_key_for_pytest_session_minimum_16chars"
 os.environ["COOKIE_SECURE"] = "false"
 os.environ["EXPOSE_API_DOCS"] = "false"

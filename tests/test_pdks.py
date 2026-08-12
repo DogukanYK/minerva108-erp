@@ -920,9 +920,14 @@ def test_checkin_config_rbac_and_roundtrip(staff_employee_client, db_session):
     # Varsayılan mod 'static' → basılı kod üretilmeden enforce AÇILAMAZ
     r = authed_client.put("/api/pdks/checkin-config", json={"enforce": True}, headers=ORIGIN)
     assert r.status_code == 400 and "basılı QR" in r.json()["detail"]
-    # Kiosk moduna geçince (ekran var) kod şartı aranmaz
+    # Kiosk moduna geçince basılı kod şartı aranmaz — ama ekranı açacak hesap
+    # da yoksa fail-closed guard devrede; yedek afişi açmak çıkış yollarından biri.
     r = authed_client.put("/api/pdks/checkin-config",
                           json={"enforce": True, "qr_mode": "rotating"}, headers=ORIGIN)
+    assert r.status_code == 400 and "kimse imza atamaz" in r.json()["detail"]
+    r = authed_client.put("/api/pdks/checkin-config",
+                          json={"enforce": True, "qr_mode": "rotating",
+                                "static_fallback": True}, headers=ORIGIN)
     assert r.status_code == 200 and r.json()["enforce"] is True
     assert r.json()["allowed_ips"] == "testclient"     # dokunulmayan alan korundu
     # Yarıçap sınırları
@@ -1310,3 +1315,422 @@ def test_request_reject_and_validation(staff_employee_client, db_session):
     # Aynı bildirim ikinci kez işlenemez
     assert admin.post(f"/api/pdks/requests/{req_id}/approve", json={},
                       headers=ORIGIN).status_code == 404
+
+
+# ═══ Yedek kod: "yönetici yokken kimse imza atamıyor" arızası ══════════════
+# 11.08.2026'da kiosk ekranını yalnız SuperAdmin açabildiği için o gün atılan
+# 8 imzanın TAMAMI manuel girildi.  Aşağıdakiler o senaryoyu kilitler.
+
+def _mk_kiosk_user(db, username="pdks-kiosk"):
+    """Kiosk ekranını açabilen (SuperAdmin olmayan) hesap."""
+    u = _mk_user(db, username, full_name="Giriş Ekranı")
+    u.permissions = json.dumps({"pdks": {"check": False, "view_own": False,
+                                         "view_all": False, "manage": False,
+                                         "report": False, "kiosk": True}})
+    db.commit()
+    return u
+
+
+def _enforce_rotating(db, client, fallback, ips="testclient"):
+    """Rotating modu aç.  fallback=False ise kiosk hesabı ŞART (fail-closed
+    guard onsuz kaydettirmez) — o yüzden çağıran önce _mk_kiosk_user yapar."""
+    r = client.put("/api/pdks/checkin-config",
+                   json={"qr_mode": "rotating", "allowed_ips": ips,
+                         "lat": 41.06, "lon": 29.0, "enforce": True,
+                         "static_fallback": fallback},
+                   headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_put_config_blocks_rotating_enforce_without_kiosk_or_fallback(
+        staff_employee_client, db_session):
+    """Kimsenin imza atamayacağı ayar kaydedilemez — 11 Ağustos'un önlemi."""
+    c, _ = staff_employee_client
+    admin = _login(c, "dogukan")
+    admin.post("/api/pdks/qr/static/regenerate", headers=ORIGIN)
+    admin.put("/api/pdks/checkin-config",
+              json={"allowed_ips": "testclient", "lat": 41.06, "lon": 29.0},
+              headers=ORIGIN)
+
+    r = admin.put("/api/pdks/checkin-config",
+                  json={"qr_mode": "rotating", "enforce": True}, headers=ORIGIN)
+    assert r.status_code == 400
+    assert "kimse imza atamaz" in r.json()["detail"]
+
+    # Yedek afişi açmak çıkış yollarından biri
+    assert _enforce_rotating(db_session, admin, fallback=True)["static_fallback"] is True
+
+    # Kiosk hesabı açmak diğer çıkış yolu
+    _mk_kiosk_user(db_session)
+    r = admin.put("/api/pdks/checkin-config",
+                  json={"static_fallback": False}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+
+    # Doğrulamayı KAPATMAK asla engellenmez (geri dönüş yolu hep açık)
+    assert admin.put("/api/pdks/checkin-config", json={"enforce": False},
+                     headers=ORIGIN).status_code == 200
+
+
+def test_rotating_rejects_static_poster_when_fallback_off(staff_employee_client, db_session):
+    """11 Ağustos'un birebir tekrarı: afiş okutuluyor, sistem ekran bekliyor."""
+    c, _ = staff_employee_client
+    admin = _login(c, "dogukan")
+    code = admin.post("/api/pdks/qr/static/regenerate", headers=ORIGIN).json()["code"]
+    _mk_kiosk_user(db_session)                     # rotating'in açılabilmesi için
+    _enforce_rotating(db_session, admin, fallback=False)
+    _login(c, "personel1")
+
+    geo = {"lat": 41.06, "lon": 29.0, "accuracy": 10}
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "qr_token": f"PDKSQRS1:{code}", **geo}, headers=ORIGIN)
+    assert r.status_code == 400
+    d = r.json()
+    assert d["code"] == "qr_mode_mismatch"
+    assert "BASILI afiş" in d["detail"]            # ne yapacağını söylüyor
+    assert db_session.query(AttendanceEvent).count() == 0
+
+
+def test_rotating_accepts_static_poster_when_fallback_on(staff_employee_client, db_session):
+    c, emp_id = staff_employee_client
+    admin = _login(c, "dogukan")
+    code = admin.post("/api/pdks/qr/static/regenerate", headers=ORIGIN).json()["code"]
+    _enforce_rotating(db_session, admin, fallback=True)
+    _login(c, "personel1")
+    geo = {"lat": 41.06, "lon": 29.0, "accuracy": 10}
+
+    # Afiş QR'ı
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "qr_token": f"PDKSQRS1:{code}", **geo}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    ev = db_session.query(AttendanceEvent).filter_by(employee_id=emp_id).one()
+    assert ev.verify_method == "static_fallback"
+
+    # Afişteki kodu ELLE girme de çalışmalı (kamera bozuksa)
+    r = c.post("/api/pdks/check",
+               json={"type": "out", "manual_code": code.lower(), **geo}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    outs = (db_session.query(AttendanceEvent)
+            .filter_by(employee_id=emp_id, event_type="out").all())
+    assert outs[0].verify_method == "static_fallback"
+
+
+def test_rotating_kiosk_paths_still_work_with_fallback_on(staff_employee_client, db_session):
+    """Yedek açıkken asıl kiosk yolu bozulmamalı."""
+    c, emp_id = staff_employee_client
+    admin = _login(c, "dogukan")
+    admin.post("/api/pdks/qr/static/regenerate", headers=ORIGIN)
+    _enforce_rotating(db_session, admin, fallback=True)
+    _login(c, "personel1")
+    geo = {"lat": 41.06, "lon": 29.0, "accuracy": 10}
+
+    now = time.time()
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "qr_token": make_qr_token(SECRET_KEY, qr_bucket(now)),
+                     **geo}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    assert db_session.query(AttendanceEvent).one().verify_method == "qr"
+
+    r = c.post("/api/pdks/check",
+               json={"type": "out", "manual_code": make_numeric_code(SECRET_KEY, qr_bucket(time.time())),
+                     **geo}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    out = (db_session.query(AttendanceEvent)
+           .filter_by(employee_id=emp_id, event_type="out").one())
+    assert out.verify_method == "code"
+
+
+def test_static_mode_rejects_kiosk_token_with_clear_message(staff_employee_client, db_session):
+    c, _ = staff_employee_client
+    admin = _login(c, "dogukan")
+    _enforce_static(db_session, admin)
+    _login(c, "personel1")
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "qr_token": make_qr_token(SECRET_KEY, qr_bucket(time.time())),
+                     "lat": 41.06, "lon": 29.0, "accuracy": 10}, headers=ORIGIN)
+    assert r.status_code == 400
+    assert r.json()["code"] == "qr_mode_mismatch"
+    assert "BASILI afiş" in r.json()["detail"]
+
+
+def test_fallback_defaults_off_and_verify_method_off_when_disabled(
+        staff_employee_client, db_session):
+    """Ayar satırı yoksa yedek KAPALI (fail-closed); doğrulama kapalıyken
+    olaya 'off' yazılır."""
+    c, emp_id = staff_employee_client
+    admin = _login(c, "dogukan")
+    assert admin.get("/api/pdks/checkin-config").json()["static_fallback"] is False
+    _login(c, "personel1")
+    assert c.post("/api/pdks/check", json={"type": "in"}, headers=ORIGIN).status_code == 200
+    assert db_session.query(AttendanceEvent).one().verify_method == "off"
+
+
+def test_static_mode_records_verify_method_static(staff_employee_client, db_session):
+    c, emp_id = staff_employee_client
+    admin = _login(c, "dogukan")
+    code = _enforce_static(db_session, admin)
+    _login(c, "personel1")
+    r = c.post("/api/pdks/check",
+               json={"type": "in", "qr_token": f"PDKSQRS1:{code}",
+                     "lat": 41.06, "lon": 29.0, "accuracy": 10}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    assert db_session.query(AttendanceEvent).one().verify_method == "static"
+
+
+def test_health_warns_rotating_without_kiosk_account(staff_employee_client, db_session):
+    """Uyarıyı SuperAdmin'in varlığı KAPATMAZ — arızanın sebebi tam buydu."""
+    c, _ = staff_employee_client
+    admin = _login(c, "dogukan")
+    admin.post("/api/pdks/qr/static/regenerate", headers=ORIGIN)
+    # Yedek açıkken rotating'e geçilebiliyor (guard sadece ikisi de yokken engeller)
+    _enforce_rotating(db_session, admin, fallback=True)
+    # Yedeği kapatmak için kiosk hesabı gerek → önce uyarı görünmeli
+    cfg = admin.get("/api/pdks/checkin-config").json()
+    codes = {w["code"] for w in cfg["warnings"]}
+    assert "rotating_no_kiosk_account" not in codes   # yedek açık → uyarı yok
+
+    # Yedek kapalı + kiosk yok kombinasyonu zaten kaydedilemiyor; kiosk hesabı
+    # ekleyip yedeği kapatınca da uyarı çıkmamalı
+    _mk_kiosk_user(db_session)
+    admin.put("/api/pdks/checkin-config", json={"static_fallback": False}, headers=ORIGIN)
+    cfg = admin.get("/api/pdks/checkin-config").json()
+    assert "rotating_no_kiosk_account" not in {w["code"] for w in cfg["warnings"]}
+
+
+def test_health_warns_loopback_in_allowlist(staff_employee_client, db_session):
+    c, _ = staff_employee_client
+    admin = _login(c, "dogukan")
+    _enforce_static(db_session, admin, ips="127.0.0.1")
+    cfg = admin.get("/api/pdks/checkin-config").json()
+    w = [x for x in cfg["warnings"] if x["code"] == "ip_allowlist_loopback"]
+    assert w and w[0]["level"] == "critical"
+    assert "HERKESE açık" in w[0]["message"]
+
+
+# ═══ İzin / rapor bildirimi (personel → yönetici onayı) ════════════════════
+
+def test_leave_request_flow_end_to_end(staff_employee_client, db_session):
+    """Hasta personel evden rapor bildirir → onaydan ÖNCE puantajda sıfır
+    etki → yönetici onaylayınca gün 'Raporlu' olur, 'Devamsız' değil."""
+    from database import LeaveRequest
+    c, emp_id = staff_employee_client
+    today = tr_date_of(datetime.utcnow())
+    yesterday = today - timedelta(days=1)
+
+    r = c.post("/api/pdks/leave-requests",
+               json={"leave_type": "raporlu",
+                     "start_date": yesterday.isoformat(),
+                     "end_date": yesterday.isoformat(),
+                     "note": "grip, 1 gün istirahat",
+                     "document_no": "ER-2026-99"},
+               headers=ORIGIN)
+    assert r.status_code == 201, r.text
+    req_id = r.json()["id"]
+
+    mine = c.get("/api/pdks/leave-requests/mine").json()["requests"]
+    assert mine[0]["status"] == "pending" and mine[0]["days"] == 1
+    # Onaydan önce hiçbir izin kaydı YOK
+    assert db_session.query(LeaveRecord).count() == 0
+    assert c.get("/api/pdks/leaves/mine").json()["leaves"] == []
+    # Personel onaylayamaz
+    assert c.post(f"/api/pdks/leave-requests/{req_id}/approve", json={},
+                  headers=ORIGIN).status_code == 403
+
+    admin = _login(c, "dogukan")
+    assert admin.get("/api/pdks/leave-requests?status=pending").json()["pending_count"] == 1
+    r = admin.post(f"/api/pdks/leave-requests/{req_id}/approve", json={}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+
+    lv = db_session.query(LeaveRecord).one()
+    assert lv.leave_type == "raporlu" and lv.employee_id == emp_id
+    assert lv.document_no == "ER-2026-99"
+    assert lv.start_date == yesterday and lv.end_date == yesterday
+    db_session.expire_all()
+    req = db_session.query(LeaveRequest).get(req_id)
+    assert req.status == "approved" and req.leave_id == lv.id and req.decided_by
+
+    # Personel artık kendi iznini görüyor
+    _login(c, "personel1")
+    mineleaves = c.get("/api/pdks/leaves/mine").json()["leaves"]
+    assert mineleaves[0]["leave_type_label"] == "Raporlu"
+    assert mineleaves[0]["document_no"] == "ER-2026-99"
+
+    actions = {a.action for a in db_session.query(AdminAuditLog).all()}
+    assert {"pdks.leave_request.create", "pdks.leave_request.approve"} <= actions
+
+
+def test_leave_request_revalidated_at_approval(staff_employee_client, db_session):
+    """KRİTİK: talep beklerken yönetici çakışan bir izin girerse, onay 400
+    döner ve talep BEKLEMEDE kalır — sessizce çift kayıt oluşmaz."""
+    from database import LeaveRequest
+    c, emp_id = staff_employee_client
+    today = tr_date_of(datetime.utcnow())
+    d1 = today - timedelta(days=2)
+
+    req_id = c.post("/api/pdks/leave-requests",
+                    json={"leave_type": "raporlu", "start_date": d1.isoformat(),
+                          "end_date": d1.isoformat(), "note": "rapor"},
+                    headers=ORIGIN).json()["id"]
+
+    admin = _login(c, "dogukan")
+    # Yönetici arada elle çakışan izin girer
+    assert admin.post("/api/pdks/leaves",
+                      json={"employee_id": emp_id, "leave_type": "yillik",
+                            "start_date": d1.isoformat(), "end_date": d1.isoformat()},
+                      headers=ORIGIN).status_code == 201
+
+    r = admin.post(f"/api/pdks/leave-requests/{req_id}/approve", json={}, headers=ORIGIN)
+    assert r.status_code == 400 and "çakışıyor" in r.json()["detail"]
+    db_session.expire_all()
+    assert db_session.query(LeaveRequest).get(req_id).status == "pending"
+    assert db_session.query(LeaveRecord).count() == 1      # ikinci kayıt oluşmadı
+
+
+def test_leave_request_overlap_and_bounds(staff_employee_client, db_session):
+    c, emp_id = staff_employee_client
+    today = tr_date_of(datetime.utcnow())
+
+    base = {"leave_type": "yillik", "note": "izin"}
+    s = (today + timedelta(days=5)).isoformat()
+    e = (today + timedelta(days=7)).isoformat()
+    assert c.post("/api/pdks/leave-requests", json={**base, "start_date": s, "end_date": e},
+                  headers=ORIGIN).status_code == 201      # GELECEK tarih serbest
+
+    # Çakışan bekleyen talep
+    r = c.post("/api/pdks/leave-requests",
+               json={**base, "start_date": (today + timedelta(days=6)).isoformat(),
+                     "end_date": (today + timedelta(days=8)).isoformat()}, headers=ORIGIN)
+    assert r.status_code == 400 and "onay bekleyen" in r.json()["detail"]
+
+    # Bitişik aralık çakışmaz
+    assert c.post("/api/pdks/leave-requests",
+                  json={**base, "start_date": (today + timedelta(days=8)).isoformat(),
+                        "end_date": (today + timedelta(days=9)).isoformat()},
+                  headers=ORIGIN).status_code == 201
+
+    # Sınırlar
+    r = c.post("/api/pdks/leave-requests",
+               json={**base, "start_date": (today - timedelta(days=90)).isoformat(),
+                     "end_date": (today - timedelta(days=90)).isoformat()}, headers=ORIGIN)
+    assert r.status_code == 400 and "geriye" in r.json()["detail"]
+    r = c.post("/api/pdks/leave-requests",
+               json={**base, "start_date": (today + timedelta(days=400)).isoformat(),
+                     "end_date": (today + timedelta(days=400)).isoformat()}, headers=ORIGIN)
+    assert r.status_code == 400
+    r = c.post("/api/pdks/leave-requests",
+               json={**base, "start_date": (today + timedelta(days=100)).isoformat(),
+                     "end_date": (today + timedelta(days=250)).isoformat()}, headers=ORIGIN)
+    assert r.status_code == 400 and "günlük aralık" in r.json()["detail"]
+    # Ters aralık
+    r = c.post("/api/pdks/leave-requests",
+               json={**base, "start_date": e, "end_date": s}, headers=ORIGIN)
+    assert r.status_code == 400
+
+
+def test_leave_request_reject_creates_nothing(staff_employee_client, db_session):
+    from database import LeaveRequest
+    c, _ = staff_employee_client
+    today = tr_date_of(datetime.utcnow())
+    req_id = c.post("/api/pdks/leave-requests",
+                    json={"leave_type": "ucretsiz", "start_date": today.isoformat(),
+                          "end_date": today.isoformat(), "note": "işim çıktı"},
+                    headers=ORIGIN).json()["id"]
+    admin = _login(c, "dogukan")
+    r = admin.post(f"/api/pdks/leave-requests/{req_id}/reject",
+                   json={"note": "yoğunluk var"}, headers=ORIGIN)
+    assert r.status_code == 200
+    assert db_session.query(LeaveRecord).count() == 0
+    db_session.expire_all()
+    req = db_session.query(LeaveRequest).get(req_id)
+    assert req.status == "rejected" and "yoğunluk" in req.decision_note
+    # İkinci kez işlenemez
+    assert admin.post(f"/api/pdks/leave-requests/{req_id}/approve", json={},
+                      headers=ORIGIN).status_code == 404
+
+
+def test_leaves_mine_scoped_to_self(staff_employee_client, db_session):
+    """Personel BAŞKASININ iznini görmemeli."""
+    c, emp_id = staff_employee_client
+    other = _mk_employee(db_session, name="Başkası")
+    today = tr_date_of(datetime.utcnow())
+    db_session.add(LeaveRecord(employee_id=other.id, leave_type="yillik",
+                               start_date=today, end_date=today))
+    db_session.add(LeaveRecord(employee_id=emp_id, leave_type="raporlu",
+                               start_date=today, end_date=today))
+    db_session.commit()
+    rows = c.get("/api/pdks/leaves/mine").json()["leaves"]
+    assert len(rows) == 1 and rows[0]["leave_type"] == "raporlu"
+    assert c.get("/api/pdks/leave-requests").status_code == 403   # view_all yok
+
+
+def test_approve_warns_when_attendance_exists(staff_employee_client, db_session):
+    c, emp_id = staff_employee_client
+    today = tr_date_of(datetime.utcnow())
+    db_session.add(AttendanceEvent(employee_id=emp_id, event_type="in",
+                                   ts_utc=datetime.utcnow(), work_date=today,
+                                   source="self"))
+    db_session.commit()
+    req_id = c.post("/api/pdks/leave-requests",
+                    json={"leave_type": "raporlu", "start_date": today.isoformat(),
+                          "end_date": today.isoformat(), "note": "rapor"},
+                    headers=ORIGIN).json()["id"]
+    admin = _login(c, "dogukan")
+    r = admin.post(f"/api/pdks/leave-requests/{req_id}/approve", json={}, headers=ORIGIN)
+    assert r.status_code == 200
+    assert "fazla mesai" in r.json().get("warning", "")
+
+
+def test_owner_sick_day_is_raporlu_not_devamsiz(authed_client, db_session):
+    """11.08.2026 senaryosu: rapor girilince gün Devamsız değil Raporlu."""
+    e = _mk_employee(db_session, name="Rapor Sahibi")
+    _mk_schedule(db_session, e.id)
+    sick = date(2026, 8, 11)          # Salı — programlı iş günü
+    assert sick.weekday() == 1
+    r = authed_client.post("/api/pdks/leaves",
+                           json={"employee_id": e.id, "leave_type": "raporlu",
+                                 "start_date": sick.isoformat(),
+                                 "end_date": sick.isoformat(),
+                                 "note": "istirahat", "document_no": "ER-11-08"},
+                           headers=ORIGIN)
+    assert r.status_code == 201, r.text
+    month = authed_client.get(
+        f"/api/pdks/report?year=2026&month=8&employee_id={e.id}").json()["employees"][0]["month"]
+    day = {d["date"]: d for d in month["days"]}["2026-08-11"]
+    assert day["status"] == "izinli"
+    assert day["status_label"] == "Raporlu"
+    assert day["expected_minutes"] == 0 and day["missing_minutes"] == 0
+    assert day["leave_document_no"] == "ER-11-08"
+    assert month["totals"]["izin_gunleri"]["raporlu"] == 1
+    assert "Raporlu: 1" in month["totals"]["izin_gunleri_label"]
+
+
+def test_totals_view_unknown_leave_type_does_not_500(authed_client, db_session):
+    """DB'ye elle atılmış bilinmeyen bir izin türü tüm raporu 500'lememeli."""
+    e = _mk_employee(db_session, name="Bilinmeyen Tür")
+    _mk_schedule(db_session, e.id)
+    db_session.add(LeaveRecord(employee_id=e.id, leave_type="hamilelik",
+                               start_date=date(2026, 8, 11), end_date=date(2026, 8, 11)))
+    db_session.commit()
+    r = authed_client.get(f"/api/pdks/report?year=2026&month=8&employee_id={e.id}")
+    assert r.status_code == 200, r.text
+    assert "hamilelik" in r.json()["employees"][0]["month"]["totals"]["izin_gunleri_label"]
+
+
+def test_excel_has_per_type_leave_columns_and_document(authed_client, db_session):
+    import io
+    from openpyxl import load_workbook
+    e = _mk_employee(db_session, name="Excel Rapor")
+    _mk_schedule(db_session, e.id)
+    db_session.add(LeaveRecord(employee_id=e.id, leave_type="raporlu",
+                               start_date=date(2026, 8, 11), end_date=date(2026, 8, 11),
+                               note="grip", document_no="ER-77"))
+    db_session.commit()
+    r = authed_client.get("/api/pdks/report/excel?year=2026&month=8")
+    assert r.status_code == 200
+    wb = load_workbook(io.BytesIO(r.content))
+    hdr = [c.value for c in wb["Özet"][3]]
+    assert "Raporlu (Gün)" in hdr and "Yıllık İzin (Gün)" in hdr
+    assert wb["Özet"].cell(row=4, column=hdr.index("Raporlu (Gün)") + 1).value == 1
+    ws = wb["Excel Rapor"]
+    notes = [row[8] for row in ws.iter_rows(min_row=2, values_only=True) if row[0]]
+    assert any(n and "ER-77" in n for n in notes)

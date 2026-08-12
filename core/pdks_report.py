@@ -55,6 +55,14 @@ def render_puantaj_excel(data: dict) -> bytes:
     miss_fill = PatternFill("solid", fgColor="FFD6D6")   # devamsız (kırmızı)
     off_fill = PatternFill("solid", fgColor="EFEFEF")    # tatil/hafta tatili (gri)
     leave_fill = PatternFill("solid", fgColor="D6F0EF")  # izinli (turkuaz)
+    # Rapor (istirahat) yıllık izinden görsel olarak ayrılsın — muhasebeci
+    # sayfaya baktığında hangi günün rapor olduğunu okumadan görsün.
+    leave_fills = {
+        "yillik":   PatternFill("solid", fgColor="D6F0EF"),
+        "raporlu":  PatternFill("solid", fgColor="FDE2E2"),
+        "ucretsiz": PatternFill("solid", fgColor="FDF0D5"),
+        "diger":    PatternFill("solid", fgColor="ECECEC"),
+    }
 
     def _style_header(ws):
         for c in ws[1]:
@@ -70,17 +78,23 @@ def render_puantaj_excel(data: dict) -> bytes:
                 min(max(len(x) for x in cells) + 3, 45)
 
     # ── Sayfa 1: Özet ────────────────────────────────────────────────────────
+    # Tür bazlı gün sütunları AYRI ve SAYISAL — muhasebeci "kaç gün rapor"
+    # sorusunu birleşik metni ayrıştırarak cevaplamak zorunda kalmasın.
     headers = ["Personel", "Ünvan", "Çalışma", "Fazla Mesai", "Eksik",
-               "Devamsızlık", "Eksik Çıkış", "İzin Günleri"]
+               "Devamsızlık", "Eksik Çıkış",
+               "Yıllık İzin (Gün)", "Raporlu (Gün)", "Ücretsiz (Gün)",
+               "İzin Günleri"]
     rows = []
     for item in data["employees"]:
         emp, tot = item["employee"], item["month"]["totals"]
         name = emp["full_name"] + ("" if emp.get("is_active", True) else " (ayrıldı)")
+        izin = tot.get("izin_gunleri") or {}
         rows.append([
             name, emp.get("title") or "—",
             tot["toplam_calisma_label"], tot["toplam_fazla_mesai_label"],
             tot["toplam_eksik_label"],
             tot["devamsizlik_gun"], tot["eksik_cikis_sayisi"],
+            izin.get("yillik", 0), izin.get("raporlu", 0), izin.get("ucretsiz", 0),
             tot["izin_gunleri_label"],
         ])
     ws = wb.create_sheet(title="Özet")
@@ -115,6 +129,12 @@ def render_puantaj_excel(data: dict) -> bytes:
                 notes.append("Çıkış eksik — toplam dışı")
             if d["break_deducted"]:
                 notes.append("Mola düşüldü")
+            # Rapor no + izin gerekçesi — muhasebecinin SGK listesiyle
+            # eşleştirdiği anahtar, rapora girmezse elle sorulur.
+            if d.get("leave_document_no"):
+                notes.append(f"Belge no: {d['leave_document_no']}")
+            if d.get("leave_note"):
+                notes.append(d["leave_note"])
             row = [
                 d["date_label"], d["weekday_label"], d["status_label"],
                 d["first_in"] or "—", d["last_out"] or "—",
@@ -130,7 +150,7 @@ def render_puantaj_excel(data: dict) -> bytes:
             elif d["status"] == "devamsiz":
                 fill = miss_fill
             elif d["status"] == "izinli":
-                fill = leave_fill
+                fill = leave_fills.get(d.get("leave_type"), leave_fill)
             elif d["status"] in ("hafta_tatili", "resmi_tatil"):
                 fill = off_fill
             if fill:

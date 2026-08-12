@@ -114,6 +114,9 @@
     .st-devamsiz{ background:#fee2e2; color:#b91c1c; }
     .st-eksik_cikis{ background:#ffedd5; color:#c2410c; }
     .st-izinli{ background:#ccfbf1; color:#0f766e; }
+    .lv-raporlu{ background:#fee2e2; color:#b91c1c; }
+    .lv-ucretsiz{ background:#fef3c7; color:#92400e; }
+    .lv-diger{ background:#f3f4f6; color:#6b7280; }
     .st-hafta_tatili{ background:#f3f4f6; color:#9ca3af; }
     .st-resmi_tatil{ background:#e5e7eb; color:#6b7280; }
     .st-bekliyor{ background:#eff6ff; color:#93c5fd; }
@@ -129,6 +132,10 @@
     .req-list{ margin-top:0.9rem; padding-top:0.7rem; border-top:1px solid #f3f0ea; font-size:0.85rem; }
     .req-list b{ display:block; margin-bottom:0.4rem; color:#6b7280; font-size:0.74rem; text-transform:uppercase; letter-spacing:0.04em; }
     .req-item{ display:flex; align-items:center; justify-content:space-between; gap:0.6rem; padding:0.3rem 0; }
+    .cfg-alert{ border-radius:9px; padding:0.8rem 1rem; margin-bottom:1rem; font-size:0.88rem; line-height:1.5; }
+    .cfg-alert.critical{ background:#fef2f2; color:#991b1b; border-left:4px solid #dc2626; }
+    .cfg-alert.warning{ background:#fffbeb; color:#92400e; border-left:4px solid #f59e0b; }
+    .cfg-alert b{ display:block; margin-bottom:0.2rem; }
     .req-pending{ background:#fffbeb; border-left:4px solid #f59e0b; border-radius:9px; padding:0.9rem 1rem; margin-bottom:1rem; }
     .req-pending .rp-row{ display:flex; align-items:center; gap:0.7rem; flex-wrap:wrap; padding:0.5rem 0; border-top:1px solid #fde68a; }
     .req-pending .rp-row:first-of-type{ border-top:none; }
@@ -232,9 +239,10 @@
       <div class="pdks-tabs">
         {% if can('pdks','check') %}<button class="pdks-tab" data-tab="check"><i class="bi bi-fingerprint"></i>Giriş / Çıkış</button>{% endif %}
         <button class="pdks-tab" data-tab="my"><i class="bi bi-calendar3"></i>Puantajım</button>
+        <button class="pdks-tab" data-tab="myleave"><i class="bi bi-clipboard2-heart"></i>İzinlerim</button>
         {% if can('pdks','view_all') %}<button class="pdks-tab" data-tab="day"><i class="bi bi-people"></i>Günlük Durum</button>{% endif %}
         {% if can('pdks','manage') %}<button class="pdks-tab" data-tab="emp"><i class="bi bi-person-gear"></i>Personel</button>{% endif %}
-        {% if can('pdks','view_all') %}<button class="pdks-tab" data-tab="leave"><i class="bi bi-umbrella"></i>İzinler</button>{% endif %}
+        {% if can('pdks','view_all') %}<button class="pdks-tab" data-tab="leave"><i class="bi bi-umbrella"></i>İzin Yönetimi</button>{% endif %}
         {% if can('pdks','report') %}<button class="pdks-tab" data-tab="report"><i class="bi bi-file-earmark-spreadsheet"></i>Aylık Rapor</button>{% endif %}
         {% if can('pdks','manage') %}<button class="pdks-tab" data-tab="cfg"><i class="bi bi-shield-check"></i>Doğrulama</button>{% endif %}
       </div>
@@ -280,9 +288,36 @@
         </div>
       </section>
 
+      <!-- ── 2b · İzinlerim (her personel görür) ── -->
+      <section class="pdks-panel" id="panel-myleave">
+        <div class="card2">
+          <div class="card2-head" style="justify-content:space-between;">
+            <div style="display:flex;align-items:center;gap:0.6rem;"><i class="bi bi-clipboard2-heart"></i><h2>İzinlerim</h2></div>
+            <button class="btn-o" onclick="lreqOpen()"><i class="bi bi-plus-lg"></i> İzin / Rapor Bildir</button>
+          </div>
+          <div class="card2-body">
+            <p class="muted" style="margin:0 0 1rem;">
+              Rapor aldığınızda veya izin kullanacağınızda buradan bildirin —
+              <b>ofiste olmanız gerekmez</b>. Bildiriminiz yöneticinin onayına düşer;
+              onaylanınca puantajınıza <b>Raporlu / İzinli</b> olarak işlenir
+              (devamsız görünmezsiniz).
+            </p>
+            <div id="myLeaveReqBox"></div>
+            <div style="overflow-x:auto;margin-top:1rem;">
+              <table>
+                <thead><tr><th>Tür</th><th>Başlangıç</th><th>Bitiş</th><th>Belge No</th><th>Açıklama</th></tr></thead>
+                <tbody id="myLeaveBody"><tr><td colspan="5" class="muted" style="padding:1rem;">Yükleniyor…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {% if can('pdks','view_all') %}
       <!-- ── 3 · Günlük Durum ── -->
       <section class="pdks-panel" id="panel-day">
+        <div id="dayWarnBox"></div>
+        <div id="pendingLeaveBox"></div>
         <div id="pendingReqBox"></div>
         <div class="card2">
           <div class="card2-head" style="justify-content:space-between;">
@@ -397,6 +432,7 @@
         <div class="card2">
           <div class="card2-head"><i class="bi bi-shield-check"></i><h2>Giriş/Çıkış Doğrulaması</h2></div>
           <div class="card2-body">
+            <div id="cfgWarnBox"></div>
             <div class="cfg-warn" id="cfgStateBox">
               <b>Doğrulama kapalı.</b> Giriş/çıkış her yerden yapılabiliyor.
             </div>
@@ -488,6 +524,17 @@
                   Ekranda QR'ın altında ayrıca <b>6 haneli yedek kod</b> yazar; kamerası olmayan/çalışmayan
                   personel bunu elle girerek imza atabilir.
                 </p>
+                <label style="display:flex;align-items:flex-start;gap:0.5rem;cursor:pointer;
+                       background:#fffbeb;border-left:4px solid #f59e0b;border-radius:8px;padding:0.7rem 0.9rem;">
+                  <input type="checkbox" id="cfgStaticFallback" style="margin-top:0.2rem;" />
+                  <span><b>Basılı afiş de geçerli olsun (yedek)</b><br/>
+                    <span class="muted" style="font-size:0.8rem;">
+                      Ekran açılmadığı gün (kiosk cihazı kapalı, o kişi izinli…) personel girişteki
+                      afişi okutarak imza atabilsin. <b>Bedeli:</b> afişin fotoğrafı da geçerli olur,
+                      yani dönen QR'ın fotoğraf koruması devre dışı kalır. Asıl güvence yine
+                      <b>ofis ağı + ofis konumu</b> şartıdır.
+                    </span></span>
+                </label>
               </div>
             </div>
 
@@ -643,6 +690,53 @@
   {% endif %}
 
   {% if can('pdks','check') %}
+  <!-- ── İzin / rapor bildir (yönetici onayına gider) ── -->
+  <div class="ovl" id="lreqModal" onclick="if(event.target===this) lreqClose()">
+    <div class="ovl-card" style="max-width:520px;">
+      <div class="ovl-head">
+        <h3>İzin / Rapor Bildir</h3>
+        <button class="ico-del" onclick="lreqClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
+      </div>
+      <div class="ovl-body">
+        <p class="muted" style="margin:0 0 1rem;">
+          Bildiriminiz <b>yöneticinin onayına</b> düşer; onaylanınca puantajınıza işlenir.
+          Ofiste olmanız gerekmez.
+        </p>
+        <div style="margin-bottom:0.8rem;">
+          <label class="lbl">Tür *</label>
+          <select id="lreqType" class="ipt" onchange="lreqTypeChanged()">
+            <option value="raporlu">Raporlu (istirahat)</option>
+            <option value="yillik">Yıllık İzin</option>
+            <option value="ucretsiz">Ücretsiz İzin</option>
+            <option value="diger">Diğer</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+          <div style="flex:1;min-width:140px;">
+            <label class="lbl">Başlangıç *</label>
+            <input type="date" id="lreqStart" class="ipt" />
+          </div>
+          <div style="flex:1;min-width:140px;">
+            <label class="lbl">Bitiş *</label>
+            <input type="date" id="lreqEnd" class="ipt" />
+          </div>
+        </div>
+        <div style="margin-bottom:0.8rem;" id="lreqDocWrap">
+          <label class="lbl">Rapor / Belge No <span class="muted" style="text-transform:none;font-weight:400;">(varsa)</span></label>
+          <input type="text" id="lreqDoc" class="ipt" maxlength="60" placeholder="ör. e-rapor no" />
+        </div>
+        <div>
+          <label class="lbl">Açıklama *</label>
+          <input type="text" id="lreqNote" class="ipt" maxlength="300" placeholder="ör. grip, 2 gün istirahat" />
+        </div>
+      </div>
+      <div style="display:flex;gap:0.6rem;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
+        <button class="btn-g" id="lreqSendBtn" onclick="lreqSubmit()"><i class="bi bi-send"></i> Gönder</button>
+        <button class="btn-o" style="margin-left:auto;" onclick="lreqClose()">Vazgeç</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Unuttuğum giriş/çıkışı bildir (yönetici onayına gider) ── -->
   <div class="ovl" id="reqModal" onclick="if(event.target===this) reqClose()">
     <div class="ovl-card" style="max-width:460px;">
@@ -724,6 +818,7 @@
         if (Array.isArray(msg)) msg = msg.map(x => (x && x.msg) || x).join(' · ');
         const err = new Error(msg || 'İşlem başarısız.');
         err.status = r.status;      // çağıran 404/429'u ayırt edebilsin
+        err.code = d.code || null;  // ör. 'qr_mode_mismatch'
         throw err;
       }
       return d;
@@ -739,7 +834,7 @@
     function openTab(name){
       document.querySelectorAll('.pdks-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
       document.querySelectorAll('.pdks-panel').forEach(p => p.classList.toggle('open', p.id === 'panel-' + name));
-      const init = { check: loadCheck, my: loadMy, day: loadDay, emp: loadEmps, leave: loadLeavesTab, report: loadReport, cfg: loadCfg };
+      const init = { check: loadCheck, my: loadMy, myleave: loadMyLeave, day: loadDay, emp: loadEmps, leave: loadLeavesTab, report: loadReport, cfg: loadCfg };
       if (init[name]) init[name](!loaded[name]);
       loaded[name] = true;
     }
@@ -747,7 +842,10 @@
 
     function badgeSt(d){
       const label = d.status === 'izinli' ? d.status_label : (d.status_label || d.status);
-      return `<span class="badge-st st-${esc(d.status)}">${esc(label)}</span>`;
+      // lv-* : izin TÜRÜNE göre renk (rapor yıllık izinden ayrılsın).
+      // Bootstrap ile çakışmayan önek — test_no_bootstrap_shadowed_class_names.
+      const lv = d.leave_type ? ` lv-${esc(d.leave_type)}` : '';
+      return `<span class="badge-st st-${esc(d.status)}${lv}">${esc(label)}</span>`;
     }
     function flags(d){
       let out = '';
@@ -816,6 +914,11 @@
         <div class="check-alt">
           <button type="button" onclick="reqOpen()">
             <i class="bi bi-clock-history"></i> Giriş/çıkış yapmayı unuttum — bildir
+          </button>
+        </div>
+        <div class="check-alt">
+          <button type="button" onclick="openTab('myleave'); lreqOpen();">
+            <i class="bi bi-clipboard2-heart"></i> Rapor / izin bildir
           </button>
         </div>
         ${guard}`;
@@ -920,12 +1023,137 @@
             : 'Kamera açılamadı — ekrandaki kodu girin.', 'info');
           codeOpen(type);
         }
+        // DİKKAT: GeolocationPositionError'ın code'u SAYI, sunucununki METİN —
+        // ayrım bu yüzden typeof ile yapılıyor.
+        else if (e && e.code === 'qr_mode_mismatch') {
+          // Yanlış moddaki kanıt: kod girmek de çare değil (o da yanlış mod).
+          // Personeli ölü uçta bırakma — bildirim yolunu göster.
+          toastFn(e.message, 'error');
+          setTimeout(() => toastFn('Bugünü kaydetmek için "Giriş/çıkış yapmayı unuttum" '
+                                   + 'ile bildirebilirsiniz.', 'info'), 400);
+        }
         else if (e && (typeof e.code === 'number' || e.message === '__nogeo__')) toastFn(geoErrMessage(e));
         else toastFn(e.message || 'İşlem başarısız.');
         if (!manualCode) loadCheck();   // hero'yu yeniden çiz → buton tekrar aktif
         return { ok: false, err: e };
       }
       finally { _checkBusy = false; }
+    }
+
+    /* ══ İzinlerim: bildirim + kendi izinlerim ══ */
+    function lreqOpen(){
+      document.getElementById('lreqType').value = 'raporlu';
+      document.getElementById('lreqStart').value = trToday();
+      document.getElementById('lreqEnd').value = trToday();
+      document.getElementById('lreqDoc').value = '';
+      document.getElementById('lreqNote').value = '';
+      lreqTypeChanged();
+      document.getElementById('lreqModal').classList.add('open');
+    }
+    function lreqClose(){ document.getElementById('lreqModal').classList.remove('open'); }
+    function lreqTypeChanged(){
+      // Belge no yalnız raporda anlamlı — diğer türlerde gürültü yapmasın.
+      const isRapor = document.getElementById('lreqType').value === 'raporlu';
+      document.getElementById('lreqDocWrap').style.display = isRapor ? '' : 'none';
+    }
+    async function lreqSubmit(){
+      const body = {
+        leave_type: document.getElementById('lreqType').value,
+        start_date: document.getElementById('lreqStart').value,
+        end_date: document.getElementById('lreqEnd').value,
+        note: document.getElementById('lreqNote').value.trim(),
+        document_no: document.getElementById('lreqDoc').value.trim() || null,
+      };
+      if (!body.start_date || !body.end_date) { toastFn('Başlangıç ve bitiş tarihi zorunlu.'); return; }
+      if (body.note.length < 3) { toastFn('Kısa bir açıklama yazın.'); return; }
+      const btn = document.getElementById('lreqSendBtn');
+      btn.disabled = true;
+      try {
+        const d = await jpost('/api/pdks/leave-requests', body);
+        toastFn(d.message || 'Bildirim gönderildi.', 'success');
+        lreqClose();
+        loadMyLeave();
+      } catch (e) { toastFn(e.message); }
+      finally { btn.disabled = false; }
+    }
+    async function loadMyLeave(){
+      const box = document.getElementById('myLeaveReqBox');
+      const tb = document.getElementById('myLeaveBody');
+      try {
+        const d = await api('/api/pdks/leave-requests/mine');
+        const rows = d.requests || [];
+        box.innerHTML = rows.length
+          ? '<div class="req-list"><b>Bildirimlerim</b>' + rows.slice(0, 6).map(r => {
+              const cls = r.status === 'pending' ? 'st-bekliyor'
+                        : r.status === 'approved' ? 'st-calisti' : 'st-devamsiz';
+              return `<div class="req-item">
+                <span>${esc(r.leave_type_label)} · ${esc(r.start_date_label)} – ${esc(r.end_date_label)}
+                  <span class="muted">(${r.days} gün)</span>${r.decision_note ? ' · <span class="muted">' + esc(r.decision_note) + '</span>' : ''}</span>
+                <span class="badge-st ${cls}">${esc(r.status_label)}</span>
+              </div>`;
+            }).join('') + '</div>'
+          : '';
+      } catch { box.innerHTML = ''; }
+      try {
+        const d = await api('/api/pdks/leaves/mine');
+        const rows = d.leaves || [];
+        tb.innerHTML = rows.length ? rows.map(l => `<tr>
+            <td><span class="badge-st st-izinli lv-${esc(l.leave_type)}">${esc(l.leave_type_label)}</span></td>
+            <td>${esc(l.start_date_label)}</td>
+            <td>${esc(l.end_date_label)}</td>
+            <td class="muted">${esc(l.document_no || '—')}</td>
+            <td class="muted">${esc(l.note || '—')}</td>
+          </tr>`).join('')
+          : '<tr><td colspan="5" class="muted" style="padding:1rem;">Kayıtlı izniniz yok.</td></tr>';
+      } catch (e) {
+        tb.innerHTML = `<tr><td colspan="5" class="muted" style="padding:1rem;">${esc(e.message)}</td></tr>`;
+      }
+    }
+
+    /* ── Bekleyen izin bildirimleri (yönetici) ── */
+    async function loadPendingLeaveRequests(){
+      const box = document.getElementById('pendingLeaveBox');
+      if (!box || !window.CAN_VIEW_ALL) return;
+      try {
+        const d = await api('/api/pdks/leave-requests?status=pending');
+        const rows = d.requests || [];
+        if (!rows.length) { box.innerHTML = ''; return; }
+        box.innerHTML = `<div class="req-pending">
+          <b><i class="bi bi-clipboard2-heart"></i> Onay bekleyen izin/rapor bildirimleri (${rows.length})</b>
+          ${rows.map(r => `<div class="rp-row">
+            <span class="rp-main"><b>${esc(r.employee_name)}</b> · <b>${esc(r.leave_type_label)}</b>
+              ${esc(r.start_date_label)} – ${esc(r.end_date_label)} (${r.days} gün)
+              ${r.document_no ? '· Belge: ' + esc(r.document_no) : ''}
+              <span class="muted">— ${esc(r.note)}</span></span>
+            ${window.CAN_MANAGE ? `<span style="display:flex;gap:0.4rem;">
+              <button class="btn-o" style="padding:0.3rem 0.7rem;" onclick="lreqDecide(${r.id},'approve','${esc(r.leave_type)}')">
+                <i class="bi bi-check-lg"></i> Onayla</button>
+              <button class="btn-o" style="padding:0.3rem 0.7rem;color:#b91c1c;" onclick="lreqDecide(${r.id},'reject','')">
+                <i class="bi bi-x-lg"></i> Reddet</button>
+            </span>` : ''}
+          </div>`).join('')}
+        </div>`;
+      } catch { box.innerHTML = ''; }
+    }
+    async function lreqDecide(id, action, leaveType){
+      const body = {};
+      if (action === 'reject') {
+        const note = prompt('Red gerekçesi (personel görecek, opsiyonel):', '');
+        if (note === null) return;
+        body.note = note || null;
+      } else if (leaveType === 'raporlu') {
+        // Rapor onaylanırken belge no — muhasebecinin SGK eşleştirme anahtarı.
+        const doc = prompt('Rapor / belge no (varsa, boş bırakılabilir):', '');
+        if (doc === null) return;
+        if (doc.trim()) body.document_no = doc.trim();
+      }
+      try {
+        const d = await jpost(`/api/pdks/leave-requests/${id}/${action}`, body);
+        toastFn(d.message || 'İşlendi.', 'success');
+        if (d.warning) setTimeout(() => toastFn(d.warning, 'info'), 400);
+        loadPendingLeaveRequests();
+        loadDay();
+      } catch (e) { toastFn(e.message); }
     }
 
     /* ── "Unuttum" bildirimi (personel) ── */
@@ -1096,6 +1324,8 @@
     async function loadDay(){
       if (!window.CAN_VIEW_ALL) return;
       loadPendingRequests();
+      loadPendingLeaveRequests();
+      loadDayWarnings();
       const inp = document.getElementById('dayDate');
       if (!inp.value) inp.value = trToday();
       const tb = document.getElementById('dayBody');
@@ -1516,12 +1746,37 @@
         const radio = document.querySelector(`input[name=cfgQrMode][value="${mode}"]`);
         if (radio) radio.checked = true;
         cfgApplyMode(mode);
+        document.getElementById('cfgStaticFallback').checked = !!c.static_fallback;
+        renderWarnings('cfgWarnBox', c.warnings, false);
         const box = document.getElementById('cfgStateBox');
         box.classList.toggle('on', !!c.enforce);
+        const yol = mode === 'static' ? 'girişteki basılı QR'
+                  : (c.static_fallback ? 'ekrandaki canlı QR (afiş de yedek)' : 'ekrandaki canlı QR');
         box.innerHTML = c.enforce
-          ? `<b>Doğrulama açık.</b> Giriş/çıkış yalnızca ofis ağı + ofis konumu + ${mode === 'static' ? 'girişteki basılı QR' : 'ekrandaki canlı QR'} ile yapılabiliyor.`
+          ? `<b>Doğrulama açık.</b> Giriş/çıkış yalnızca ofis ağı + ofis konumu + ${yol} ile yapılabiliyor.`
           : '<b>Doğrulama kapalı.</b> Giriş/çıkış her yerden yapılabiliyor.';
       } catch (e) { toastFn(e.message); }
+    }
+
+    /* Yapılandırma sağlık uyarıları. onlyCritical=true → Günlük Durum kopyası. */
+    function renderWarnings(boxId, warnings, onlyCritical){
+      const box = document.getElementById(boxId);
+      if (!box) return;
+      let list = warnings || [];
+      if (onlyCritical) list = list.filter(w => w.level === 'critical');
+      box.innerHTML = list.map(w => `<div class="cfg-alert ${esc(w.level)}">
+        <b><i class="bi bi-exclamation-triangle-fill"></i> ${w.level === 'critical' ? 'Dikkat' : 'Uyarı'}</b>
+        ${esc(w.message)}</div>`).join('');
+    }
+
+    /* Günlük Durum'daki kritik uyarı kopyası — Doğrulama sekmesini bir şey
+       bozulana kadar kimse açmıyor, yönetici asıl burayı her gün açıyor. */
+    async function loadDayWarnings(){
+      if (!window.CAN_MANAGE) return;
+      try {
+        const c = await api('/api/pdks/checkin-config');
+        renderWarnings('dayWarnBox', c.warnings, true);
+      } catch { /* yetkisiz/erişilemez — sessiz geç */ }
     }
     /* QR modu: hangi panel görünecek + basılı QR yükle */
     function cfgApplyMode(mode){
@@ -1595,6 +1850,7 @@
         lon: lon === '' ? null : parseFloat(lon),
         radius_m: parseInt(document.getElementById('cfgRadius').value || '150'),
         qr_mode: (document.querySelector('input[name=cfgQrMode]:checked') || {}).value || 'static',
+        static_fallback: document.getElementById('cfgStaticFallback').checked,
       };
       const btn = document.getElementById('cfgSaveBtn');
       btn.disabled = true;

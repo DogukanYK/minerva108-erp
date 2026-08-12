@@ -27,8 +27,17 @@ make shell        # Python REPL with a live DB session (Item/User imported)
 ```
 
 Tests require a **separate PostgreSQL database `minerva_test`** — `tests/conftest.py`
-hardcodes `postgresql://minerva_user:devpass123@localhost:5432/minerva_test` and
-drop/creates all tables per test function. It never touches dev/prod DBs.
+builds `postgresql://minerva_user:devpass123@localhost:5432/<db>` itself (the
+caller's `DATABASE_URL` is deliberately ignored so a stray env var can never
+`drop_all` dev/prod) and drop/creates all tables per test function.
+
+**İki oturum aynı anda test koşarsa** biri diğerinin tablolarını siler
+(`relation "users" does not exist`). Çözüm: DB adı `MINERVA_TEST_DB` ile
+değiştirilebilir —
+`MINERVA_TEST_DB=minerva_test2 .venv/bin/pytest tests/…`
+(DB'yi bir kez oluştur: `psql -h localhost -d postgres -c "CREATE DATABASE
+minerva_test2 OWNER minerva_user"`). `deploy.sh` varsayılan `minerva_test`'i
+kullandığı için deploy öncesi yine `pgrep -f 'bin/pytest'` boş olmalı.
 
 ## Environment
 
@@ -253,15 +262,86 @@ açıkken **üçü birden** sağlanmadan yazılmaz — sıra: **IP → QR → ko
    yolu bundan etkilenmez). Sayaç süreç belleğinde — restart'ta sıfırlanır
    (kabul edilebilir: saldırgan zaten ofis ağında + ofis konumunda olmalı).
 Ayarlar `AppSetting`'te: `pdks.checkin.enforce|allowed_ips|lat|lon|radius_m|
-qr_mode|static_code`; UI PDKS → **Doğrulama** sekmesi (`pdks.manage`), uçlar
-`GET/PUT /api/pdks/checkin-config` + `GET /api/pdks/qr/static`.
+qr_mode|static_code|static_fallback`; UI PDKS → **Doğrulama** sekmesi
+(`pdks.manage`), uçlar `GET/PUT /api/pdks/checkin-config` +
+`GET /api/pdks/qr/static`.
 Statik modda **kod üretilmeden enforce açılamaz** (PUT 400 döner).
 **enforce KAPALI başlar**; kapatmak tek
 PUT'tur (deploysuz anında geri dönüş) ve `/checkin-config` doğrulamadan
 etkilenmez — yönetici kendini kilitleyemez. **Yönetici manuel olay girişi
 bilinçli olarak MUAF** (kasıtlı fallback). Olaylara `geo_lat/geo_lon/
-geo_accuracy_m` (migration `a4c8e2f6b9d1`) her zaman yazılır. Bilinçli
-ertelenen: tek-kullanımlık QR/replay önleme, IPv6/CIDR, kiosk cihaz token'ı.
+geo_accuracy_m` (migration `a4c8e2f6b9d1`) her zaman yazılır.
+
+**11.08.2026 KESİNTİSİ — sebebi ve alınan önlemler.** O gün patron hasta
+olduğu için hiç kimse imza atamadı; atılan 8 olayın TAMAMI `source='manual'`
+girildi. Sebep: `qr_mode=rotating` seçiliydi ama kiosk ekranını (`/pdks-qr`,
+perm `pdks.kiosk`) **yalnız SuperAdmin açabiliyordu** — o gidince ekran yok,
+QR yok, imza yok. Üstelik girişe asılı basılı afiş rotating modda
+reddediliyordu (`PDKSQRS1:` token'ı `verify_qr_token`'a düşüp "geçersiz"
+oluyordu). Üç önlem:
+1. **`static_fallback`** (varsayılan KAPALI): açıkken rotating modda basılı
+   afiş DE kabul edilir → ekran açılmayan günde imza atılabilir. Bedeli
+   açıkça kabul edilmiştir (afiş fotoğrafı geçerli olur; asıl güvence ofis
+   IP + konum). Kabul eden yol `verify_method='static_fallback'` yazar.
+2. **Fail-closed guard**: `PUT /checkin-config`, *sonuç durumu*
+   `enforce + rotating + kiosk hesabı yok + fallback kapalı` olacaksa 400
+   döner — kimsenin imza atamayacağı ayar kaydedilemez. Yalnız sonuç
+   durumuna bakılır, enforce'u kapatmak asla engellenmez.
+3. **Sağlık uyarıları**: `GET /checkin-config` → `warnings[]`
+   (`rotating_no_kiosk_account` · `enforce_static_no_code` ·
+   `enforce_no_ip_or_geo` · `ip_allowlist_loopback`). Kritik olanlar Günlük
+   Durum sekmesinin başına da basılır — Doğrulama sekmesini bir şey bozulana
+   kadar kimse açmıyor. `_kiosk_account_exists` **SuperAdmin'i saymaz**;
+   kesintinin sebebi tam olarak buydu.
+`pdks_events.verify_method` (migration `c7e9b1d3f5a2`) hangi yolla imza
+atıldığını tutar: `qr|code|static|static_fallback|off`.
+Yanlış moddaki kanıt jenerik "geçersiz" yerine ne yapılacağını söyleyen mesaj
++ `code="qr_mode_mismatch"` döndürür (istemci ölü uç yerine bildirim yolunu
+gösterir). Bilinçli ertelenen: tek-kullanımlık QR/replay önleme, IPv6/CIDR,
+kiosk cihaz token'ı, yetki-birleştirme (yedek onaycı istenmedi).
+
+**Rapor/izin bildirimi — personel bildirir, yönetici onaylar** (`pdks_leave_
+requests`, migration `e1a3c5b7d9f2`, `b8d2f4a6c9e1`→`c7e9b1d3f5a2`→
+`e1a3c5b7d9f2` zinciri). 11 Ağustos'taki asıl eksik buydu: rapor hiç sisteme
+girmiyor, gün "Devamsız" görünüyordu. Akış: personel `POST /api/pdks/leave-
+requests` ile tür + tarih aralığı + **zorunlu açıklama** + opsiyonel
+`document_no` (e-rapor no) bildirir (perm `pdks.check` — Staff dahil herkes);
+`employee_id` her zaman `_employee_for_user(current_user)`'dan alınır, body'den
+DEĞİL (personel başkasının adına talep açamaz). Kayıt `status='pending'`
+başlar, **puantajda sıfır etki** (henüz `LeaveRecord` yok). Yönetici
+`GET /leave-requests?status=pending` (`view_all`) görür,
+`POST /leave-requests/{id}/approve|reject` (`manage`) ile karara bağlar.
+**Onay anında `_validate_leave` TEKRAR çalışır** (aynı fonksiyonu doğrudan
+yönetici girişi `create_leave`/`update_leave` de kullanır — tek kaynak):
+bildirim beklerken yönetici elle çakışan bir izin girmişse onay **400** döner
+ve talep `pending` KALIR, sessizce çift kayıt oluşmaz
+(`test_leave_request_revalidated_at_approval`). Onay `LeaveRecord` yaratır,
+`LeaveRequest.leave_id`'ye bağlar, `document_no` yönetici onayda da
+girilebilir (personel evden yazarken e-rapor no henüz elinde olmayabilir).
+Reddetme hiçbir `LeaveRecord` yaratmaz. Tarih sınırları asimetrik — rapor
+geçmişe, yıllık izin geleceğe akar: `LEAVE_REQUEST_MAX_PAST_DAYS=60` (kapanmış
+bordro ayını korur), `MAX_FUTURE_DAYS=365`, `MAX_SPAN_DAYS=90`; dışı ⇒
+"yöneticinize başvurun" (yönetici `POST /leaves` ile sınırsız girebilir).
+Personel kendi taleplerini (`GET /leave-requests/mine`) ve kendi yürürlükteki
+izinlerini (`GET /leaves/mine`, `view_own`, employee_id'ye scope'lu — önceden
+bu uç hiç yoktu, personel kendi raporunu dolaylı gün etiketinden bile
+göremiyordu) görür. `core.pdks.leave_detail_for(leaves, work_date)` artık
+iznin TAMAMINI döner (`leave_for` türe indirger, geriye uyum için kalır);
+`compute_day(..., leave=…)` `leave_note`/`leave_document_no`'yu gün çıktısına
+taşır, `compute_month`'taki `totals["izin_gunleri"][tür]` sayacı `.get(tür, 0)`
+ile artar — DB'de elle/gelecekte silinmiş bir `leave_type` görürse 500 atmaz
+(`test_totals_view_unknown_leave_type_does_not_500`). Excel (`core/pdks_
+report.py`): rapor artık yıllık izinden **ayrı renkte** (`leave_fills`:
+turkuaz/kırmızı/sarı/gri), Özet sayfasında tür başına ayrı **sayısal** sütun
+(`Yıllık İzin (Gün)`/`Raporlu (Gün)`/`Ücretsiz (Gün)` — muhasebeci string
+ayrıştırmasın), personel sayfası Not sütununda `Belge no: X`. UI: yeni
+**"İzinlerim"** sekmesi (`pdks.view_own`) — hero'daki "Rapor / izin bildir"
+kısayolu hasta personeli oraya götürür; yönetici sekmesi `İzinler` →
+**"İzin Yönetimi"** (panel id'leri değişmedi). `badgeSt()` artık `lv-${tür}`
+class'ı da üretir (Bootstrap'le çakışmayan önek, bkz. gölgeleme tuzağı).
+Bilinçli ertelenen: talebi personelin geri çekmesi (yönetici silebiliyor),
+yarım gün izin, rapor PDF yükleme, onay push bildirimi (7 kişilik ekipte
+rozet yeterli).
 
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +
