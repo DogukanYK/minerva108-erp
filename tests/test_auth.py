@@ -10,7 +10,7 @@ Kapsam:
   • Security header'ları (CSP, HSTS, X-Frame-Options vb.)
   • SECRET_KEY env yoksa fail-loud (manuel test, conftest sayesinde set)
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -71,6 +71,106 @@ def test_login_empty_password_pydantic_rejects(client: TestClient):
     )
     # Pydantic min_length=1 → 422
     assert r.status_code == 422
+
+
+# ─── Login: PDKS kiosk hesabı — pratikte süresiz oturum ────────────────────
+# /pdks-qr'ı sürekli açık tutan ekran normal 8 saatlik oturumla her gece
+# dışarı düşüyordu (11.08.2026 kesintisiyle aynı aileden arıza — ekran sabah
+# "giriş yapın" gösteriyor, kimse imza atamıyor). Bu hesaplar login'de
+# otomatik ~10 yıllık token alır; yetki denetimi yine her istekte canlıdır.
+
+def _mk_kiosk_login_user(db: Session, username="kiosk-ekran"):
+    import bcrypt
+    from database import User
+    u = User(username=username,
+             password_hash=bcrypt.hashpw(b"minerva123", bcrypt.gensalt()).decode(),
+             full_name="Giriş Ekranı", role="Staff", is_active=True)
+    u.permissions = __import__("json").dumps({
+        "pdks": {"check": False, "view_own": False, "view_all": False,
+                 "manage": False, "report": False, "kiosk": True},
+    })
+    db.add(u)
+    db.commit()
+    return u
+
+
+def test_kiosk_account_login_gets_long_session(client: TestClient, db_session: Session):
+    from core.auth import decode_token
+    _mk_kiosk_login_user(db_session)
+
+    r = client.post("/api/login", json={"username": "kiosk-ekran", "password": "minerva123"},
+                    headers={"Origin": "http://testserver"})
+    assert r.status_code == 200
+    payload = decode_token(r.cookies["access_token"])
+    remaining = payload["exp"] - datetime.now(timezone.utc).timestamp()
+    assert remaining > 300 * 24 * 3600     # normal 8 saatten çok uzun — pratikte süresiz
+    # Cookie da aynı ömrü taşıyor (Max-Age), token'la tutarlı olmalı
+    set_cookie_header = r.headers.get("set-cookie", "")
+    assert "max-age=" in set_cookie_header.lower()
+
+
+def test_kiosk_account_login_ignores_remember_me_flag(client: TestClient, db_session: Session):
+    """Kiosk hesabı remember_me=False gönderse bile uzun oturum alır —
+    ekranı açan kişinin kutucuğu hatırlamasına bağlı kalınmaz."""
+    from core.auth import decode_token
+    _mk_kiosk_login_user(db_session)
+
+    r = client.post("/api/login",
+                    json={"username": "kiosk-ekran", "password": "minerva123",
+                          "remember_me": False},
+                    headers={"Origin": "http://testserver"})
+    assert r.status_code == 200
+    payload = decode_token(r.cookies["access_token"])
+    remaining = payload["exp"] - datetime.now(timezone.utc).timestamp()
+    assert remaining > 300 * 24 * 3600
+
+
+def test_non_kiosk_login_keeps_default_8h_session(client: TestClient):
+    """Normal hesap (kiosk yetkisi yok) davranış DEĞİŞMEMELİ — yalnız kiosk
+    hesapları uzun oturum alır, güvenlik genel olarak gevşetilmez."""
+    from core.auth import decode_token
+    r = client.post("/api/login", json={"username": "dogukan", "password": "minerva123"},
+                    headers={"Origin": "http://testserver"})
+    assert r.status_code == 200
+    payload = decode_token(r.cookies["access_token"])
+    remaining = payload["exp"] - datetime.now(timezone.utc).timestamp()
+    assert 7 * 3600 < remaining < 9 * 3600     # ~8 saat, eskisi gibi
+
+
+def test_non_kiosk_remember_me_still_gets_30_days(client: TestClient):
+    """remember_me davranışı kiosk-dışı hesaplarda hiç değişmedi."""
+    from core.auth import decode_token
+    r = client.post("/api/login",
+                    json={"username": "dogukan", "password": "minerva123",
+                          "remember_me": True},
+                    headers={"Origin": "http://testserver"})
+    assert r.status_code == 200
+    payload = decode_token(r.cookies["access_token"])
+    remaining = payload["exp"] - datetime.now(timezone.utc).timestamp()
+    assert 29 * 24 * 3600 < remaining < 31 * 24 * 3600   # ~30 gün, eskisi gibi
+
+
+def test_kiosk_permission_still_checked_live_despite_long_token(
+        client: TestClient, db_session: Session):
+    """Uzun token = 'yeniden girişe gerek yok' demek, 'yetki kalıcı' demek
+    DEĞİL. Token hâlâ geçerliyken kiosk yetkisi geri alınırsa /pdks-qr anında
+    kapanmalı — süresiz oturum sessizce kalıcı yetkiye dönüşmesin."""
+    u = _mk_kiosk_login_user(db_session, username="kiosk-ekran2")
+    r = client.post("/api/login", json={"username": "kiosk-ekran2", "password": "minerva123"},
+                    headers={"Origin": "http://testserver"})
+    assert r.status_code == 200
+
+    # Yetkiyi geri al
+    u.permissions = __import__("json").dumps({
+        "pdks": {"check": False, "view_own": False, "view_all": False,
+                 "manage": False, "report": False, "kiosk": False},
+    })
+    db_session.commit()
+
+    # token hâlâ geçerli (~10 yıl), ama yetki gitti
+    r2 = client.get("/pdks-qr", follow_redirects=False)
+    assert r2.status_code in (302, 307)
+    assert "/pdks-qr" not in r2.headers.get("location", "")
 
 
 # ─── Account lockout (R3) ──────────────────────────────────────────────────

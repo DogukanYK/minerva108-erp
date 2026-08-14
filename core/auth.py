@@ -56,15 +56,21 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
 
-def create_access_token(data: dict, remember_me: bool = False) -> str:
+def create_access_token(data: dict, remember_me: bool = False, days: Optional[int] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + (timedelta(days=30) if remember_me else timedelta(hours=8))
+    if days is not None:
+        expire = datetime.utcnow() + timedelta(days=days)
+    else:
+        expire = datetime.utcnow() + (timedelta(days=30) if remember_me else timedelta(hours=8))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def set_auth_cookie(response: Response, token: str, remember_me: bool = False):
-    max_age = 30 * 24 * 3600 if remember_me else 8 * 3600
+def set_auth_cookie(response: Response, token: str, remember_me: bool = False, days: Optional[int] = None):
+    if days is not None:
+        max_age = days * 24 * 3600
+    else:
+        max_age = 30 * 24 * 3600 if remember_me else 8 * 3600
     response.set_cookie(
         key="access_token",
         value=token,

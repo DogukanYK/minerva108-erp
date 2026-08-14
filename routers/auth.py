@@ -18,6 +18,7 @@ from typing import Optional
 from database import get_db, User
 from core.auth import verify_password, create_access_token, set_auth_cookie
 from core.limiter import limiter
+from core.permissions import _has_permission
 
 
 # ─── Hesap kilitleme parametreleri (R3) ──────────────────────────────────
@@ -29,6 +30,20 @@ LOCKOUT_DURATION_MIN    = 15
 # Global default idle timeout — kullanıcı user.idle_timeout_minutes set
 # etmediğinde frontend bu değeri kullanır.  Lab istediği gibi değiştirebilir.
 DEFAULT_IDLE_TIMEOUT_MIN = 5
+
+# PDKS kiosk hesapları (örn. /pdks-qr'ı sürekli açık tutan ekran) normal
+# 8 saatlik oturumla her gece dışarı düşer — 11.08.2026 kesintisiyle aynı
+# aileden bir arıza: ekran sabah "giriş yapın" gösterir, kimse imza atamaz.
+# Bu hesaplara login'de pratikte süresiz oturum verilir (~10 yıl); yetki
+# denetimi (pdks.kiosk) yine HER istekte canlı kontrol edilir (bkz.
+# api_main.pdks_qr_page → _user_can) — bu yalnız "yeniden giriş" ihtiyacını
+# kaldırır, yetkiyi kalıcı yapmaz. Yetki geri alınırsa token geçerli olsa
+# bile sayfa aynı anda kapanır.
+# SuperAdmin HARİÇ: _resolve_permissions SuperAdmin'i her kategoride otomatik
+# True döndürür, yani bu istisna olmadan patronun kendi normal girişi de
+# sessizce 10 yıllık oturuma dönerdi — _kiosk_account_exists'teki "SuperAdmin
+# sayılmaz" kuralıyla aynı sebep, burada da aynı istisna şart.
+KIOSK_SESSION_DAYS = 3650
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
@@ -91,11 +106,15 @@ def login(request: Request, data: LoginRequest, response: Response, db: Session 
     user.lockout_until = None
     db.commit()
 
+    kiosk_days = (KIOSK_SESSION_DAYS
+                  if user.role != "SuperAdmin" and _has_permission(user, "pdks", "kiosk")
+                  else None)
     token = create_access_token(
         {"sub": str(user.id), "username": user.username, "full_name": user.full_name, "role": user.role},
         remember_me=data.remember_me,
+        days=kiosk_days,
     )
-    set_auth_cookie(response, token, remember_me=data.remember_me)
+    set_auth_cookie(response, token, remember_me=data.remember_me, days=kiosk_days)
     return {"message": "Giriş başarılı", "redirect": "/"}
 
 

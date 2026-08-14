@@ -300,6 +300,27 @@ Yanlış moddaki kanıt jenerik "geçersiz" yerine ne yapılacağını söyleyen
 gösterir). Bilinçli ertelenen: tek-kullanımlık QR/replay önleme, IPv6/CIDR,
 kiosk cihaz token'ı, yetki-birleştirme (yedek onaycı istenmedi).
 
+**Kiosk hesabı — oturum hiç dolmasın** (`routers/auth.py::login`,
+2026-08-14). `/pdks-qr` ekranı hiç tıklanmadığı için idle-watch zaten yüklü
+değil (bkz. `api_main.pdks_qr_page` docstring), ama normal JWT/cookie 8
+saatte doluyordu — kiosk ekranı her gece "giriş yapın" ekranına düşüyor,
+ertesi sabah kimse imza atamıyordu (11 Ağustos'la aynı aile: kiosk yönetici
+olmadan çalışmıyor, farklı sebep). Çözüm `core.auth.create_access_token`/
+`set_auth_cookie`'ye eklenen opsiyonel `days=` override'ı: login'de kullanıcı
+`pdks.kiosk` yetkiliyse **ve SuperAdmin DEĞİLSE** token/cookie ömrü
+`remember_me` kutucuğundan bağımsız `KIOSK_SESSION_DAYS=3650`'ye (~10 yıl,
+pratikte süresiz) sabitlenir. **TUZAK — SuperAdmin istisnası şart**:
+`_resolve_permissions` SuperAdmin'i her kategoride otomatik `True` döndürür
+(`core/permissions.py`), yani bu istisna olmadan patronun kendi normal
+girişi de sessizce 10 yıllık oturuma dönerdi —
+`test_non_kiosk_login_keeps_default_8h_session` bunu kilitler,
+`_kiosk_account_exists`'teki "SuperAdmin sayılmaz" kuralıyla aynı sebep.
+Bu yalnız "yeniden girişe gerek yok" demektir, **yetkiyi kalıcı yapmaz**:
+`/pdks-qr` yetki denetimi (`_resolve_active_user` + `_user_can`) her istekte
+DB'den taze okur, kiosk yetkisi geri alınırsa uzun token hâlâ geçerliyken
+bile sayfa aynı anda kapanır (`test_kiosk_permission_still_checked_live_
+despite_long_token`).
+
 **Rapor/izin bildirimi — personel bildirir, yönetici onaylar** (`pdks_leave_
 requests`, migration `e1a3c5b7d9f2`, `b8d2f4a6c9e1`→`c7e9b1d3f5a2`→
 `e1a3c5b7d9f2` zinciri). 11 Ağustos'taki asıl eksik buydu: rapor hiç sisteme
