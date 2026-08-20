@@ -90,6 +90,10 @@ DAY_STATUS_LABELS = {
     "eksik_cikis":  "Çıkış eksik",
     "izinli":       "İzinli",
     "hafta_tatili": "Hafta tatili",
+    # Program versiyonu HENÜZ tanımlı olmayan gün — "hafta tatili" DEĞİL.
+    # İkisini ayırmazsak beklenen süre bilinmediği hâlde 0 sayılır ve o gün
+    # çalışılan sürenin TAMAMI fazla mesai olarak yazılır (gerçek bir hataydı).
+    "programsiz":   "Program tanımsız",
     "resmi_tatil":  "Resmi tatil",
     "bekliyor":     "Bekliyor",
 }
@@ -253,6 +257,19 @@ def schedule_for(schedules, work_date):
     }
 
 
+def has_schedule_version(schedules, work_date) -> bool:
+    """work_date'i kapsayan BİR program versiyonu var mı?
+
+    `schedule_for` iki ayrı durumda da None döner:
+      (a) o tarihe geçerli program versiyonu HİÇ yok → beklenen süre BİLİNMİYOR
+      (b) versiyon var ama o gün boş bırakılmış → gerçek hafta tatili, beklenen 0
+    Bu ayrım olmadan (a) da hafta tatili sayılıyor ve o gün çalışılan sürenin
+    tamamı fazla mesaiye yazılıyordu.
+    """
+    return any(s.get("effective_from") is not None and s["effective_from"] <= work_date
+               for s in schedules or [])
+
+
 def open_in_still_valid(in_ts_utc, in_work_date, now_utc) -> bool:
     """Açık bir 'in' olayı hâlâ "içerideyim" sayılmalı mı?
 
@@ -307,13 +324,16 @@ def pair_events(events):
 
 
 def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None,
-                leave=None):
+                leave=None, unscheduled=False):
     """Bir personelin TEK gününü hesapla.
 
     events: o work_date'e yazılmış aktif olaylar (dict listesi).
     day_schedule: schedule_for() çıktısı ya da None.
     leave_type: o günü kapsayan izin türü ya da None.
     holiday: {"name", "is_half_day"} ya da None.
+    unscheduled: o tarihi kapsayan program versiyonu YOK (bkz.
+    `has_schedule_version`).  Bu durumda beklenen süre bilinmediği için
+    fazla mesai / eksik süre HESAPLANMAZ — çalışılan süre yine gösterilir.
     """
     # `leave` verilirse tür ondan türetilir (not + belge no da taşınır);
     # `leave_type=` eski çağrılar için korunuyor.
@@ -352,6 +372,10 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None,
     overtime = max(0, worked - expected)
     # Eksik süre: çıkış eksikse hesaplanamaz (gün zaten toplam dışı bayraklı).
     missing = 0 if missing_checkout else max(0, expected - worked)
+    if unscheduled:
+        # Beklenen süre bilinmiyor → ne fazla mesai ne eksik yazılabilir.
+        # (Aksi hâlde o gün çalışılan sürenin tamamı fazla mesai olurdu.)
+        overtime = missing = 0
 
     first_in = min((p["in"]["ts_utc"] for p in pairs if p["in"]), default=None)
     last_out = max((p["out"]["ts_utc"] for p in pairs if p["out"]), default=None)
@@ -361,6 +385,8 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None,
         status = "resmi_tatil"
     elif leave_type:
         status = "izinli"
+    elif unscheduled:
+        status = "programsiz"
     elif not day_schedule:
         status = "hafta_tatili"
     elif missing_checkout:
@@ -448,6 +474,7 @@ def compute_month(year, month, schedules, events_by_date, leaves, holidays, toda
             sched,
             leave=leave_detail_for(leaves, d),
             holiday=(holidays or {}).get(d),
+            unscheduled=not has_schedule_version(schedules, d),
         )
         days.append(day)
         totals["toplam_calisma"] += day["worked_minutes"]

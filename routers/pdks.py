@@ -40,7 +40,7 @@ from core.pdks import (
     geo_within, haversine_m, ip_allowed, leave_detail_for, leave_for,
     make_numeric_code,
     make_qr_token, make_static_token, open_in_still_valid, qr_bucket,
-    schedule_for, tr_date_of,
+    has_schedule_version, schedule_for, tr_date_of,
     validate_template, verify_numeric_code, verify_qr_token,
     verify_static_code, verify_static_token,
 )
@@ -541,7 +541,8 @@ def _today_status(db: Session, emp: Employee) -> dict:
     holidays = _holiday_map(db, today, today)
     day = compute_day(today, [_event_dict(e) for e in events], sched,
                       leave=leave_detail_for(leaves, today),
-                      holiday=holidays.get(today))
+                      holiday=holidays.get(today),
+                      unscheduled=not has_schedule_version(schedules, today))
     open_ev = _open_in(db, emp.id, now)
     worked_live = day["worked_minutes"]
     if open_ev is not None:
@@ -828,11 +829,13 @@ def day_overview(
                           AttendanceEvent.is_active == True,               # noqa: E712
                           AttendanceEvent.work_date == d)
                   .order_by(AttendanceEvent.ts_utc).all())
+        emp_scheds = _schedule_dicts(db, emp.id)
         day = compute_day(
             d, [_event_dict(e) for e in events],
-            schedule_for(_schedule_dicts(db, emp.id), d),
+            schedule_for(emp_scheds, d),
             leave=leave_detail_for(_leave_dicts(db, emp.id, d, d), d),
             holiday=holidays.get(d),
+            unscheduled=not has_schedule_version(emp_scheds, d),
         )
         if d > today_tr:
             # Gelecek tarih: kimse "Devamsız" damgası yememeli

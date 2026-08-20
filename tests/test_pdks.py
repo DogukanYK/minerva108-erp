@@ -1753,3 +1753,45 @@ def test_me_month_carries_employee_and_time_labels(staff_employee_client):
     for key in ("expected_label", "missing_label", "worked_label",
                 "overtime_label", "break_label", "pairs"):
         assert key in day, key
+
+
+# ─── Program tanımsız gün ≠ hafta tatili ────────────────────────────────────
+
+def test_unscheduled_day_is_not_weekly_holiday():
+    """Program versiyonu o tarihi kapsamıyorsa gün "hafta tatili" SAYILMAZ.
+
+    Gerçek hata: programlar 04.08'de başlıyordu, 03.08 Pazartesi çalışılmış
+    olmasına rağmen "Hafta tatili" görünüyordu ve beklenen süre 0 kabul
+    edildiği için 9 sa 15 dk'nın TAMAMI fazla mesai yazılıyordu.
+    """
+    from core.pdks import compute_day, has_schedule_version, schedule_for
+    scheds = [{"effective_from": date(2026, 8, 4),
+               "template": {0: {"start": "08:30", "end": "17:45"}}}]
+    d = date(2026, 8, 3)                       # Pazartesi — program başlamadan önce
+    assert has_schedule_version(scheds, d) is False
+    assert schedule_for(scheds, d) is None
+
+    events = [{"event_type": "in", "ts_utc": datetime(2026, 8, 3, 5, 30)},    # 08:30 TR
+              {"event_type": "out", "ts_utc": datetime(2026, 8, 3, 14, 45)}]  # 17:45 TR
+    day = compute_day(d, events, None, unscheduled=True)
+    assert day["status"] == "programsiz"
+    assert day["status_label"] == "Program tanımsız"
+    assert day["worked_minutes"] > 0            # çalışma yine görünür
+    assert day["overtime_minutes"] == 0         # ama fazla mesai UYDURULMAZ
+    assert day["missing_minutes"] == 0
+
+
+def test_real_weekly_holiday_still_counts_overtime():
+    """Gerçek hafta tatili (program var, o gün boş) eski davranışta kalır."""
+    from core.pdks import compute_day, has_schedule_version, schedule_for
+    scheds = [{"effective_from": date(2026, 8, 1),
+               "template": {0: {"start": "08:30", "end": "17:45"}}}]   # yalnız Pzt
+    d = date(2026, 8, 8)                        # Cumartesi — programda boş
+    assert has_schedule_version(scheds, d) is True
+    assert schedule_for(scheds, d) is None
+
+    events = [{"event_type": "in", "ts_utc": datetime(2026, 8, 8, 6, 0)},     # 09:00
+              {"event_type": "out", "ts_utc": datetime(2026, 8, 8, 10, 0)}]   # 13:00
+    day = compute_day(d, events, None, unscheduled=False)
+    assert day["status"] == "hafta_tatili"
+    assert day["overtime_minutes"] == 240       # tatilde çalışma = fazla mesai
