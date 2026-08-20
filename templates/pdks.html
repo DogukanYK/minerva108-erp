@@ -622,6 +622,9 @@
         <button class="ico-del" onclick="fixClose()" title="Kapat"><i class="bi bi-x-lg" style="font-size:1.2rem;"></i></button>
       </div>
       <div class="ovl-body">
+        <div id="fixSummary"></div>
+        <div id="fixEventsBox">
+        <label class="lbl" style="margin-bottom:0.35rem;display:block;">Ham Giriş / Çıkış Olayları</label>
         <table>
           <thead><tr><th>Zaman</th><th>Tip</th><th>Kaynak</th><th>Düzeltme</th><th></th></tr></thead>
           <tbody id="fixEvents"></tbody>
@@ -637,6 +640,7 @@
           </div>
           <input type="text" id="fxNote" class="ipt" placeholder="Gerekçe (zorunlu) — ör. çıkış unutuldu" maxlength="300" style="margin-bottom:0.6rem;" />
           <button class="btn-o" onclick="fixAdd()"><i class="bi bi-plus-lg"></i> Olay Ekle</button>
+        </div>
         </div>
       </div>
       <div style="display:flex;padding:1rem 1.25rem;border-top:1px solid #f0ece4;">
@@ -840,6 +844,14 @@
     }
     document.querySelectorAll('.pdks-tab').forEach(b => b.addEventListener('click', () => openTab(b.dataset.tab)));
 
+    // core/pdks.py fmt_minutes ile AYNI biçim (375 → '6 sa 15 dk')
+    function fmtMin(m){
+      m = parseInt(m, 10) || 0;
+      if (!m) return '—';
+      const h = Math.floor(m / 60), mm = m % 60;
+      if (h && mm) return `${h} sa ${mm} dk`;
+      return h ? `${h} sa` : `${mm} dk`;
+    }
     function badgeSt(d){
       const label = d.status === 'izinli' ? d.status_label : (d.status_label || d.status);
       // lv-* : izin TÜRÜNE göre renk (rapor yıllık izinden ayrılsın).
@@ -1289,13 +1301,25 @@
       const tb = document.getElementById('myBody');
       try {
         const d = await api(`/api/pdks/me/month?year=${myY}&month=${myM}`);
+        _myDays = d.days || [];
+        _myEmp = d.employee || null;
         renderMonthRows(tb, d, 8);
       } catch (e) {
         tb.innerHTML = `<tr><td colspan="8" class="muted" style="padding:1rem;">${esc(e.message)}</td></tr>`;
       }
     }
+    let _myDays = [], _myEmp = null;
+    /* Puantaj satırına tıklayınca o günün kırılımı açılır: planlanan vs
+       çalışılan, mola düşümü, giriş/çıkış çiftleri.  Yetkisi olan (pdks.manage
+       — yalnız Süper Yönetici) aynı pencereden olayları da düzeltebilir. */
+    function myDayOpen(i){
+      const x = _myDays[i];
+      if (!x) return;
+      fixOpen(_myEmp ? _myEmp.id : null, _myEmp ? _myEmp.full_name : 'Puantajım',
+              x.date, x, loadMy);
+    }
     function renderMonthRows(tb, d, span){
-      const rows = d.days.map(x => `<tr>
+      const rows = d.days.map((x, i) => `<tr class="emp-row" onclick="myDayOpen(${i})">
         <td>${esc(x.date_label)}</td>
         <td class="muted">${esc(x.weekday_label)}</td>
         <td>${badgeSt(x)}</td>
@@ -1350,15 +1374,54 @@
     document.getElementById('dayDate')?.addEventListener('change', loadDay);
 
     /* ── Gün düzeltme modalı ── */
-    let _fixEmp = null, _fixDate = null;
+    let _fixEmp = null, _fixDate = null, _fixAfter = null;
     function fixOpenIdx(i){
       const r = _dayRows[i];
-      if (r) fixOpen(r.employee.id, r.employee.full_name, _dayDateStr);
+      if (r) fixOpen(r.employee.id, r.employee.full_name, _dayDateStr, r.day, loadDay);
     }
-    async function fixOpen(empId, empName, dateStr){
-      if (!window.CAN_MANAGE) return;
-      _fixEmp = empId; _fixDate = dateStr;
-      document.getElementById('fixTitle').textContent = `${empName} — ${dateStr.split('-').reverse().join('.')}`;
+    /* Gün kırılımı — `/day` satırları ile `/me/month` günleri AYNI şekli
+       kullanıyor (_day_view), o yüzden tek renderer ikisine de yetiyor. */
+    function fixSummaryHtml(x){
+      if (!x) return '';
+      const cell = (lbl, val, strong) =>
+        `<div style="min-width:120px;"><div class="muted" style="font-size:0.76rem;">${lbl}</div>
+         <div style="font-size:1.02rem;${strong ? 'font-weight:700;' : ''}">${val}</div></div>`;
+      const pairs = (x.pairs || []).length
+        ? `<table style="margin-top:0.6rem;"><thead><tr><th>Giriş</th><th>Çıkış</th><th>Süre</th></tr></thead>
+           <tbody>${x.pairs.map(p => `<tr>
+             <td>${esc(p.in || '—')}</td><td>${esc(p.out || '—')}</td>
+             <td>${p.minutes ? fmtMin(p.minutes) : '—'}</td></tr>`).join('')}</tbody></table>`
+        : '<p class="muted" style="margin:0.6rem 0 0;">Bu günde giriş/çıkış kaydı yok.</p>';
+      const notes = [];
+      if (x.break_deducted && x.break_minutes)
+        notes.push(`Mola düşüldü: <b>${esc(x.break_label)}</b>`);
+      if (x.missing_checkout) notes.push('<b>Çıkış eksik</b> — süre hesaplanamadı');
+      if (x.orphan_out) notes.push('<b>Girişsiz çıkış</b>');
+      if (x.holiday_name) notes.push(`Resmî tatil: <b>${esc(x.holiday_name)}</b>`);
+      if (x.leave_type) notes.push(`İzin: <b>${esc(x.leave_type)}</b>${x.leave_note ? ' — ' + esc(x.leave_note) : ''}`);
+      return `<div style="background:#faf8f4;border:1px solid #f0ece4;border-radius:10px;padding:0.85rem 1rem;margin-bottom:1rem;">
+        <div style="display:flex;gap:1.4rem;flex-wrap:wrap;align-items:flex-start;">
+          ${cell('Durum', badgeSt(x))}
+          ${cell('Çalışılan', esc(x.worked_label || '—'), true)}
+          ${cell('Planlanan', esc(x.expected_label || '—'))}
+          ${cell('Fazla mesai', x.overtime_minutes ? esc(x.overtime_label) : '—')}
+          ${cell('Eksik', x.missing_minutes ? esc(x.missing_label) : '—')}
+        </div>
+        ${notes.length ? `<div class="muted" style="margin-top:0.6rem;font-size:0.82rem;">${notes.join(' · ')}</div>` : ''}
+        ${pairs}
+      </div>`;
+    }
+    async function fixOpen(empId, empName, dateStr, dayObj, after){
+      _fixEmp = empId; _fixDate = dateStr; _fixAfter = after || null;
+      document.getElementById('fixTitle').textContent =
+        `${empName} — ${dateStr.split('-').reverse().join('.')}`;
+      document.getElementById('fixSummary').innerHTML = fixSummaryHtml(dayObj);
+      // Düzeltme yalnız `pdks.manage` yetkisinde açılır; diğerleri günü
+      // salt-okunur görür.  Uçlar da aynı yetkiyi arıyor, ikisi tek yerden.
+      const box = document.getElementById('fixEventsBox');
+      const canFix = !!(window.CAN_MANAGE && empId);
+      box.style.display = canFix ? '' : 'none';
+      if (!canFix) { document.getElementById('fixModal').classList.add('open'); return; }
       document.getElementById('fxDate').value = dateStr;
       document.getElementById('fxTime').value = '';
       document.getElementById('fxNote').value = '';
@@ -1367,7 +1430,19 @@
     }
     function fixClose(){
       document.getElementById('fixModal').classList.remove('open');
-      loadDay();
+      const after = _fixAfter; _fixAfter = null;
+      (after || loadDay)();
+    }
+    async function fixRefreshSummary(){
+      // Olay eklenince/silinince çalışma süresi değişir; özet bloğu bayat
+      // kalmasın.  Düzeltme yetkisi (`manage`) zaten `view_all` gerektirdiği
+      // için her iki sekmede de /day ucu kullanılabiliyor.
+      if (!_fixEmp || !_fixDate) return;
+      try {
+        const d = await api(`/api/pdks/day?date=${_fixDate}`);
+        const row = (d.rows || []).find(r => r.employee.id === _fixEmp);
+        if (row) document.getElementById('fixSummary').innerHTML = fixSummaryHtml(row.day);
+      } catch (e) { /* özet tazelenemedi — olay listesi yine de doğru */ }
     }
     async function fixLoad(){
       const tb = document.getElementById('fixEvents');
@@ -1395,6 +1470,7 @@
       try {
         await jpost('/api/pdks/events', { employee_id: _fixEmp, event_type: type, date, time, note });
         toastFn('Olay eklendi.', 'success');
+        fixRefreshSummary();
         document.getElementById('fxTime').value = ''; document.getElementById('fxNote').value = '';
         fixLoad();
       } catch (e) { toastFn(e.message); }
@@ -1409,6 +1485,7 @@
       try {
         await jpost(`/api/pdks/events/${id}`, { date, time, note: note.trim() }, 'PUT');
         toastFn('Olay güncellendi.', 'success');
+        fixRefreshSummary();
         fixLoad();
       } catch (e) { toastFn(e.message); }
     }
@@ -1418,6 +1495,7 @@
       try {
         await api(`/api/pdks/events/${id}?note=${encodeURIComponent(note.trim())}`, { method: 'DELETE' });
         toastFn('Olay silindi.', 'success');
+        fixRefreshSummary();
         fixLoad();
       } catch (e) { toastFn(e.message); }
     }

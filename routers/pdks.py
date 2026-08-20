@@ -417,9 +417,11 @@ def _day_view(day: dict) -> dict:
         "worked_minutes": day["worked_minutes"],
         "worked_label": fmt_minutes(day["worked_minutes"]),
         "expected_minutes": day["expected_minutes"],
+        "expected_label": fmt_minutes(day["expected_minutes"]),
         "overtime_minutes": day["overtime_minutes"],
         "overtime_label": fmt_minutes(day["overtime_minutes"]),
         "missing_minutes": day["missing_minutes"],
+        "missing_label": fmt_minutes(day["missing_minutes"]),
         "missing_checkout": day["missing_checkout"],
         "orphan_out": day["orphan_out"],
         "break_deducted": day["break_deducted"],
@@ -576,7 +578,11 @@ def _month_payload(db: Session, emp: Employee, year: int, month: int) -> dict:
         _holiday_map(db, start, end),
         tr_date_of(datetime.utcnow()),
     )
-    return _month_view(data)
+    out = _month_view(data)
+    # Puantaj ekranı gün düzeltmesi için kimin puantajı olduğunu bilmeli
+    # (kendi personel kaydının id'si olmadan olay ekleme/düzeltme çağrılamaz).
+    out["employee"] = {"id": emp.id, "full_name": emp.full_name}
+    return out
 
 
 # ─── Self endpoint'ler ───────────────────────────────────────────────────────

@@ -1734,3 +1734,22 @@ def test_excel_has_per_type_leave_columns_and_document(authed_client, db_session
     ws = wb["Excel Rapor"]
     notes = [row[8] for row in ws.iter_rows(min_row=2, values_only=True) if row[0]]
     assert any(n and "ER-77" in n for n in notes)
+
+
+def test_me_month_carries_employee_and_time_labels(staff_employee_client):
+    """Puantaj ekranı gün düzeltmesi için kendi personel kimliğini bilmeli.
+
+    `employee` olmadan Puantajım'dan olay ekleme/düzeltme çağrılamaz
+    (uçlar `employee_id` istiyor).  `expected_label` / `missing_label` da
+    gün kırılımı penceresinde gösteriliyor — sunucu biçimlendirmesi
+    (`fmt_minutes`) tek kaynak olsun diye burada üretiliyor.
+    """
+    c, emp_id = staff_employee_client
+    now_tr = datetime.utcnow() + timedelta(hours=3)
+    d = c.get(f"/api/pdks/me/month?year={now_tr.year}&month={now_tr.month}").json()
+    assert d["employee"]["id"] == emp_id
+    assert d["employee"]["full_name"]
+    day = d["days"][0]
+    for key in ("expected_label", "missing_label", "worked_label",
+                "overtime_label", "break_label", "pairs"):
+        assert key in day, key
