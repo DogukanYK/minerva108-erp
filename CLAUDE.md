@@ -140,6 +140,25 @@ edilebilir): tatil/izin/hafta tatilinde çalışılan her dakika fazla mesai, a�
    Güvenliği sağlayan şey onaydır, doğrulama zayıflamaz. Sınırlar: gelecek
    zaman yasak, en fazla `REQUEST_MAX_AGE_DAYS`=14 gün geriye, aynı
    gün+tip için tek bekleyen bildirim.
+
+**TUZAK — "program tanımsız" ≠ "hafta tatili".** `schedule_for()` İKİ ayrı
+durumda da `None` döner: (a) o tarihi kapsayan program versiyonu HİÇ yok,
+(b) versiyon var ama o gün boş bırakılmış (gerçek hafta tatili). Bunlar
+karıştırılırsa (a) da hafta tatili sayılır, beklenen süre 0 kabul edilir ve o
+gün çalışılan sürenin **TAMAMI fazla mesai** yazılır. SAHADA YAŞANDI
+(2026-08-20): programlar 04.08'de başlıyordu, 03.08 Pazartesi 08:30–17:45
+çalışıldığı hâlde "Hafta tatili" görünüyor ve 9 sa 15 dk fazla mesai
+yazıyordu. Ayrım `has_schedule_version(schedules, work_date)` ile yapılır;
+`compute_day(..., unscheduled=True)` durumu **`programsiz`** ("Program
+tanımsız") yapar ve fazla mesai/eksik süreyi HESAPLAMAZ (çalışılan süre yine
+görünür). `compute_month` bayrağı kendi hesaplar; `compute_day`'i doğrudan
+çağıran router uçları (`/me/today`, `/day`) geçirmek ZORUNDA. Geriye dönük
+düzeltme yolu: eksik dönemi kapsayan **YENİ bir program versiyonu** ekle
+(`PUT /employees/{id}/schedule`, farklı `effective_from` = yeni versiyon) —
+mevcut versiyonu mutate etme. Ama bunu yalnız o dönemde **gerçekten olay
+kaydı olan** personel için yap; kayıt yokken program geriye çekilirse o
+günler "Devamsız"a döner ve olmayan devamsızlık uydurulur.
+
 **Geç gelme / erken çıkma bayrağı YOKTUR** (kullanıcı kararı, 2026-08-03:
 "dakika dakikasına bakma") — saatler dakika dakika kaydedilir ama kimse
 işaretlenmez; puantajda giriş/çıkış saati, çalışma, fazla mesai ve eksik süre
