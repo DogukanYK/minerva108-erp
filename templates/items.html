@@ -820,7 +820,7 @@
         <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 1.25rem;border-bottom:1px solid #f0ece4;flex-wrap:wrap;">
           <div>
             <h2 style="font-family:'Playfair Display',serif;font-size:1.05rem;font-weight:600;color:var(--navy);margin:0;">Numune Girişleri</h2>
-            <p style="font-size:0.82rem;color:#6b7280;margin:0.2rem 0 0;">Var olan bir hammaddenin alternatif tedarikçiden gelen numune partileri. Stoğa girer; üretimde tedarikçi/lot seçilebilir.</p>
+            <p style="font-size:0.82rem;color:#6b7280;margin:0.2rem 0 0;">Var olan bir hammaddenin alternatif tedarikçiden gelen numune partileri. <b>Stoğa girmez, üretimde kullanılamaz</b> — değerlendirme olumlu geldiğinde "Stoğa Çevir" ile deftere işlenir.</p>
           </div>
           {% if can('inventory', 'receive') %}
           <button class="btn-primary-gold" onclick="openSampleModal()">
@@ -838,10 +838,11 @@
                 <th style="text-align:right;">Miktar</th>
                 <th>Son Kullanma</th>
                 <th>Giriş Tarihi</th>
+                <th></th>
               </tr>
             </thead>
             <tbody id="sampleBody">
-              <tr><td colspan="6"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+              <tr><td colspan="7"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -864,7 +865,9 @@
           <p style="font-size:0.82rem;color:#6b7280;margin:0 0 1rem;">Numune, var olan bir hammaddeye bağlı ayrı bir lot olarak kaydedilir; normal stokla birleşmez.</p>
           <div class="mb-3">
             <label class="form-label-sm">Hammadde *</label>
-            <select class="form-select" id="sampleItem" required><option value="">— Hammadde seçiniz —</option></select>
+            <input type="text" class="form-control mb-1" id="sampleItemSearch"
+                   placeholder="Yazarak süz… (Türkçe ad da aranır)" autocomplete="off" />
+            <select class="form-select" id="sampleItem" size="6" required><option value="">— Hammadde seçiniz —</option></select>
           </div>
           <div class="mb-3">
             <label class="form-label-sm">Numune Tedarikçisi</label>
@@ -1007,6 +1010,7 @@
               <div class="col-{{ fin_col }}">
                 <label class="form-label-sm">Birim</label>
                 <select class="form-select" id="itemUnit">
+                  <option value="" selected disabled>— Birim seçiniz —</option>
                   <option value="adet">Adet</option>
                   <option value="kg">Kilogram (kg)</option>
                   <option value="g">Gram (g)</option>
@@ -1476,7 +1480,8 @@
 
     /* ── Filter + Sort ── */
     function applyFiltersAndSort() {
-      const q      = document.getElementById('searchInput').value.toLowerCase();
+      const q      = window.trFold ? window.trFold(document.getElementById('searchInput').value)
+                                   : document.getElementById('searchInput').value.toLowerCase();
       const tabCfg = TABS[activeTab];
 
       // 1. Tab filter first
@@ -1491,13 +1496,17 @@
         }
       }
 
-      // 3. Search within the active tab — name, category, OR barcode (Phase 9)
+      // 3. Search within the active tab — name, name_tr, category, OR barcode
+      //    (Phase 9).  Türkçe-katlanmış: "badem yagi" artık "BADEM YAĞI"nı
+      //    bulur, "İ"/"I" farkı arama sonucunu değiştirmez.
       if (q) {
+        const fold = window.trFold || (s => (s || '').toLowerCase());
         data = data.filter(i =>
-          i.name.toLowerCase().includes(q) ||
-          (i.category || '').toLowerCase().includes(q) ||
-          (i.pkg_type || '').toLowerCase().includes(q) ||
-          (i.barcode  || '').toLowerCase().includes(q)
+          fold(i.name).includes(q) ||
+          fold(i.name_tr).includes(q) ||
+          fold(i.category).includes(q) ||
+          fold(i.pkg_type).includes(q) ||
+          (i.barcode || '').toLowerCase().includes(q)
         );
       }
 
@@ -1655,9 +1664,10 @@
         const cnt = document.getElementById('count-numune');
         if (cnt) cnt.textContent = rows.length;
         if (!rows.length) {
-          tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><i class="bi bi-eyedropper"></i><p>Henüz numune girişi yok. "Numune Girişi" ile ekleyin.</p></div></td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i class="bi bi-eyedropper"></i><p>Henüz numune girişi yok. "Numune Girişi" ile ekleyin.</p></div></td></tr>`;
           return;
         }
+        const canReceive = {{ 'true' if can('inventory','receive') else 'false' }};
         tbody.innerHTML = rows.map(r => `
           <tr>
             <td style="padding-left:1.1rem;font-weight:600;color:#1f2937;">${escHtml(r.item_name)}</td>
@@ -1666,21 +1676,48 @@
             <td style="text-align:right;font-weight:600;">${Number(r.quantity).toLocaleString('tr-TR',{maximumFractionDigits:4})} ${escHtml(r.unit || '')}</td>
             <td style="color:#6b7280;">${escHtml(r.expiry_date || '—')}</td>
             <td style="color:#6b7280;">${escHtml(r.created_at || '—')}</td>
+            <td>${canReceive ? `<button class="btn btn-sm btn-outline-secondary" onclick="convertSample(${r.inventory_id}, '${escHtml(r.item_name).replace(/'/g, "\\'")}', ${r.quantity}, '${escHtml(r.unit || '')}', '${escHtml(r.lot_number).replace(/'/g, "\\'")}')">Stoğa Çevir</button>` : ''}</td>
           </tr>`).join('');
-      } catch { tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><p>Numuneler yüklenemedi.</p></div></td></tr>`; }
+      } catch { tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><p>Numuneler yüklenemedi.</p></div></td></tr>`; }
+    }
+
+    async function convertSample(inventoryId, itemName, qty, unit, lot) {
+      const ok = confirm(`${qty} ${unit} "${itemName}" (Lot ${lot}) gerçek stoğa geçirilsin mi?\nBu işlem geri alınamaz — stok artışı ve giriş kaydı yazılır.`);
+      if (!ok) return;
+      try {
+        const res = await fetch(`/api/inventory/samples/${inventoryId}/convert`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { showToast(data.detail || 'Numune stoğa çevrilemedi.'); return; }
+        showToast(data.message, 'success');
+        renderSamples();
+        if (window.invalidateItemsCache) window.invalidateItemsCache();
+      } catch { showToast('Sunucuya bağlanılamadı.'); }
     }
 
     async function openSampleModal() {
       // Hammadde + tedarikçi dropdownlarını doldur
       const itemSel = document.getElementById('sampleItem');
       const suppSel = document.getElementById('sampleSupplier');
+      const searchEl = document.getElementById('sampleItemSearch');
       itemSel.innerHTML = '<option value="">— Hammadde seçiniz —</option>';
       suppSel.innerHTML = '<option value="">— Tedarikçi seçiniz —</option>';
+      searchEl.value = '';
       try {
         const items = window.fetchItems ? await window.fetchItems()
                     : await fetch('/api/items').then(r => r.json());
+        const fold = window.trFold || (s => (s || '').toLowerCase());
         window.trSortBy(items.filter(i => i.category !== 'Ambalaj' && i.category !== 'Bitmiş Ürün'), 'name')
-          .forEach(i => { const o = document.createElement('option'); o.value = i.id; o.textContent = i.name; o.dataset.unit = i.unit || ''; itemSel.appendChild(o); });
+          .forEach(i => {
+            const o = document.createElement('option');
+            o.value = i.id;
+            o.textContent = i.name_tr ? `${i.name}  ·  ${i.name_tr}` : i.name;
+            o.dataset.unit = i.unit || '';
+            // 24.08.2026: mevcut kart bulunamayınca stajyer aynı ürünü ikinci
+            // kez açtı.  Ad + Türkçe ad Türkçe-katlanmış olarak burada
+            // önceden hesaplanır, arama input'u bunu süzer.
+            o.dataset.fold = fold(i.name) + ' ' + fold(i.name_tr);
+            itemSel.appendChild(o);
+          });
       } catch {}
       try {
         const supps = await fetch('/api/suppliers').then(r => r.json());
@@ -1689,6 +1726,15 @@
       ['sampleLot','sampleQty','sampleExpiry'].forEach(id => document.getElementById(id).value = '');
       new bootstrap.Modal(document.getElementById('sampleEntryModal')).show();
     }
+
+    document.getElementById('sampleItemSearch')?.addEventListener('input', function () {
+      const fold = window.trFold || (s => (s || '').toLowerCase());
+      const q = fold(this.value);
+      document.querySelectorAll('#sampleItem option').forEach(o => {
+        if (!o.value) { o.style.display = ''; return; }   // placeholder hep görünür
+        o.style.display = (!q || (o.dataset.fold || '').includes(q)) ? '' : 'none';
+      });
+    });
 
     async function submitSample() {
       const itemId = parseInt(document.getElementById('sampleItem').value);
@@ -1923,6 +1969,9 @@
       const name = document.getElementById('itemName').value.trim();
       if (!name) { showToast('Ürün adı zorunludur.'); return; }
 
+      const unit = document.getElementById('itemUnit').value;
+      if (!unit) { showToast('Birim seçiniz.'); return; }
+
       // ── Variation validation (Bitmiş Ürün + variation toggle ON) ───────
       const isVariationCb = document.getElementById('isVariationToggle');
       const isVariation   = isVariationCb.checked && !isVariationCb.disabled;
@@ -1935,13 +1984,11 @@
         if (!variation_name) { showToast('Varyasyon adı zorunludur (örn: 200ml).'); return; }
       }
 
-      this.disabled = true;
-      this.textContent = 'Kaydediliyor…';
       const payload = {
         name,
         name_tr:        (document.getElementById('itemNameTr')?.value || '').trim() || null,
         category:       document.getElementById('itemCategory').value  || null,
-        unit:           document.getElementById('itemUnit').value,
+        unit,
         min_stock:      parseFloat(document.getElementById('itemMinStock').value)  || 0,
         // Finance-gated: input only exists in the DOM for SuperAdmin/Manager
         cost_price:     CAN_SEE_FINANCE
@@ -1954,11 +2001,28 @@
         language:       (document.getElementById('itemLanguage')?.value || '').trim() || null,
         supplier_id:    parseInt(document.getElementById('itemSupplierId')?.value || '') || null,
       };
+
+      this.disabled = true;
+      this.textContent = 'Kaydediliyor…';
       try {
         const url    = editingItemId ? `/api/items/${editingItemId}` : '/api/items';
         const method = editingItemId ? 'PUT' : 'POST';
-        const res  = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        const data = await res.json();
+        let res  = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        let data = await res.json();
+        // 24.08.2026 olayı: aynı ürün Türkçe-katlanmış farklı yazımla ikinci
+        // kez açılabiliyordu (BADEM YAĞI / BADEM YAGI).  Sunucu artık
+        // çakışmayı 409 ile bildiriyor — kullanıcı onaylarsa force ile devam.
+        if (res.status === 409 && data.existing) {
+          const ex = data.existing;
+          const ok = confirm(
+            `Aynı isimde ürün zaten var: "${ex.name}" (${ex.unit}, stok ${ex.current_stock}).\n` +
+            `Yine de yeni bir kart oluşturulsun mu?`
+          );
+          if (!ok) { return; }
+          res  = await fetch(url, { method, headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ ...payload, force: true }) });
+          data = await res.json();
+        }
         if (!res.ok) { showToast(data.detail || 'Kayıt başarısız.'); return; }
         showToast(editingItemId ? 'Ürün güncellendi.' : 'Ürün başarıyla eklendi.', 'success');
         bootstrap.Modal.getInstance(document.getElementById('addItemModal')).hide();

@@ -393,6 +393,7 @@ def _plan_lot_allocation(db, item, gross_qty, chosen_inv_id):
             Inventory.item_id == item.id,
             Inventory.status == "APPROVED",
             Inventory.quantity > 0,
+            Inventory.is_sample == False,   # noqa: E712 — numune üretimde KULLANILAMAZ (2026-08-24)
         )
         .order_by(Inventory.created_at.asc(), Inventory.id.asc())
         .with_for_update()

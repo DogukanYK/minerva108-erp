@@ -493,7 +493,32 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
 - **Samples (numune)**: `Inventory.is_sample=True` marks a lot received from an
   *alternate* supplier for an existing raw material (entered from the Items page
   "Numune" tab → `/api/inventory/receive` with `is_sample`). Sample lots never merge
-  with normal lots (upsert key includes `is_sample`) and enter usable stock.
+  with normal lots (upsert key includes `is_sample`, but NOT `supplier_id` — a second
+  sample on the same lot number merges into the first, supplier is COALESCE-only).
+  **Samples are NOT stock** (2026-08-24 fix): `current_stock` is untouched and no
+  `Transaction` is written on sample receive — only the `Inventory` row + an
+  `admin_audit_log` entry. Production's lot pool (`_plan_lot_allocation` in
+  `routers/production.py`, `/api/inventory/available-lots`) excludes
+  `is_sample=True` lots entirely, so a sample can never be silently consumed by
+  FIFO or picked by id. To promote a sample into real stock, use
+  `POST /api/inventory/samples/{id}/convert` — that's the ONE place a sample
+  Inventory row gets an `Input` Transaction + `current_stock` bump; it flips
+  `is_sample=False` (or merges into a same-lot normal row if one exists).
+  `receive_stock` also gates on `require_permission("inventory","receive")` +
+  `active_domain` + `with_for_update()` (it originally had none of the three).
+  **24.08.2026 incident**: an intern entered 47 samples through this tab in one
+  session; because samples counted as stock, ~40 raw-material cards inflated
+  (units sometimes wrong too — e.g. +50 kg on an item with 5 kg real stock),
+  and because the item picker was a plain `<select>` with no search and the
+  items list search didn't fold Turkish characters or check `name_tr`, the
+  intern couldn't find several existing cards and created 8 duplicates via
+  "Yeni Ürün Ekle" (whose unit `<select>` defaulted to 'adet' — now the select
+  has no default option and empty unit is a 422). Fixed with a repair script
+  (`scripts/repair_numune_20260824.py`, compensating `Adjustment` transactions
+  per `scripts/merge_duplicate_products.py`'s pattern — never delete
+  Transaction rows, see the ledger-invariant note below) plus `Item.name`/
+  `name_tr` duplicate-guard on create/update (`_find_name_conflict`, Turkish-
+  folded via `core.supplier_prices.normalize`, 409 + `force:true` override).
 - **Lot/supplier-aware consumption**: production decrements `Item.current_stock`
   (authoritative gate) **and** specific Inventory lots. Per raw-material ingredient the
   user may pick a lot via `ingredient_lot_choices {item_id: inventory_id}` (production

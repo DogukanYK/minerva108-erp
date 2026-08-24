@@ -698,10 +698,21 @@
             üretim çıktıları doğrudan stoğa yazıldığı için bu beklenen bir durum olabilir.</div>`;
         }
 
+        // Numune stoğa dahil DEĞİL (2026-08-24 sonrası) — ayrı satır olarak
+        // gösterilir, yoksa numunesi olan her üründe "stok ile lot toplamı
+        // farklı" uyarısı kalıcı olarak basardı.
+        const sampleLine = (d.sample_total > 0.001)
+          ? `<p style="margin:0 0 0.85rem;color:#6b7280;font-size:0.85rem;">
+               Numune toplamı: <b style="color:#4338ca;">${fmt(d.sample_total)} ${escHtml(d.unit)}</b>
+               <span style="color:#9ca3af;"> — stok toplamına dahil değil</span>
+             </p>`
+          : '';
+
         body.innerHTML = `
           <p style="margin:0 0 0.85rem;color:#6b7280;font-size:0.85rem;">
             Güncel toplam stok: <b style="color:var(--navy);">${fmt(d.current_stock)} ${escHtml(d.unit)}</b>
           </p>
+          ${sampleLine}
           <p style="font-size:0.72rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#9ca3af;margin:0 0 0.5rem;">Lokasyon Kırılımı</p>
           ${locCards}
           ${lotTable}

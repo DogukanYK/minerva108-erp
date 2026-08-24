@@ -10,7 +10,7 @@ and Excel imports (both classic templated import + smart auto-detect import).
 """
 import re
 
-from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, Field
@@ -40,13 +40,15 @@ def _norm_language(val: Optional[str]) -> Optional[str]:
 from database import (
     to_tr,
     get_db, Item, Supplier, Inventory, Transaction,
-    Recipe, RecipeIngredient,
+    Recipe, RecipeIngredient, RetentionSample,
 )
 from core.auth import get_current_user
 from core.permissions import _can_see_finance, require_permission
 from core.notifications import notify_low_stock
 from core.undo import record as record_undoable
 from core.domain import active_domain
+from core.audit import log_admin_event
+from core.supplier_prices import normalize as _tr_fold
 
 router = APIRouter(prefix="/api", tags=["inventory"])
 
@@ -57,7 +59,10 @@ class ItemCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=150)
     name_tr: Optional[str] = Field(None, max_length=150)   # Türkçe ad (belge dili + çift-dilli arama)
     category: Optional[str] = Field(None, max_length=50)
-    unit: str = Field("adet", max_length=20)
+    # Varsayılan YOK — 24.08.2026 olayında modal 'adet'i ön-seçili tutuyordu,
+    # kullanıcı dokunmadan hammadde 'adet' birimiyle açılıyordu (bkz. incident
+    # notu CLAUDE.md). Birim artık AÇIKÇA seçilmeli.
+    unit: str = Field(..., min_length=1, max_length=20)
     min_stock:      Optional[float] = 0.0
     cost_price:     Optional[float] = 0.0
     parent_id:      Optional[int]   = None
@@ -68,6 +73,9 @@ class ItemCreateRequest(BaseModel):
     language:       Optional[str]   = Field(None, max_length=8)
     # Varsayılan tedarikçi — mal kabulde bu ürün seçilince oto-doldurulur
     supplier_id:    Optional[int]   = None
+    # Ad-çakışması uyarısı görüldükten sonra kullanıcı yine de yeni kart
+    # açmak isterse True gönderilir (bkz. _find_name_conflict).
+    force:          bool = False
 
 
 class BulkDeleteRequest(BaseModel):
@@ -95,7 +103,9 @@ class StockReceiveRequest(BaseModel):
     quantity: float
     location: Optional[str] = Field(None, max_length=100)
     # Numune kabulü — alternatif tedarikçiden gelen numune partisi.  Ayrı lot
-    # olarak işaretlenir, normal lotla birleşmez; üretimde tedarikçi seçilebilir.
+    # olarak işaretlenir, normal lotla birleşmez, ÜRETİMDE KULLANILAMAZ ve
+    # current_stock'a GİRMEZ (bkz. receive_stock).  Stoğa geçmek için
+    # POST /inventory/samples/{id}/convert kullanılır.
     is_sample: Optional[bool] = False
 
 
@@ -327,12 +337,54 @@ def _validate_variation(
     return None
 
 
+def _find_name_conflict(db: Session, domain: str, name: str,
+                        name_tr: Optional[str], exclude_id: Optional[int] = None):
+    """Türkçe-katlanmış ad çakışması ara — 24.08.2026 olayının kapısı.
+
+    Stajyer mevcut "BADEM YAĞI" kartını bulamayıp "BADEM YAGI" adıyla yeni
+    kart açtı (Item.name'de unique kısıt yok, eski arama da Türkçe harfleri
+    katlamıyordu).  Burada `core.supplier_prices.normalize` (İ/ı/ğ/ş/ö/ü/ç
+    katlama + boşluk normalize) ile YENİ adın hem mevcut `name` hem
+    `name_tr`'ye karşı çapraz kontrolü yapılır.  Bulunca engellemez —
+    çağıran `force=True` ile geçmeyi seçebilir.
+    """
+    new_key = _tr_fold(name)
+    new_tr_key = _tr_fold(name_tr) if name_tr else ""
+    if not new_key and not new_tr_key:
+        return None
+    q = db.query(Item).filter(Item.domain == domain, Item.is_active == True)  # noqa: E712
+    if exclude_id:
+        q = q.filter(Item.id != exclude_id)
+    for it in q.all():
+        existing_key = _tr_fold(it.name)
+        existing_tr_key = _tr_fold(it.name_tr) if it.name_tr else ""
+        if new_key and new_key in (existing_key, existing_tr_key):
+            return it
+        if new_tr_key and new_tr_key in (existing_key, existing_tr_key):
+            return it
+    return None
+
+
+def _conflict_payload(it: Item) -> dict:
+    return {"id": it.id, "name": it.name, "name_tr": it.name_tr or "",
+            "category": it.category or "", "unit": it.unit or "",
+            "current_stock": round(float(it.current_stock or 0), 4)}
+
+
 @router.post("/items", status_code=201)
 def create_item(data: ItemCreateRequest, db: Session = Depends(get_db),
                 _: dict = Depends(require_permission("items", "create")),
                 domain: str = Depends(active_domain)):
     err = _validate_variation(db, data.parent_id, data.variation_name)
     if err: return err
+
+    if not data.force:
+        conflict = _find_name_conflict(db, domain, data.name, data.name_tr)
+        if conflict:
+            return JSONResponse(status_code=409, content={
+                "detail": f"Aynı isimde ürün zaten kayıtlı: {conflict.name}",
+                "existing": _conflict_payload(conflict),
+            })
 
     pkg = (data.pkg_type.strip() if data.pkg_type and data.pkg_type.strip() else None)
     is_label = (data.category == "Ambalaj" and pkg == "etiket")
@@ -586,10 +638,22 @@ def update_item(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("items", "edit")),
+    domain: str = Depends(active_domain),
 ):
     item = db.query(Item).filter(Item.id == item_id).first()
     if not item:
         return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+
+    if not data.force and _tr_fold(data.name) != _tr_fold(item.name):
+        # Yalnız ad fiilen değişiyorsa kontrol et — aksi hâlde ürünün kendi
+        # adı kendine "çakışma" olarak dönerdi.
+        conflict = _find_name_conflict(db, domain, data.name, data.name_tr,
+                                       exclude_id=item_id)
+        if conflict:
+            return JSONResponse(status_code=409, content={
+                "detail": f"Aynı isimde ürün zaten kayıtlı: {conflict.name}",
+                "existing": _conflict_payload(conflict),
+            })
 
     # If converting to a variation, ensure this item itself has no children (would orphan them)
     if data.parent_id is not None and item.parent_id is None:
@@ -840,15 +904,19 @@ def list_inventory(db: Session = Depends(get_db), domain: str = Depends(active_d
 @router.post("/inventory/receive", status_code=201)
 def receive_stock(
     data: StockReceiveRequest,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("inventory", "receive")),
+    domain: str = Depends(active_domain),
 ):
     if data.quantity <= 0:
         return JSONResponse(status_code=400, content={"detail": "Miktar sıfırdan büyük olmalıdır."})
 
-    item = db.query(Item).filter(Item.id == data.item_id).first()
+    item = db.query(Item).filter(Item.id == data.item_id).with_for_update().first()
     if not item:
         return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+    if (item.domain or "cosmetics") != domain:
+        return JSONResponse(status_code=400, content={"detail": "Bu ürün aktif panelde değil."})
 
     actor = current_user.get("full_name") or current_user.get("username") or "—"
 
@@ -860,25 +928,28 @@ def receive_stock(
     try:
         # ── Upsert Logic (4.7) ──────────────────────────────────────────────
         # Numune lotları normal lotlarla BİRLEŞMEZ — is_sample da eşleşme
-        # anahtarına dahil (aynı lot no farklı tedarikçi/numune ayrı kalır).
-        existing = db.query(Inventory).filter(
-            Inventory.item_id == data.item_id,
-            Inventory.lot_number == data.lot_number,
-            Inventory.is_sample == is_sample,
-        ).first()
+        # anahtarına dahil.  DİKKAT: supplier_id anahtara DAHİL DEĞİL — aynı
+        # lot no farklı tedarikçiden ikinci kez gelirse bu satıra birleşir
+        # (ilk tedarikçi COALESCE ile korunur, ikincisi sessizce atlanır).
+        existing = (db.query(Inventory)
+                   .filter(Inventory.item_id == data.item_id,
+                           Inventory.lot_number == data.lot_number,
+                           Inventory.is_sample == is_sample)
+                   .with_for_update().first())
 
         new_inventory: Optional[Inventory] = None
         stock_before = float(item.current_stock or 0.0)
 
         if existing:
-            # Miktarı topla; location/supplier_id sadece yeni değer varsa güncelle (COALESCE)
+            # Miktarı topla; location her zaman güncellenir, supplier_id/expiry
+            # yalnız BOŞSA doldurulur (COALESCE — mevcut tedarikçi ezilmez).
             existing.quantity   += data.quantity
             existing.updated_at  = __import__("datetime").datetime.utcnow()
             if location:
                 existing.location = location
-            if data.supplier_id is not None:
+            if data.supplier_id is not None and existing.supplier_id is None:
                 existing.supplier_id = data.supplier_id
-            if data.expiry_date:
+            if data.expiry_date and not existing.expiry_date:
                 existing.expiry_date = data.expiry_date
             # received_by sadece ilk kabul edende kalır (audit immutability)
         else:
@@ -897,14 +968,31 @@ def receive_stock(
             )
             db.add(new_inventory)
 
-        # ── Transaction kaydı (2.4) ─────────────────────────────────────────
-        kabul_label = "Numune kabul" if is_sample else "Mal kabul"
+        if is_sample:
+            # ── Numune STOK DEĞİLDİR (2026-08-24 olayı) ─────────────────────
+            # Eskiden numune de current_stock'a eklenip Input Transaction'ı
+            # yazıyordu — kritik-stok uyarısını maskeledi, üretim FIFO'suna
+            # karışabildi, Shopify'a satılabilir stok diye gitti.  Artık
+            # Inventory satırı (numune envanteri) yazılır ama STOK ve DEFTER'e
+            # dokunulmaz; denetim izi audit log'dadır.  Gerçek stoğa geçmek
+            # için POST /inventory/samples/{id}/convert kullanılır.
+            db.flush()
+            log_admin_event(db, request, actor=current_user, action="inventory.sample_receive",
+                            target_type="inventory", target_id=(existing or new_inventory).id,
+                            target_name=item.name,
+                            details={"lot": data.lot_number, "quantity": data.quantity,
+                                     "unit": item.unit, "supplier_id": data.supplier_id})
+            db.commit()
+            return {"message": f"Numune kabul başarılı. {data.quantity} {item.unit} "
+                               f"numune kaydedildi (stok toplamına dahil edilmez)."}
+
+        # ── Transaction kaydı (2.4) — yalnız GERÇEK stok girişi ─────────────
         tx = Transaction(
             item_id=data.item_id,
             lot_number=data.lot_number,
             transaction_type="Input",
             quantity=data.quantity,
-            notes=f"{kabul_label} — Lot: {data.lot_number}" + (f", Konum: {location}" if location else ""),
+            notes=f"Mal kabul — Lot: {data.lot_number}" + (f", Konum: {location}" if location else ""),
             performed_by=actor,                          # Audit trail
         )
         db.add(tx)
@@ -944,10 +1032,7 @@ def receive_stock(
                 pass
 
         db.commit()
-        msg = (f"Numune kabul başarılı. {data.quantity} {item.unit} numune stoğa eklendi."
-               if is_sample else
-               f"Mal kabul başarılı. {data.quantity} {item.unit} stoka eklendi.")
-        return {"message": msg}
+        return {"message": f"Mal kabul başarılı. {data.quantity} {item.unit} stoka eklendi."}
 
     except Exception:
         db.rollback()
@@ -1144,6 +1229,12 @@ def inventory_by_item(
             "created_at":    to_tr(r.created_at).strftime("%d.%m.%Y %H:%M") if r.created_at else "",
         })
 
+    # lot_total STOK karşılığı — numune satırları hariç (numune current_stock'a
+    # hiç girmiyor, dahil edilirse her numunesi olan üründe kalıcı "stok ile
+    # lot toplamı uyuşmuyor" uyarısı basardı).  sample_total ayrı gösterilir.
+    non_sample_total = round(sum(l["quantity"] for l in lots if not l["is_sample"]), 4)
+    sample_total = round(sum(l["quantity"] for l in lots if l["is_sample"]), 4)
+
     return {
         "item_id":       item.id,
         "item_name":     item.name,
@@ -1152,7 +1243,8 @@ def inventory_by_item(
         # Item.current_stock source-of-truth; lot toplamı bundan sapabilir
         # (ör. üretim çıktısı doğrudan current_stock'a yazılır).
         "current_stock": round(float(item.current_stock or 0), 4),
-        "lot_total":     round(sum(l["quantity"] for l in lots), 4),
+        "lot_total":     non_sample_total,
+        "sample_total":  sample_total,
         "by_location":   [
             {"location": loc, "total": tot}
             for loc, tot in sorted(by_location.items(), key=lambda x: -x[1])
@@ -1191,6 +1283,82 @@ def list_samples(db: Session = Depends(get_db), _: dict = Depends(get_current_us
     ]
 
 
+@router.post("/inventory/samples/{inventory_id}/convert", status_code=200)
+def convert_sample_to_stock(
+    inventory_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("inventory", "receive")),
+    domain: str = Depends(active_domain),
+):
+    """Numuneyi GERÇEK stoğa çevirir — lab değerlendirmesi olumlu geldiğinde.
+
+    Numune artık current_stock'a hiç girmiyor (2026-08-24 olayı sonrası).
+    Bir numune üretimde kullanılabilir hâle gelmesi gerekiyorsa (yeterli
+    miktar geldi, tedarikçi onaylandı) bu uç onu deftere işler: tam satır
+    (kısmi bölme kapsam dışı) `is_sample=False`'a döner ve TAM BURADA
+    `Transaction(Input)` + `current_stock` artışı yazılır — böylece snapshot/
+    trace/aylık rapor hep tutarlı kalır (numune hiçbir aşamada iki kere
+    sayılmaz).
+    """
+    row = (db.query(Inventory).filter(Inventory.id == inventory_id)
+          .with_for_update().first())
+    if not row or not row.is_sample:
+        return JSONResponse(status_code=404, content={"detail": "Numune kaydı bulunamadı."})
+    if row.domain != domain:
+        return JSONResponse(status_code=404, content={"detail": "Numune kaydı bulunamadı."})
+
+    item = db.query(Item).filter(Item.id == row.item_id).with_for_update().first()
+    if not item:
+        return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+
+    # Şahit numune dolabı bu lotu izlemiyor olmalı — production'daki -S
+    # lotları ayrı bir akış (routers/production.py); burada sadece emin ol.
+    if db.query(RetentionSample.id).filter(RetentionSample.inventory_id == row.id).first():
+        return JSONResponse(status_code=400, content={
+            "detail": "Bu kayıt şahit numune dolabına bağlı, buradan çevrilemez."})
+
+    qty = float(row.quantity or 0)
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
+
+    target = (db.query(Inventory)
+             .filter(Inventory.item_id == row.item_id,
+                     Inventory.lot_number == row.lot_number,
+                     Inventory.is_sample == False)                       # noqa: E712
+             .with_for_update().first())
+    if target:
+        target.quantity += qty
+        target.updated_at = __import__("datetime").datetime.utcnow()
+        db.delete(row)
+        lot_row_msg = f"lot {row.lot_number} — mevcut normal lotla birleşti"
+    else:
+        row.is_sample = False
+        if row.location == "Numune":
+            row.location = None
+        lot_row_msg = f"lot {row.lot_number}"
+
+    tx = Transaction(
+        item_id=item.id, lot_number=row.lot_number, transaction_type="Input",
+        quantity=qty,
+        notes=f"Numune stoğa çevrildi — Lot: {row.lot_number}",
+        performed_by=actor,
+    )
+    db.add(tx)
+    item.current_stock = round((item.current_stock or 0.0) + qty, 6)
+
+    try:
+        db.flush()
+        log_admin_event(db, request, actor=current_user, action="inventory.sample_convert",
+                        target_type="inventory", target_id=inventory_id, target_name=item.name,
+                        details={"lot": row.lot_number, "quantity": qty})
+        db.commit()
+    except Exception:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"detail": "Numune stoğa çevrilemedi."})
+
+    return {"message": f"Numune stoğa çevrildi — {qty} {item.unit or ''} {item.name} ({lot_row_msg})."}
+
+
 class _AvailableLotsRequest(BaseModel):
     item_ids: List[int] = Field(..., max_length=300)
 
@@ -1204,9 +1372,13 @@ def available_lots(
 ):
     """
     Üretim ekranı için: verilen hammaddelerin TÜKETİLEBİLİR lotları
-    (APPROVED + miktar>0), tedarikçi + numune bilgisiyle, FIFO sırasında
+    (APPROVED + miktar>0 + numune DEĞİL), tedarikçi bilgisiyle, FIFO sırasında
     (en eski önce).  `{item_id: [ {inventory_id, lot_number, supplier_name,
     quantity, is_sample, location, expiry_date}, … ]}` döner.
+
+    Numune lotları hariç (2026-08-24 olayı) — numune stok değildir, üretimde
+    kullanılamaz.  `is_sample` alanı geriye dönük uyum için hâlâ dönüyor,
+    artık her zaman `false`.
     """
     if not data.item_ids:
         return {}
@@ -1217,6 +1389,7 @@ def available_lots(
             Inventory.item_id.in_(data.item_ids),
             Inventory.status == "APPROVED",
             Inventory.quantity > 0,
+            Inventory.is_sample == False,   # noqa: E712
             Inventory.domain == domain,
         )
         .order_by(Inventory.created_at.asc(), Inventory.id.asc())

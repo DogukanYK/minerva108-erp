@@ -39,4 +39,24 @@
   window.trSortBy = function (arr, fieldName) {
     return window.trSort(arr, function (x) { return x[fieldName]; });
   };
+
+  // ── Türkçe-katlanmış arama anahtarı ──────────────────────────────────────
+  // `core/supplier_prices.py::normalize`'ın (_TR_FOLD tablosu) BİREBİR JS
+  // karşılığı — sunucu ile istemci aynı ürünü aynı anahtarla bulsun diye.
+  // Sıradan `.toLowerCase()` "İ"yi katlamaz (U+0130 → "i̇", noktalı bileşik
+  // karakter kalır) — 24.08.2026'da stajyerin "BADEM YAGI" araması "BADEM
+  // YAĞI" kartını bulamamasının sebeplerinden biri buydu (diğeri: arama
+  // yalnız `name` alanına bakıyordu, `name_tr`'ye değil).
+  const _TR_FOLD_MAP = {
+    'ç': 'c', 'Ç': 'c', 'ğ': 'g', 'Ğ': 'g', 'ı': 'i', 'İ': 'i',
+    'ö': 'o', 'Ö': 'o', 'ş': 's', 'Ş': 's', 'ü': 'u', 'Ü': 'u', 'I': 'i',
+  };
+  window.trFold = function (s) {
+    if (s === null || s === undefined) return '';
+    let out = '';
+    for (const ch of String(s)) {
+      out += _TR_FOLD_MAP[ch] !== undefined ? _TR_FOLD_MAP[ch] : ch.toLowerCase();
+    }
+    return out.split(/\s+/).filter(Boolean).join(' ');
+  };
 })();
