@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks, Reque
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, Field
+from datetime import datetime
 from typing import Optional, List
 
 
@@ -39,7 +40,7 @@ def _norm_language(val: Optional[str]) -> Optional[str]:
 
 from database import (
     to_tr,
-    get_db, Item, Supplier, Inventory, Transaction,
+    get_db, DuplicateItemDecision, Item, Supplier, Inventory, Transaction,
     Recipe, RecipeIngredient, RetentionSample,
 )
 from core.auth import get_current_user
@@ -412,6 +413,106 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db),
     db.commit()
     db.refresh(item)
     return {"id": item.id, "message": "Ürün başarıyla eklendi."}
+
+
+# ─── Kopya kartı kararları — lab popup'ı ────────────────────────────────────
+# 24.08.2026 numune olayı taramasında bulunan kopya hammadde kümeleri.  Hangi
+# kartların aynı ürün olduğuna LAB karar verir; "birleştir" kararı sunucuda
+# core/item_merge.merge_items ile anında uygulanır (Adjustment çifti + FK
+# taşıma + pasifleştirme — defter kuralları o modülün docstring'inde).
+
+class DupDecisionBody(BaseModel):
+    action: str = Field(..., max_length=10)              # merge | keep
+    target_item_id: Optional[int] = None                 # merge için zorunlu
+
+
+@router.get("/items/dup-decisions")
+def list_dup_decisions(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("items", "edit")),
+):
+    from core.item_merge import pending_clusters
+    clusters = pending_clusters(db)
+    db.commit()          # pending_clusters tek-kartlı kümeleri kapatmış olabilir
+    return {"clusters": clusters, "count": len(clusters)}
+
+
+@router.post("/items/dup-decisions/{decision_id}")
+def decide_duplicate(
+    decision_id: int,
+    data: DupDecisionBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("items", "edit")),
+):
+    from core.item_merge import MergeError, merge_items
+    import json as _json
+
+    row = (db.query(DuplicateItemDecision)
+           .filter(DuplicateItemDecision.id == decision_id,
+                   DuplicateItemDecision.status == "pending")
+           .with_for_update().first())
+    if not row:
+        return JSONResponse(status_code=404,
+                            content={"detail": "Karar kaydı bulunamadı ya da kapanmış."})
+    actor = (current_user or {}).get("full_name") or (current_user or {}).get("username") or "sistem"
+
+    if data.action == "keep":
+        row.status = "kept"
+        row.decided_by = actor
+        row.decided_at = datetime.utcnow()
+        row.result_note = "Lab kararı: farklı ürünler, kartlar ayrı kalacak."
+        db.commit()
+        log_admin_event(db, request, actor=current_user, action="items.dup_keep",
+                        target_type="dup_decision", target_id=row.id,
+                        target_name=row.title, details={"karar": "ayrı kalsın"})
+        return {"message": f"«{row.title}» — kartlar ayrı bırakıldı."}
+
+    if data.action != "merge":
+        return JSONResponse(status_code=400, content={"detail": "Geçersiz karar."})
+    if not data.target_item_id:
+        return JSONResponse(status_code=400,
+                            content={"detail": "Birleştirme için kalacak kartı seçin."})
+    try:
+        ids = [int(x) for x in _json.loads(row.item_ids)]
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=500, content={"detail": "Küme verisi bozuk."})
+    if data.target_item_id not in ids:
+        return JSONResponse(status_code=400,
+                            content={"detail": "Hedef kart bu kümeye ait değil."})
+
+    losers = [i for i in ids if i != data.target_item_id
+              and db.query(Item.id).filter(Item.id == i,
+                                           Item.is_active == True).first()]  # noqa: E712
+    summaries = []
+    try:
+        for loser_id in losers:
+            summaries.append(merge_items(db, loser_id, data.target_item_id, actor))
+        row.status = "merged"
+        row.target_item_id = data.target_item_id
+        row.decided_by = actor
+        row.decided_at = datetime.utcnow()
+        row.result_note = _json.dumps(summaries, ensure_ascii=False)[:2000]
+        db.commit()
+    except MergeError as exc:
+        db.rollback()
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+    except Exception:
+        db.rollback()
+        return JSONResponse(status_code=500,
+                            content={"detail": "Birleştirme sırasında hata — hiçbir şey değişmedi."})
+
+    log_admin_event(db, request, actor=current_user, action="items.dup_merge",
+                    target_type="dup_decision", target_id=row.id,
+                    target_name=row.title,
+                    details={"hedef": data.target_item_id,
+                             "birlesen": [s["loser_id"] for s in summaries],
+                             "tasinan_stok": [f'{s["moved_stock"]:g} {s["unit"]}'
+                                              for s in summaries]})
+    moved = sum(s["moved_stock"] for s in summaries)
+    unit = summaries[0]["unit"] if summaries else ""
+    return {"message": f"«{row.title}» birleştirildi — {len(summaries)} kart kapandı, "
+                       f"{moved:g} {unit} stok tek karta taşındı."}
 
 
 @router.post("/items/import-names")

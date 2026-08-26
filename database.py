@@ -779,6 +779,30 @@ class StockSnapshot(Base):
     captured_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class DuplicateItemDecision(Base):
+    """Kopya hammadde kartı karar kaydı — 24.08.2026 numune olayı taramasından.
+
+    Aynı fiziksel malzemenin birden fazla kartla yaşadığı tespit edildi (stok
+    bölünüyor, reçeteler farklı kartlara bakıyor).  Hangi kartların aynı ürün
+    olduğuna patron değil LAB karar verir — Ürünler sayfasındaki popup bu
+    tablodan beslenir.  'merge' kararı sunucuda core/item_merge.merge_items
+    ile ANINDA uygulanır (Adjustment çifti + FK taşıma + pasifleştirme),
+    'keep' kararı kümeyi kapatır ve bir daha sorulmaz.
+    """
+    __tablename__ = "duplicate_item_decisions"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    cluster_key    = Column(String(80), unique=True, nullable=False, index=True)
+    title          = Column(String(150), nullable=False)     # popup başlığı
+    item_ids       = Column(Text, nullable=False)            # JSON int listesi
+    status         = Column(String(20), default="pending", nullable=False, index=True)  # pending|merged|kept
+    target_item_id = Column(Integer, ForeignKey("items.id"), nullable=True)  # merge hedefi
+    decided_by     = Column(String(80), nullable=True)
+    decided_at     = Column(DateTime, nullable=True)
+    result_note    = Column(Text, nullable=True)             # birleştirme özeti / sebep
+    created_at     = Column(DateTime, default=datetime.utcnow)
+
+
 class SystemEvent(Base):
     """
     Sistem olay defteri — şimdilik yalnızca uygulama açılışlarını yazar.

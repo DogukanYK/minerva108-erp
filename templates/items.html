@@ -698,6 +698,12 @@
           <i class="bi bi-plus-lg"></i> Yeni Ürün Ekle
         </button>
         {% endif %}
+        {% if can('items', 'edit') %}
+        <button class="btn-outline-navy" id="dupBtn" style="display:none;" onclick="dupOpen()">
+          <i class="bi bi-exclamation-diamond"></i> Kopya Kararları
+          <span class="tab-count" id="dupCount">0</span>
+        </button>
+        {% endif %}
         {% if can('items', 'import') %}
         <button class="btn-excel" data-bs-toggle="modal" data-bs-target="#importModal">
           <i class="bi bi-file-earmark-excel"></i> Excel'den İçe Aktar
@@ -897,6 +903,39 @@
   </div>
 
   <!-- ════ MODAL: YENİ ÜRÜN EKLE ════ -->
+  <!-- Kopya kartı karar modalı — hangi kartların aynı ürün olduğuna LAB karar verir -->
+  <div class="modal fade" id="dupModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Kopya ürün kartı kararı <span class="tab-count" id="dupStep"></span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted" style="font-size:0.86rem;">
+            Aşağıdaki kartlar <b>aynı fiziksel malzeme</b> olabilir — sistemde ayrı ayrı
+            kayıtlılar, bu yüzden stok bölünüyor ve üretim "yetmez" diyebiliyor.
+            Aynı ürünlerse <b>hangisi kalsın</b> seçin (diğerlerinin stoğu ve reçeteleri
+            ona taşınır); gerçekten farklı ürünlerse "Farklı ürünler" deyin.
+          </p>
+          <h6 id="dupTitle" class="mb-2"></h6>
+          <div id="dupCards"></div>
+        </div>
+        <div class="modal-footer" style="justify-content:space-between;">
+          <button type="button" class="btn-outline-navy" onclick="dupDecide('keep')">
+            Farklı ürünler — ayrı kalsın
+          </button>
+          <div>
+            <button type="button" class="btn-outline-navy" data-bs-dismiss="modal">Sonra</button>
+            <button type="button" class="btn-primary-gold" id="dupMergeBtn" onclick="dupDecide('merge')" disabled>
+              <i class="bi bi-sign-merge-left"></i> Seçilene Birleştir
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal fade" id="addItemModal" tabindex="-1" aria-labelledby="addItemModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
@@ -2343,7 +2382,91 @@
       } catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
     });
 
+    /* ── Kopya kartı kararları — lab popup'ı ──
+       Kümeler sunucudan gelir (duplicate_item_decisions); "birleştir" kararı
+       sunucuda anında uygulanır.  Sayfa açılışında bekleyen küme varsa modal
+       kendiliğinden açılır (oturum başına bir kez — sessionStorage). */
+    let _dupClusters = [], _dupIdx = 0;
+    async function loadDupDecisions(autoOpen) {
+      if (!window.can || !window.can('items', 'edit')) return;
+      try {
+        const res = await fetch('/api/items/dup-decisions');
+        if (!res.ok) return;
+        const d = await res.json();
+        _dupClusters = d.clusters || [];
+        const btn = document.getElementById('dupBtn');
+        const cnt = document.getElementById('dupCount');
+        if (btn) btn.style.display = _dupClusters.length ? '' : 'none';
+        if (cnt) cnt.textContent = _dupClusters.length;
+        if (autoOpen && _dupClusters.length && !sessionStorage.getItem('dupSeen')) {
+          sessionStorage.setItem('dupSeen', '1');
+          dupOpen();
+        }
+      } catch { /* sessiz — popup kritik değil */ }
+    }
+    function dupOpen() {
+      if (!_dupClusters.length) { showToast('Bekleyen kopya kararı yok.', 'success'); return; }
+      _dupIdx = 0;
+      dupRender();
+      new bootstrap.Modal(document.getElementById('dupModal')).show();
+    }
+    function dupRender() {
+      const c = _dupClusters[_dupIdx];
+      if (!c) {
+        const m = bootstrap.Modal.getInstance(document.getElementById('dupModal'));
+        if (m) m.hide();
+        loadDupDecisions(false);
+        loadItems();
+        return;
+      }
+      document.getElementById('dupStep').textContent = `${_dupIdx + 1} / ${_dupClusters.length}`;
+      document.getElementById('dupTitle').textContent = c.title;
+      document.getElementById('dupMergeBtn').disabled = true;
+      document.getElementById('dupCards').innerHTML = c.cards.map(k => `
+        <label class="d-flex align-items-start gap-2 border rounded p-2 mb-2" style="cursor:pointer;">
+          <input type="radio" name="dupPick" value="${k.id}" style="margin-top:0.3rem;"
+                 onchange="document.getElementById('dupMergeBtn').disabled = false;" />
+          <span>
+            <b>${escHtml(k.name)}</b>
+            ${k.name_tr ? `<span class="text-muted"> · ${escHtml(k.name_tr)}</span>` : ''}
+            <br/>
+            <span class="text-muted" style="font-size:0.82rem;">
+              Stok: <b>${k.current_stock}</b> ${escHtml(k.unit)} ·
+              ${k.recipe_count} reçetede · ${k.tx_count} hareket
+              ${k.last_tx ? ` · son: ${k.last_tx}` : ''} · açıldı: ${k.created}
+            </span>
+          </span>
+        </label>`).join('');
+    }
+    async function dupDecide(action) {
+      const c = _dupClusters[_dupIdx];
+      if (!c) return;
+      const body = { action };
+      if (action === 'merge') {
+        const pick = document.querySelector('input[name="dupPick"]:checked');
+        if (!pick) { showToast('Önce kalacak kartı seçin.'); return; }
+        body.target_item_id = parseInt(pick.value, 10);
+        const others = c.cards.filter(k => k.id !== body.target_item_id);
+        const moved = others.map(k => `${k.name} (${k.current_stock} ${k.unit})`).join(', ');
+        if (!confirm(`${moved} → seçtiğiniz karta taşınacak ve kapanacak. Emin misiniz?`)) return;
+      }
+      const mergeBtn = document.getElementById('dupMergeBtn');
+      mergeBtn.disabled = true;
+      try {
+        const res = await fetch(`/api/items/dup-decisions/${c.id}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const d = await res.json();
+        if (!res.ok) { showToast(d.detail || 'Karar kaydedilemedi.'); return; }
+        showToast(d.message, 'success');
+        _dupClusters.splice(_dupIdx, 1);
+        dupRender();
+      } catch { showToast('Bağlantı hatası — karar kaydedilemedi.'); }
+    }
+
     loadItems();
+    loadDupDecisions(true);
   </script>
 
 </body>
