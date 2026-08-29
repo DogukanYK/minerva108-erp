@@ -52,8 +52,9 @@ from database import get_db
 from core.audit import log_admin_event
 from core.limiter import limiter
 from core.permissions import require_permission
-from core.product_images import (MAX_UPLOAD_BYTES, build_csv, images_dir,
-                                 is_jpeg, is_valid_name, list_images,
+from core.product_images import (MAX_UPLOAD_BYTES, SDS_SLOT, build_csv,
+                                 content_matches, content_type_for, images_dir,
+                                 is_sds, is_valid_name, list_images,
                                  normalize_name, parse_name, public_url,
                                  safe_path, strip_jpeg_metadata)
 
@@ -89,14 +90,24 @@ def _base_url(request: Request) -> str:
 @public_router.api_route("/product-images/{filename}", methods=["GET", "HEAD"])
 @limiter.exempt                      # Amazon toplu indirirken 300/dk'ya takılmasın
 def serve_product_image(filename: str, request: Request):
-    """Ürün görselini doğrudan döndür — 200 + image/jpeg, yönlendirme yok."""
+    """Ürün görselini/SDS PDF'ini doğrudan döndür — 200, yönlendirme yok.
+
+    Amazon görseli (`image/jpeg`) ve Walmart Güvenlik Bilgi Formu
+    (`application/pdf`) aynı yoldan yayınlanır; Content-Type dosya adındaki
+    uzantıdan seçilir, tahmin edilmez.
+    """
     path = safe_path(filename)       # beyaz liste + dizin-dışı koruması
     if path is None or not path.is_file():
         return PlainTextResponse("Not Found", status_code=404)
     return FileResponse(
         path,
-        media_type="image/jpeg",
+        media_type=content_type_for(filename),
         headers={
+            # Güvenlik başlıkları (nosniff / sandbox CSP / X-Frame-Options)
+            # `SecurityHeadersMiddleware` içindeki "/public/product-images/"
+            # dalından gelir — tek kaynak orası, yoksa middleware buradakini
+            # ezerdi.  Prod'da dosyayı zaten nginx veriyor ve aynı başlıkları
+            # kendi location bloğunda tekrarlıyor.
             # `immutable` KULLANILMAZ: yükleme ucu aynı adın üzerine yazabiliyor
             # (görseli düzeltip tekrar yüklemek kasıtlı bir akış), immutable
             # ise aracı cache'lere "bir daha sorma" der ve eski görsel takılı
@@ -128,8 +139,12 @@ def list_product_images(
         "public_path": _PUBLIC_PATH,
         "count": len(imgs),
         "sku_count": len(skus),
+        "sds_count": sum(1 for im in imgs if im["slot"] == SDS_SLOT),
         "images": [{**im, "url": public_url(base, im["name"])} for im in imgs],
-        "incomplete": sorted(s for s, sl in skus.items() if "MAIN" not in sl),
+        # "MAIN'i eksik" listesi yalnız GÖRSELİ olmayan SKU'ları saymalı —
+        # yalnızca SDS yüklenmiş bir SKU görsel eksiği sayılmaz.
+        "incomplete": sorted(s for s, sl in skus.items()
+                             if "MAIN" not in sl and any(x != SDS_SLOT for x in sl)),
     }
 
 
@@ -140,7 +155,7 @@ def upload_product_images(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("items", "import")),
 ):
-    """Çoklu görsel yükleme.  Dosya adı sözleşmeye uymalı: <SKU>.MAIN.jpg
+    """Çoklu dosya yükleme.  Ad sözleşmesi: <SKU>.MAIN.jpg / .PT0N.jpg / .SDS.pdf
 
     Aynı ad tekrar yüklenirse ÜZERİNE yazılır — URL kalıcı kalsın diye
     (Amazon aynı adresi tekrar çeker, yeni görseli görür).
@@ -152,7 +167,8 @@ def upload_product_images(
         name = normalize_name(original)
         if not is_valid_name(name):
             rejected.append({"file": original, "reason":
-                             "Ad biçimi geçersiz — <SKU>.MAIN.jpg veya <SKU>.PT01.jpg olmalı "
+                             "Ad biçimi geçersiz — <SKU>.MAIN.jpg, <SKU>.PT01.jpg "
+                             "veya <SKU>.SDS.pdf olmalı "
                              "(SKU'da yalnız harf/rakam/tire/alt çizgi)."})
             continue
         data = uf.file.read(MAX_UPLOAD_BYTES + 1)
@@ -160,18 +176,23 @@ def upload_product_images(
             rejected.append({"file": original,
                              "reason": f"Dosya çok büyük (>{MAX_UPLOAD_BYTES // (1024*1024)} MB)."})
             continue
-        if not is_jpeg(data):
+        if not content_matches(name, data):
             rejected.append({"file": original,
-                             "reason": "JPEG değil (uzantı .jpg olsa da içerik JPEG olmalı)."})
+                             "reason": ("PDF değil (SDS dosyası gerçek PDF olmalı)."
+                                        if is_sds(name) else
+                                        "JPEG değil (uzantı .jpg olsa da içerik JPEG olmalı).")})
             continue
         path = safe_path(name)
         if path is None:
             rejected.append({"file": original, "reason": "Ad reddedildi."})
             continue
         replaced = path.is_file()
-        # EXIF/GPS/yorum segmentlerini at — dosya public bir adresten
+        # JPEG'de EXIF/GPS/yorum segmentlerini at — dosya public bir adresten
         # yayınlanacak, telefon fotoğrafındaki konum bilgisi sızmasın.
-        clean = strip_jpeg_metadata(data)
+        # PDF'e DOKUNULMAZ: SDS bir mevzuat belgesi, baytlarını yeniden yazmak
+        # belgeyi bozar (strip_jpeg_metadata JPEG segment ayrıştırıcısıdır,
+        # PDF'te çalıştırılırsa çıktı kullanılamaz hâle gelir).
+        clean = data if is_sds(name) else strip_jpeg_metadata(data)
         with open(path, "wb") as fh:
             fh.write(clean)
         sku, slot = parse_name(name)

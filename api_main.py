@@ -95,6 +95,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
             return response
+        # Public ürün dosyaları (Amazon görseli + Walmart SDS PDF'i): kimlik
+        # doğrulaması YOK, Amazon/Walmart kendi sunucularından çekiyor.
+        # PDF servis edildiği için `sandbox` ŞART — gömülü JavaScript taşıyan
+        # bir belge aksi hâlde ims.minerva108.com origin'inde çalışabilirdi.
+        # Aynı başlıklar nginx location bloğunda da var (prod'da dosyayı nginx
+        # Python'a hiç sormadan veriyor); burası lokal + yedek yol.
+        if path.startswith("/public/product-images/"):
+            response.headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            return response
         # Content-Security-Policy: çoğu XSS senaryosunu sıfırlar
         # 'unsafe-eval' YASAK — eval() veya new Function() ile saldırı yapılamaz
         # 'object-src none' — Flash/PDF/applet vektörlerini kapatır

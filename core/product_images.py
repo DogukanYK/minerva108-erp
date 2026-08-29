@@ -39,12 +39,23 @@ from typing import List, Optional, Tuple
 
 # Amazon: 1 ana + 8 yardımcı görsel
 SLOTS = ("MAIN",) + tuple(f"PT{i:02d}" for i in range(1, 9))
-MAX_UPLOAD_BYTES = 15 * 1024 * 1024          # 1600x1600 JPEG ~300-600 KB; bol pay
+# Walmart WFS: kimyasal sayılan her ürün için public bir Güvenlik Bilgi Formu
+# (Safety Data Sheet) PDF'i şart — `safetyDataSheet` alanı bu adresi ister.
+SDS_SLOT = "SDS"
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024          # 1600x1600 JPEG ~300-600 KB, SDS PDF ~200-800 KB
 JPEG_MAGIC = b"\xff\xd8\xff"
+PDF_MAGIC = b"%PDF-"
+
+# Slot → zorunlu uzantı.  Eşleşme TEK YÖNLÜ bağlıdır: MAIN.pdf ya da SDS.jpg
+# kabul EDİLMEZ (aşağıdaki `is_valid_name` çifti doğrular).  Bu ayrım şart —
+# public uç Content-Type'ı uzantıdan seçiyor, yanlış çift MIME karışıklığı olurdu.
+SLOT_EXT = {**{s: "jpg" for s in SLOTS}, SDS_SLOT: "pdf"}
+CONTENT_TYPES = {"jpg": "image/jpeg", "pdf": "application/pdf"}
 
 # SKU: harf/rakam/tire/alt çizgi, 1-80 karakter.  Nokta SKU'da YASAK — ad
-# ayrıştırması noktaya dayanıyor (SKU.SLOT.jpg).
-FILENAME_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_-]{0,79})\.(MAIN|PT0[1-8])\.jpg$")
+# ayrıştırması noktaya dayanıyor (SKU.SLOT.uzantı).
+FILENAME_RE = re.compile(
+    r"^([A-Za-z0-9][A-Za-z0-9_-]{0,79})\.(MAIN|PT0[1-8]|SDS)\.(jpg|pdf)$")
 
 # Türkçe harf → ASCII (dosya adı Amazon tarafında sorun çıkarmasın)
 _TR = str.maketrans({
@@ -71,6 +82,7 @@ def normalize_name(original: str) -> str:
     """
     name = os.path.basename((original or "").strip()).translate(_TR)
     name = re.sub(r"\.jpeg$", ".jpg", name, flags=re.I)
+    name = re.sub(r"\.(jpg|pdf)$", lambda m: m.group(0).lower(), name, flags=re.I)
     parts = name.split(".")
     if len(parts) < 3:
         return re.sub(r"[^A-Za-z0-9._-]+", "-", name)
@@ -85,13 +97,41 @@ def normalize_name(original: str) -> str:
 
 
 def parse_name(name: str) -> Optional[Tuple[str, str]]:
-    """'MIN-DAYCRM-50.MAIN.jpg' → ('MIN-DAYCRM-50', 'MAIN').  Uymuyorsa None."""
-    m = FILENAME_RE.fullmatch(name or "")
+    """'MIN-DAYCRM-50.MAIN.jpg' → ('MIN-DAYCRM-50', 'MAIN').  Uymuyorsa None.
+
+    Sözleşme (sku, slot) DEĞİŞMEDİ — çağıranlar aynı kaldı; uzantı gerekiyorsa
+    `ext_of()` kullanılır.  SDS için slot 'SDS' döner.
+    """
+    m = _match(name)
     return (m.group(1), m.group(2)) if m else None
 
 
+def _match(name: str):
+    """Regex + slot/uzantı çifti doğrulaması — ikisi birlikte geçerli sayılır."""
+    m = FILENAME_RE.fullmatch(name or "")
+    if not m:
+        return None
+    return m if SLOT_EXT.get(m.group(2)) == m.group(3) else None
+
+
+def ext_of(name: str) -> Optional[str]:
+    """'…​.SDS.pdf' → 'pdf'.  Geçersiz adda None."""
+    m = _match(name)
+    return m.group(3) if m else None
+
+
+def content_type_for(name: str) -> str:
+    """Public uçta dönecek Content-Type — uzantıdan, tahminden DEĞİL."""
+    return CONTENT_TYPES.get(ext_of(name) or "", "application/octet-stream")
+
+
+def is_sds(name: str) -> bool:
+    m = _match(name)
+    return bool(m) and m.group(2) == SDS_SLOT
+
+
 def is_valid_name(name: str) -> bool:
-    return FILENAME_RE.fullmatch(name or "") is not None
+    return _match(name) is not None
 
 
 def safe_path(name: str) -> Optional[Path]:
@@ -114,6 +154,25 @@ def safe_path(name: str) -> Optional[Path]:
 def is_jpeg(head: bytes) -> bool:
     """Sihirli bayt kontrolü — uzantı yalanını eler."""
     return bool(head) and head.startswith(JPEG_MAGIC)
+
+
+def is_pdf(head: bytes) -> bool:
+    return bool(head) and head.startswith(PDF_MAGIC)
+
+
+def content_matches(name: str, data: bytes) -> bool:
+    """Dosya içeriği adın vaat ettiği türle uyuşuyor mu?
+
+    SDS PDF'leri İÇERİK OLARAK TEMİZLENMEZ: bunlar mevzuat belgesi, yeniden
+    yazmak imzayı/biçimi bozar.  Güvenlik public uçtaki `sandbox` CSP +
+    `nosniff` ile sağlanır (bkz. routers/product_images.serve_product_image).
+    """
+    ext = ext_of(name)
+    if ext == "jpg":
+        return is_jpeg(data)
+    if ext == "pdf":
+        return is_pdf(data)
+    return False
 
 
 # JPEG'de atılacak metadata segmentleri:
@@ -217,6 +276,9 @@ def build_csv(base_url: str, images: List[dict]) -> str:
     """
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
+    # SDS slotu bilerek DIŞARIDA: bu CSV Amazon görsel flat-file'ı, PDF adresi
+    # other_image_url sütununa girerse listeleme reddedilir.  Aşağıdaki döngü
+    # yalnız MAIN + PT01..PT08 okur, SDS anahtarı sessizce atlanır.
     w.writerow(["sku", "main_image_url"] + [f"other_image_url{i}" for i in range(1, 9)])
     for sku, slots in sorted(group_by_sku(images).items()):
         row = [sku]

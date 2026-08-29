@@ -256,3 +256,86 @@ def test_page_renders(authed_client):
     assert r.status_code == 200
     assert "Ürün Görselleri" in r.text
     assert r.text.count("<script") == r.text.count("</script>")
+
+
+# ─── Walmart SDS PDF desteği ────────────────────────────────────────────────
+#
+# Walmart WFS, isChemical=Yes olan her ürün için public bir Güvenlik Bilgi
+# Formu (SDS) PDF adresi ister: /public/product-images/<SKU>.SDS.pdf
+# Aynı public uç hem Amazon JPEG'ini hem Walmart PDF'ini yayınlar.
+
+PDF = b"%PDF-1.7\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n"
+
+
+def _up_pdf(client, name, data=PDF):
+    return client.post(f"{_API}/upload", headers=_HDR,
+                       files=[("files", (name, io.BytesIO(data), "application/pdf"))])
+
+
+def test_sds_name_contract():
+    """Slot ile uzantı ÇİFT olarak doğrulanır — çapraz eşleşme reddedilir."""
+    from core.product_images import content_type_for, ext_of, is_sds
+    assert is_valid_name("SER-SHMP-OILY-200.SDS.pdf")
+    assert parse_name("SER-SHMP-OILY-200.SDS.pdf") == ("SER-SHMP-OILY-200", "SDS")
+    assert ext_of("SER-SHMP-OILY-200.SDS.pdf") == "pdf"
+    assert content_type_for("SER-SHMP-OILY-200.SDS.pdf") == "application/pdf"
+    assert content_type_for("A.MAIN.jpg") == "image/jpeg"
+    assert is_sds("A.SDS.pdf") and not is_sds("A.MAIN.jpg")
+    # Çapraz eşleşme YASAK — public uç Content-Type'ı uzantıdan seçiyor
+    for bad in ("A.MAIN.pdf", "A.SDS.jpg", "A.SDS.PDF", "A.SDS.pdf.exe",
+                "../gizli.SDS.pdf", ".SDS.pdf"):
+        assert not is_valid_name(bad), bad
+
+
+def test_sds_upload_and_public_serve(authed_client):
+    """SDS yüklenir, public uçtan application/pdf olarak BOZULMADAN döner."""
+    r = _up_pdf(authed_client, "SER-SHMP-OILY-200.SDS.pdf")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert not body["rejected"], body["rejected"]
+    assert body["saved"][0]["slot"] == "SDS"
+
+    # PDF baytları AYNEN korunmalı — strip_jpeg_metadata PDF'e uygulanmamalı
+    assert (images_dir() / "SER-SHMP-OILY-200.SDS.pdf").read_bytes() == PDF
+
+    g = authed_client.get(f"{_PUB}/SER-SHMP-OILY-200.SDS.pdf")
+    assert g.status_code == 200
+    assert g.headers["content-type"].startswith("application/pdf")
+    assert g.content == PDF
+    # Güvenlik başlıkları — nginx location'ında da tekrarlanır (iki-yer kuralı)
+    assert g.headers["x-content-type-options"] == "nosniff"
+    assert "sandbox" in g.headers["content-security-policy"]
+    assert g.headers["access-control-allow-origin"] == "*"
+
+
+def test_sds_rejects_non_pdf_content(authed_client):
+    """Adı .SDS.pdf ama içeriği JPEG olan dosya reddedilir."""
+    r = _up_pdf(authed_client, "SAHTE.SDS.pdf", data=JPEG)
+    assert r.status_code == 200
+    assert not r.json()["saved"]
+    assert "PDF değil" in r.json()["rejected"][0]["reason"]
+    assert not (images_dir() / "SAHTE.SDS.pdf").exists()
+
+
+def test_jpeg_slot_still_rejects_pdf_content(authed_client):
+    """Gerileme kilidi: görsel slotuna PDF yüklenemez."""
+    r = _up(authed_client, "MIN-X-50.MAIN.jpg", data=PDF)
+    assert not r.json()["saved"]
+    assert "JPEG değil" in r.json()["rejected"][0]["reason"]
+
+
+def test_sds_excluded_from_amazon_csv(authed_client):
+    """SDS, Amazon görsel CSV'sinin sütunlarına SIZMAMALI."""
+    assert _up(authed_client, "MIN-X-50.MAIN.jpg").json()["saved"]
+    assert _up_pdf(authed_client, "MIN-X-50.SDS.pdf").json()["saved"]
+    csv_text = authed_client.get(f"{_API}/export.csv").text
+    assert "MIN-X-50.MAIN.jpg" in csv_text
+    assert ".SDS.pdf" not in csv_text            # asıl kilit
+
+
+def test_sds_only_sku_not_flagged_incomplete(authed_client):
+    """Yalnız SDS'i olan SKU 'ana görseli eksik' listesine düşmemeli."""
+    assert _up_pdf(authed_client, "ONLY-SDS-1.SDS.pdf").json()["saved"]
+    d = authed_client.get(_API).json()
+    assert d["sds_count"] == 1
+    assert "ONLY-SDS-1" not in d["incomplete"]

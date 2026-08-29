@@ -415,8 +415,9 @@ butonu ekranda yok ve tıklanamaz oldu (modül haftalarca kullanılamadı; sın�
 `check-action` olarak yeniden adlandırıldı). Bootstrap yüklü şablonlarda
 `btn-*` önekli ad KULLANMA. `test_no_bootstrap_shadowed_class_names` kilitler.
 
-**Amazon ürün görselleri — public uç nginx'te İZOLE** (`routers/product_images.py`,
-2026-08-06). `/public/product-images/<SKU>.MAIN.jpg` kimlik doğrulaması olmayan,
+**Public ürün dosyaları — Amazon görseli + Walmart SDS, nginx'te İZOLE**
+(`routers/product_images.py`, 2026-08-06; SDS 2026-08-29).
+`/public/product-images/<SKU>.MAIN.jpg` kimlik doğrulaması olmayan,
 Amazon'un flat-file'ının kendi sunucusundan çektiği bir yol. **uvicorn TEK
 süreçte çalışıyor** (systemd `minerva`, worker sayısı yok) — auth'suz + rate
 limit'ten muaf bir uç aynı süreçte kalırsa, biri bombaladığında tüm ERP
@@ -436,6 +437,31 @@ Yüklenen görseller `product_images/` dizininde, git'e girmez (`.gitignore`);
 `ops/snapshot/minerva-snapshot.sh` günde bir tarball alır (Drive ile aynı kalıp).
 **AÇIK NOT:** uvicorn `User=root` ile çalışıyor (systemd) — bu ayrı, daha büyük
 bir sertleştirme konusu, bilinçli olarak ertelendi.
+
+**Walmart SDS PDF'i aynı uçtan** (2026-08-29). Walmart WFS, `isChemical=Yes` olan
+her ürün için public bir Güvenlik Bilgi Formu adresi ister
+(`safetyDataSheet` alanı) → `/public/product-images/<SKU>.SDS.pdf`.
+`FILENAME_RE` artık `(MAIN|PT0[1-8]|SDS)\.(jpg|pdf)` kabul ediyor ama
+**slot/uzantı ÇİFTİ zorunlu** (`SLOT_EXT` haritası; `MAIN.pdf` ve `SDS.jpg`
+REDDEDİLİR) — public uç Content-Type'ı uzantıdan seçtiği için bu ayrım
+güvenlik meselesi. Yükleme `content_matches()` ile sihirli baytı doğrular
+(`%PDF-`), ve **`strip_jpeg_metadata` PDF'e UYGULANMAZ**: SDS bir mevzuat
+belgesi, JPEG segment ayrıştırıcısından geçerse bozulur.
+`build_csv` yalnız MAIN + PT01..PT08 okur → SDS Amazon flat-file'ına SIZMAZ
+(`test_sds_excluded_from_amazon_csv` kilitler).
+
+**TUZAK — nginx `add_header` DEVRALMASI.** Bir `location` kendi `add_header`'ını
+tanımlarsa **sunucu bloğundaki TÜM `add_header`'lar düşer**. Canlıda ölçüldü
+(2026-08-29): public görsel ucu `nosniff`/CSP/`X-Frame-Options`/HSTS'in
+hiçbirini döndürmüyordu, çünkü location yalnız Cache-Control + CORS
+tanımlıyordu. JPEG'de düşük riskti, **PDF'te ciddi** (gömülü JavaScript
+taşıyan belge `ims.minerva108.com` origin'inde çalışabilirdi). Çözüm: location
+bloğu güvenlik başlıklarını TEKRAR yazar + CSP `sandbox; default-src 'none'`
+(belge görüntülenir, script/plugin/form çalışmaz). Uygulama tarafında aynı
+politika `SecurityHeadersMiddleware`'in `/public/product-images/` dalından
+gelir — route'un kendi header'ını koyması İŞE YARAMAZ, middleware ezer
+(Drive `preview/raw` dalıyla aynı kalıp). Yeni bir `location` bloğu
+eklerken güvenlik başlıklarını oraya da yazdığını `curl -sI` ile DOĞRULA.
 
 **Middleware stack** (api_main.py): `SecurityHeadersMiddleware` (CSP + headers),
 `CSRFMiddleware` (Origin/Referer check on mutating verbs; exempts `/api/login`,

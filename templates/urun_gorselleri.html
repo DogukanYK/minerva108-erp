@@ -202,11 +202,13 @@
           <div class="naming">
             <b>Dosya adı kuralı</b> — ad, hangi ürüne ve hangi sıraya ait olduğunu belirler:
             <code>&lt;SKU&gt;.MAIN.jpg</code> (ana görsel) ·
-            <code>&lt;SKU&gt;.PT01.jpg</code> … <code>.PT08.jpg</code> (ek görseller)<br/>
-            Örnek: <code>MIN-DAYCRM-50.MAIN.jpg</code> · SKU'da yalnız harf, rakam, tire ve alt çizgi.
+            <code>&lt;SKU&gt;.PT01.jpg</code> … <code>.PT08.jpg</code> (ek görseller) ·
+            <code>&lt;SKU&gt;.SDS.pdf</code> (Güvenlik Bilgi Formu — Walmart için)<br/>
+            Örnek: <code>MIN-DAYCRM-50.MAIN.jpg</code> · <code>MIN-DAYCRM-50.SDS.pdf</code><br/>
+            SKU'da yalnız harf, rakam, tire ve alt çizgi. Görseller JPEG, SDS ise PDF olmalı.
             Aynı adı tekrar yüklerseniz görsel değişir, <b>adres aynı kalır</b>.
           </div>
-          <input type="file" id="fileInput" class="ipt" multiple accept="image/jpeg,.jpg,.jpeg"
+          <input type="file" id="fileInput" class="ipt" multiple accept="image/jpeg,.jpg,.jpeg,application/pdf,.pdf"
                  style="padding:0.5rem;" />
           <div style="margin-top:0.8rem;display:flex;gap:0.7rem;align-items:center;flex-wrap:wrap;">
             <button class="btn-g" id="upBtn" onclick="doUpload()"><i class="bi bi-upload"></i> Yükle</button>
