@@ -281,6 +281,10 @@ def build_csv(base_url: str, images: List[dict]) -> str:
     # yalnız MAIN + PT01..PT08 okur, SDS anahtarı sessizce atlanır.
     w.writerow(["sku", "main_image_url"] + [f"other_image_url{i}" for i in range(1, 9)])
     for sku, slots in sorted(group_by_sku(images).items()):
+        # Yalnız SDS'i olan SKU CSV'ye HİÇ girmez: Amazon flat-file'inda
+        # gorselsiz satir ise yaramaz (SDS Walmart tarafina ait, bkz. SDS_SLOT).
+        if not any(k in slots for k in SLOTS):
+            continue
         row = [sku]
         row.append(public_url(base_url, slots["MAIN"]) if "MAIN" in slots else "")
         for i in range(1, 9):

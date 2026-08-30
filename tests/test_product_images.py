@@ -333,6 +333,16 @@ def test_sds_excluded_from_amazon_csv(authed_client):
     assert ".SDS.pdf" not in csv_text            # asıl kilit
 
 
+def test_sds_only_sku_absent_from_csv(authed_client):
+    """Görseli olmayıp yalnız SDS'i olan SKU, Amazon CSV'sine BOŞ SATIR olarak
+    girmemeli — flat-file'da görselsiz satır işe yaramaz."""
+    assert _up_pdf(authed_client, "ONLY-SDS-2.SDS.pdf").json()["saved"]
+    assert _up(authed_client, "HAS-IMG-1.MAIN.jpg").json()["saved"]
+    csv_text = authed_client.get(f"{_API}/export.csv").text
+    assert "HAS-IMG-1" in csv_text
+    assert "ONLY-SDS-2" not in csv_text
+
+
 def test_sds_only_sku_not_flagged_incomplete(authed_client):
     """Yalnız SDS'i olan SKU 'ana görseli eksik' listesine düşmemeli."""
     assert _up_pdf(authed_client, "ONLY-SDS-1.SDS.pdf").json()["saved"]
