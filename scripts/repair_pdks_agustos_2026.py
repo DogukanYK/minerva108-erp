@@ -13,12 +13,15 @@ göstermiyordu.
   • Program versiyonları personelin ilk gününden SONRA başlıyor (Meltem
     10.08, Müyesser 06.08, Betül/Berkan 04.08) → önceki günler "program
     tanımsız", çalışma hiç sayılmıyor.
-  • Songül 25–28.08 yıllık izindeydi; izin kaydı girilmediği için DEVAMSIZ.
+  • Songül 25–28.08, Meltem 03–09.08 yıllık izindeydi; izin kaydı
+    girilmediği için DEVAMSIZ / boş görünüyordu.
   • Doğukan 11.08 RAPORLU (kendi bildirimi, 28.08).  İlk turda bu izin kaydı
     gözden kaçtı ve o güne tam mesai yazıldı → raporlu günde beklenen 0
     olduğu için 8 saat fazla mesai görünüyordu; HATALI listesi geri alır.
   • Müyesser 14.08'de, Berkan 24.08'de ayrıldı; ayrılış tarihi alanı yoktu
     (bu deploy'da eklendi) → ayın kalanı devamsız yazılıyordu.
+  • Dudu Ekmekçi 24.08'de işe başladı (6 iş günü: 24–28 + 31) ama PDKS'e
+    hiç kaydedilmemişti — kart + program + olaylar bu script'le açılır.
 
 Patron gün gün teyit etti (01.09.2026): "neredeyse her gün herkes geldi",
 Müyesser ayrıldı · Songül izinliydi · Berkan'ın son günü 24.08.
@@ -81,21 +84,24 @@ TAM_GUN = [
     (5, date(2026, 8, 5), "09:00", "14:00"),
     (5, date(2026, 8, 6), "09:00", "14:00"),
     (5, date(2026, 8, 11), "09:00", "14:00"),
-    # Meltem — sisteme 10.08'de tanımlandı, önceki hafta hiç kaydı yok
-    (6, date(2026, 8, 3), "08:30", "17:45"),
-    (6, date(2026, 8, 4), "08:30", "17:45"),
-    (6, date(2026, 8, 5), "08:30", "17:45"),
-    (6, date(2026, 8, 6), "08:30", "17:45"),
-    (6, date(2026, 8, 7), "08:30", "17:45"),
 ]
 
 # ── Hatalı eklenen olaylar — geri alınacak (emp_id, TR gün, TR saat, tip) ───
 # 11.08 Doğukan RAPORLU (izin kaydı 28.08'de kendisi bildirdi, "hasta").  İlk
 # turda izin kayıtları eksik okundu ve o güne tam mesai yazıldı; raporlu günde
 # beklenen süre 0 olduğu için o 8 saat FAZLA MESAİ olarak görünüyordu.
+# 03–07.08 Meltem YILLIK İZİNDEYDİ (yönetici düzeltmesi, 01.09) — ilk turda
+# "önceki hafta kaydı yok" diye tam gün yazılmıştı; geri alınır, yerine izin
+# kaydı girilir.  Hafta sonu (08–09) izin hakkından sayılmaz — compute_month
+# izin sayacı zaten yalnız programlı iş gününe bakar.
 HATALI = [
     (1, date(2026, 8, 11), "08:30", "in"),
     (1, date(2026, 8, 11), "17:45", "out"),
+    (6, date(2026, 8, 3), "08:30", "in"), (6, date(2026, 8, 3), "17:45", "out"),
+    (6, date(2026, 8, 4), "08:30", "in"), (6, date(2026, 8, 4), "17:45", "out"),
+    (6, date(2026, 8, 5), "08:30", "in"), (6, date(2026, 8, 5), "17:45", "out"),
+    (6, date(2026, 8, 6), "08:30", "in"), (6, date(2026, 8, 6), "17:45", "out"),
+    (6, date(2026, 8, 7), "08:30", "in"), (6, date(2026, 8, 7), "17:45", "out"),
 ]
 
 # ── Yalnız çıkış eklenecek (emp_id, TR gün, çıkış) — giriş kayıtta var ──────
@@ -117,11 +123,30 @@ PROGRAM_GERI = {3: date(2026, 8, 3), 4: date(2026, 8, 3),
 IZINLER = [
     (2, "yillik", date(2026, 8, 25), date(2026, 8, 28),
      "Yıllık izin — puantaj düzeltmesinde girildi (01.09.2026)"),
+    # Meltem 03–10 arası izinli (10'u işbaşı — o gün gerçek QR basımı var);
+    # kayıt 09'a kadar, hafta sonu zaten izin hakkından sayılmıyor.
+    (6, "yillik", date(2026, 8, 3), date(2026, 8, 9),
+     "Yıllık izin — puantaj düzeltmesinde girildi (01.09.2026)"),
 ]
 
 # ── Ayrılışlar: emp_id → (ayrılış tarihi, pasifleştir?) ─────────────────────
 AYRILISLAR = {5: (date(2026, 8, 14), True),      # Müyesser Üner
               3: (date(2026, 8, 24), True)}      # Berkan Yıldız (zaten pasif)
+
+# ── Yeni personel: sistemde hiç kaydı olmayanlar (ada göre idempotent) ──────
+# Dudu Ekmekçi 24.08'de işe başladı, ay sonuna kadar 6 iş günü geldi
+# (24–28 + 31); PDKS'e hiç kaydedilmediği için puantajda yoktu.
+_STD_TPL = ('{"0": {"start": "08:30", "end": "17:45"}, '
+            '"1": {"start": "08:30", "end": "17:45"}, '
+            '"2": {"start": "08:30", "end": "17:45"}, '
+            '"3": {"start": "08:30", "end": "17:45"}, '
+            '"4": {"start": "08:30", "end": "17:45"}, "5": null, "6": null}')
+YENI_PERSONEL = [{
+    "full_name": "Dudu Ekmekçi", "title": "Personel",
+    "start": date(2026, 8, 24), "template": _STD_TPL,
+    "days": [date(2026, 8, n) for n in (24, 25, 26, 27, 28, 31)],
+    "in": "08:30", "out": "17:45",
+}]
 
 
 def utc_of(d: date, hm: str) -> datetime:
@@ -143,6 +168,62 @@ def main() -> int:
         if missing:
             print(f"✖ Personel kaydı bulunamadı: {sorted(missing)} — İPTAL")
             return 1
+
+        # ── 0) Yeni personel kartları ──────────────────────────────────────
+        print("\n⓪ Yeni personel")
+        for yp in YENI_PERSONEL:
+            e = (db.query(Employee)
+                 .filter(Employee.full_name == yp["full_name"]).first())
+            if e is None:
+                n_emp += 1
+                print(f"   + {yp['full_name']:20} işe giriş {yp['start']:%d.%m.%Y}")
+                if COMMIT:
+                    e = Employee(full_name=yp["full_name"], title=yp["title"],
+                                 start_date=yp["start"], is_active=True)
+                    db.add(e)
+                    db.flush()
+                else:
+                    continue          # kuru: id yok, olaylar aşağıda listelenir
+            else:
+                skipped.append(f"personel zaten var: {e.full_name} (id {e.id})")
+            emps[e.id] = e
+            if not (db.query(EmployeeSchedule.id)
+                    .filter(EmployeeSchedule.employee_id == e.id).first()):
+                n_sched += 1
+                print(f"   + {e.full_name:20} program {yp['start']} (standart)")
+                if COMMIT:
+                    db.add(EmployeeSchedule(
+                        employee_id=e.id, effective_from=yp["start"],
+                        weekly_template=yp["template"],
+                        lunch_break_minutes=60,
+                        created_by=f"sistem — {NOTE}"[:100]))
+            for gd in yp["days"]:
+                for typ, hm in (("in", yp["in"]), ("out", yp["out"])):
+                    ts = utc_of(gd, hm)
+                    dup = (db.query(AttendanceEvent.id)
+                           .filter(AttendanceEvent.employee_id == e.id,
+                                   AttendanceEvent.event_type == typ,
+                                   AttendanceEvent.ts_utc == ts,
+                                   AttendanceEvent.is_active == True)     # noqa: E712
+                           .first())
+                    if dup:
+                        skipped.append(f"olay zaten var: {e.full_name} "
+                                       f"{gd:%d.%m} {hm} {typ}")
+                        continue
+                    n_ev += 1
+                    print(f"   + {e.full_name:20} {gd:%d.%m} {hm} {typ}")
+                    if COMMIT:
+                        db.add(AttendanceEvent(
+                            employee_id=e.id, event_type=typ, ts_utc=ts,
+                            work_date=gd, source="manual",
+                            created_by_user_id=ACTOR_USER_ID,
+                            correction_note=f"İşe giriş haftası — {NOTE}"[:300]))
+        if not COMMIT and any(
+                db.query(Employee.id).filter(
+                    Employee.full_name == yp["full_name"]).first() is None
+                for yp in YENI_PERSONEL):
+            print("   (kuru çalıştırma: yeni personelin olay/program satırları "
+                  "--commit'te yazılır)")
 
         # ── 1) Deneme basımlarını pasifleştir ──────────────────────────────
         print("\n① Deneme basımları (pasifleştirilecek)")
@@ -222,8 +303,8 @@ def main() -> int:
                 row.corrected_by = "sistem"
                 row.corrected_at = datetime.utcnow()
                 row.correction_note = (
-                    "Hatalı eklenmişti — o gün RAPORLU (izin kaydı var). "
-                    f"{NOTE}")[:300]
+                    "Hatalı eklenmişti — o gün izinli/raporlu (izin kaydı "
+                    f"var). {NOTE}")[:300]
 
         # ── 3) Program versiyonlarını geriye taşı ──────────────────────────
         print("\n③ Program versiyonu (geriye dönük kopya)")
