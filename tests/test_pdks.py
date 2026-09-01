@@ -1795,3 +1795,103 @@ def test_real_weekly_holiday_still_counts_overtime():
     day = compute_day(d, events, None, unscheduled=False)
     assert day["status"] == "hafta_tatili"
     assert day["overtime_minutes"] == 240       # tatilde çalışma = fazla mesai
+
+
+# ─── İstihdam penceresi (işe giriş / ayrılış) ────────────────────────────────
+
+def test_day_after_departure_is_not_absence():
+    """Ayrılış tarihinden SONRAKİ gün devamsızlık değildir.
+
+    Gerçek hata: iki personel Ağustos 2026'da ayrıldı; kartları pasifti ama
+    aylık puantaj ayın kalanını "Devamsız" yazıp bordroya 8'er saat eksik
+    süre bindiriyordu (compute_month yalnız programa bakıyordu).
+    """
+    d = date(2026, 8, 27)                       # Perşembe — programlı iş günü
+    sched = schedule_for(STD_SCHEDULES, d)
+    assert sched is not None
+    day = compute_day(d, [], sched, left_on=date(2026, 8, 24))
+    assert day["status"] == "ayrildi"
+    assert day["status_label"] == "İşten ayrıldı"
+    assert day["off_roster"] is True
+    assert day["expected_minutes"] == 0
+    assert day["missing_minutes"] == 0
+    assert day["overtime_minutes"] == 0
+
+
+def test_day_before_hire_is_not_absence():
+    d = date(2026, 8, 27)
+    day = compute_day(d, [], schedule_for(STD_SCHEDULES, d),
+                      started_on=date(2026, 9, 1))
+    assert day["status"] == "baslamadi"
+    assert day["status_label"] == "İşe başlamadı"
+    assert day["expected_minutes"] == 0 and day["missing_minutes"] == 0
+
+
+def test_last_working_day_still_counts():
+    """Ayrılış günü DAHİLDİR — son gün mesaisi bordrodan düşmemeli."""
+    d = date(2026, 8, 24)                       # Pazartesi
+    events = [ev("in", tr(2026, 8, 24, 9, 0)), ev("out", tr(2026, 8, 24, 18, 0))]
+    day = compute_day(d, events, schedule_for(STD_SCHEDULES, d),
+                      left_on=date(2026, 8, 24))
+    assert day["status"] == "calisti"
+    assert day["off_roster"] is False
+    assert day["worked_minutes"] == 465
+
+
+def test_month_totals_exclude_days_after_departure():
+    """Ay toplamı: ayrılıştan sonraki günler devamsızlığa ve eksik süreye girmez."""
+    events = {date(2026, 8, 24): [ev("in", tr(2026, 8, 24, 9, 0)),
+                                  ev("out", tr(2026, 8, 24, 18, 0))]}
+    base = compute_month(2026, 8, STD_SCHEDULES, events, [], {}, date(2026, 8, 31))
+    left = compute_month(2026, 8, STD_SCHEDULES, events, [], {}, date(2026, 8, 31),
+                         left_on=date(2026, 8, 24))
+    # Ayrılış olmadan: 24.08 sonrası 5 iş günü devamsız (25–28 + 31)
+    assert base["totals"]["devamsizlik_gun"] - left["totals"]["devamsizlik_gun"] == 5
+    assert left["totals"]["toplam_eksik"] < base["totals"]["toplam_eksik"]
+    assert left["totals"]["toplam_calisma"] == base["totals"]["toplam_calisma"]
+    tail = [d for d in left["days"] if d["date"] > date(2026, 8, 24)
+            and d["date"].weekday() < 5]
+    assert tail and all(d["status"] == "ayrildi" for d in tail)
+
+
+def test_departure_leave_does_not_consume_leave_balance():
+    """Ayrılıştan sonraya taşan izin kaydı izin hakkından gün düşürmez."""
+    leaves = [{"leave_type": "yillik", "start_date": date(2026, 8, 20),
+               "end_date": date(2026, 8, 28), "note": "", "document_no": ""}]
+    m = compute_month(2026, 8, STD_SCHEDULES, {}, leaves, {}, date(2026, 8, 31),
+                      left_on=date(2026, 8, 21))
+    # 20–21 sayılır (2 gün), 24–28 ayrılış sonrası → sayılmaz
+    assert m["totals"]["izin_gunleri"]["yillik"] == 2
+
+
+def test_employee_end_date_roundtrip_and_validation(authed_client, db_session):
+    r = authed_client.post("/api/pdks/employees", headers=ORIGIN, json={
+        "full_name": "Ayrılan Personel", "start_date": "2026-06-01",
+        "end_date": "2026-08-24"})
+    assert r.status_code == 201, r.text
+    eid = r.json()["id"]
+    got = authed_client.get(f"/api/pdks/employees/{eid}").json()
+    assert got["end_date"] == "2026-08-24"
+    assert got["end_date_label"] == "24.08.2026"
+
+    bad = authed_client.put(f"/api/pdks/employees/{eid}", headers=ORIGIN, json={
+        "full_name": "Ayrılan Personel", "start_date": "2026-06-01",
+        "end_date": "2026-05-01"})
+    assert bad.status_code == 400
+    assert "önce olamaz" in bad.json()["detail"]
+    db_session.expire_all()
+    assert db_session.query(Employee).get(eid).end_date == date(2026, 8, 24)
+
+
+def test_deactivating_employee_stamps_departure_date(authed_client, db_session):
+    """Pasifleştirme ayrılış tarihi bırakmalı — yoksa puantaj devamsız yazmaya
+    devam ediyordu (kartın pasif olması compute_month'a görünmüyor)."""
+    r = authed_client.post("/api/pdks/employees", headers=ORIGIN,
+                           json={"full_name": "Pasife Alınacak"})
+    eid = r.json()["id"]
+    assert authed_client.delete(f"/api/pdks/employees/{eid}",
+                                headers=ORIGIN).status_code == 200
+    db_session.expire_all()
+    emp = db_session.query(Employee).get(eid)
+    assert emp.is_active is False
+    assert emp.end_date == tr_date_of(datetime.utcnow())

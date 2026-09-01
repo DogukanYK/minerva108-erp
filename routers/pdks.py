@@ -134,6 +134,7 @@ class EmployeeBody(BaseModel):
     full_name: str = Field(..., min_length=1, max_length=150)
     title: Optional[str] = Field(None, max_length=100)
     start_date: Optional[date] = None
+    end_date: Optional[date] = None           # işten ayrılış (dahil)
     notes: Optional[str] = Field(None, max_length=2000)
     user_id: Optional[int] = None
     is_active: Optional[bool] = None          # yalnız PUT'ta anlamlı
@@ -424,6 +425,7 @@ def _day_view(day: dict) -> dict:
         "missing_label": fmt_minutes(day["missing_minutes"]),
         "missing_checkout": day["missing_checkout"],
         "orphan_out": day["orphan_out"],
+        "off_roster": day.get("off_roster", False),
         "break_deducted": day["break_deducted"],
         "break_minutes": day.get("break_minutes", 0),
         "break_label": fmt_minutes(day.get("break_minutes", 0)),
@@ -465,6 +467,8 @@ def _employee_view(e: Employee, db: Session) -> dict:
         "id": e.id, "full_name": e.full_name, "title": e.title or "",
         "start_date": e.start_date.isoformat() if e.start_date else None,
         "start_date_label": e.start_date.strftime("%d.%m.%Y") if e.start_date else "",
+        "end_date": e.end_date.isoformat() if e.end_date else None,
+        "end_date_label": e.end_date.strftime("%d.%m.%Y") if e.end_date else "",
         "notes": e.notes or "", "user_id": e.user_id, "username": uname,
         "is_active": bool(e.is_active),
     }
@@ -542,7 +546,8 @@ def _today_status(db: Session, emp: Employee) -> dict:
     day = compute_day(today, [_event_dict(e) for e in events], sched,
                       leave=leave_detail_for(leaves, today),
                       holiday=holidays.get(today),
-                      unscheduled=not has_schedule_version(schedules, today))
+                      unscheduled=not has_schedule_version(schedules, today),
+                      started_on=emp.start_date, left_on=emp.end_date)
     open_ev = _open_in(db, emp.id, now)
     worked_live = day["worked_minutes"]
     if open_ev is not None:
@@ -578,6 +583,7 @@ def _month_payload(db: Session, emp: Employee, year: int, month: int) -> dict:
         _leave_dicts(db, emp.id, start, end),
         _holiday_map(db, start, end),
         tr_date_of(datetime.utcnow()),
+        started_on=emp.start_date, left_on=emp.end_date,
     )
     out = _month_view(data)
     # Puantaj ekranı gün düzeltmesi için kimin puantajı olduğunu bilmeli
@@ -836,6 +842,7 @@ def day_overview(
             leave=leave_detail_for(_leave_dicts(db, emp.id, d, d), d),
             holiday=holidays.get(d),
             unscheduled=not has_schedule_version(emp_scheds, d),
+            started_on=emp.start_date, left_on=emp.end_date,
         )
         if d > today_tr:
             # Gelecek tarih: kimse "Devamsız" damgası yememeli
@@ -853,6 +860,14 @@ def day_overview(
 
 
 # ─── Personel CRUD ───────────────────────────────────────────────────────────
+
+def _validate_employment(data) -> Optional[JSONResponse]:
+    """Ayrılış tarihi işe girişten önce olamaz — pencere ters dönerse personel
+    hiçbir güne düşmez ve puantajı sessizce boşalırdı."""
+    if (data.start_date and data.end_date and data.end_date < data.start_date):
+        return _err(400, "Ayrılış tarihi işe giriş tarihinden önce olamaz.")
+    return None
+
 
 def _validate_user_link(db: Session, user_id: Optional[int],
                         exclude_employee_id: Optional[int] = None):
@@ -913,12 +928,13 @@ def create_employee(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("pdks", "manage")),
 ):
-    err = _validate_user_link(db, data.user_id)
+    err = _validate_user_link(db, data.user_id) or _validate_employment(data)
     if err:
         return err
     e = Employee(
         full_name=data.full_name.strip(), title=(data.title or "").strip() or None,
-        start_date=data.start_date, notes=(data.notes or "").strip() or None,
+        start_date=data.start_date, end_date=data.end_date,
+        notes=(data.notes or "").strip() or None,
         user_id=data.user_id,
     )
     try:
@@ -961,12 +977,14 @@ def update_employee(
     e = db.query(Employee).filter(Employee.id == employee_id).first()
     if not e:
         return _err(404, "Personel bulunamadı.")
-    err = _validate_user_link(db, data.user_id, exclude_employee_id=e.id)
+    err = (_validate_user_link(db, data.user_id, exclude_employee_id=e.id)
+           or _validate_employment(data))
     if err:
         return err
     e.full_name = data.full_name.strip()
     e.title = (data.title or "").strip() or None
     e.start_date = data.start_date
+    e.end_date = data.end_date
     e.notes = (data.notes or "").strip() or None
     e.user_id = data.user_id
     if data.is_active is not None:
@@ -994,6 +1012,10 @@ def delete_employee(
     if not e:
         return _err(404, "Personel bulunamadı.")
     e.is_active = False
+    # Pasifleştirme = ayrılış.  Tarih boşsa bugüne yaz; yoksa puantaj ayın
+    # kalanını devamsız yazmaya devam ederdi (kartın pasif olması yetmiyor).
+    if e.end_date is None:
+        e.end_date = tr_date_of(datetime.utcnow())
     db.commit()
     log_admin_event(db, request, actor=current_user, action="pdks.employee.delete",
                     target_type="pdks_employee", target_id=e.id, target_name=e.full_name)

@@ -122,6 +122,17 @@ yok). Hesap motoru `core/pdks.py` SAF fonksiyonlardır (DB'siz, unit-test
 edilebilir): tatil/izin/hafta tatilinde çalışılan her dakika fazla mesai, açık
 çift ("çıkış eksik") 0 sayılır ve yönetici düzeltene kadar toplam dışıdır.
 
+**İstihdam penceresi — `pdks_employees.start_date` / `end_date`.** `is_active`
+puantaja GÖRÜNMEZ: kart pasifleştirilse bile `compute_month` yalnız programa
+bakıp ayın kalanını "Devamsız" yazıyor ve ayrılanın son ay bordrosuna 8'er
+saat eksik süre bindiriyordu (Ağustos 2026'da iki ayrılışta yaşandı).
+`compute_day(..., started_on=, left_on=)` pencere dışı günü `baslamadi` /
+`ayrildi` statüsüyle **toplam dışı** bırakır (beklenen 0, devamsızlık yok,
+izin sayacına girmez) — öncelik sırasında EN ÜSTTE, tatil/izinden önce.
+Ayrılış günü DAHİLDİR. `DELETE /api/pdks/employees/{id}` (pasifleştirme)
+tarih boşsa bugüne damgalar; pencere dışına düşmüş OLAY yine gösterilir
+(anomali görünsün). Kolon prod'a `init_db()` alter_safe satırıyla ulaşır.
+
 **Unutulan çıkış — iki mekanizma:**
 1. **Açık 'in' ne zaman düşer** (`core.pdks.open_in_still_valid`): 16 saatten
    (`OPEN_PAIR_MAX_HOURS`) eski olmayacak VE **önceki güne aitse** 12 saatten

@@ -579,6 +579,10 @@
             <label class="lbl">İşe Giriş Tarihi</label>
             <input type="date" id="eStartDate" class="ipt" />
           </div>
+          <div style="flex:1;min-width:150px;">
+            <label class="lbl">Ayrılış Tarihi <span class="muted" style="text-transform:none;font-weight:400;">(boşsa çalışıyor)</span></label>
+            <input type="date" id="eEndDate" class="ipt" />
+          </div>
           <div style="flex:2;min-width:200px;">
             <label class="lbl">Bağlı IMS Hesabı <span class="muted" style="text-transform:none;font-weight:400;">(kendi cihazından giriş/çıkış için şart)</span></label>
             <select id="eUser" class="ipt"><option value="">— Bağlı değil —</option></select>
@@ -1514,7 +1518,7 @@
         const act = _emps.filter(e => e.is_active);
         const pas = _emps.filter(e => !e.is_active);
         const row = e => `<tr class="emp-row" onclick="empOpen(${e.id})" style="${e.is_active ? '' : 'opacity:0.5;'}">
-          <td><b>${esc(e.full_name)}</b>${e.is_active ? '' : ' <span class="muted">(pasif)</span>'}</td>
+          <td><b>${esc(e.full_name)}</b>${e.is_active ? '' : ' <span class="muted">(' + (e.end_date_label ? 'ayrıldı ' + esc(e.end_date_label) : 'pasif') + ')</span>'}</td>
           <td>${esc(e.title || '—')}</td>
           <td class="muted">${esc(e.start_date_label || '—')}</td>
           <td>${e.username ? '<i class="bi bi-person-check" style="color:#15803d;"></i> ' + esc(e.username) : '<span class="muted">bağlı değil</span>'}</td>
@@ -1568,6 +1572,7 @@
       document.getElementById('eFullName').value = e ? e.full_name : '';
       document.getElementById('eTitle').value = e ? (e.title || '') : '';
       document.getElementById('eStartDate').value = e ? (e.start_date || '') : '';
+      document.getElementById('eEndDate').value = e ? (e.end_date || '') : '';
       document.getElementById('eNotes').value = e ? (e.notes || '') : '';
       document.getElementById('eActive').checked = e ? !!e.is_active : true;
       // Program: en güncel versiyonu editöre yükle
@@ -1608,6 +1613,7 @@
         full_name: fullName,
         title: document.getElementById('eTitle').value.trim() || null,
         start_date: document.getElementById('eStartDate').value || null,
+        end_date: document.getElementById('eEndDate').value || null,
         notes: document.getElementById('eNotes').value.trim() || null,
         user_id: document.getElementById('eUser').value ? parseInt(document.getElementById('eUser').value) : null,
         is_active: document.getElementById('eActive').checked,

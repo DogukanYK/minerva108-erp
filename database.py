@@ -1314,6 +1314,11 @@ class Employee(Base):
     full_name  = Column(String(150), nullable=False)
     title      = Column(String(100), nullable=True)      # görev/ünvan
     start_date = Column(Date, nullable=True)             # işe giriş (TR-yerel)
+    # İşten ayrılış (TR-yerel, dahil).  Bu tarihten SONRAKİ günler puantajda
+    # devamsızlık değil 'İşten ayrıldı'dır — is_active tek başına yetmiyordu:
+    # kart pasifleşse bile aylık rapor ayın kalanını devamsız yazıyordu ve
+    # ayrılan personelin son ay bordrosu yanlış çıkıyordu (bkz. core/pdks.py).
+    end_date   = Column(Date, nullable=True)
     notes      = Column(Text, nullable=True)
     is_active  = Column(Boolean, default=True)           # soft delete (işten ayrılan)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -1720,6 +1725,9 @@ def init_db():
             # alıcı daveti sipariş işleme akışında bu bayrakla idempotent üretilir
             # (webhook redelivery / retry_order aynı siparişe iki davet üretmesin).
             "ALTER TABLE shopify_orders ADD COLUMN invites_created BOOLEAN NOT NULL DEFAULT FALSE",
+            # PDKS — işten ayrılış tarihi.  deploy.sh alembic ÇALIŞTIRMIYOR;
+            # kolon prod'a yalnız bu satırla ulaşır.
+            "ALTER TABLE pdks_employees ADD COLUMN end_date DATE",
         ):
             alter_safe(stmt)
 

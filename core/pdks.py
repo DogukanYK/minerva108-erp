@@ -94,6 +94,8 @@ DAY_STATUS_LABELS = {
     # İkisini ayırmazsak beklenen süre bilinmediği hâlde 0 sayılır ve o gün
     # çalışılan sürenin TAMAMI fazla mesai olarak yazılır (gerçek bir hataydı).
     "programsiz":   "Program tanımsız",
+    "baslamadi":    "İşe başlamadı",
+    "ayrildi":      "İşten ayrıldı",
     "resmi_tatil":  "Resmi tatil",
     "bekliyor":     "Bekliyor",
 }
@@ -324,7 +326,7 @@ def pair_events(events):
 
 
 def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None,
-                leave=None, unscheduled=False):
+                leave=None, unscheduled=False, started_on=None, left_on=None):
     """Bir personelin TEK gününü hesapla.
 
     events: o work_date'e yazılmış aktif olaylar (dict listesi).
@@ -334,11 +336,18 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None,
     unscheduled: o tarihi kapsayan program versiyonu YOK (bkz.
     `has_schedule_version`).  Bu durumda beklenen süre bilinmediği için
     fazla mesai / eksik süre HESAPLANMAZ — çalışılan süre yine gösterilir.
+    started_on / left_on: istihdam penceresi (ikisi de DAHİL, None = sınırsız).
+    Pencere dışındaki gün 'işe başlamadı' / 'işten ayrıldı'dır: beklenen süre
+    0, devamsızlık YOK.  `is_active` bunun yerine geçmez — pasif kart aylık
+    raporda ayın kalanını devamsız yazıyordu ve ayrılanın son ay bordrosu
+    yanlış çıkıyordu.  Pencere dışına düşmüş OLAY yine gösterilir (anomali).
     """
     # `leave` verilirse tür ondan türetilir (not + belge no da taşınır);
     # `leave_type=` eski çağrılar için korunuyor.
     if leave:
         leave_type = leave.get("leave_type") or leave_type
+    off_roster = ((started_on is not None and work_date < started_on)
+                  or (left_on is not None and work_date > left_on))
     pairs = pair_events(events)
     closed = [p for p in pairs if p["in"] and p["out"]]
     missing_checkout = any(p["in"] and not p["out"] for p in pairs)
@@ -362,7 +371,7 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None,
     # Beklenen süre
     half_day_holiday = bool(holiday and holiday.get("is_half_day"))
     full_holiday = bool(holiday and not half_day_holiday)
-    if leave_type or full_holiday or not day_schedule:
+    if off_roster or leave_type or full_holiday or not day_schedule:
         expected = 0
     else:
         expected = max(0, day_schedule["span_minutes"] - day_schedule["break_minutes"])
@@ -372,16 +381,21 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None,
     overtime = max(0, worked - expected)
     # Eksik süre: çıkış eksikse hesaplanamaz (gün zaten toplam dışı bayraklı).
     missing = 0 if missing_checkout else max(0, expected - worked)
-    if unscheduled:
-        # Beklenen süre bilinmiyor → ne fazla mesai ne eksik yazılabilir.
-        # (Aksi hâlde o gün çalışılan sürenin tamamı fazla mesai olurdu.)
+    if unscheduled or off_roster:
+        # Beklenen süre bilinmiyor (program yok) ya da o gün istihdam penceresi
+        # dışında → ne fazla mesai ne eksik yazılabilir.  (Aksi hâlde o gün
+        # çalışılan sürenin tamamı fazla mesai olurdu.)
         overtime = missing = 0
 
     first_in = min((p["in"]["ts_utc"] for p in pairs if p["in"]), default=None)
     last_out = max((p["out"]["ts_utc"] for p in pairs if p["out"]), default=None)
 
-    # Durum — öncelik sırası sabit (modül docstring'i).
-    if holiday:
+    # Durum — öncelik sırası sabit (modül docstring'i).  İstihdam penceresi
+    # EN ÜSTTE: ayrılmış personelin günü tatil/izin/devamsız değildir.
+    if off_roster:
+        status = "baslamadi" if (started_on is not None
+                                 and work_date < started_on) else "ayrildi"
+    elif holiday:
         status = "resmi_tatil"
     elif leave_type:
         status = "izinli"
@@ -404,6 +418,7 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None,
         "leave_type": leave_type,
         "leave_note": (leave or {}).get("note") or "",
         "leave_document_no": (leave or {}).get("document_no") or "",
+        "off_roster": off_roster,
         "holiday_name": holiday.get("name") if holiday else None,
         "first_in": first_in,
         "last_out": last_out,
@@ -434,12 +449,15 @@ def leave_detail_for(leaves, work_date):
     return None
 
 
-def compute_month(year, month, schedules, events_by_date, leaves, holidays, today_tr):
+def compute_month(year, month, schedules, events_by_date, leaves, holidays,
+                  today_tr, started_on=None, left_on=None):
     """Bir personelin bir ayını hesapla.
 
     events_by_date: {date: [olay]}   holidays: {date: {"name","is_half_day"}}
     today_tr: bugünün TR-yerel tarihi — sonraki günler 'bekliyor' olur ve
     toplamlara girmez.
+    started_on / left_on: istihdam penceresi (bkz. compute_day) — dışındaki
+    günler devamsızlığa, eksik süreye ve izin sayacına GİRMEZ.
 
     izin_gunleri sayacı yalnız PROGRAMLI iş gününe denk gelen izin günlerini
     sayar (hafta tatiline taşan izin, izin hakkından gün düşürmez); görüntü
@@ -463,8 +481,9 @@ def compute_month(year, month, schedules, events_by_date, leaves, holidays, toda
                 "first_in": None, "last_out": None,
                 "worked_minutes": 0, "expected_minutes": 0, "overtime_minutes": 0,
                 "missing_minutes": 0,
-                "missing_checkout": False, "orphan_out": False,
+                    "missing_checkout": False, "orphan_out": False,
                 "break_deducted": False, "break_minutes": 0, "pairs": [],
+                "off_roster": False,
             })
             continue
         sched = schedule_for(schedules, d)
@@ -475,6 +494,7 @@ def compute_month(year, month, schedules, events_by_date, leaves, holidays, toda
             leave=leave_detail_for(leaves, d),
             holiday=(holidays or {}).get(d),
             unscheduled=not has_schedule_version(schedules, d),
+            started_on=started_on, left_on=left_on,
         )
         days.append(day)
         totals["toplam_calisma"] += day["worked_minutes"]
@@ -487,7 +507,7 @@ def compute_month(year, month, schedules, events_by_date, leaves, holidays, toda
         # Tam resmi tatile denk gelen izin günü izin hakkından düşmez
         # (İş Kanunu m.56 — yıllık izne rastlayan tatil izinden sayılmaz).
         hol = (holidays or {}).get(d)
-        if (day["leave_type"] and sched
+        if (day["leave_type"] and sched and not day["off_roster"]
                 and not (hol and not hol.get("is_half_day"))):
             totals["izin_gunleri"][day["leave_type"]] = \
                 totals["izin_gunleri"].get(day["leave_type"], 0) + 1
