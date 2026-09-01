@@ -14,6 +14,9 @@ göstermiyordu.
     10.08, Müyesser 06.08, Betül/Berkan 04.08) → önceki günler "program
     tanımsız", çalışma hiç sayılmıyor.
   • Songül 25–28.08 yıllık izindeydi; izin kaydı girilmediği için DEVAMSIZ.
+  • Doğukan 11.08 RAPORLU (kendi bildirimi, 28.08).  İlk turda bu izin kaydı
+    gözden kaçtı ve o güne tam mesai yazıldı → raporlu günde beklenen 0
+    olduğu için 8 saat fazla mesai görünüyordu; HATALI listesi geri alır.
   • Müyesser 14.08'de, Berkan 24.08'de ayrıldı; ayrılış tarihi alanı yoktu
     (bu deploy'da eklendi) → ayın kalanı devamsız yazılıyordu.
 
@@ -64,8 +67,6 @@ DENEME = [
 
 # ── Tam gün eklenecek (emp_id, TR gün, giriş, çıkış) ────────────────────────
 TAM_GUN = [
-    # Doğukan — 11.08 hiç basım yok
-    (1, date(2026, 8, 11), "08:30", "17:45"),
     # Songül — 04.08 yalnız deneme basımı vardı
     (2, date(2026, 8, 4), "08:30", "17:41"),
     # Berkan — 03.08 program yoktu, 04.08 deneme
@@ -86,6 +87,15 @@ TAM_GUN = [
     (6, date(2026, 8, 5), "08:30", "17:45"),
     (6, date(2026, 8, 6), "08:30", "17:45"),
     (6, date(2026, 8, 7), "08:30", "17:45"),
+]
+
+# ── Hatalı eklenen olaylar — geri alınacak (emp_id, TR gün, TR saat, tip) ───
+# 11.08 Doğukan RAPORLU (izin kaydı 28.08'de kendisi bildirdi, "hasta").  İlk
+# turda izin kayıtları eksik okundu ve o güne tam mesai yazıldı; raporlu günde
+# beklenen süre 0 olduğu için o 8 saat FAZLA MESAİ olarak görünüyordu.
+HATALI = [
+    (1, date(2026, 8, 11), "08:30", "in"),
+    (1, date(2026, 8, 11), "17:45", "out"),
 ]
 
 # ── Yalnız çıkış eklenecek (emp_id, TR gün, çıkış) — giriş kayıtta var ──────
@@ -121,12 +131,13 @@ def utc_of(d: date, hm: str) -> datetime:
 
 def main() -> int:
     db = SessionLocal()
-    n_off = n_ev = n_sched = n_leave = n_emp = 0
+    n_off = n_ev = n_sched = n_leave = n_emp = n_undo = 0
     skipped = []
     try:
         emps = {e.id: e for e in db.query(Employee).all()}
         need = set(x[0] for x in DENEME) | set(x[0] for x in TAM_GUN) \
             | set(x[0] for x in SADECE_CIKIS) | set(PROGRAM_GERI) \
+            | set(x[0] for x in HATALI) \
             | set(x[0] for x in IZINLER) | set(AYRILISLAR)
         missing = need - set(emps)
         if missing:
@@ -188,6 +199,31 @@ def main() -> int:
             add_event(eid, d, o_hm, "out", "gün eksikti, tam gün eklendi")
         for eid, d, o_hm in SADECE_CIKIS:
             add_event(eid, d, o_hm, "out", "çıkış basılmamıştı")
+
+        # ── 2b) Hatalı eklenenleri geri al ─────────────────────────────────
+        print("\n②b Hatalı eklenen olaylar (geri alınacak)")
+        for eid, d, hm, typ in HATALI:
+            ts = utc_of(d, hm)
+            row = (db.query(AttendanceEvent)
+                   .filter(AttendanceEvent.employee_id == eid,
+                           AttendanceEvent.event_type == typ,
+                           AttendanceEvent.ts_utc == ts,
+                           AttendanceEvent.source == "manual",
+                           AttendanceEvent.is_active == True).first())   # noqa: E712
+            if row is None:
+                skipped.append(f"geri alınacak olay yok: {emps[eid].full_name} "
+                               f"{d:%d.%m} {hm} {typ}")
+                continue
+            n_undo += 1
+            print(f"   − {emps[eid].full_name:20} {d:%d.%m} {hm} {typ:3} "
+                  f"(id {row.id})")
+            if COMMIT:
+                row.is_active = False
+                row.corrected_by = "sistem"
+                row.corrected_at = datetime.utcnow()
+                row.correction_note = (
+                    "Hatalı eklenmişti — o gün RAPORLU (izin kaydı var). "
+                    f"{NOTE}")[:300]
 
         # ── 3) Program versiyonlarını geriye taşı ──────────────────────────
         print("\n③ Program versiyonu (geriye dönük kopya)")
@@ -256,8 +292,8 @@ def main() -> int:
     finally:
         db.close()
 
-    print(f"\nÖzet: {n_off} deneme pasif · {n_ev} olay · {n_sched} program · "
-          f"{n_leave} izin · {n_emp} personel")
+    print(f"\nÖzet: {n_off} deneme pasif · {n_ev} olay · {n_undo} geri alma · "
+          f"{n_sched} program · {n_leave} izin · {n_emp} personel")
     for s in skipped:
         print(f"  · atlandı — {s}")
     print("\n✓ YAZILDI." if COMMIT
