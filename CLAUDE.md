@@ -183,7 +183,9 @@ gibi; domain kolonu/dependency yok). RBAC kategorisi **`pdks`**
 Manager tümü). Manuel olay düzeltmeleri `correction_note` zorunlu +
 `log_admin_event` audit'li; olay silme soft-delete. Excel puantaj:
 `GET /api/pdks/report/excel` → `core/pdks_report.py` (Özet + personel başına
-sayfa). Tablolar `pdks_*` — create_all ile gelir (migration
+sayfa); `GET /api/pdks/report/pdf` → `core/pdks_pdf.py` — patronun aylık
+puantaj formatı: tik'li tek sayfa grid (✓/R/İ/D/!/—), süre dökümü YOK
+(o Excel'de kalır). İkisi de `_report_data` sözleşmesini paylaşır. Tablolar `pdks_*` — create_all ile gelir (migration
 `f3a5c7e9b2d4`). Not: buradaki "izin" devamsızlık mazeretidir; RBAC
 "permission" kavramıyla karıştırma.
 

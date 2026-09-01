@@ -1895,3 +1895,32 @@ def test_deactivating_employee_stamps_departure_date(authed_client, db_session):
     emp = db_session.query(Employee).get(eid)
     assert emp.is_active is False
     assert emp.end_date == tr_date_of(datetime.utcnow())
+
+
+# ─── Puantaj çizelgesi PDF (tik'li grid) ────────────────────────────────────
+
+def test_report_pdf_returns_grid(authed_client, db_session):
+    """`/report/pdf` geçerli bir PDF döner; ayrılış sonrası günler devamsızlığa
+    yazılmaz (grid Excel ile aynı _report_data sözleşmesini kullanır)."""
+    r = authed_client.post("/api/pdks/employees", headers=ORIGIN, json={
+        "full_name": "Çizelge Personeli", "start_date": "2026-08-03",
+        "end_date": "2026-08-24"})
+    assert r.status_code == 201, r.text
+    eid = r.json()["id"]
+    authed_client.put(f"/api/pdks/employees/{eid}/schedule", headers=ORIGIN,
+                      json={"effective_from": "2026-08-03",
+                            "weekly_template": STD_TEMPLATE})
+    resp = authed_client.get("/api/pdks/report/pdf?year=2026&month=8")
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "application/pdf"
+    assert "puantaj_cizelge_2026-08.pdf" in resp.headers["content-disposition"]
+    assert resp.content.startswith(b"%PDF-")
+
+    assert authed_client.get(
+        "/api/pdks/report/pdf?year=2026&month=13").status_code == 400
+
+
+def test_report_pdf_rbac(staff_employee_client):
+    """pdks.report izni olmayan personel çizelgeyi indiremez."""
+    c, _emp_id = staff_employee_client
+    assert c.get("/api/pdks/report/pdf?year=2026&month=8").status_code == 403

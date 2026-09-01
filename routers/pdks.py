@@ -2119,6 +2119,34 @@ def monthly_report(
     return _report_data(db, year, month, employee_id)
 
 
+@router.get("/report/pdf")
+def monthly_report_pdf(
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("pdks", "report")),
+):
+    """Tik'li aylık puantaj çizelgesi (tek sayfa, dikey A4) — patron formatı.
+
+    Süre dökümü Excel'de; bu PDF yalnız geldi/izin/rapor işaretleri + gün
+    toplamlarıdır (core/pdks_pdf.py).
+    """
+    if not _valid_month(year, month):
+        return _err(400, "Geçersiz yıl/ay.")
+    import io
+    from core.delivery_note import content_disposition
+    from core.pdks_pdf import puantaj_grid_filename, render_puantaj_grid_pdf
+    data = _report_data(db, year, month)
+    try:
+        content = render_puantaj_grid_pdf(data)
+    except Exception:
+        return _err(500, "Rapor üretilemedi.")
+    return StreamingResponse(
+        io.BytesIO(content), media_type="application/pdf",
+        headers={"Content-Disposition":
+                 content_disposition(puantaj_grid_filename(year, month))})
+
+
 @router.get("/report/excel")
 def monthly_report_excel(
     year: int,
