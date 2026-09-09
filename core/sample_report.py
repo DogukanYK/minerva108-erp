@@ -86,11 +86,49 @@ def _sample_story(view: dict, s: float = 1.0):
     info = [("Bulk Adı", view.get("bulk_name") or "—"),
             ("Üretim Tarihi", view.get("production_date") or "—"),
             ("Lot Numarası", view.get("lot_number") or "—")]
+    if view.get("mode_label"):
+        info.append(("Çalışma Türü", view["mode_label"]))
     if view.get("recipe_name"):
         info.append(("Çalışılan Formülasyon", view["recipe_name"]))
     if view.get("formulation_notes"):
         info.append(("Formülasyon / Sapma Notu", view["formulation_notes"]))
     story.append(kv(info))
+
+    # ── Kullanılan hammaddeler (bileşen satırları) ──
+    ings = view.get("ingredients") or []
+    if ings:
+        st_note = ParagraphStyle("inote", fontName=font, fontSize=7.5 * s,
+                                 textColor=MUTED, leading=10 * s)
+        story.append(Paragraph("Kullanılan Hammaddeler", st_h2))
+        ihead = [Paragraph(escape(h), st_hcell)
+                 for h in ("HAMMADDE", "KAYNAK", "LOT", "MİKTAR")]
+        ibody = []
+        for g in ings:
+            name_cell = [Paragraph(escape(str(g.get("item_name") or "—")), st_cell)]
+            if g.get("note"):
+                name_cell.append(Paragraph(escape(str(g["note"])), st_note))
+            lot = g.get("lot_number") or g.get("supplier_name") or "—"
+            if g.get("source") == "pending":
+                qty_txt = "—"
+            else:
+                q = float(g.get("quantity") or 0)
+                qty_txt = f"{q:g} {g.get('unit') or ''}".strip()
+            ibody.append([name_cell,
+                          Paragraph(escape(str(g.get("source_label") or "—")), st_cell),
+                          Paragraph(escape(str(lot)), st_cell),
+                          Paragraph(escape(qty_txt), st_cell)])
+        it = Table([ihead] + ibody,
+                   colWidths=[W * 0.36 * mm, W * 0.16 * mm, W * 0.26 * mm, W * 0.22 * mm],
+                   repeatRows=1)
+        it.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
+            ("GRID", (0, 0), (-1, -1), 0.4, GREY),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), pad), ("BOTTOMPADDING", (0, 0), (-1, -1), pad),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        story.append(it)
 
     # ── Özellik tablosu ──
     story.append(Paragraph("Bakılan Özellikler", st_h2))

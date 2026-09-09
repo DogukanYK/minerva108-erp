@@ -33,3 +33,24 @@ RESULT_LABELS = {
 
 def result_label(result) -> str:
     return RESULT_LABELS.get(result, RESULT_LABELS[None])
+
+# Bileşen satırı kaynağı — formda select, PDF'te sütun, _view'da source_label.
+SOURCE_LABELS = {
+    "sample":  "Numune lotu",
+    "stock":   "Stok",
+    "pending": "Henüz gelmedi",
+}
+
+# Çalışma türü — mevcut reçete üzerinde deneme / sıfırdan yeni reçete çalışması.
+MODE_LABELS = {
+    "existing": "Mevcut reçete üzerinde çalışma",
+    "new":      "Yeni reçete çalışması",
+}
+
+
+def source_label(source) -> str:
+    return SOURCE_LABELS.get(source, SOURCE_LABELS["pending"])
+
+
+def mode_label(mode) -> str:
+    return MODE_LABELS.get(mode, MODE_LABELS["new"])

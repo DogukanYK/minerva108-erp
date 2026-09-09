@@ -11,7 +11,15 @@ Liste/detay/PDF `qc.view`; oluştur/düzenle/sil `qc.approve` (form iki onay imz
 taşıyan bağlayıcı bir KK belgesi — imza yetkisi olan roller yazar, analiz yapan
 kişi serbest metin olarak kaydedilir). Belge no: NA-YYYY-NNNNN. Soft-delete.
 Reçete bağı opsiyonel; recipe_name snapshot'ı reçete silinse de belgeyi okunur
-tutar. Items sekmesindeki 'numune' lotlarıyla (Inventory.is_sample) İLGİSİZ.
+tutar.
+
+Bileşen satırları (`ingredients`): her satır hammadde + kaynak (numune lotu /
+stok / henüz gelmedi) + miktar.  Kullanılan miktar KAYNAĞINDAN DÜŞÜLÜR — motor
+core/sample_trial_stock.py (numune lotu: yalnız Inventory.quantity; stok:
+stock_lots.consume).  PUT yalnız farkı uygular, DELETE hepsini iade eder.
+Yetki bilinçli olarak yalnız `qc.approve` (inventory.adjust EK ŞART DEĞİL):
+deneme miktarları küçük, her hareket performed_by'lı Transaction/audit bırakır;
+admin'e gitme sürtünmesi 24.08.2026 kopya-kart kaosunu doğurmuştu.
 """
 import io
 import json
@@ -21,17 +29,19 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from database import get_db, to_tr, Recipe, SampleAnalysis
 from core.audit import log_admin_event
 from core.domain import active_domain
 from core.permissions import require_permission
-from core.sample_questions import FORM_CODE, result_label
+from core.sample_questions import FORM_CODE, result_label, source_label, mode_label
+from core.sample_trial_stock import TrialStockError, release_all, sync_ingredients
 
 router = APIRouter(prefix="/api", tags=["sample-analysis"])
 
 _RESULTS = ("uygun", "uygun_degil")
+_MODES = ("existing", "new")
 
 
 class PropertyRow(BaseModel):
@@ -41,11 +51,23 @@ class PropertyRow(BaseModel):
     found: Optional[str] = Field(None, max_length=300)
 
 
+class IngredientRow(BaseModel):
+    row_id: Optional[int] = None                     # mevcut satır id (PUT eşlemesi)
+    item_id: int
+    source: str = Field("pending", max_length=10)    # sample | stock | pending
+    inventory_id: Optional[int] = None               # yalnız source == sample
+    quantity: Optional[float] = Field(None, ge=0)
+    unit: Optional[str] = Field(None, max_length=20)
+    note: Optional[str] = Field(None, max_length=300)
+
+
 class SampleAnalysisCreate(BaseModel):
     bulk_name: str = Field(..., min_length=1, max_length=200)
     production_date: Optional[date] = None
     lot_number: Optional[str] = Field(None, max_length=100)
     recipe_id: Optional[int] = None
+    mode: Optional[str] = None                        # existing | new | None → türet
+    ingredients: List[IngredientRow] = Field(default_factory=list, max_length=100)
     formulation_notes: Optional[str] = Field(None, max_length=5000)
     properties: List[PropertyRow] = Field(..., min_length=1, max_length=30)
     analyst_name: Optional[str] = Field(None, max_length=100)
@@ -56,11 +78,16 @@ class SampleAnalysisCreate(BaseModel):
     qa_representative: Optional[str] = Field(None, max_length=100)
 
 
+def _view_mode(r: SampleAnalysis) -> str:
+    return r.mode or ("existing" if r.recipe_id else "new")
+
+
 def _view(r: SampleAnalysis) -> dict:
     try:
         props = json.loads(r.properties or "[]")
     except (TypeError, ValueError):
         props = []
+    mode = _view_mode(r)
     return {
         "id":                r.id,
         "document_no":       r.document_no,
@@ -69,6 +96,22 @@ def _view(r: SampleAnalysis) -> dict:
         "lot_number":        r.lot_number or "",
         "recipe_id":         r.recipe_id,
         "recipe_name":       r.recipe_name or "",
+        "mode":              mode,
+        "mode_label":        mode_label(mode),
+        "ingredients":       [{
+            "row_id":        g.id,
+            "item_id":       g.item_id,
+            "item_name":     g.item_name,
+            "unit":          g.unit or "",
+            "source":        g.source,
+            "source_label":  source_label(g.source),
+            "inventory_id":  g.inventory_id,
+            "lot_number":    g.lot_number or "",
+            "supplier_name": g.supplier_name or "",
+            "quantity":      round(float(g.quantity or 0), 6),
+            "consumed_qty":  round(float(g.consumed_qty or 0), 6),
+            "note":          g.note or "",
+        } for g in (r.ingredients or [])],
         "formulation_notes": r.formulation_notes or "",
         "properties":        props,
         "analyst_name":      r.analyst_name or "",
@@ -86,6 +129,7 @@ def _view(r: SampleAnalysis) -> dict:
 
 def _get_active(db: Session, analysis_id: int, domain: str) -> Optional[SampleAnalysis]:
     return (db.query(SampleAnalysis)
+            .options(selectinload(SampleAnalysis.ingredients))
             .filter(SampleAnalysis.id == analysis_id,
                     SampleAnalysis.domain == domain,
                     SampleAnalysis.is_active == True)      # noqa: E712
@@ -98,10 +142,18 @@ def _apply(r: SampleAnalysis, data: SampleAnalysisCreate, db: Session, domain: s
     if result is not None and result not in _RESULTS:
         return None, JSONResponse(status_code=400,
                                   content={"detail": f"Geçersiz sonuç: {data.result} (uygun/uygun_degil/boş)."})
+    mode = (data.mode or "").strip().lower() or ("existing" if data.recipe_id else "new")
+    if mode not in _MODES:
+        return None, JSONResponse(status_code=400,
+                                  content={"detail": f"Geçersiz çalışma türü: {data.mode} (existing/new)."})
+    recipe_id = data.recipe_id if mode == "existing" else None   # yeni reçete → bağ yok
+    if mode == "existing" and recipe_id is None:
+        return None, JSONResponse(status_code=400,
+                                  content={"detail": "Mevcut reçete çalışması için bir reçete seçin."})
     recipe_name = None
-    if data.recipe_id is not None:
+    if recipe_id is not None:
         rec = (db.query(Recipe)
-               .filter(Recipe.id == data.recipe_id, Recipe.domain == domain,
+               .filter(Recipe.id == recipe_id, Recipe.domain == domain,
                        Recipe.is_active == True).first())  # noqa: E712
         if not rec:
             return None, JSONResponse(status_code=404, content={"detail": "Reçete bulunamadı."})
@@ -109,7 +161,8 @@ def _apply(r: SampleAnalysis, data: SampleAnalysisCreate, db: Session, domain: s
     r.bulk_name = data.bulk_name.strip()
     r.production_date = data.production_date
     r.lot_number = (data.lot_number or "").strip() or None
-    r.recipe_id = data.recipe_id
+    r.mode = mode
+    r.recipe_id = recipe_id
     r.recipe_name = recipe_name
     r.formulation_notes = (data.formulation_notes or "").strip() or None
     r.properties = json.dumps([p.model_dump() for p in data.properties], ensure_ascii=False)
@@ -131,6 +184,7 @@ def list_sample_analyses(
 ):
     limit = max(1, min(int(limit or 100), 500))
     rows = (db.query(SampleAnalysis)
+            .options(selectinload(SampleAnalysis.ingredients))
             .filter(SampleAnalysis.domain == domain,
                     SampleAnalysis.is_active == True)      # noqa: E712
             .order_by(SampleAnalysis.id.desc())
@@ -155,14 +209,19 @@ def create_sample_analysis(
         db.add(r)
         db.flush()
         r.document_no = f"NA-{datetime.utcnow().year}-{r.id:05d}"
+        moves = sync_ingredients(db, r, data.ingredients, domain=domain, actor=actor)
         db.commit()
+    except TrialStockError as e:
+        db.rollback()
+        return JSONResponse(status_code=e.status, content={"detail": e.detail})
     except Exception:
         db.rollback()
         return JSONResponse(status_code=500, content={"detail": "Kayıt oluşturulamadı."})
     log_admin_event(db, request, actor=current_user, action="sample_analysis.create",
                     target_type="sample_analysis", target_id=r.id, target_name=r.document_no,
-                    details={"bulk": r.bulk_name, "lot": r.lot_number,
-                             "sonuc": result_label(r.result)})
+                    details={"bulk": r.bulk_name, "lot": r.lot_number, "mod": r.mode,
+                             "sonuc": result_label(r.result), "satir": len(r.ingredients),
+                             "dusum": moves["consumed"], "iade": moves["released"]})
     return {"id": r.id, "document_no": r.document_no, "message": "Numune analiz formu kaydedildi."}
 
 
@@ -191,17 +250,25 @@ def update_sample_analysis(
     r = _get_active(db, analysis_id, domain)
     if not r:
         return JSONResponse(status_code=404, content={"detail": "Kayıt bulunamadı."})
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
     r, err = _apply(r, data, db, domain)
     if err:
+        db.rollback()
         return err
     try:
+        moves = sync_ingredients(db, r, data.ingredients, domain=domain, actor=actor)
         db.commit()
+    except TrialStockError as e:
+        db.rollback()          # alan değişiklikleri de geri alınır — tek işlem, hep ya hiç
+        return JSONResponse(status_code=e.status, content={"detail": e.detail})
     except Exception:
         db.rollback()
         return JSONResponse(status_code=500, content={"detail": "Kayıt güncellenemedi."})
     log_admin_event(db, request, actor=current_user, action="sample_analysis.update",
                     target_type="sample_analysis", target_id=r.id, target_name=r.document_no,
-                    details={"bulk": r.bulk_name, "sonuc": result_label(r.result)})
+                    details={"bulk": r.bulk_name, "mod": r.mode, "sonuc": result_label(r.result),
+                             "satir": len(r.ingredients),
+                             "dusum": moves["consumed"], "iade": moves["released"]})
     return {"id": r.id, "message": "Numune analiz formu güncellendi."}
 
 
@@ -216,11 +283,17 @@ def delete_sample_analysis(
     r = _get_active(db, analysis_id, domain)
     if not r:
         return JSONResponse(status_code=404, content={"detail": "Kayıt bulunamadı."})
-    r.is_active = False
-    db.commit()
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
+    try:
+        released = release_all(db, r, actor=actor, reason="form silindi")
+        r.is_active = False
+        db.commit()
+    except Exception:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"detail": "Form silinemedi."})
     log_admin_event(db, request, actor=current_user, action="sample_analysis.delete",
                     target_type="sample_analysis", target_id=r.id, target_name=r.document_no,
-                    details={"bulk": r.bulk_name})
+                    details={"bulk": r.bulk_name, "iade": released})
     return {"message": "Numune analiz formu silindi."}
 
 

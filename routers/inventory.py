@@ -686,6 +686,11 @@ def _item_has_audit(db: Session, item_id: int) -> bool:
         return True
     if db.query(Inventory.id).filter(Inventory.item_id == item_id).first():
         return True
+    # Numune analiz formunda bileşen olarak geçen kart (pending satırda ne
+    # Transaction ne Inventory olabilir) — FK kırılmasın, soft-delete.
+    from database import SampleAnalysisIngredient
+    if db.query(SampleAnalysisIngredient.id).filter(SampleAnalysisIngredient.item_id == item_id).first():
+        return True
     return False
 
 

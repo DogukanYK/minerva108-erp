@@ -355,8 +355,10 @@ class SampleAnalysis(Base):
     SONUÇ metni, imza adları snapshot. Reçete bağı OPSİYONEL (recipe_name
     snapshot'ı reçete silinse de belgeyi okunur tutar). form_code satır-başı
     snapshot: kağıt form revize olursa eski kayıtlar eski revizyonla basılır.
-    Items sekmesindeki 'numune' (Inventory.is_sample = tedarikçi numune lotu)
-    ile İLGİSİZ — bu tablo bir KK belgesidir.
+    Bileşen satırları `SampleAnalysisIngredient`'ta: hangi hammadde, nereden
+    (Items 'Numune' sekmesindeki numune lotu / normal stok / henüz gelmedi), ne
+    kadar.  Kullanılan miktar kaynağından DÜŞÜLÜR — motor core/sample_trial_stock.
+    `mode`: 'existing' (mevcut reçete üzerinde çalışma) | 'new' (yeni reçete).
     """
     __tablename__ = "sample_analyses"
 
@@ -381,7 +383,46 @@ class SampleAnalysis(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    mode = Column(String(10), nullable=False, default="new")      # existing | new
+
     recipe = relationship("Recipe", foreign_keys=[recipe_id])
+    ingredients = relationship("SampleAnalysisIngredient", back_populates="analysis",
+                               cascade="all, delete-orphan",
+                               order_by="SampleAnalysisIngredient.position")
+
+
+class SampleAnalysisIngredient(Base):
+    """FR.KK.01 deneme satırı — hangi hammadde, nereden, ne kadar.
+
+    source: 'sample' (Inventory.is_sample lotu, inventory_id dolu) | 'stock'
+    (normal stok, FIFO) | 'pending' (henüz gelmedi / kullanılmadı).
+    consumed_qty = şu an fiilen DÜŞÜLMÜŞ miktar; PUT/DELETE bu sayaca göre fark
+    uygular (core/sample_trial_stock.py).  Numune lotunda yalnız
+    Inventory.quantity iner (numune stok DEĞİLDİR — Transaction yok); stokta
+    core/stock_lots.consume (lot başına Output + current_stock).
+    inventory_id ondelete=SET NULL: numune stoğa çevrilirken aynı lotlu normal
+    satıra birleşince numune satırı silinir; belge snapshot'larla okunur kalır.
+    """
+    __tablename__ = "sample_analysis_ingredients"
+
+    id = Column(Integer, primary_key=True, index=True)
+    analysis_id = Column(Integer, ForeignKey("sample_analyses.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False, index=True)
+    item_name = Column(String(150), nullable=False)                 # snapshot
+    unit = Column(String(20), nullable=True)                        # item.unit snapshot
+    source = Column(String(10), nullable=False, default="pending")  # sample | stock | pending
+    inventory_id = Column(Integer, ForeignKey("inventory.id", ondelete="SET NULL"),
+                          nullable=True, index=True)
+    lot_number = Column(String(100), nullable=True)                 # snapshot
+    supplier_name = Column(String(150), nullable=True)              # snapshot
+    quantity = Column(Float, nullable=False, default=0.0)
+    consumed_qty = Column(Float, nullable=False, default=0.0)
+    note = Column(String(300), nullable=True)
+    position = Column(Integer, nullable=False, default=0)
+
+    analysis = relationship("SampleAnalysis", back_populates="ingredients")
+    item = relationship("Item", foreign_keys=[item_id])
+    inventory = relationship("Inventory", foreign_keys=[inventory_id])
 
 
 class Transaction(Base):
@@ -2236,6 +2277,11 @@ def init_db():
             # ulaşır (migration b5d7f9a1c3e5 geçmiş + temiz kurulum içindir).
             "ALTER TABLE crm_task ADD COLUMN influencer_collab_id INTEGER",
             "CREATE INDEX IF NOT EXISTS ix_crm_task_inf_collab ON crm_task(influencer_collab_id)",
+            # Numune analizi — deneme satırları tablosu create_all ile gelir;
+            # mevcut sample_analyses'a eklenen tek kolon burada.  deploy.sh
+            # alembic ÇALIŞTIRMIYOR; kolon prod'a yalnız bu satırla ulaşır
+            # (migration c7e9a1b3d5f7 geçmiş + temiz kurulum içindir).
+            "ALTER TABLE sample_analyses ADD COLUMN mode VARCHAR(10) NOT NULL DEFAULT 'new'",
         ):
             alter_safe(stmt)
 

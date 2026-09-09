@@ -562,6 +562,17 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   `POST /api/inventory/samples/{id}/convert` — that's the ONE place a sample
   Inventory row gets an `Input` Transaction + `current_stock` bump; it flips
   `is_sample=False` (or merges into a same-lot normal row if one exists).
+  **Second consumer of sample quantity (2026-09-09): the Numune Analizi form.**
+  `sample_analysis_ingredients` rows (`routers/sample_analysis.py`, engine
+  `core/sample_trial_stock.py`) record per-ingredient source — `sample` (a
+  specific `is_sample` lot: only `Inventory.quantity` drops, no Transaction, no
+  `current_stock`), `stock` (`stock_lots.consume` → FIFO + Output per lot +
+  `current_stock`; short stock = 400) or `pending` (no effect). `consumed_qty`
+  is the amount physically taken; PUT applies only the delta, DELETE releases
+  everything (sample → quantity back; stock → signed `+Adjustment`, Output rows
+  untouched, no lot re-opened). `inventory_id` FK is `ondelete=SET NULL` because
+  `convert` deletes a sample row when merging. `sample_analyses.mode`
+  (`existing`/`new`) is added via `init_db` alter_safe + migration c7e9a1b3d5f7.
   `receive_stock` also gates on `require_permission("inventory","receive")` +
   `active_domain` + `with_for_update()` (it originally had none of the three).
   **24.08.2026 incident**: an intern entered 47 samples through this tab in one

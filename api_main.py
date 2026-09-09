@@ -595,10 +595,12 @@ def numune_analiz_page(request: Request, db: Session = Depends(get_db)):
     user = _resolve_active_user(payload, db)
     if not _user_can(user, "qc", "view"):
         return RedirectResponse(url="/", status_code=302)
-    from core.sample_questions import FORM_CODE, SAMPLE_PROPERTIES
+    from core.sample_questions import FORM_CODE, MODE_LABELS, SAMPLE_PROPERTIES, SOURCE_LABELS
     ctx = _page_ctx(request, payload, user)
     ctx["sample_properties"] = SAMPLE_PROPERTIES   # tek kaynak — form satırları
     ctx["sample_form_code"] = FORM_CODE
+    ctx["sample_sources"] = SOURCE_LABELS          # bileşen kaynağı etiketleri
+    ctx["sample_modes"] = MODE_LABELS              # çalışma türü etiketleri
     return templates.TemplateResponse("numune_analiz.html", ctx)
 
 

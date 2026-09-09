@@ -76,6 +76,15 @@
     .radio-row{ display:flex; gap:1.1rem; flex-wrap:wrap; align-items:center; padding:0.35rem 0; }
     .radio-row label{ display:flex; align-items:center; gap:0.35rem; font-size:0.9rem; cursor:pointer; }
     .radio-row input{ accent-color:var(--navy); }
+    .mode-row{ display:flex; gap:0.6rem; flex-wrap:wrap; margin-bottom:0.8rem; }
+    .mode-opt{ flex:1; min-width:220px; display:flex; align-items:center; gap:0.6rem; padding:0.65rem 0.9rem; border:1.5px solid #e5e7eb; border-radius:9px; cursor:pointer; font-size:0.9rem; font-weight:500; background:#fff; }
+    .mode-opt:has(input:checked){ border-color:var(--navy); background:#f5f4ff; }
+    .mode-opt input{ accent-color:var(--navy); }
+    .ing-hint{ font-size:0.72rem; color:#9ca3af; display:block; margin-top:0.15rem; }
+    .ing-hint.warn{ color:#b91c1c; }
+    .ing-sel{ width:100%; padding:0.4rem 0.4rem; border:1.5px solid #e5e7eb; border-radius:7px; font-size:0.83rem; font-family:inherit; background:#fff; }
+    .ing-sel:disabled{ background:#f9fafb; color:#9ca3af; }
+    .src-sample{ background:#fef3c7; color:#92400e; } .src-stock{ background:#dbeafe; color:#1e40af; } .src-pending{ background:#f3f4f6; color:#6b7280; }
     #toast-container{ position:fixed; bottom:1.5rem; right:1.5rem; z-index:9999; display:flex; flex-direction:column; gap:0.6rem; }
     .toast-msg{ min-width:270px; max-width:380px; padding:0.8rem 1rem; border-radius:10px; font-size:0.88rem; font-weight:500; box-shadow:0 4px 20px rgba(0,0,0,0.12); display:flex; align-items:center; gap:0.6rem; }
     .toast-error{ background:#fff1f1; color:#b91c1c; border-left:4px solid #ef4444; }
@@ -95,6 +104,8 @@
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
   <script src="/static/toast.js" defer></script>
+  <script src="/static/tr-sort.js" defer></script>
+  <script src="/static/items-cache.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
 </head>
 <body>
@@ -182,15 +193,33 @@
               <input type="text" id="saLot" class="ipt" placeholder="ör. LOT-2407-A" maxlength="100" />
             </div>
           </div>
+          <label class="lbl">Çalışma Türü</label>
+          <div class="mode-row">
+            <label class="mode-opt"><input type="radio" name="saMode" value="new" checked onchange="saModeChanged()" /> <i class="bi bi-stars" style="color:var(--gold);"></i> {{ sample_modes['new'] }}</label>
+            <label class="mode-opt"><input type="radio" name="saMode" value="existing" onchange="saModeChanged()" /> <i class="bi bi-journal-text" style="color:var(--gold);"></i> {{ sample_modes['existing'] }}</label>
+          </div>
           <div style="display:flex;gap:0.7rem;flex-wrap:wrap;margin-bottom:0.8rem;">
-            <div style="flex:1;min-width:220px;">
-              <label class="lbl">Çalışılan Formülasyon <span class="muted" style="text-transform:none;font-weight:400;">(reçete — opsiyonel)</span></label>
-              <select id="saRecipe" class="ipt"><option value="">— Reçete bağlanmadı —</option></select>
+            <div style="flex:1;min-width:220px;display:none;" id="saRecipeWrap">
+              <label class="lbl">Çalışılan Reçete *</label>
+              <select id="saRecipe" class="ipt" onchange="saRecipeChanged()"><option value="">— Reçete seçiniz —</option></select>
+              <span class="ing-hint">Seçince bileşenler reçeteden dolar; kaynak ve tartılan miktarı satırda düzenleyin.</span>
             </div>
             <div style="flex:2;min-width:260px;">
               <label class="lbl">Formülasyon / Sapma Notu</label>
               <input type="text" id="saFormNotes" class="ipt" placeholder="ör. metil selüloz %3→%1, xanthan gum %1.7→%0.5" maxlength="5000" />
             </div>
+          </div>
+
+          <label class="lbl" style="margin-top:0.4rem;">Kullanılan Hammaddeler <span class="muted" style="text-transform:none;font-weight:400;">(kaynak: numune lotu / stok / henüz gelmedi — girilen miktar kaynağından düşülür)</span></label>
+          <div style="overflow-x:auto;">
+            <table id="ingTable">
+              <thead><tr><th style="width:30%;">Hammadde</th><th style="width:15%;">Kaynak</th><th style="width:22%;">Lot</th><th style="width:15%;">Miktar</th><th style="width:14%;">Not</th><th style="width:4%;"></th></tr></thead>
+              <tbody id="ingBody"></tbody>
+            </table>
+          </div>
+          <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin:0.5rem 0 1rem;">
+            <button type="button" id="addIngBtn" class="btn-o"><i class="bi bi-plus-lg"></i> Hammadde Ekle</button>
+            <span class="muted" style="font-size:0.8rem;">Gelen numuneyi önce <a href="/items" target="_blank" style="color:var(--navy);">Ürünler ▸ Numune</a> sekmesinden girin; kartı olmayan hammadde için önce kart açın.</span>
           </div>
 
           <label class="lbl" style="margin-top:0.4rem;">Bakılan Özellikler</label>
@@ -278,11 +307,209 @@
   <script>
     const SAMPLE_PROPERTIES = {{ sample_properties | tojson }};
     const FORM_CODE = {{ sample_form_code | tojson }};
+    const SAMPLE_SOURCES = {{ sample_sources | tojson }};
+    const MODE_LABELS = {{ sample_modes | tojson }};
     function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
     let _editId = null;      // düzenleme modundaki kayıt id'si
     let _current = null;     // detay overlay'indeki kayıt
     let _recipes = [];
+    let _items = [];         // hammadde kartları (Ambalaj/Bitmiş Ürün hariç)
+    let _samples = [];       // /api/inventory/samples — numune lotları
+    let _ingSeq = 0;
+
+    /* ── Bileşen satırları ── */
+    async function loadIngredientSources(force){
+      try {
+        const all = window.fetchItems ? await window.fetchItems(!!force)
+                  : await fetch('/api/items').then(r => r.json());
+        const raw = (all || []).filter(i => i.category !== 'Ambalaj' && i.category !== 'Bitmiş Ürün');
+        _items = window.trSortBy ? window.trSortBy(raw, 'name') : raw;
+      } catch { _items = []; }
+      try {
+        const r = await fetch('/api/inventory/samples');
+        _samples = r.ok ? await r.json() : [];
+      } catch { _samples = []; }
+    }
+    function fold(s){ return window.trFold ? window.trFold(s || '') : String(s || '').toLowerCase(); }
+    function itemById(id){ return _items.find(i => i.id === Number(id)); }
+    function samplesFor(itemId){ return _samples.filter(x => x.item_id === Number(itemId)); }
+
+    function itemOptions(selectedId){
+      return '<option value="">— Hammadde seçiniz —</option>' + _items.map(i => {
+        const lbl = i.name_tr ? `${i.name}  ·  ${i.name_tr}` : i.name;
+        return `<option value="${i.id}" data-fold="${esc(fold(i.name) + ' ' + fold(i.name_tr))}" ${Number(selectedId) === i.id ? 'selected' : ''}>${esc(lbl)}</option>`;
+      }).join('');
+    }
+    function sourceOptions(g){
+      const hasSample = samplesFor(g.item_id).length > 0 || g.source === 'sample';
+      return Object.entries(SAMPLE_SOURCES).map(([k, v]) =>
+        `<option value="${k}" ${g.source === k ? 'selected' : ''} ${(k === 'sample' && !hasSample) ? 'disabled' : ''}>${esc(v)}</option>`).join('');
+    }
+    function lotOptions(g){
+      const lots = samplesFor(g.item_id);
+      let html = '<option value="">— Lot seçiniz —</option>' + lots.map(l =>
+        `<option value="${l.inventory_id}" ${Number(g.inventory_id) === l.inventory_id ? 'selected' : ''}>${esc(l.lot_number)} · ${esc(l.supplier_name || '—')} · kalan ${Number(l.quantity).toLocaleString('tr-TR',{maximumFractionDigits:4})} ${esc(l.unit || '')}</option>`).join('');
+      if (g.source === 'sample' && g.lot_number && !lots.some(l => l.inventory_id === Number(g.inventory_id))) {
+        // düzenleme: bağlı lot artık numune listesinde değil (stoğa çevrildi / silindi)
+        const v = g.inventory_id ? g.inventory_id : 'gone';
+        html += `<option value="${v}" selected>${esc(g.lot_number)} (stoğa çevrildi / silindi)</option>`;
+      }
+      return html;
+    }
+    function ingRow(g){
+      const id = ++_ingSeq;
+      const it = itemById(g.item_id);
+      const unit = it ? (it.unit || '') : (g.unit || '');
+      const src = g.source || 'pending';
+      return `<tr data-ing="${id}">
+        <td>
+          <input type="hidden" class="ingRowId" value="${g.row_id || ''}">
+          <input type="text" class="prop-ipt ingSearch" placeholder="Yazarak süz…" autocomplete="off" style="margin-bottom:0.25rem;" oninput="ingFilter(this)">
+          <select class="ing-sel ingItem" onchange="ingItemChanged(this)">${itemOptions(g.item_id)}</select>
+          ${g.recipe_qty != null ? `<span class="ing-hint">Reçete: ${esc(g.recipe_qty)} ${esc(g.recipe_unit || '')}</span>` : ''}
+        </td>
+        <td><select class="ing-sel ingSource src-${src}" onchange="ingSourceChanged(this)">${sourceOptions({...g, source: src})}</select></td>
+        <td>
+          <select class="ing-sel ingLot" ${src === 'sample' ? '' : 'disabled'} onchange="ingLotChanged(this)">${lotOptions({...g, source: src})}</select>
+          <span class="ing-hint ingLotHint"></span>
+        </td>
+        <td>
+          <div style="display:flex;align-items:center;gap:0.3rem;">
+            <input type="number" class="prop-ipt ingQty" min="0" step="0.001" value="${g.quantity != null && g.quantity !== '' ? esc(g.quantity) : ''}" oninput="ingQtyChanged(this)" ${src === 'pending' ? 'disabled' : ''}>
+            <span class="ingUnit muted" style="font-size:0.8rem;white-space:nowrap;">${esc(unit)}</span>
+          </div>
+          <span class="ing-hint ingQtyHint"></span>
+        </td>
+        <td><input type="text" class="prop-ipt ingNote" value="${esc(g.note || '')}" maxlength="300" placeholder="opsiyonel"></td>
+        <td><button type="button" class="ico-del" onclick="this.closest('tr').remove()" title="Satırı sil"><i class="bi bi-x-lg"></i></button></td>
+      </tr>`;
+    }
+    function renderIngredients(rows){
+      const body = document.getElementById('ingBody');
+      if (!body) return;
+      body.innerHTML = (rows || []).map(ingRow).join('');
+      body.querySelectorAll('tr').forEach(ingRefreshHints);
+    }
+    function ingFilter(input){
+      const q = fold(input.value);
+      const sel = input.closest('td').querySelector('.ingItem');
+      sel.querySelectorAll('option').forEach(o => {
+        if (!o.value) { o.style.display = ''; return; }
+        o.style.display = (!q || (o.dataset.fold || '').includes(q)) ? '' : 'none';
+      });
+    }
+    function ingState(tr){
+      return {
+        row_id: tr.querySelector('.ingRowId').value ? parseInt(tr.querySelector('.ingRowId').value) : null,
+        item_id: parseInt(tr.querySelector('.ingItem').value) || null,
+        source: tr.querySelector('.ingSource').value || 'pending',
+        inventory_id: parseInt(tr.querySelector('.ingLot').value) || null,
+        quantity: tr.querySelector('.ingQty').value,
+        note: tr.querySelector('.ingNote').value,
+      };
+    }
+    function ingItemChanged(sel){
+      const tr = sel.closest('tr');
+      const g = ingState(tr);
+      const it = itemById(g.item_id);
+      tr.querySelector('.ingUnit').textContent = it ? (it.unit || '') : '';
+      if (!samplesFor(g.item_id).length && g.source === 'sample') g.source = 'pending';
+      g.inventory_id = null;
+      const srcSel = tr.querySelector('.ingSource');
+      srcSel.innerHTML = sourceOptions(g);
+      srcSel.value = g.source;
+      ingSourceChanged(srcSel);
+    }
+    function ingSourceChanged(sel){
+      const tr = sel.closest('tr');
+      const g = ingState(tr);
+      sel.className = `ing-sel ingSource src-${g.source}`;
+      const lot = tr.querySelector('.ingLot');
+      lot.disabled = g.source !== 'sample';
+      lot.innerHTML = lotOptions(g);
+      if (g.source !== 'sample') lot.value = '';
+      const qty = tr.querySelector('.ingQty');
+      qty.disabled = g.source === 'pending';
+      ingRefreshHints(tr);
+    }
+    function ingLotChanged(sel){ ingRefreshHints(sel.closest('tr')); }
+    function ingQtyChanged(inp){ ingRefreshHints(inp.closest('tr')); }
+    function ingRefreshHints(tr){
+      const g = ingState(tr);
+      const it = itemById(g.item_id);
+      const lotHint = tr.querySelector('.ingLotHint');
+      const qtyHint = tr.querySelector('.ingQtyHint');
+      lotHint.textContent = ''; lotHint.className = 'ing-hint ingLotHint';
+      qtyHint.textContent = ''; qtyHint.className = 'ing-hint ingQtyHint';
+      if (!it) return;
+      const q = parseFloat(g.quantity) || 0;
+      if (g.source === 'sample') {
+        if (!samplesFor(g.item_id).length && !g.inventory_id) {
+          lotHint.textContent = 'Bu hammadde için numune lotu yok — Ürünler ▸ Numune sekmesinden girin.';
+          lotHint.classList.add('warn');
+        }
+        const l = _samples.find(x => x.inventory_id === g.inventory_id);
+        if (l) {
+          // düzenlemede daha önce düşülen miktar lot kalanına eklenir (fark düşülür)
+          const prev = g.row_id && _current && _current.id === _editId
+            ? ((_current.ingredients || []).find(r => r.row_id === g.row_id && r.inventory_id === g.inventory_id) || {}).consumed_qty || 0 : 0;
+          const avail = Number(l.quantity) + prev;
+          if (q > avail + 1e-9) { qtyHint.textContent = `Lotta yalnız ${avail.toLocaleString('tr-TR',{maximumFractionDigits:4})} ${it.unit || ''} var.`; qtyHint.classList.add('warn'); }
+        }
+      } else if (g.source === 'stock') {
+        qtyHint.textContent = `mevcut stok: ${Number(it.current_stock || 0).toLocaleString('tr-TR',{maximumFractionDigits:4})} ${it.unit || ''}`;
+        if (q > Number(it.current_stock || 0) + 1e-9) qtyHint.classList.add('warn');
+      }
+    }
+    function collectIngredients(){
+      const rows = []; let err = null;
+      document.querySelectorAll('#ingBody tr').forEach((tr, i) => {
+        const g = ingState(tr);
+        if (!g.item_id) { if (!err) err = `${i + 1}. satırda hammadde seçilmedi.`; return; }
+        if (g.source === 'sample' && tr.querySelector('.ingLot').value === 'gone') { if (!err) err = `${i + 1}. satırdaki numune lotu artık yok — kaynağı değiştirin.`; return; }
+        if (g.source === 'sample' && !g.inventory_id) { if (!err) err = `${i + 1}. satırda numune lotu seçilmedi.`; return; }
+        const q = g.quantity === '' ? null : parseFloat(g.quantity);
+        if (q != null && (isNaN(q) || q < 0)) { if (!err) err = `${i + 1}. satırda miktar geçersiz.`; return; }
+        rows.push({ row_id: g.row_id, item_id: g.item_id, source: g.source,
+                    inventory_id: g.source === 'sample' ? g.inventory_id : null,
+                    quantity: g.source === 'pending' ? null : q,
+                    note: (g.note || '').trim() || null });
+      });
+      return { rows, err };
+    }
+    document.getElementById('addIngBtn')?.addEventListener('click', () => {
+      document.getElementById('ingBody').insertAdjacentHTML('beforeend', ingRow({source:'pending'}));
+    });
+
+    /* ── Çalışma türü + reçeteden doldurma ── */
+    function saMode(){ return document.querySelector('input[name=saMode]:checked')?.value || 'new'; }
+    function saModeChanged(){
+      const wrap = document.getElementById('saRecipeWrap');
+      if (!wrap) return;
+      const existing = saMode() === 'existing';
+      wrap.style.display = existing ? '' : 'none';
+      if (!existing) { const sel = document.getElementById('saRecipe'); if (sel) sel.value = ''; }
+    }
+    async function saRecipeChanged(){
+      const id = document.getElementById('saRecipe').value;
+      if (!id) return;
+      const hasData = [...document.querySelectorAll('#ingBody tr')].some(tr => ingState(tr).item_id);
+      if (hasData && !confirm('Bileşen satırları reçeteden yeniden doldurulsun mu? Mevcut satırlar silinir.')) return;
+      try {
+        const r = await fetch(`/api/recipes/${id}`);
+        if (!r.ok) { showToast('Reçete yüklenemedi.'); return; }
+        const d = await r.json();
+        const rows = (d.ingredients || []).filter(x => !x.is_ambalaj).map(x => {
+          const it = itemById(x.item_id);
+          const sameUnit = !it || !x.unit || (it.unit || '') === x.unit;
+          return { item_id: x.item_id, source: 'pending', quantity: sameUnit ? x.quantity : '',
+                   recipe_qty: x.quantity, recipe_unit: x.unit };
+        });
+        renderIngredients(rows);
+        if (!rows.length) showToast('Reçetede hammadde bileşeni yok.', 'info');
+      } catch { showToast('Sunucuya bağlanılamadı.'); }
+    }
 
     /* ── Özellik satırları ── */
     function propRow(p, fixed){
@@ -339,12 +566,18 @@
       if (!props.length) { showToast('En az bir özellik satırı gerekli.'); return null; }
       const bulk = document.getElementById('saBulk').value.trim();
       if (!bulk) { showToast('Bulk adı zorunlu.'); return null; }
+      const mode = saMode();
       const rid = document.getElementById('saRecipe').value;
+      if (mode === 'existing' && !rid) { showToast('Mevcut reçete çalışması için bir reçete seçin.'); return null; }
+      const ing = collectIngredients();
+      if (ing.err) { showToast(ing.err); return null; }
       return {
         bulk_name: bulk,
         production_date: document.getElementById('saDate').value || null,
         lot_number: document.getElementById('saLot').value.trim() || null,
-        recipe_id: rid ? parseInt(rid) : null,
+        mode,
+        recipe_id: mode === 'existing' && rid ? parseInt(rid) : null,
+        ingredients: ing.rows,
         formulation_notes: document.getElementById('saFormNotes').value.trim() || null,
         properties: props,
         analyst_name: document.getElementById('saAnalyst').value.trim() || null,
@@ -373,6 +606,7 @@
         showToast(_editId ? 'Form güncellendi.' : `Form kaydedildi — ${d.document_no}`, 'success');
         saResetForm();
         loadHistory();
+        loadIngredientSources(true);     // numune kalanları / stok değişti
       } catch { showToast('Sunucuya bağlanılamadı.'); }
       finally { btn.disabled = false; }
     }
@@ -387,6 +621,9 @@
       ['saBulk','saDate','saLot','saFormNotes','saResultText','saNotes','saApprovedBy','saQaRep']
         .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
       const sel = document.getElementById('saRecipe'); if (sel) sel.value = '';
+      const m0 = document.querySelector('input[name=saMode][value="new"]'); if (m0) m0.checked = true;
+      saModeChanged();
+      renderIngredients([]);
       const r0 = document.querySelector('input[name=saResult][value=""]'); if (r0) r0.checked = true;
       renderProps(SAMPLE_PROPERTIES.map(p => ({...p, found: ''})));
     }
@@ -407,7 +644,7 @@
           <td><b>${esc(x.document_no)}</b></td>
           <td>${esc(x.bulk_name)}</td>
           <td>${esc(x.lot_number || '—')}</td>
-          <td class="muted">${esc(x.recipe_name || x.formulation_notes || '—')}</td>
+          <td class="muted">${esc(x.recipe_name || x.formulation_notes || '—')}${(x.ingredients || []).length ? ` <span class="badge-res badge-bekle" title="bileşen satırı">${x.ingredients.length} bileşen</span>` : ''}</td>
           <td>${resBadge(x)}</td>
           <td class="muted">${esc(x.created_at)}</td>
           <td style="white-space:nowrap;">
@@ -430,9 +667,18 @@
       const kv = (k, v) => v ? `<div class="kvrow"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>` : '';
       const props = (x.properties || []).map(p =>
         `<tr><td><b>${esc(p.label)}</b></td><td>${esc(p.spec || '—')}</td><td>${esc(p.found || '—')}</td></tr>`).join('');
+      const ings = (x.ingredients || []).map(g =>
+        `<tr><td><b>${esc(g.item_name)}</b>${g.note ? `<div class="muted" style="font-size:0.76rem;">${esc(g.note)}</div>` : ''}</td>
+             <td><span class="badge-res src-${esc(g.source)}">${esc(g.source_label)}</span></td>
+             <td>${esc(g.lot_number || g.supplier_name || '—')}</td>
+             <td style="white-space:nowrap;">${g.source === 'pending' ? '—' : `${Number(g.quantity).toLocaleString('tr-TR',{maximumFractionDigits:4})} ${esc(g.unit || '')}`}</td></tr>`).join('');
+      const ingTable = ings ? `<div class="lbl" style="margin-top:0.8rem;">Kullanılan Hammaddeler</div>
+        <table style="margin:0.3rem 0 0.8rem;"><thead><tr><th>Hammadde</th><th>Kaynak</th><th>Lot</th><th>Miktar</th></tr></thead><tbody>${ings}</tbody></table>` : '';
       document.getElementById('dBody').innerHTML =
         kv('Bulk Adı', x.bulk_name) + kv('Üretim Tarihi', x.production_date) + kv('Lot Numarası', x.lot_number) +
+        kv('Çalışma Türü', x.mode_label) +
         kv('Çalışılan Formülasyon', x.recipe_name) + kv('Formülasyon / Sapma Notu', x.formulation_notes) +
+        ingTable +
         `<table style="margin:0.8rem 0;"><thead><tr><th>Özellik</th><th>Spesifikasyon</th><th>Bulunan Değer</th></tr></thead><tbody>${props}</tbody></table>` +
         kv('Analiz Yapan', x.analyst_name) +
         `<div style="margin:0.6rem 0;">${resBadge(x)}</div>` +
@@ -459,7 +705,11 @@
       const m = (x.production_date || '').match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
       document.getElementById('saDate').value = m ? `${m[3]}-${m[2]}-${m[1]}` : '';
       document.getElementById('saLot').value = x.lot_number || '';
+      const mr = document.querySelector(`input[name=saMode][value="${x.mode || 'new'}"]`);
+      if (mr) mr.checked = true;
+      saModeChanged();
       document.getElementById('saRecipe').value = x.recipe_id || '';
+      renderIngredients(x.ingredients || []);
       document.getElementById('saFormNotes').value = x.formulation_notes || '';
       document.getElementById('saAnalyst').value = x.analyst_name || '';
       const rv = x.result || '';
@@ -496,6 +746,7 @@
       if (document.getElementById('propBody')) {
         renderProps(SAMPLE_PROPERTIES.map(p => ({...p, found: ''})));
         loadRecipes();
+        loadIngredientSources();
       }
       loadHistory();
     })();

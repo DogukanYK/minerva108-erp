@@ -15,7 +15,8 @@ from fastapi.testclient import TestClient
 from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
-from database import AdminAuditLog, Item, Recipe, RecipeIngredient, SampleAnalysis
+from database import (AdminAuditLog, Inventory, Item, Recipe, RecipeIngredient,
+                      SampleAnalysis, SampleAnalysisIngredient, Supplier, Transaction)
 
 _HDR = {"Origin": "http://testserver"}
 _API = "/api/sample-analysis"
@@ -185,3 +186,257 @@ def test_audit_row_written(authed_client: TestClient, db_session: Session):
     rows = (db_session.query(AdminAuditLog)
             .filter(AdminAuditLog.action == "sample_analysis.create").all())
     assert any(r.target_name == doc for r in rows)
+
+
+# ═══ Bileşen satırları — kaynak-farkındalıklı düşüm ═════════════════════════
+
+def _raw(db, name="Xanthan Gum", stock=100.0, unit="g", domain="cosmetics", category="Hammadde"):
+    it = Item(name=name, sku=f"sa-{name[:10]}", category=category, unit=unit,
+              current_stock=stock, domain=domain)
+    db.add(it); db.flush()
+    if stock > 0:
+        db.add(Inventory(item_id=it.id, lot_number=f"L-{name[:4]}", quantity=stock,
+                         status="APPROVED", domain=domain))
+    db.commit()
+    return it.id
+
+
+def _sample_lot(db, item_id, qty=10.0, lot="NUM-001", supplier=None, domain="cosmetics"):
+    sid = None
+    if supplier:
+        sup = Supplier(name=supplier); db.add(sup); db.flush(); sid = sup.id
+    inv = Inventory(item_id=item_id, lot_number=lot, quantity=qty, status="APPROVED",
+                    is_sample=True, location="Numune", domain=domain, supplier_id=sid)
+    db.add(inv); db.commit()
+    return inv.id
+
+
+def _inv_qty(db, inv_id):
+    db.expire_all()
+    row = db.query(Inventory).filter(Inventory.id == inv_id).first()
+    return None if row is None else round(float(row.quantity), 6)
+
+
+def _stock(db, item_id):
+    db.expire_all()
+    return round(float(db.query(Item).filter(Item.id == item_id).one().current_stock), 6)
+
+
+def _tx(db, item_id, kind=None):
+    db.expire_all()
+    q = db.query(Transaction).filter(Transaction.item_id == item_id)
+    if kind:
+        q = q.filter(Transaction.transaction_type == kind)
+    return q.order_by(Transaction.id).all()
+
+
+def _post(c, **over):
+    r = c.post(_API, json=_payload(**over), headers=_HDR)
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def test_sample_row_deducts_only_inventory(authed_client, db_session):
+    item = _raw(db_session); inv = _sample_lot(db_session, item, 10, supplier="Alt Tedarikçi")
+    rid = _post(authed_client, ingredients=[
+        {"item_id": item, "source": "sample", "inventory_id": inv, "quantity": 3}])
+    assert _inv_qty(db_session, inv) == 7
+    assert _stock(db_session, item) == 100                 # numune stok değildir
+    assert _tx(db_session, item) == []                     # Transaction YOK
+    x = authed_client.get(f"{_API}/{rid}").json()
+    g = x["ingredients"][0]
+    assert x["mode"] == "new" and g["consumed_qty"] == 3 and g["source_label"] == "Numune lotu"
+    assert g["lot_number"] == "NUM-001" and g["supplier_name"] == "Alt Tedarikçi"
+
+
+def test_stock_row_consumes_fifo_and_writes_output(authed_client, db_session):
+    item = _raw(db_session, stock=100)
+    rid = _post(authed_client, ingredients=[{"item_id": item, "source": "stock", "quantity": 5}])
+    assert _stock(db_session, item) == 95
+    outs = _tx(db_session, item, "Output")
+    assert len(outs) == 1 and outs[0].quantity == 5 and outs[0].lot_number == "L-Xant"
+    doc = authed_client.get(f"{_API}/{rid}").json()["document_no"]
+    assert doc in outs[0].notes
+    lot = db_session.query(Inventory).filter(Inventory.item_id == item).one()
+    assert round(lot.quantity, 6) == 95
+
+
+def test_pending_row_no_effect(authed_client, db_session):
+    item = _raw(db_session)
+    rid = _post(authed_client, ingredients=[{"item_id": item, "source": "pending", "quantity": 50}])
+    assert _stock(db_session, item) == 100 and _tx(db_session, item) == []
+    assert authed_client.get(f"{_API}/{rid}").json()["ingredients"][0]["consumed_qty"] == 0
+
+
+def test_put_quantity_delta(authed_client, db_session):
+    item = _raw(db_session); inv = _sample_lot(db_session, item, 10)
+    stk = _raw(db_session, name="Gliserin", stock=50)
+    rid = _post(authed_client, ingredients=[
+        {"item_id": item, "source": "sample", "inventory_id": inv, "quantity": 3},
+        {"item_id": stk, "source": "stock", "quantity": 4}])
+    rows = authed_client.get(f"{_API}/{rid}").json()["ingredients"]
+    r1, r2 = rows[0]["row_id"], rows[1]["row_id"]
+    # artır
+    assert authed_client.put(f"{_API}/{rid}", headers=_HDR, json=_payload(ingredients=[
+        {"row_id": r1, "item_id": item, "source": "sample", "inventory_id": inv, "quantity": 5},
+        {"row_id": r2, "item_id": stk, "source": "stock", "quantity": 6}])).status_code == 200
+    assert _inv_qty(db_session, inv) == 5 and _stock(db_session, stk) == 44
+    assert len(_tx(db_session, stk, "Output")) == 2      # 4 + 2
+    # azalt
+    assert authed_client.put(f"{_API}/{rid}", headers=_HDR, json=_payload(ingredients=[
+        {"row_id": r1, "item_id": item, "source": "sample", "inventory_id": inv, "quantity": 1},
+        {"row_id": r2, "item_id": stk, "source": "stock", "quantity": 1}])).status_code == 200
+    assert _inv_qty(db_session, inv) == 9 and _stock(db_session, stk) == 49
+    adj = _tx(db_session, stk, "Adjustment")
+    assert len(adj) == 1 and adj[0].quantity == 5 and "iadesi" in adj[0].notes
+    assert len(_tx(db_session, stk, "Output")) == 2      # Output silinmedi
+    x = authed_client.get(f"{_API}/{rid}").json()["ingredients"]
+    assert [g["consumed_qty"] for g in x] == [1, 1]
+    assert [g["row_id"] for g in x] == [r1, r2]          # satır kimlikleri korundu
+
+
+def test_put_source_change_returns_then_consumes(authed_client, db_session):
+    item = _raw(db_session, stock=20); inv = _sample_lot(db_session, item, 10)
+    rid = _post(authed_client, ingredients=[
+        {"item_id": item, "source": "sample", "inventory_id": inv, "quantity": 4}])
+    r1 = authed_client.get(f"{_API}/{rid}").json()["ingredients"][0]["row_id"]
+    assert authed_client.put(f"{_API}/{rid}", headers=_HDR, json=_payload(ingredients=[
+        {"row_id": r1, "item_id": item, "source": "stock", "quantity": 4}])).status_code == 200
+    assert _inv_qty(db_session, inv) == 10               # numune tam iade
+    assert _stock(db_session, item) == 16
+    assert len(_tx(db_session, item, "Output")) == 1 and _tx(db_session, item, "Adjustment") == []
+
+
+def test_put_removed_row_released(authed_client, db_session):
+    item = _raw(db_session); inv = _sample_lot(db_session, item, 10)
+    rid = _post(authed_client, ingredients=[
+        {"item_id": item, "source": "sample", "inventory_id": inv, "quantity": 4}])
+    assert authed_client.put(f"{_API}/{rid}", headers=_HDR,
+                             json=_payload(ingredients=[])).status_code == 200
+    assert _inv_qty(db_session, inv) == 10
+    assert db_session.query(SampleAnalysisIngredient).count() == 0
+
+
+def test_delete_returns_everything(authed_client, db_session):
+    item = _raw(db_session); inv = _sample_lot(db_session, item, 10)
+    stk = _raw(db_session, name="Gliserin", stock=50)
+    rid = _post(authed_client, ingredients=[
+        {"item_id": item, "source": "sample", "inventory_id": inv, "quantity": 3},
+        {"item_id": stk, "source": "stock", "quantity": 4},
+        {"item_id": stk, "source": "pending"}])
+    assert _stock(db_session, stk) == 46
+    assert authed_client.delete(f"{_API}/{rid}", headers=_HDR).status_code == 200
+    assert _inv_qty(db_session, inv) == 10 and _stock(db_session, stk) == 50
+    assert len(_tx(db_session, stk, "Output")) == 1      # DEĞİŞMEZ
+    adj = _tx(db_session, stk, "Adjustment")
+    assert len(adj) == 1 and adj[0].quantity == 4
+    # satırlar duruyor (belge pasif), consumed sıfır
+    db_session.expire_all()
+    assert all(g.consumed_qty == 0 for g in db_session.query(SampleAnalysisIngredient).all())
+
+
+def test_shortage_400_full_rollback(authed_client, db_session):
+    item = _raw(db_session, stock=2); inv = _sample_lot(db_session, item, 1)
+    r = authed_client.post(_API, headers=_HDR, json=_payload(ingredients=[
+        {"item_id": item, "source": "stock", "quantity": 1},
+        {"item_id": item, "source": "sample", "inventory_id": inv, "quantity": 5}]))
+    assert r.status_code == 400 and "numune lotunda" in r.json()["detail"]
+    assert _stock(db_session, item) == 2 and _inv_qty(db_session, inv) == 1
+    assert _tx(db_session, item) == []
+    assert db_session.query(SampleAnalysis).count() == 0
+    r = authed_client.post(_API, headers=_HDR, json=_payload(ingredients=[
+        {"item_id": item, "source": "stock", "quantity": 3}]))
+    assert r.status_code == 400 and "yetersiz" in r.json()["detail"]
+    # PUT'ta hata → alan değişiklikleri de geri alınır
+    rid = _post(authed_client, ingredients=[{"item_id": item, "source": "stock", "quantity": 1}])
+    r = authed_client.put(f"{_API}/{rid}", headers=_HDR, json=_payload(
+        bulk_name="DEĞİŞTİ", ingredients=[{"item_id": item, "source": "stock", "quantity": 99}]))
+    assert r.status_code == 400
+    assert authed_client.get(f"{_API}/{rid}").json()["bulk_name"] == "Saç Kremi Deneme Bulk"
+    assert _stock(db_session, item) == 1
+
+
+def test_item_validation(authed_client, db_session):
+    other = _raw(db_session, name="Supp Item", domain="supplement")
+    r = authed_client.post(_API, headers=_HDR, json=_payload(ingredients=[
+        {"item_id": other, "source": "pending"}]))
+    assert r.status_code == 404
+    amb = _raw(db_session, name="Şişe 200", category="Ambalaj", unit="adet")
+    r = authed_client.post(_API, headers=_HDR, json=_payload(ingredients=[
+        {"item_id": amb, "source": "pending"}]))
+    assert r.status_code == 400 and "hammadde değil" in r.json()["detail"]
+    a = _raw(db_session, name="A"); b = _raw(db_session, name="B")
+    inv_b = _sample_lot(db_session, b, 10)
+    r = authed_client.post(_API, headers=_HDR, json=_payload(ingredients=[
+        {"item_id": a, "source": "sample", "inventory_id": inv_b, "quantity": 1}]))
+    assert r.status_code == 400 and "ait değil" in r.json()["detail"]
+    r = authed_client.post(_API, headers=_HDR, json=_payload(ingredients=[
+        {"item_id": a, "source": "sample", "quantity": 1}]))
+    assert r.status_code == 400 and "lotu seçilmedi" in r.json()["detail"]
+    assert db_session.query(SampleAnalysis).count() == 0
+
+
+def test_mode_validation(authed_client, db_session):
+    rec_id, rec_name = _recipe(db_session)
+    r = authed_client.post(_API, headers=_HDR, json=_payload(mode="existing"))
+    assert r.status_code == 400
+    rid = _post(authed_client, mode="new", recipe_id=rec_id)
+    x = authed_client.get(f"{_API}/{rid}").json()
+    assert x["mode"] == "new" and x["recipe_id"] is None
+    rid = _post(authed_client, recipe_id=rec_id)                   # mode yok → türet
+    x = authed_client.get(f"{_API}/{rid}").json()
+    assert x["mode"] == "existing" and x["recipe_name"] == rec_name
+    assert x["mode_label"] == "Mevcut reçete üzerinde çalışma"
+    assert authed_client.post(_API, headers=_HDR, json=_payload(mode="belki")).status_code == 400
+
+
+def test_recipe_prefill_contract(authed_client, db_session):
+    rec_id, _ = _recipe(db_session)
+    ings = authed_client.get(f"/api/recipes/{rec_id}").json()["ingredients"]
+    assert ings and {"item_id", "item_name", "unit", "quantity", "is_ambalaj"} <= set(ings[0])
+
+
+def test_pdf_includes_ingredients(authed_client, db_session):
+    item = _raw(db_session, name="Panthenol Deneme"); inv = _sample_lot(db_session, item, 10, lot="NUM-77")
+    rid = _post(authed_client, ingredients=[
+        {"item_id": item, "source": "sample", "inventory_id": inv, "quantity": 2.5, "note": "yeni tedarikçi"}])
+    r = authed_client.get(f"{_API}/{rid}/pdf")
+    assert r.status_code == 200 and _all_pages_a4(r.content)
+    text = "".join(pg.extract_text() for pg in PdfReader(BytesIO(r.content)).pages)
+    assert "Panthenol Deneme" in text and "NUM-77" in text and "2.5 g" in text
+    assert "Kullan" in text and "Numune lotu" in text
+
+
+def test_release_after_sample_converted(authed_client, db_session):
+    item = _raw(db_session, stock=0); inv = _sample_lot(db_session, item, 10, lot="NUM-C")
+    rid = _post(authed_client, ingredients=[
+        {"item_id": item, "source": "sample", "inventory_id": inv, "quantity": 3}])
+    r = authed_client.post(f"/api/inventory/samples/{inv}/convert", headers=_HDR)
+    assert r.status_code == 200, r.text
+    assert _stock(db_session, item) == 7
+    assert authed_client.delete(f"{_API}/{rid}", headers=_HDR).status_code == 200
+    assert _stock(db_session, item) == 10 and _inv_qty(db_session, inv) == 10
+    adj = _tx(db_session, item, "Adjustment")
+    assert len(adj) == 1 and adj[0].quantity == 3 and adj[0].lot_number == "NUM-C"
+    # merge yolu: aynı lotlu normal satır var → numune satırı silinir → FK NULL → iade no-op
+    item2 = _raw(db_session, name="Merge Item", stock=0)
+    db_session.add(Inventory(item_id=item2, lot_number="NUM-M", quantity=5, status="APPROVED", domain="cosmetics"))
+    db_session.commit()
+    inv2 = _sample_lot(db_session, item2, 10, lot="NUM-M")
+    rid2 = _post(authed_client, ingredients=[
+        {"item_id": item2, "source": "sample", "inventory_id": inv2, "quantity": 4}])
+    assert authed_client.post(f"/api/inventory/samples/{inv2}/convert", headers=_HDR).status_code == 200
+    assert _inv_qty(db_session, inv2) is None
+    x = authed_client.get(f"{_API}/{rid2}").json()["ingredients"][0]
+    assert x["inventory_id"] is None and x["lot_number"] == "NUM-M"     # snapshot kaldı
+    assert authed_client.delete(f"{_API}/{rid2}", headers=_HDR).status_code == 200
+    assert _stock(db_session, item2) == 6                               # değişmedi
+
+
+def test_item_with_pending_row_soft_deletes(authed_client, db_session):
+    item = _raw(db_session, name="Pending Only", stock=0)
+    _post(authed_client, ingredients=[{"item_id": item, "source": "pending"}])
+    r = authed_client.delete(f"/api/items/{item}", headers=_HDR)
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    assert db_session.query(Item).filter(Item.id == item).one().is_active is False
