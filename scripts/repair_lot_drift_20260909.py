@@ -10,11 +10,13 @@ bu script GEÇMİŞTE birikmiş farkı temizler.
 
 NE YAPAR / NE YAPMAZ
 ────────────────────
-✔ Yalnız `Inventory.quantity` düzeltir — lot fazlaysa FIFO ile (en eski önce)
-  eritir.
-✘ `Item.current_stock`'a DOKUNMAZ, `Transaction` YAZMAZ.  Defter zaten
-  DOĞRU: item 24'te 23 hareketin toplamı tam olarak `current_stock`'u veriyor.
-  Bu bir stok düzeltmesi değil, LOT TABLOSU uzlaştırmasıdır.
+✔ Lot fazlaysa `Inventory.quantity`'yi FIFO ile (en eski önce) eritir.
+✔ YALNIZ `STOK_DUZELTME` listesindeki, fiziksel sayımla teyit edilmiş kalemde
+  `current_stock` değiştirir + imzalı `Adjustment` yazar.  Onun dışında deftere
+  DOKUNMAZ: defter zaten doğru (item 24'te 23 hareketin toplamı tam olarak
+  `current_stock`'u veriyordu).  Geri kalanı LOT TABLOSU uzlaştırmasıdır.
+✔ `SAHIT_KAYIT` — dolapta fiziksel duran ama modüle hiç girmemiş numuneleri
+  Şahit Numune modülüne kaydeder (stoğa etki etmez, adet zaten stokta sayılı).
 ✘ Lot toplamı stoktan AZ olan kalemlere dokunmaz — hayalî lot AÇMAK veri
   uydurmaktır; onlar fiziksel sayımla çözülür (rapor edilir).
 ✘ Ambalaj/etiket kapsam DIŞI — onlar tasarım gereği lot tutmaz
@@ -37,9 +39,29 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from database import Inventory, Item, SessionLocal                  # noqa: E402
+from database import (Inventory, Item, RetentionSample,           # noqa: E402
+                      RetentionSampleMovement, SessionLocal, Transaction)
 
 COMMIT = "--commit" in sys.argv
+ACTOR = "sistem (lot uzlaştırma 09.09.2026)"
+
+# ── Fiziksel sayımla teyit edilmiş STOK düzeltmeleri ────────────────────────
+# Patron 09.09.2026'da dolabı saydı: Serenida Bikini Area 200 ml → showroom'da
+# 9, şahit numune dolabında 2 = TOPLAM 11.  Meltem Hanım aynı gün stoğu 0→9
+# yaparken dolaptaki 2 adedi saymamıştı; sistemin kuralı gereği dolapta duran
+# şahit numune de `current_stock` içinde SAYILIR (CLAUDE.md).  Bu yüzden stok
+# 9 → 11 çıkar.  Defter kaydı normal imzalı Adjustment'tır.
+STOK_DUZELTME = [
+    (24, 11.0, "Şahit numune dolabındaki 2 adet stoğa dahil değildi "
+                "(09.09.2026 fiziksel sayım: 9 showroom + 2 dolap)"),
+]
+
+# ── Şahit numune modülüne KAYIT EDİLMEMİŞ dolap adetleri ────────────────────
+# Üretim `-S` lotunu açmış ama şahit numune kaydı hiç oluşmamış; dolapta
+# fiziksel olarak duruyorlar (patron teyidi).  Modül listesinde görünsünler.
+SAHIT_KAYIT = [
+    {"item_id": 24, "lot_number": "PRD-20260625-113617-S", "quantity": 2.0},
+]
 EPS = 1e-6
 #: Lot tutan kategoriler — Ambalaj/Etiket bilinçli olarak DIŞARIDA.
 LOT_CATEGORIES = ("Bitmiş Ürün", "Hammadde")
@@ -52,10 +74,84 @@ def _is_retention(inv: Inventory) -> bool:
 
 def main() -> int:
     db = SessionLocal()
+    _hedef_stok = {iid: hedef for iid, hedef, _ in STOK_DUZELTME}
     fixed = drained = 0
     retention_hits = []
     under = []           # lot < stok — dokunulmaz, raporlanır
     try:
+        # ── ① Fiziksel sayım stok düzeltmeleri ──────────────────────────
+        if STOK_DUZELTME:
+            print("① STOK DÜZELTME (fiziksel sayım)")
+            for iid, hedef, sebep in STOK_DUZELTME:
+                it = db.query(Item).filter(Item.id == iid).with_for_update().first()
+                if not it:
+                    print(f"   ✖ id {iid} bulunamadı — atlandı")
+                    continue
+                eski = round(float(it.current_stock or 0), 6)
+                delta = round(hedef - eski, 6)
+                if abs(delta) <= EPS:
+                    print(f"   · {it.name[:44]:44} zaten {hedef:g} — atlandı")
+                    continue
+                print(f"   ~ {it.name[:44]:44} {eski:g} → {hedef:g} "
+                      f"(Δ {delta:+g})")
+                if COMMIT:
+                    it.current_stock = hedef
+                    db.add(Transaction(
+                        item_id=it.id, transaction_type="Adjustment",
+                        quantity=delta, performed_by=ACTOR,
+                        notes=(f"Stok düzeltme — Eski: {eski:g} {it.unit or ''} → "
+                               f"Yeni: {hedef:g} {it.unit or ''} "
+                               f"(Δ {delta:+g}) | Sebep: {sebep}")[:500],
+                    ))
+            print()
+
+        # ── ② Şahit numune modülüne eksik kayıt ─────────────────────────
+        if SAHIT_KAYIT:
+            print("② ŞAHİT NUMUNE KAYDI (dolapta var, modülde yoktu)")
+            for rec in SAHIT_KAYIT:
+                it = db.query(Item).filter(Item.id == rec["item_id"]).first()
+                inv = (db.query(Inventory)
+                       .filter(Inventory.item_id == rec["item_id"],
+                               Inventory.lot_number == rec["lot_number"]).first())
+                var = (db.query(RetentionSample)
+                       .filter(RetentionSample.item_id == rec["item_id"],
+                               RetentionSample.lot_number == rec["lot_number"],
+                               RetentionSample.is_active == True)      # noqa: E712
+                       .first())
+                if var:
+                    print(f"   · {rec['lot_number']} zaten kayıtlı — atlandı")
+                    continue
+                if not it:
+                    print(f"   ✖ id {rec['item_id']} bulunamadı — atlandı")
+                    continue
+                from core.brands import cabinet_of
+                marka = cabinet_of(it.name or "") or "Minerva"
+                print(f"   + {it.name[:40]:40} {rec['lot_number']:26} "
+                      f"{rec['quantity']:g} {it.unit or ''} · dolap: {marka}")
+                if COMMIT:
+                    rs = RetentionSample(
+                        inventory_id=inv.id if inv else None,
+                        item_id=it.id, item_name=it.name,
+                        lot_number=rec["lot_number"], brand=marka,
+                        quantity=rec["quantity"],
+                        initial_quantity=rec["quantity"],
+                        unit=it.unit or "adet",
+                        produced_at=inv.created_at if inv else None,
+                    )
+                    db.add(rs)
+                    db.flush()
+                    db.add(RetentionSampleMovement(
+                        sample_id=rs.id, movement_type="giris",
+                        quantity=rec["quantity"], reason="diger",
+                        performed_by=ACTOR,
+                        note=("Geriye dönük kayıt — üretim -S lotu açmış ama "
+                              "şahit numune kaydı oluşmamıştı (09.09.2026 "
+                              "fiziksel teyit)."),
+                    ))
+            print()
+
+        # ── ③ Lot uzlaştırma ────────────────────────────────────────────
+        print("③ LOT UZLAŞTIRMA")
         items = (db.query(Item)
                  .filter(Item.is_active == True,                    # noqa: E712
                          Item.category.in_(LOT_CATEGORIES))
@@ -73,7 +169,10 @@ def main() -> int:
                     .with_for_update()
                     .all())
             lot_total = round(sum(float(l.quantity or 0) for l in lots), 6)
-            stock = round(float(it.current_stock or 0), 6)
+            # KURU ÇALIŞTIRMA SADAKATİ: ① adımı --commit olmadan yazmaz, ama
+            # planı hedef stoğa göre kurmalıyız; yoksa kuru çıktı gerçekte
+            # olacak düşümden fazlasını gösterir.
+            stock = round(float(_hedef_stok.get(it.id, it.current_stock) or 0), 6)
             diff = round(lot_total - stock, 6)
             if abs(diff) <= EPS:
                 continue
