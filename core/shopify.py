@@ -611,15 +611,13 @@ def _decrement_stock(db: Session, order: dict) -> Tuple[int, list]:
             continue
         plan.append((item, qty))
 
+    from core.stock_lots import consume as _lot_consume
     for item, qty in plan:
-        item.current_stock = round((item.current_stock or 0) - qty, 6)
-        db.add(Transaction(
-            item_id=item.id,
-            transaction_type="Output",
-            quantity=qty,
-            notes=f"Shopify #{order['order_number']} · {order['store_label']}",
-            performed_by="Shopify",
-        ))
+        # Stok + LOT birlikte düşer — satış yıllarca lot satırına dokunmuyordu.
+        _lot_consume(
+            db, item, qty, actor="Shopify",
+            note=f"Shopify #{order['order_number']} · {order['store_label']}",
+        )
     return len(plan), issues
 
 

@@ -1,0 +1,646 @@
+{#
+  Halka açık creator başvuru formu — auth YOK, token YOK (bio linkine konur).
+  Route: GET /basvuru?lang=tr|en  (api_main.py, reviews/yorum.html kalıbı)
+  Gönderim: fetch JSON → POST /basvuru/gonder (routers/influencer.public_router)
+  Context: lang ('tr'|'en'), consent_version (opsiyonel), store_key (opsiyonel ön seçim)
+  Sözleşme (JSON alan adları) tasarım planı B4/A2 ile aynıdır — alan adı değiştirme.
+  Inline JS Jinja İÇERMEZ: sunucu değerleri <form data-*> ile taşınır (node --check dostu).
+#}
+{% set lang = (lang or 'tr') if (lang or 'tr') in ('tr', 'en') else 'tr' %}
+{% set consent_version = consent_version or '2026-09-v1' %}
+{% set store_key = store_key or '' %}
+{% if lang == 'tr' %}
+{% set T = {
+  'title': 'Creator Başvurusu · Minerva108',
+  'head': 'Creator Programı Başvurusu',
+  'lead': 'Ürünlerimizi deneyip anlatmak ister misin?',
+  'sub': 'Nano ve mikro içerik üreticileriyle barter (ürün karşılığı) veya affiliate link modeliyle çalışıyoruz. Başvurular 3–5 iş günü içinde yanıtlanır.',
+  'agency_note': 'Bu form yalnız içerik üreticisinin kendisi içindir. Menajer, ajans veya üçüncü kişi adına yapılan başvurular değerlendirilmez.',
+  'sec_store': 'Hangi markaya başvuruyorsun?',
+  'sec_you': 'Sen',
+  'sec_accounts': 'Hesapların',
+  'sec_content': 'İçeriğin',
+  'sec_model': 'İş birliği modeli',
+  'sec_consent': 'Kişisel veriler',
+  'full_name': 'Ad Soyad',
+  'email': 'E-posta',
+  'phone': 'Telefon',
+  'phone_hint': 'Ülke koduyla, ör. +90 5xx…',
+  'country': 'Ülke',
+  'city': 'Şehir',
+  'birth_year': 'Doğum yılı',
+  'birth_hint': 'Programa yalnız 18 yaş ve üzeri creator\'lar katılabilir.',
+  'platform': 'Platform',
+  'url': 'Profil bağlantısı',
+  'followers': 'Takipçi',
+  'add_account': 'Hesap ekle',
+  'remove': 'Kaldır',
+  'niches': 'Nişin (birden fazla seçebilirsin)',
+  'skin_type': 'Cilt tipin',
+  'skin_opts': [('normal','Normal'),('kuru','Kuru'),('yagli','Yağlı'),('karma','Karma'),('hassas','Hassas'),('akneye_egilimli','Akneye eğilimli')],
+  'niche_opts': [('cilt_bakimi','Cilt bakımı'),('makyaj','Makyaj'),('sac_bakimi','Saç bakımı'),('vegan_yasam','Vegan yaşam'),('anne_bebek','Anne-bebek'),('saglik_wellness','Sağlık & wellness'),('moda','Moda'),('yasam_tarzi','Yaşam tarzı'),('erkek_bakim','Erkek bakımı'),('diger','Diğer')],
+  'recent_links': 'Son 3 içeriğinin bağlantısı',
+  'recent_hint': 'Reels, TikTok videosu veya YouTube videosu — en az 1, en fazla 3.',
+  'why': 'Neden bizimle çalışmak istiyorsun?',
+  'why_hint': 'Kısa bir paragraf yeter. Hangi ürün grubu ilgini çekiyor, kitlen kim?',
+  'past_brands': 'Daha önce iş birliği yaptığın kozmetik markaları',
+  'past_hint': 'Marka adlarını virgülle ayır. Yoksa boş bırak.',
+  'model_barter': 'Barter — ürün karşılığı içerik',
+  'model_link': 'Affiliate link — satıştan %10 komisyon',
+  'model_karma': 'İkisi de olur',
+  'consent_read': 'Aydınlatma metnini okudum, anladım.',
+  'consent_open': 'Aydınlatma metnini göster',
+  'consent_close': 'Kapat',
+  'marketing': 'Minerva 108, Serenida ve Evanira markalarının yeni ürün, kampanya ve creator programı duyurularını e-posta / WhatsApp ile almak için açık rıza veriyorum. (İsteğe bağlı — başvuruyu etkilemez, dilediğin an geri çekebilirsin.)',
+  'submit': 'Başvuruyu Gönder',
+  'sending': 'Gönderiliyor…',
+  'ok_title': 'Başvurun alındı',
+  'ok_text': 'Teşekkürler! Başvurunu inceleyip 3–5 iş günü içinde e-posta ile dönüş yapacağız.',
+  'err_generic': 'Bir sorun oluştu, lütfen tekrar dene.',
+  'err_network': 'Bağlantı kurulamadı. İnternetini kontrol edip tekrar dene.',
+  'err_rate': 'Çok sık deneme yapıldı. Lütfen bir süre sonra tekrar dene.',
+  'err_required': 'Lütfen zorunlu alanları doldur.',
+  'err_consent': 'Devam etmek için aydınlatma metnini okuduğunu onaylaman gerekir.',
+  'err_age': 'Programa yalnız 18 yaş ve üzeri creator\'lar katılabilir.',
+  'err_account': 'En az bir platform hesabı ekle (profil bağlantısı ve takipçi sayısı).',
+  'err_link': 'En az bir içerik bağlantısı ekle.',
+  'err_niche': 'En az bir niş seç.',
+  'err_url': 'Bağlantılar http:// veya https:// ile başlamalı.',
+  'foot': 'Minerva108 Vegan Cosmetics',
+  'lang_switch': 'English',
+  'lang_href': '/basvuru?lang=en',
+  'req': 'zorunlu'
+} %}
+{% else %}
+{% set T = {
+  'title': 'Creator Application · Minerva108',
+  'head': 'Creator Program Application',
+  'lead': 'Want to try our products and tell your audience about them?',
+  'sub': 'We work with nano and micro creators on a gifting (product-for-content) or affiliate-link basis. Applications are answered within 3–5 business days.',
+  'agency_note': 'This form is for the creator only. Applications submitted by managers, agencies or any third party are not reviewed.',
+  'sec_store': 'Which brand are you applying to?',
+  'sec_you': 'About you',
+  'sec_accounts': 'Your accounts',
+  'sec_content': 'Your content',
+  'sec_model': 'Collaboration model',
+  'sec_consent': 'Personal data',
+  'full_name': 'Full name',
+  'email': 'Email',
+  'phone': 'Phone',
+  'phone_hint': 'With country code, e.g. +1 …',
+  'country': 'Country',
+  'city': 'City',
+  'birth_year': 'Year of birth',
+  'birth_hint': 'Only creators aged 18 or over can join the program.',
+  'platform': 'Platform',
+  'url': 'Profile link',
+  'followers': 'Followers',
+  'add_account': 'Add account',
+  'remove': 'Remove',
+  'niches': 'Your niche (pick as many as apply)',
+  'skin_type': 'Your skin type',
+  'skin_opts': [('normal','Normal'),('kuru','Dry'),('yagli','Oily'),('karma','Combination'),('hassas','Sensitive'),('akneye_egilimli','Acne-prone')],
+  'niche_opts': [('cilt_bakimi','Skincare'),('makyaj','Makeup'),('sac_bakimi','Hair care'),('vegan_yasam','Vegan living'),('anne_bebek','Mom & baby'),('saglik_wellness','Health & wellness'),('moda','Fashion'),('yasam_tarzi','Lifestyle'),('erkek_bakim','Men\'s grooming'),('diger','Other')],
+  'recent_links': 'Links to your 3 most recent posts',
+  'recent_hint': 'Reels, TikTok or YouTube videos — at least 1, up to 3.',
+  'why': 'Why do you want to work with us?',
+  'why_hint': 'A short paragraph is enough. Which products interest you, who is your audience?',
+  'past_brands': 'Cosmetics brands you have worked with before',
+  'past_hint': 'Comma-separated brand names. Leave blank if none.',
+  'model_barter': 'Gifting — content in exchange for product',
+  'model_link': 'Affiliate link — 10% commission on sales',
+  'model_karma': 'Either works for me',
+  'consent_read': 'I have read and understood the privacy notice.',
+  'consent_open': 'Show privacy notice',
+  'consent_close': 'Close',
+  'marketing': 'I explicitly consent to receiving new product, campaign and creator program announcements from Minerva 108, Serenida and Evanira by email / WhatsApp. (Optional — does not affect your application; you can withdraw at any time.)',
+  'submit': 'Submit application',
+  'sending': 'Sending…',
+  'ok_title': 'Application received',
+  'ok_text': 'Thank you! We will review your application and reply by email within 3–5 business days.',
+  'err_generic': 'Something went wrong, please try again.',
+  'err_network': 'Could not connect. Check your internet connection and try again.',
+  'err_rate': 'Too many attempts. Please try again later.',
+  'err_required': 'Please fill in the required fields.',
+  'err_consent': 'You need to confirm that you have read the privacy notice to continue.',
+  'err_age': 'Only creators aged 18 or over can join the program.',
+  'err_account': 'Add at least one platform account (profile link and follower count).',
+  'err_link': 'Add at least one content link.',
+  'err_niche': 'Pick at least one niche.',
+  'err_url': 'Links must start with http:// or https://.',
+  'foot': 'Minerva108 Vegan Cosmetics',
+  'lang_switch': 'Türkçe',
+  'lang_href': '/basvuru?lang=tr',
+  'req': 'required'
+} %}
+{% endif %}
+{# Mağaza listesi: TR sayfada üç marka; EN sayfada yalnız yurt dışı mağazaları (Serenida/Evanira). #}
+{% if lang == 'tr' %}
+  {% set STORES = [('minerva','Minerva 108','minerva108.com'),('serenida','Serenida','serenida.com'),('evanira','Evanira','evanira.com')] %}
+{% else %}
+  {% set STORES = [('serenida','Serenida','serenida.com'),('evanira','Evanira','evanira.com')] %}
+{% endif %}
+{% set COUNTRIES = [('TR','Türkiye'),('US','United States'),('GB','United Kingdom'),('DE','Deutschland'),('NL','Nederland'),('FR','France'),('IT','Italia'),('ES','España'),('AT','Österreich'),('BE','Belgique / België'),('CH','Schweiz'),('SE','Sverige'),('DK','Danmark'),('NO','Norge'),('FI','Suomi'),('IE','Ireland'),('PL','Polska'),('PT','Portugal'),('CZ','Česko'),('GR','Ελλάδα'),('RO','România'),('BG','България'),('HU','Magyarország'),('CA','Canada'),('AU','Australia'),('AE','United Arab Emirates'),('SA','Saudi Arabia'),('AZ','Azərbaycan'),('KZ','Qazaqstan'),('CY','Cyprus'),('MK','North Macedonia'),('BA','Bosna i Hercegovina')] %}
+{% set default_country = 'TR' if lang == 'tr' else 'US' %}
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>{{ T.title }}</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    :root{ --navy:#232E6E; --gold:#C9AC6F; --cream:#f5f0e8; --white:#fff; --err:#b91c1c; --ok:#166534; }
+    *,*::before,*::after{ box-sizing:border-box; }
+    body{ margin:0; font-family:'Jost',sans-serif; background:var(--cream); color:#1f2937; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:3vh 1rem; }
+    .card{ background:var(--white); border-radius:16px; box-shadow:0 12px 48px rgba(44,44,115,0.12); max-width:640px; width:100%; overflow:hidden; }
+    .head{ background:var(--navy); padding:1.5rem 1.75rem; color:#fff; display:flex; align-items:center; gap:0.9rem; }
+    .head img{ height:34px; opacity:0.96; }
+    .head h1{ font-family:'Playfair Display',serif; font-size:1.15rem; font-weight:700; margin:0; flex:1; }
+    .head a.inf-lang{ color:#fff; opacity:0.8; font-size:0.78rem; text-decoration:none; border:1px solid rgba(255,255,255,0.4); border-radius:999px; padding:0.25rem 0.7rem; white-space:nowrap; }
+    .head a.inf-lang:hover{ opacity:1; }
+    .body{ padding:1.5rem 1.75rem 1.9rem; }
+    .lead{ font-family:'Playfair Display',serif; font-size:1.3rem; font-weight:700; color:var(--navy); margin:0 0 0.3rem; }
+    .sub{ font-size:0.86rem; color:#6b7280; margin:0 0 1.2rem; line-height:1.5; }
+    .state{ text-align:center; padding:1.5rem 0.5rem; }
+    .state i{ font-size:2.4rem; color:var(--gold); display:block; margin-bottom:0.7rem; }
+    .state h2{ font-family:'Playfair Display',serif; font-size:1.2rem; color:var(--navy); margin:0 0 0.3rem; }
+    .state p{ font-size:0.88rem; color:#6b7280; margin:0; }
+    .err{ background:#fef2f2; color:var(--err); border:1px solid #fecaca; border-radius:8px; padding:0.6rem 0.85rem; font-size:0.85rem; margin-bottom:1rem; }
+    .gift-note{ background:#f5f2ea; border:1px solid #e9e3d3; border-radius:8px; padding:0.65rem 0.9rem; font-size:0.82rem; color:#57544a; margin-bottom:1.2rem; display:flex; gap:0.5rem; align-items:flex-start; line-height:1.45; }
+    .gift-note i{ color:var(--gold); margin-top:0.15rem; }
+
+    .inf-section{ font-family:'Playfair Display',serif; font-size:1rem; color:var(--navy); margin:1.6rem 0 0.8rem; padding-bottom:0.35rem; border-bottom:1px solid #ece7db; }
+    .inf-section:first-of-type{ margin-top:0.4rem; }
+    .field{ margin-bottom:1.05rem; }
+    .field label.flabel{ display:block; font-size:0.82rem; font-weight:600; color:#4b5563; margin-bottom:0.35rem; }
+    .field .inf-hint{ font-size:0.76rem; color:#9ca3af; margin-top:0.3rem; line-height:1.4; }
+    .field input[type=text], .field input[type=email], .field input[type=tel], .field input[type=url], .field input[type=number],
+    .field select, .field textarea{ width:100%; padding:0.7rem 0.9rem; border:1.5px solid #e5e7eb; border-radius:9px; font-family:inherit; font-size:0.94rem; background:#fff; color:#1f2937; }
+    .field input:focus, .field select:focus, .field textarea:focus{ outline:none; border-color:var(--navy); }
+    .field textarea{ resize:vertical; min-height:110px; }
+    .inf-req{ color:var(--gold); font-weight:600; }
+    .inf-grid{ display:grid; grid-template-columns:1fr 1fr; gap:0 0.9rem; }
+    @media (max-width:520px){ .inf-grid{ grid-template-columns:1fr; } }
+
+    .inf-stores{ display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:0.6rem; }
+    .inf-store{ position:relative; display:block; cursor:pointer; }
+    .inf-store input{ position:absolute; opacity:0; width:1px; height:1px; }
+    .inf-store span{ display:block; border:1.5px solid #e5e7eb; border-radius:10px; padding:0.75rem 0.9rem; text-align:center; font-weight:600; color:#4b5563; transition:border-color .12s, background .12s; }
+    .inf-store small{ display:block; font-weight:400; font-size:0.72rem; color:#9ca3af; margin-top:0.15rem; }
+    .inf-store input:checked + span{ border-color:var(--navy); background:#f3f4fb; color:var(--navy); }
+    .inf-store input:focus-visible + span{ outline:2px solid var(--gold); outline-offset:2px; }
+
+    .inf-acc{ display:grid; grid-template-columns:120px 1fr 110px 36px; gap:0.5rem; align-items:center; margin-bottom:0.5rem; }
+    .inf-acc select, .inf-acc input{ width:100%; padding:0.6rem 0.7rem; border:1.5px solid #e5e7eb; border-radius:9px; font-family:inherit; font-size:0.9rem; background:#fff; }
+    .inf-acc input:focus, .inf-acc select:focus{ outline:none; border-color:var(--navy); }
+    .inf-acc .inf-x{ background:none; border:none; color:#9ca3af; font-size:1.2rem; cursor:pointer; padding:0.3rem; min-width:36px; min-height:36px; }
+    .inf-acc .inf-x:hover{ color:var(--err); }
+    @media (max-width:560px){ .inf-acc{ grid-template-columns:1fr 1fr; } .inf-acc input[type=url]{ grid-column:1 / -1; } }
+    .inf-add{ background:none; border:1.5px dashed #dcd5c6; color:var(--navy); border-radius:9px; padding:0.55rem 0.9rem; font-family:inherit; font-size:0.85rem; font-weight:600; cursor:pointer; min-height:40px; display:inline-flex; align-items:center; gap:0.4rem; }
+    .inf-add:hover{ border-color:var(--navy); }
+
+    .inf-chips{ display:flex; flex-wrap:wrap; gap:0.45rem; }
+    .inf-chip{ position:relative; cursor:pointer; }
+    .inf-chip input{ position:absolute; opacity:0; width:1px; height:1px; }
+    .inf-chip span{ display:inline-block; border:1.5px solid #e5e7eb; border-radius:999px; padding:0.4rem 0.85rem; font-size:0.84rem; color:#4b5563; transition:all .12s; }
+    .inf-chip input:checked + span{ background:var(--navy); border-color:var(--navy); color:#fff; }
+    .inf-chip input:focus-visible + span{ outline:2px solid var(--gold); outline-offset:2px; }
+
+    .inf-radio{ display:flex; gap:0.6rem; align-items:flex-start; padding:0.6rem 0.75rem; border:1.5px solid #e5e7eb; border-radius:9px; margin-bottom:0.45rem; cursor:pointer; font-size:0.9rem; color:#374151; }
+    .inf-radio input{ margin-top:0.2rem; min-width:18px; min-height:18px; }
+    .inf-radio:has(input:checked){ border-color:var(--navy); background:#f3f4fb; }
+
+    .consent{ display:flex; gap:0.6rem; align-items:flex-start; font-size:0.82rem; color:#4b5563; line-height:1.5; margin-bottom:0.9rem; }
+    .consent input{ margin-top:0.2rem; min-width:18px; min-height:18px; }
+    .consent.inf-opt{ color:#6b7280; }
+    .inf-link{ background:none; border:none; color:var(--navy); font-size:0.82rem; text-decoration:underline; cursor:pointer; padding:0; font-family:inherit; }
+
+    /* Aydınlatma metni paneli */
+    .inf-notice{ display:none; background:#faf8f3; border:1px solid #e9e3d3; border-radius:10px; padding:1rem 1.1rem; font-size:0.8rem; color:#4b5563; line-height:1.55; margin:0 0 1rem; max-height:320px; overflow-y:auto; }
+    .inf-notice.open{ display:block; }
+    .inf-notice h3{ font-size:0.9rem; color:var(--navy); margin:0 0 0.5rem; font-family:'Playfair Display',serif; }
+    .inf-notice h4{ font-size:0.8rem; margin:0.8rem 0 0.25rem; color:#374151; }
+    .inf-notice p, .inf-notice ul{ margin:0 0 0.5rem; }
+    .inf-notice ul{ padding-left:1.1rem; }
+    .inf-notice .inf-ver{ color:#9ca3af; font-size:0.72rem; }
+
+    /* Honeypot — botlar doldurur, insanlar görmez. display:none KULLANMA (bazı botlar atlar). */
+    .inf-hp{ position:absolute; left:-9999px; top:-9999px; width:1px; height:1px; opacity:0; overflow:hidden; }
+
+    .inf-submit{ width:100%; padding:0.85rem 1rem; background:var(--navy); color:#fff; border:none; border-radius:9px; font-family:inherit; font-size:0.98rem; font-weight:600; cursor:pointer; min-height:44px; margin-top:0.4rem; }
+    .inf-submit:hover{ background:#1a2456; }
+    .inf-submit:disabled{ opacity:0.6; cursor:not-allowed; }
+    .foot{ text-align:center; font-size:0.72rem; color:#9ca3af; margin-top:1.1rem; }
+
+    @media (prefers-reduced-motion: reduce){ * { transition:none !important; } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <img src="/static/images/logo_sidebar.png" alt="Minerva 108" />
+      <h1>{{ T.head }}</h1>
+      <a class="inf-lang" href="{{ T.lang_href }}">{{ T.lang_switch }}</a>
+    </div>
+    <div class="body">
+      <div id="formWrap">
+        <p class="lead">{{ T.lead }}</p>
+        <p class="sub">{{ T.sub }}</p>
+
+        <div class="gift-note"><i class="bi bi-person-badge"></i><span>{{ T.agency_note }}</span></div>
+
+        <div class="err" id="formErr" hidden></div>
+
+        <form id="applyForm" novalidate autocomplete="on"
+              data-lang="{{ lang }}"
+              data-consent-version="{{ consent_version }}"
+              data-msg-generic="{{ T.err_generic }}"
+              data-msg-network="{{ T.err_network }}"
+              data-msg-rate="{{ T.err_rate }}"
+              data-msg-required="{{ T.err_required }}"
+              data-msg-consent="{{ T.err_consent }}"
+              data-msg-age="{{ T.err_age }}"
+              data-msg-account="{{ T.err_account }}"
+              data-msg-link="{{ T.err_link }}"
+              data-msg-niche="{{ T.err_niche }}"
+              data-msg-url="{{ T.err_url }}"
+              data-msg-sending="{{ T.sending }}"
+              data-msg-submit="{{ T.submit }}"
+              data-msg-remove="{{ T.remove }}">
+
+          <h2 class="inf-section">{{ T.sec_store }} <span class="inf-req">*</span></h2>
+          <div class="field">
+            <div class="inf-stores">
+              {% for key, name, site in STORES %}
+              <label class="inf-store">
+                <input type="radio" name="store_key" value="{{ key }}" {% if store_key == key or (not store_key and loop.first) %}checked{% endif %} />
+                <span>{{ name }}<small>{{ site }}</small></span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+
+          <h2 class="inf-section">{{ T.sec_you }}</h2>
+          <div class="field">
+            <label class="flabel" for="full_name">{{ T.full_name }} <span class="inf-req">*</span></label>
+            <input type="text" id="full_name" name="full_name" maxlength="120" autocomplete="name" required />
+          </div>
+          <div class="inf-grid">
+            <div class="field">
+              <label class="flabel" for="email">{{ T.email }} <span class="inf-req">*</span></label>
+              <input type="email" id="email" name="email" maxlength="160" autocomplete="email" required />
+            </div>
+            <div class="field">
+              <label class="flabel" for="phone">{{ T.phone }} <span class="inf-req">*</span></label>
+              <input type="tel" id="phone" name="phone" maxlength="30" autocomplete="tel" required />
+              <div class="inf-hint">{{ T.phone_hint }}</div>
+            </div>
+          </div>
+          <div class="inf-grid">
+            <div class="field">
+              <label class="flabel" for="country">{{ T.country }} <span class="inf-req">*</span></label>
+              <select id="country" name="country" required>
+                {% for code, name in COUNTRIES %}
+                <option value="{{ code }}" {% if code == default_country %}selected{% endif %}>{{ name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="field">
+              <label class="flabel" for="city">{{ T.city }} <span class="inf-req">*</span></label>
+              <input type="text" id="city" name="city" maxlength="80" autocomplete="address-level2" required />
+            </div>
+          </div>
+          <div class="field">
+            <label class="flabel" for="birth_year">{{ T.birth_year }} <span class="inf-req">*</span></label>
+            <input type="number" id="birth_year" name="birth_year" inputmode="numeric" min="1930" max="2010" placeholder="1998" required />
+            <div class="inf-hint">{{ T.birth_hint }}</div>
+          </div>
+
+          <h2 class="inf-section">{{ T.sec_accounts }} <span class="inf-req">*</span></h2>
+          <div class="field">
+            <div id="accRows"></div>
+            <button type="button" class="inf-add" id="accAdd"><i class="bi bi-plus-lg"></i>{{ T.add_account }}</button>
+          </div>
+
+          <h2 class="inf-section">{{ T.sec_content }}</h2>
+          <div class="field">
+            <label class="flabel">{{ T.niches }} <span class="inf-req">*</span></label>
+            <div class="inf-chips">
+              {% for key, name in T.niche_opts %}
+              <label class="inf-chip"><input type="checkbox" name="niches" value="{{ key }}" /><span>{{ name }}</span></label>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="field">
+            <label class="flabel" for="skin_type">{{ T.skin_type }} <span class="inf-req">*</span></label>
+            <select id="skin_type" name="skin_type" required>
+              <option value="" selected disabled>—</option>
+              {% for key, name in T.skin_opts %}
+              <option value="{{ key }}">{{ name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label class="flabel">{{ T.recent_links }} <span class="inf-req">*</span></label>
+            <input type="url" name="recent_links" maxlength="400" placeholder="https://" style="margin-bottom:0.45rem" inputmode="url" />
+            <input type="url" name="recent_links" maxlength="400" placeholder="https://" style="margin-bottom:0.45rem" inputmode="url" />
+            <input type="url" name="recent_links" maxlength="400" placeholder="https://" inputmode="url" />
+            <div class="inf-hint">{{ T.recent_hint }}</div>
+          </div>
+          <div class="field">
+            <label class="flabel" for="why">{{ T.why }} <span class="inf-req">*</span></label>
+            <textarea id="why" name="why" maxlength="1500" required></textarea>
+            <div class="inf-hint">{{ T.why_hint }}</div>
+          </div>
+          <div class="field">
+            <label class="flabel" for="past_brands">{{ T.past_brands }}</label>
+            <input type="text" id="past_brands" name="past_brands" maxlength="400" />
+            <div class="inf-hint">{{ T.past_hint }}</div>
+          </div>
+
+          <h2 class="inf-section">{{ T.sec_model }} <span class="inf-req">*</span></h2>
+          <div class="field">
+            <label class="inf-radio"><input type="radio" name="accepted_model" value="barter" checked /><span>{{ T.model_barter }}</span></label>
+            <label class="inf-radio"><input type="radio" name="accepted_model" value="link" /><span>{{ T.model_link }}</span></label>
+            <label class="inf-radio"><input type="radio" name="accepted_model" value="karma" /><span>{{ T.model_karma }}</span></label>
+          </div>
+
+          <h2 class="inf-section">{{ T.sec_consent }}</h2>
+
+          {# Honeypot: gerçek kullanıcı görmez/dolduramaz; doluysa sunucu 200 döner ama kaydetmez #}
+          <div class="inf-hp" aria-hidden="true">
+            <label for="website">Website</label>
+            <input type="text" id="website" name="website" tabindex="-1" autocomplete="off" />
+          </div>
+
+          <div class="inf-notice" id="kvkkNotice" role="region" aria-label="KVKK">
+            {% if lang == 'tr' %}
+            <h3>Creator Programı — Kişisel Verilerin İşlenmesine İlişkin Aydınlatma Metni</h3>
+            <p><strong>Veri sorumlusu:</strong> Minerva 108 (Minerva 108, Serenida ve Evanira markaları) — İstanbul, Türkiye. İletişim: it@minerva108.com</p>
+            <h4>Hangi verileri, neden işliyoruz?</h4>
+            <ul>
+              <li><strong>Kimlik ve iletişim:</strong> ad soyad, e-posta, telefon, ülke/şehir, doğum yılı — başvurunu değerlendirmek, 18 yaş şartını doğrulamak ve seninle iletişim kurmak için.</li>
+              <li><strong>Sosyal medya bilgileri:</strong> profil bağlantıların, takipçi sayıların, içerik bağlantıların, niş/cilt tipi beyanın, önceki iş birliklerin — hesaplarının programa uygunluğunu ve gerçeklik skorunu değerlendirmek için. Herkese açık profil verilerin yalnız bu amaçla incelenir.</li>
+            </ul>
+            <p><strong>Bu formda T.C. kimlik numarası, IBAN veya açık adres istenmez.</strong> Kabul edilirsen kargo adresin, ödeme yapılacaksa banka bilgin ve vergi belgen sana özel ayrı bir bağlantıda, yalnız gerektiğinde ve o aşamada istenir.</p>
+            <h4>Hukuki sebep</h4>
+            <p>Başvuru verilerin KVKK m.5/2-c (sözleşmenin kurulması için gerekli olması) ve m.5/2-f (meşru menfaat — creator seçimi) kapsamında işlenir. Pazarlama iletişimi ise yalnız ayrıca vereceğin <em>açık rıza</em>ya dayanır; rızayı istediğin an geri çekebilirsin.</p>
+            <h4>Nerede saklanıyor, kimlerle paylaşılıyor?</h4>
+            <ul>
+              <li>Verilerin, Türkiye'de barındırılan kendi iç sistemimizde (IMS) tutulur; yurt dışına aktarılmaz.</li>
+              <li>Ürün gönderimi aşamasında ad, telefon ve adres bilgisi yalnız <strong>kargo firmasıyla</strong>, teslimat amacıyla paylaşılır.</li>
+              <li>Affiliate modeli seçilirse e-posta adresin, satış takibi için mağaza altyapımızdaki affiliate uygulamasında (Shopify / UpPromote) kayıt anahtarı olarak kullanılır — bu, ancak kabulden sonra ve seninle mutabık kalınarak yapılır.</li>
+              <li>Kanunen yetkili kurumlar talep ettiğinde paylaşım yükümlülüğümüz saklıdır.</li>
+            </ul>
+            <h4>Saklama süresi</h4>
+            <p>Reddedilen başvurular 12 ay içinde silinir. Kabul edilen creator verileri, iş birliği süresince ve sonrasında yasal saklama süreleri (ticari defter/vergi mevzuatı) boyunca tutulur. Yüklenen Insights ekran kayıtları 90 gün sonra silinir.</p>
+            <h4>Hakların</h4>
+            <p>KVKK m.11 uyarınca verilerine erişme, düzeltme, silme, işlemeye itiraz etme ve rızanı geri çekme hakkına sahipsin. Talebini it@minerva108.com adresine iletebilirsin; en geç 30 gün içinde yanıtlanır.</p>
+            <p class="inf-ver">Metin sürümü: {{ consent_version }}</p>
+            {% else %}
+            <h3>Creator Program — Privacy Notice</h3>
+            <p><strong>Data controller:</strong> Minerva 108 (brands Minerva 108, Serenida and Evanira) — Istanbul, Türkiye. Contact: it@minerva108.com</p>
+            <h4>What we collect and why</h4>
+            <ul>
+              <li><strong>Identity and contact:</strong> full name, email, phone, country/city, year of birth — to review your application, verify that you are 18 or over, and contact you.</li>
+              <li><strong>Social media details:</strong> your profile links, follower counts, content links, niche/skin type, previous collaborations — to assess fit and authenticity for the program. Public profile data is reviewed for this purpose only.</li>
+            </ul>
+            <p><strong>This form does not ask for a national ID number, bank account (IBAN) or street address.</strong> If accepted, your shipping address and — only where a payout is due — bank details and tax documents are requested later, on a private link, only when needed.</p>
+            <h4>Legal basis</h4>
+            <p>Application data is processed under Turkish Data Protection Law (KVKK) art. 5/2-c (necessary to enter into a contract) and art. 5/2-f (legitimate interest — creator selection). Marketing communication relies solely on your separate <em>explicit consent</em>, which you can withdraw at any time.</p>
+            <h4>Where it is stored and who sees it</h4>
+            <ul>
+              <li>Your data is kept in our own internal system (IMS) hosted in Türkiye; it is not transferred abroad.</li>
+              <li>When a product is shipped, your name, phone and address are shared only with the <strong>shipping carrier</strong>, for delivery.</li>
+              <li>If you choose the affiliate model, your email is used as the registration key in the affiliate app of our store platform (Shopify / UpPromote) for sales tracking — only after acceptance and in agreement with you.</li>
+              <li>We may be required to disclose data to legally authorised authorities.</li>
+            </ul>
+            <h4>Retention</h4>
+            <p>Rejected applications are deleted within 12 months. Accepted creator data is kept for the duration of the collaboration and for the statutory retention periods afterwards (commercial and tax law). Uploaded Insights screen recordings are deleted after 90 days.</p>
+            <h4>Your rights</h4>
+            <p>Under KVKK art. 11 you may access, correct or delete your data, object to processing and withdraw consent. Send requests to it@minerva108.com; we reply within 30 days.</p>
+            <p class="inf-ver">Notice version: {{ consent_version }}</p>
+            {% endif %}
+          </div>
+
+          <label class="consent">
+            <input type="checkbox" id="consent_ack" name="consent_ack" required />
+            <span>{{ T.consent_read }} <span class="inf-req">*</span><br />
+              <button type="button" class="inf-link" id="kvkkToggle" aria-expanded="false" aria-controls="kvkkNotice" data-open="{{ T.consent_open }}" data-close="{{ T.consent_close }}">{{ T.consent_open }}</button>
+            </span>
+          </label>
+
+          <label class="consent inf-opt">
+            <input type="checkbox" id="marketing_consent" name="marketing_consent" />
+            <span>{{ T.marketing }}</span>
+          </label>
+
+          <input type="hidden" name="consent_version" value="{{ consent_version }}" />
+          <input type="hidden" name="lang" value="{{ lang }}" />
+
+          <button type="submit" class="inf-submit" id="submitBtn">{{ T.submit }}</button>
+        </form>
+      </div>
+
+      <div class="state" id="okState" hidden>
+        <i class="bi bi-check-circle-fill"></i>
+        <h2>{{ T.ok_title }}</h2>
+        <p id="okText">{{ T.ok_text }}</p>
+      </div>
+    </div>
+  </div>
+  <p class="foot">{{ T.foot }}</p>
+
+  <script>
+  (function () {
+    'use strict';
+    var form = document.getElementById('applyForm');
+    if (!form) return;
+    var D = form.dataset;
+    var errBox = document.getElementById('formErr');
+    var submitBtn = document.getElementById('submitBtn');
+    var accRows = document.getElementById('accRows');
+    var PLATFORMS = [['instagram', 'Instagram'], ['tiktok', 'TikTok'], ['youtube', 'YouTube']];
+    var FOLLOWERS_LABEL = D.lang === 'tr' ? 'Takipçi' : 'Followers';
+
+    // Doğum yılı üst sınırı: bu yıl − 18 (sunucu da ayrıca denetler)
+    var thisYear = new Date().getFullYear();
+    var maxYear = thisYear - 18;
+    var birth = document.getElementById('birth_year');
+    birth.max = String(maxYear);
+
+    // ── Platform satırları ─────────────────────────────────────────────
+    function addAccRow(platform) {
+      var row = document.createElement('div');
+      row.className = 'inf-acc';
+      var sel = document.createElement('select');
+      sel.setAttribute('aria-label', 'Platform');
+      PLATFORMS.forEach(function (p) {
+        var o = document.createElement('option');
+        o.value = p[0]; o.textContent = p[1];
+        if (p[0] === platform) o.selected = true;
+        sel.appendChild(o);
+      });
+      var url = document.createElement('input');
+      url.type = 'url'; url.placeholder = 'https://'; url.maxLength = 300; url.inputMode = 'url';
+      url.setAttribute('aria-label', 'URL');
+      var fol = document.createElement('input');
+      fol.type = 'number'; fol.min = '0'; fol.step = '1'; fol.inputMode = 'numeric';
+      fol.placeholder = FOLLOWERS_LABEL; fol.setAttribute('aria-label', FOLLOWERS_LABEL);
+      var x = document.createElement('button');
+      x.type = 'button'; x.className = 'inf-x'; x.innerHTML = '<i class="bi bi-x-lg"></i>';
+      x.setAttribute('aria-label', D.msgRemove); x.title = D.msgRemove;
+      x.addEventListener('click', function () {
+        if (accRows.children.length > 1) row.remove();
+        else { url.value = ''; fol.value = ''; }
+      });
+      row.appendChild(sel); row.appendChild(url); row.appendChild(fol); row.appendChild(x);
+      accRows.appendChild(row);
+      return row;
+    }
+    addAccRow('instagram');
+    document.getElementById('accAdd').addEventListener('click', function () {
+      if (accRows.children.length >= 6) return;
+      var used = Array.prototype.map.call(accRows.querySelectorAll('select'), function (s) { return s.value; });
+      var next = PLATFORMS.map(function (p) { return p[0]; }).filter(function (k) { return used.indexOf(k) < 0; })[0] || 'instagram';
+      var r = addAccRow(next);
+      r.querySelector('input[type=url]').focus();
+    });
+
+    // ── KVKK paneli ───────────────────────────────────────────────────
+    var notice = document.getElementById('kvkkNotice');
+    var toggle = document.getElementById('kvkkToggle');
+    toggle.addEventListener('click', function () {
+      var open = !notice.classList.contains('open');
+      notice.classList.toggle('open', open);
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.textContent = open ? toggle.dataset.close : toggle.dataset.open;
+      if (open) notice.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+
+    // ── Yardımcılar ───────────────────────────────────────────────────
+    function showErr(msg) {
+      errBox.textContent = msg;
+      errBox.hidden = false;
+      errBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    function clearErr() { errBox.hidden = true; errBox.textContent = ''; }
+    function val(name) {
+      var el = form.elements[name];
+      return el ? String(el.value || '').trim() : '';
+    }
+    function isHttpUrl(u) { return /^https?:\/\/\S+$/i.test(u); }
+    function checkedValue(name) {
+      var el = form.querySelector('input[name="' + name + '"]:checked');
+      return el ? el.value : '';
+    }
+
+    // ── Payload ───────────────────────────────────────────────────────
+    function buildPayload() {
+      var accounts = [];
+      Array.prototype.forEach.call(accRows.querySelectorAll('.inf-acc'), function (row) {
+        var platform = row.querySelector('select').value;
+        var url = row.querySelector('input[type=url]').value.trim();
+        var fol = row.querySelector('input[type=number]').value.trim();
+        if (!url && !fol) return;  // boş satır
+        accounts.push({ platform: platform, url: url, followers_claimed: parseInt(fol || '0', 10) || 0 });
+      });
+      var niches = Array.prototype.map.call(form.querySelectorAll('input[name="niches"]:checked'), function (c) { return c.value; });
+      var links = Array.prototype.map.call(form.querySelectorAll('input[name="recent_links"]'), function (i) { return i.value.trim(); })
+        .filter(function (u) { return u; }).slice(0, 3);
+      return {
+        store_key: checkedValue('store_key'),
+        lang: D.lang,
+        full_name: val('full_name'),
+        email: val('email'),
+        phone: val('phone'),
+        country: val('country'),
+        city: val('city'),
+        birth_year: parseInt(val('birth_year'), 10) || 0,
+        accounts: accounts,
+        niches: niches,
+        skin_type: val('skin_type'),
+        recent_links: links,
+        why: val('why'),
+        past_brands: val('past_brands'),
+        accepted_model: checkedValue('accepted_model') || 'barter',
+        consent_ack: !!form.elements.consent_ack.checked,
+        consent_version: D.consentVersion,
+        marketing_consent: !!form.elements.marketing_consent.checked,
+        website: val('website')   // honeypot — insan için daima boş
+      };
+    }
+
+    function validate(p) {
+      if (!p.store_key || !p.full_name || !p.email || !p.phone || !p.country || !p.city || !p.birth_year || !p.skin_type || !p.why) return D.msgRequired;
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.email)) return D.msgRequired;
+      if (p.birth_year < 1930 || p.birth_year > maxYear) return D.msgAge;
+      if (!p.accounts.length) return D.msgAccount;
+      for (var i = 0; i < p.accounts.length; i++) {
+        if (!p.accounts[i].url) return D.msgAccount;
+        if (!isHttpUrl(p.accounts[i].url)) return D.msgUrl;
+      }
+      if (!p.niches.length) return D.msgNiche;
+      if (!p.recent_links.length) return D.msgLink;
+      for (var j = 0; j < p.recent_links.length; j++) {
+        if (!isHttpUrl(p.recent_links[j])) return D.msgUrl;
+      }
+      if (!p.consent_ack) return D.msgConsent;
+      return '';
+    }
+
+    // ── Gönderim ──────────────────────────────────────────────────────
+    var busy = false;
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      if (busy) return;
+      clearErr();
+      var payload = buildPayload();
+      var problem = validate(payload);
+      if (problem) { showErr(problem); return; }
+      busy = true;
+      submitBtn.disabled = true;
+      submitBtn.textContent = D.msgSending;
+      fetch('/basvuru/gonder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload)
+      }).then(function (res) {
+        return res.text().then(function (txt) {
+          var data = null;
+          try { data = txt ? JSON.parse(txt) : null; } catch (e) { data = null; }
+          return { status: res.status, data: data };
+        });
+      }).then(function (r) {
+        if (r.status === 201 || r.status === 200) {
+          document.getElementById('formWrap').hidden = true;
+          var ok = document.getElementById('okState');
+          if (r.data && r.data.message) document.getElementById('okText').textContent = r.data.message;
+          ok.hidden = false;
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          return;
+        }
+        if (r.status === 429) { showErr(D.msgRate); return; }
+        var detail = r.data && r.data.detail;
+        if (Array.isArray(detail)) {
+          // Pydantic 422 listesi — ilk mesajı göster
+          detail = detail.length && detail[0].msg ? detail[0].msg : '';
+        }
+        showErr(typeof detail === 'string' && detail ? detail : D.msgGeneric);
+      }).catch(function () {
+        showErr(D.msgNetwork);
+      }).finally(function () {
+        busy = false;
+        submitBtn.disabled = false;
+        submitBtn.textContent = D.msgSubmit;
+      });
+    });
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,598 @@
+{#
+  Creator claim-link sayfası — auth YOK, token'lı (yorum.html kalıbı).
+  Route: GET /basvuru/t/{token}  (api_main.py)
+  Context: state ('open'|'notfound'|'expired'|'used'), purpose ('address'|'insights'|'agreement'),
+           creator_name, market ('TR'|'US'|'UK'|'DE'|'EU'), label_template (str),
+           claim_sheet (list — str ya da dict), consent_version, token, lang (opsiyonel; yoksa market'ten türer)
+  POST'lar (routers/influencer.public_router):
+    address   → JSON      /basvuru/t/{token}/adres     {recipient,line1,line2,district,city,postal_code,country,phone}
+    insights  → multipart /basvuru/t/{token}/insights  file + reach_30d, engaged_30d, followers, geo_target_pct
+    agreement → JSON      /basvuru/t/{token}/onay      {ack:true, version}
+  Inline JS Jinja İÇERMEZ: sunucu değerleri <form data-*> ile taşınır (node --check dostu).
+#}
+{% set market = (market or 'TR')|upper %}
+{% set lang = lang if lang in ('tr', 'en') else ('tr' if market == 'TR' else 'en') %}
+{% set consent_version = consent_version or '2026-09-v1' %}
+{% set claim_sheet = claim_sheet or [] %}
+{% set MAX_MB = 60 %}
+{% if lang == 'tr' %}
+{% set T = {
+  'title': 'Creator Programı · Minerva108',
+  'head': 'Creator Programı',
+  'hello': 'Merhaba',
+  'foot': 'Minerva108 Vegan Cosmetics',
+  'notfound_h': 'Bulunamadı', 'notfound_p': 'Bu bağlantı geçersiz ya da kaldırılmış.',
+  'expired_h': 'Süresi doldu', 'expired_p': 'Bu bağlantının süresi dolmuş. Yeni bağlantı için bize yaz.',
+  'used_h': 'Teşekkürler!', 'used_p': 'Bu bağlantı daha önce kullanıldı; bilgilerin bizde.',
+  'done_h': 'Kaydedildi', 'done_p': 'Teşekkürler, bilgilerin ulaştı.',
+  'err_generic': 'Bir sorun oluştu, lütfen tekrar dene.',
+  'err_network': 'Bağlantı kurulamadı. İnternetini kontrol edip tekrar dene.',
+  'err_rate': 'Çok sık deneme yapıldı. Lütfen bir süre sonra tekrar dene.',
+  'err_required': 'Lütfen zorunlu alanları doldur.',
+  'err_file': 'Lütfen bir video dosyası seç.',
+  'err_size': 'Video en fazla 60 MB olabilir. Ekran kaydını kısaltıp tekrar dene.',
+  'err_ack': 'Devam etmek için kutuyu işaretlemen gerekir.',
+  'sending': 'Gönderiliyor…', 'uploading': 'Yükleniyor…',
+  'req': 'zorunlu',
+  'addr_lead': 'Ürünlerini nereye gönderelim?',
+  'addr_sub': 'Adresini yalnız sen girersin; biz asla elle yazmayız. Teslimattan sonra bir şey değişirse yeni bağlantı isteyebilirsin.',
+  'addr_note': 'Bu bilgiler yalnız iş birliğinin ifası (ürün gönderimi, KVKK m.5/2-c) için işlenir ve sadece kargo firmasıyla, teslimat amacıyla paylaşılır. Türkiye\'deki sunucumuzda tutulur.',
+  'recipient': 'Alıcı adı soyadı', 'line1': 'Adres satırı 1', 'line2': 'Adres satırı 2', 'line2_hint': 'Daire, kat, site adı (opsiyonel)',
+  'district': 'İlçe', 'city': 'Şehir', 'postal_code': 'Posta kodu', 'country': 'Ülke', 'phone': 'Telefon', 'phone_hint': 'Kargo görevlisi arayabilir.',
+  'addr_submit': 'Adresi Kaydet',
+  'ins_lead': 'Insights ekran kaydını yükle',
+  'ins_sub': 'Herkese açık sayılarla karşılaştırıp gerçeklik skorunu tamamlamak için Instagram Insights ekranlarını kısa bir ekran kaydıyla (en fazla 60 saniye, 60 MB) paylaş.',
+  'ins_steps_h': 'Kayıtta sırayla şu ekranlar görünmeli',
+  'ins_steps': [
+    'Profil → Professional Dashboard → Insights',
+    'Tarih aralığını "Son 30 gün" yap — aralık ve profil adın ekranda görünür olsun',
+    'Accounts reached (erişilen hesaplar, 30 gün)',
+    'Accounts engaged (etkileşime geçen hesaplar, 30 gün)',
+    'Total followers (toplam takipçi)',
+    'Audience → Top locations (ülke/şehir) ve Age (yaş dağılımı)',
+    'Herhangi bir Reels\'in Content interactions ekranı'
+  ],
+  'ins_tip': 'Ekran kaydını telefonun kendi kayıt özelliğiyle al; kesme/hızlandırma yapma. Tarih ve profil adı görünmeyen kayıtlar değerlendirilemez.',
+  'file': 'Ekran kaydı (video)', 'file_hint': 'MP4 / MOV — en fazla 60 MB.',
+  'reach_30d': 'Accounts reached (30 gün)', 'engaged_30d': 'Accounts engaged (30 gün)', 'followers': 'Total followers', 'geo_target_pct': 'Hedef ülke payı (%)',
+  'geo_hint': 'Top locations ekranındaki ilk ülkenin yüzdesi (0–100).',
+  'nums_h': 'Kayıtta görünen sayıları aynen yaz',
+  'ins_submit': 'Kaydı Gönder',
+  'ins_note': 'Video Türkiye\'deki sunucumuzda tutulur, üçüncü kişiyle paylaşılmaz ve 90 gün sonra silinir.',
+  'agr_lead': 'Paylaşım kılavuzu ve onay',
+  'agr_sub': 'Ürün sana ulaşmadan önce üç şeyi netleştirelim: reklam etiketi, ürün iddiaları ve paylaşım kuralları. Bunlar yasal zorunluluk — hem senin hem bizim için.',
+  'label_h': 'Reklam etiketi (pazar: {m})',
+  'label_p': 'Her gönderi ve story\'nin İLK satırında / ilk saniyelerinde, diğer etiketlerden önce, açıkça görünür şekilde:',
+  'label_why': 'Türkiye\'de 1 Ağustos 2026 yönetmeliği (m.23/A) "Reklam" veya "Tanıtım" ibaresini ve marka adını zorunlu kılar; marka ile creator müteselsil sorumludur. ABD\'de FTC "#ad", İngiltere\'de ASA "Ad", Almanya\'da "Werbung" ister — "#gifted" tek başına YETERSİZ.',
+  'claims_h': 'Söyleyebileceklerin ve söyleyemeyeceklerin (claim sheet)',
+  'claims_p': 'Kozmetikte creator\'ın her cümlesi markanın iddiası sayılır. Aşağıdaki sınırların dışına çıkma; emin olmadığın bir cümle varsa yayınlamadan önce bize sor.',
+  'claims_empty': 'Bu ürün için özel bir iddia listesi yok; genel kural geçerlidir.',
+  'claims_general_h': 'Genel kural',
+  'claims_general': [
+    '"Tedavi eder", "iyileştirir", "akneyi/egzamayı geçirir" gibi tıbbi iddia YOK.',
+    '"3 günde", "garantili", "kalıcı" gibi süre/garanti vaadi YOK.',
+    'Filtreli, retuşlu ya da farklı ışıkta çekilmiş öncesi-sonrası karşılaştırması YOK.',
+    'Kendi deneyimini anlat: "bende şöyle hissettirdi" — genelleme yapma.',
+    'Ürünü etiketteki kullanım şekliyle göster; başka ürünle karıştırma.'
+  ],
+  'rules_h': 'Paylaşım kuralları',
+  'rules': [
+    'Ürün teslim edildikten sonra en geç 14 gün içinde paylaş; gecikeceksen haber ver.',
+    'Affiliate link / kod verildiyse açıklamaya ve story\'ye ekle.',
+    'İçeriği, organik ve ücretli reklamda 12 ay boyunca kullanmamıza izin veriyorsun (kaynak belirtilir).',
+    'Paylaşımdan sonraki 48 saat içinde rakip kozmetik markası tanıtımı yapma.',
+    'Müzik ve üçüncü kişi görselleri için hak sende olsun.'
+  ],
+  'ack': 'Kılavuzu okudum, paylaşımımda "Reklam/Tanıtım" ibaresini ve marka adını kullanacağım.',
+  'agr_submit': 'Onaylıyorum',
+  'agr_note': 'Onayın, tarih ve saatiyle birlikte iş birliği kaydına yazılır (sürüm {v}).'
+} %}
+{% else %}
+{% set T = {
+  'title': 'Creator Program · Minerva108',
+  'head': 'Creator Program',
+  'hello': 'Hi',
+  'foot': 'Minerva108 Vegan Cosmetics',
+  'notfound_h': 'Not found', 'notfound_p': 'This link is invalid or has been removed.',
+  'expired_h': 'Link expired', 'expired_p': 'This link has expired. Message us for a new one.',
+  'used_h': 'Thank you!', 'used_p': 'This link has already been used; we have your details.',
+  'done_h': 'Saved', 'done_p': 'Thank you, we received your details.',
+  'err_generic': 'Something went wrong, please try again.',
+  'err_network': 'Could not connect. Check your internet connection and try again.',
+  'err_rate': 'Too many attempts. Please try again later.',
+  'err_required': 'Please fill in the required fields.',
+  'err_file': 'Please choose a video file.',
+  'err_size': 'The video must be 60 MB or smaller. Trim the recording and try again.',
+  'err_ack': 'You need to tick the box to continue.',
+  'sending': 'Sending…', 'uploading': 'Uploading…',
+  'req': 'required',
+  'addr_lead': 'Where should we send your products?',
+  'addr_sub': 'Only you enter your address; we never type it in for you. If anything changes after delivery, ask for a new link.',
+  'addr_note': 'These details are processed solely to perform the collaboration (product shipping, KVKK art. 5/2-c) and are shared only with the shipping carrier, for delivery. They are stored on our server in Türkiye.',
+  'recipient': 'Recipient full name', 'line1': 'Address line 1', 'line2': 'Address line 2', 'line2_hint': 'Apartment, floor, building (optional)',
+  'district': 'District', 'city': 'City', 'postal_code': 'Postal code', 'country': 'Country', 'phone': 'Phone', 'phone_hint': 'The courier may call you.',
+  'addr_submit': 'Save address',
+  'ins_lead': 'Upload your Insights screen recording',
+  'ins_sub': 'To complete your authenticity score we compare your Insights with public numbers. Share a short screen recording (max 60 seconds, 60 MB) of the Instagram Insights screens below.',
+  'ins_steps_h': 'The recording should show these screens, in order',
+  'ins_steps': [
+    'Profile → Professional Dashboard → Insights',
+    'Set the date range to "Last 30 days" — the range and your profile name must be visible',
+    'Accounts reached (30 days)',
+    'Accounts engaged (30 days)',
+    'Total followers',
+    'Audience → Top locations (country/city) and Age',
+    'Content interactions of any one Reel'
+  ],
+  'ins_tip': 'Use your phone\'s built-in screen recorder; do not cut or speed up. Recordings without a visible date range and profile name cannot be evaluated.',
+  'file': 'Screen recording (video)', 'file_hint': 'MP4 / MOV — up to 60 MB.',
+  'reach_30d': 'Accounts reached (30 days)', 'engaged_30d': 'Accounts engaged (30 days)', 'followers': 'Total followers', 'geo_target_pct': 'Target country share (%)',
+  'geo_hint': 'Percentage of the first country on the Top locations screen (0–100).',
+  'nums_h': 'Type the numbers exactly as shown in the recording',
+  'ins_submit': 'Send recording',
+  'ins_note': 'The video is stored on our server in Türkiye, never shared with third parties, and deleted after 90 days.',
+  'agr_lead': 'Posting guidelines and confirmation',
+  'agr_sub': 'Before the product reaches you, let\'s settle three things: the ad label, product claims and posting rules. These are legal requirements — for you and for us.',
+  'label_h': 'Ad label (market: {m})',
+  'label_p': 'In the FIRST line / first seconds of every post and story, before any other tag, clearly visible:',
+  'label_why': 'In the US the FTC requires "#ad" or "Paid partnership"; in the UK the ASA requires "Ad" up front — "#gifted" alone is NOT enough; in Germany "Werbung" must come first; in Türkiye the 2026 regulation requires "Reklam" plus the brand name. Brand and creator are jointly liable.',
+  'claims_h': 'What you can and cannot say (claim sheet)',
+  'claims_p': 'In cosmetics, every sentence a creator says counts as a brand claim. Stay within the limits below; if you are unsure about a sentence, ask us before publishing.',
+  'claims_empty': 'There is no product-specific claim list; the general rule applies.',
+  'claims_general_h': 'General rule',
+  'claims_general': [
+    'NO medical claims such as "treats", "heals", "cures acne/eczema".',
+    'NO time or guarantee promises such as "in 3 days", "guaranteed", "permanent".',
+    'NO before/after comparisons with filters, retouching or different lighting.',
+    'Describe your own experience: "this is how it felt for me" — do not generalise.',
+    'Show the product used as directed on the label; do not mix it with other products.'
+  ],
+  'rules_h': 'Posting rules',
+  'rules': [
+    'Post within 14 days of delivery; let us know if you will be late.',
+    'If you were given an affiliate link / code, add it to the caption and story.',
+    'You allow us to reuse the content in organic and paid ads for 12 months (with credit).',
+    'No competing cosmetics brand promotion within 48 hours of your post.',
+    'Make sure you hold the rights to any music or third-party visuals.'
+  ],
+  'ack': 'I have read the guidelines and will use the "Ad" label and the brand name in my post.',
+  'agr_submit': 'I confirm',
+  'agr_note': 'Your confirmation is recorded with date and time on the collaboration (version {v}).'
+} %}
+{% endif %}
+{% set COUNTRIES = [('TR','Türkiye'),('US','United States'),('GB','United Kingdom'),('DE','Deutschland'),('NL','Nederland'),('FR','France'),('IT','Italia'),('ES','España'),('AT','Österreich'),('BE','Belgique / België'),('CH','Schweiz'),('SE','Sverige'),('DK','Danmark'),('NO','Norge'),('FI','Suomi'),('IE','Ireland'),('PL','Polska'),('PT','Portugal'),('CZ','Česko'),('GR','Ελλάδα'),('RO','România'),('BG','България'),('HU','Magyarország'),('CA','Canada'),('AU','Australia'),('AE','United Arab Emirates'),('SA','Saudi Arabia'),('AZ','Azərbaycan'),('KZ','Qazaqstan'),('CY','Cyprus'),('MK','North Macedonia'),('BA','Bosna i Hercegovina')] %}
+{% set default_country = 'TR' if market == 'TR' else ('GB' if market == 'UK' else ('DE' if market == 'DE' else 'US')) %}
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>{{ T.title }}</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    :root{ --navy:#232E6E; --gold:#C9AC6F; --cream:#f5f0e8; --white:#fff; --err:#b91c1c; }
+    *,*::before,*::after{ box-sizing:border-box; }
+    body{ margin:0; font-family:'Jost',sans-serif; background:var(--cream); color:#1f2937; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:3vh 1rem; }
+    .card{ background:var(--white); border-radius:16px; box-shadow:0 12px 48px rgba(44,44,115,0.12); max-width:600px; width:100%; overflow:hidden; }
+    .head{ background:var(--navy); padding:1.5rem 1.75rem; color:#fff; display:flex; align-items:center; gap:0.9rem; }
+    .head img{ height:34px; opacity:0.96; }
+    .head h1{ font-family:'Playfair Display',serif; font-size:1.15rem; font-weight:700; margin:0; }
+    .body{ padding:1.5rem 1.75rem 1.9rem; }
+    .lead{ font-family:'Playfair Display',serif; font-size:1.3rem; font-weight:700; color:var(--navy); margin:0 0 0.3rem; }
+    .sub{ font-size:0.86rem; color:#6b7280; margin:0 0 1.2rem; line-height:1.5; }
+    .state{ text-align:center; padding:1.5rem 0.5rem; }
+    .state i{ font-size:2.4rem; color:var(--gold); display:block; margin-bottom:0.7rem; }
+    .state h2{ font-family:'Playfair Display',serif; font-size:1.2rem; color:var(--navy); margin:0 0 0.3rem; }
+    .state p{ font-size:0.88rem; color:#6b7280; margin:0; }
+    .err{ background:#fef2f2; color:var(--err); border:1px solid #fecaca; border-radius:8px; padding:0.6rem 0.85rem; font-size:0.85rem; margin-bottom:1rem; }
+    .gift-note{ background:#f5f2ea; border:1px solid #e9e3d3; border-radius:8px; padding:0.65rem 0.9rem; font-size:0.82rem; color:#57544a; margin-bottom:1.2rem; display:flex; gap:0.5rem; align-items:flex-start; line-height:1.45; }
+    .gift-note i{ color:var(--gold); margin-top:0.15rem; }
+
+    .inf-hello{ font-size:0.84rem; color:#9ca3af; margin:0 0 0.2rem; }
+    .inf-section{ font-family:'Playfair Display',serif; font-size:1rem; color:var(--navy); margin:1.4rem 0 0.7rem; padding-bottom:0.35rem; border-bottom:1px solid #ece7db; }
+    .field{ margin-bottom:1.05rem; }
+    .field label.flabel{ display:block; font-size:0.82rem; font-weight:600; color:#4b5563; margin-bottom:0.35rem; }
+    .field .inf-hint{ font-size:0.76rem; color:#9ca3af; margin-top:0.3rem; line-height:1.4; }
+    .field input[type=text], .field input[type=tel], .field input[type=number], .field select{ width:100%; padding:0.7rem 0.9rem; border:1.5px solid #e5e7eb; border-radius:9px; font-family:inherit; font-size:0.94rem; background:#fff; color:#1f2937; }
+    .field input:focus, .field select:focus{ outline:none; border-color:var(--navy); }
+    .inf-req{ color:var(--gold); font-weight:600; }
+    .inf-grid{ display:grid; grid-template-columns:1fr 1fr; gap:0 0.9rem; }
+    @media (max-width:520px){ .inf-grid{ grid-template-columns:1fr; } }
+
+    .inf-steps{ counter-reset:step; list-style:none; padding:0; margin:0 0 0.8rem; }
+    .inf-steps li{ position:relative; padding:0.35rem 0 0.35rem 2.1rem; font-size:0.86rem; color:#374151; line-height:1.45; }
+    .inf-steps li::before{ counter-increment:step; content:counter(step); position:absolute; left:0; top:0.3rem; width:1.5rem; height:1.5rem; border-radius:50%; background:var(--navy); color:#fff; font-size:0.74rem; font-weight:600; display:flex; align-items:center; justify-content:center; }
+
+    .inf-drop{ border:1.5px dashed #dcd5c6; border-radius:10px; padding:1rem; text-align:center; cursor:pointer; }
+    .inf-drop:hover, .inf-drop.has{ border-color:var(--navy); }
+    .inf-drop i{ font-size:1.6rem; color:var(--gold); display:block; margin-bottom:0.3rem; }
+    .inf-drop input{ display:none; }
+    .inf-drop .inf-fname{ font-size:0.84rem; color:#374151; word-break:break-all; }
+    .inf-bar{ height:8px; background:#ece7db; border-radius:999px; overflow:hidden; margin-top:0.6rem; display:none; }
+    .inf-bar span{ display:block; height:100%; width:0; background:var(--navy); transition:width .2s; }
+
+    .inf-label-box{ background:#1f2937; color:#fff; border-radius:10px; padding:0.9rem 1rem; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:0.95rem; letter-spacing:0.01em; margin:0 0 0.5rem; word-break:break-word; }
+    .inf-why{ font-size:0.78rem; color:#6b7280; line-height:1.5; margin:0 0 0.4rem; }
+    .inf-list{ margin:0 0 0.6rem; padding-left:1.15rem; font-size:0.86rem; color:#374151; line-height:1.5; }
+    .inf-list li{ margin-bottom:0.3rem; }
+    .inf-claim{ display:flex; gap:0.55rem; align-items:flex-start; padding:0.5rem 0.7rem; border:1px solid #ece7db; border-radius:8px; margin-bottom:0.4rem; font-size:0.85rem; line-height:1.45; color:#374151; }
+    .inf-claim i{ margin-top:0.15rem; }
+    .inf-claim.ok i{ color:#166534; }
+    .inf-claim.no i{ color:var(--err); }
+    .inf-claim.info i{ color:var(--gold); }
+    .inf-claim small{ display:block; color:#6b7280; font-size:0.76rem; }
+
+    .consent{ display:flex; gap:0.6rem; align-items:flex-start; font-size:0.84rem; color:#374151; line-height:1.5; margin:1rem 0 0.9rem; padding:0.75rem 0.85rem; border:1.5px solid #e5e7eb; border-radius:9px; }
+    .consent input{ margin-top:0.2rem; min-width:18px; min-height:18px; }
+    .consent:has(input:checked){ border-color:var(--navy); background:#f3f4fb; }
+
+    .inf-submit{ width:100%; padding:0.85rem 1rem; background:var(--navy); color:#fff; border:none; border-radius:9px; font-family:inherit; font-size:0.98rem; font-weight:600; cursor:pointer; min-height:44px; margin-top:0.4rem; }
+    .inf-submit:hover{ background:#1a2456; }
+    .inf-submit:disabled{ opacity:0.6; cursor:not-allowed; }
+    .inf-small{ font-size:0.74rem; color:#9ca3af; margin-top:0.7rem; line-height:1.45; }
+    .foot{ text-align:center; font-size:0.72rem; color:#9ca3af; margin-top:1.1rem; }
+
+    @media (prefers-reduced-motion: reduce){ * { transition:none !important; } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <img src="/static/images/logo_sidebar.png" alt="Minerva 108" />
+      <h1>{{ T.head }}</h1>
+    </div>
+    <div class="body">
+      {% if state == 'open' %}
+        <div id="formWrap">
+          {% if creator_name %}<p class="inf-hello">{{ T.hello }} {{ creator_name }},</p>{% endif %}
+          <div class="err" id="formErr" hidden></div>
+
+          {# ── Ortak data-* mesajları tek yerde: her form aynı id/dataset'i kullanır ── #}
+          {% set common_attrs %}
+              data-token="{{ token }}"
+              data-msg-generic="{{ T.err_generic }}"
+              data-msg-network="{{ T.err_network }}"
+              data-msg-rate="{{ T.err_rate }}"
+              data-msg-required="{{ T.err_required }}"
+              data-msg-file="{{ T.err_file }}"
+              data-msg-size="{{ T.err_size }}"
+              data-msg-ack="{{ T.err_ack }}"
+              data-msg-sending="{{ T.sending }}"
+              data-msg-uploading="{{ T.uploading }}"
+              data-max-mb="{{ MAX_MB }}"
+          {% endset %}
+
+          {% if purpose == 'address' %}
+          {# ═══════════════ ADRES ═══════════════ #}
+          <p class="lead">{{ T.addr_lead }}</p>
+          <p class="sub">{{ T.addr_sub }}</p>
+          <div class="gift-note"><i class="bi bi-shield-lock"></i><span>{{ T.addr_note }}</span></div>
+
+          <form id="claimForm" data-purpose="address" data-action="/basvuru/t/{{ token }}/adres" data-msg-submit="{{ T.addr_submit }}" novalidate {{ common_attrs }}>
+            <div class="field">
+              <label class="flabel" for="recipient">{{ T.recipient }} <span class="inf-req">*</span></label>
+              <input type="text" id="recipient" name="recipient" maxlength="120" autocomplete="name" value="{{ creator_name or '' }}" required />
+            </div>
+            <div class="field">
+              <label class="flabel" for="line1">{{ T.line1 }} <span class="inf-req">*</span></label>
+              <input type="text" id="line1" name="line1" maxlength="200" autocomplete="address-line1" required />
+            </div>
+            <div class="field">
+              <label class="flabel" for="line2">{{ T.line2 }}</label>
+              <input type="text" id="line2" name="line2" maxlength="200" autocomplete="address-line2" />
+              <div class="inf-hint">{{ T.line2_hint }}</div>
+            </div>
+            <div class="inf-grid">
+              <div class="field">
+                <label class="flabel" for="district">{{ T.district }} <span class="inf-req">*</span></label>
+                <input type="text" id="district" name="district" maxlength="80" autocomplete="address-level3" required />
+              </div>
+              <div class="field">
+                <label class="flabel" for="city">{{ T.city }} <span class="inf-req">*</span></label>
+                <input type="text" id="city" name="city" maxlength="80" autocomplete="address-level2" required />
+              </div>
+            </div>
+            <div class="inf-grid">
+              <div class="field">
+                <label class="flabel" for="postal_code">{{ T.postal_code }} <span class="inf-req">*</span></label>
+                <input type="text" id="postal_code" name="postal_code" maxlength="16" autocomplete="postal-code" inputmode="numeric" required />
+              </div>
+              <div class="field">
+                <label class="flabel" for="country">{{ T.country }} <span class="inf-req">*</span></label>
+                <select id="country" name="country" autocomplete="country" required>
+                  {% for code, name in COUNTRIES %}
+                  <option value="{{ code }}" {% if code == default_country %}selected{% endif %}>{{ name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <label class="flabel" for="phone">{{ T.phone }} <span class="inf-req">*</span></label>
+              <input type="tel" id="phone" name="phone" maxlength="30" autocomplete="tel" required />
+              <div class="inf-hint">{{ T.phone_hint }}</div>
+            </div>
+            <button type="submit" class="inf-submit" id="submitBtn">{{ T.addr_submit }}</button>
+          </form>
+
+          {% elif purpose == 'insights' %}
+          {# ═══════════════ INSIGHTS VİDEO ═══════════════ #}
+          <p class="lead">{{ T.ins_lead }}</p>
+          <p class="sub">{{ T.ins_sub }}</p>
+
+          <h2 class="inf-section">{{ T.ins_steps_h }}</h2>
+          <ol class="inf-steps">
+            {% for s in T.ins_steps %}<li>{{ s }}</li>{% endfor %}
+          </ol>
+          <div class="gift-note"><i class="bi bi-camera-video"></i><span>{{ T.ins_tip }}</span></div>
+
+          <form id="claimForm" data-purpose="insights" data-action="/basvuru/t/{{ token }}/insights" data-msg-submit="{{ T.ins_submit }}" novalidate enctype="multipart/form-data" {{ common_attrs }}>
+            <div class="field">
+              <label class="flabel">{{ T.file }} <span class="inf-req">*</span></label>
+              <label class="inf-drop" id="dropZone">
+                <i class="bi bi-cloud-arrow-up"></i>
+                <span class="inf-fname" id="fileName">{{ T.file_hint }}</span>
+                <input type="file" id="file" name="file" accept="video/*" required />
+              </label>
+              <div class="inf-bar" id="upBar"><span id="upBarFill"></span></div>
+            </div>
+
+            <h2 class="inf-section">{{ T.nums_h }}</h2>
+            <div class="inf-grid">
+              <div class="field">
+                <label class="flabel" for="reach_30d">{{ T.reach_30d }} <span class="inf-req">*</span></label>
+                <input type="number" id="reach_30d" name="reach_30d" min="0" step="1" inputmode="numeric" required />
+              </div>
+              <div class="field">
+                <label class="flabel" for="engaged_30d">{{ T.engaged_30d }} <span class="inf-req">*</span></label>
+                <input type="number" id="engaged_30d" name="engaged_30d" min="0" step="1" inputmode="numeric" required />
+              </div>
+            </div>
+            <div class="inf-grid">
+              <div class="field">
+                <label class="flabel" for="followers">{{ T.followers }} <span class="inf-req">*</span></label>
+                <input type="number" id="followers" name="followers" min="0" step="1" inputmode="numeric" required />
+              </div>
+              <div class="field">
+                <label class="flabel" for="geo_target_pct">{{ T.geo_target_pct }} <span class="inf-req">*</span></label>
+                <input type="number" id="geo_target_pct" name="geo_target_pct" min="0" max="100" step="1" inputmode="numeric" required />
+                <div class="inf-hint">{{ T.geo_hint }}</div>
+              </div>
+            </div>
+            <button type="submit" class="inf-submit" id="submitBtn">{{ T.ins_submit }}</button>
+            <p class="inf-small">{{ T.ins_note }}</p>
+          </form>
+
+          {% else %}
+          {# ═══════════════ KILAVUZ ONAYI ═══════════════ #}
+          <p class="lead">{{ T.agr_lead }}</p>
+          <p class="sub">{{ T.agr_sub }}</p>
+
+          <h2 class="inf-section">{{ T.label_h.replace('{m}', market) }}</h2>
+          <p class="inf-why">{{ T.label_p }}</p>
+          <div class="inf-label-box">{{ label_template or '' }}</div>
+          <p class="inf-why">{{ T.label_why }}</p>
+
+          <h2 class="inf-section">{{ T.claims_h }}</h2>
+          <p class="inf-why">{{ T.claims_p }}</p>
+          {% if claim_sheet %}
+            {% for c in claim_sheet %}
+              {% if c is mapping %}
+                {% set txt = c.get('text') or c.get('claim') or c.get('rule') or c.get('label') or '' %}
+                {% set allowed = c.get('allowed') %}
+                {% set kind = 'ok' if allowed is sameas true else ('no' if allowed is sameas false else 'info') %}
+                <div class="inf-claim {{ kind }}">
+                  <i class="bi {{ 'bi-check-circle-fill' if kind == 'ok' else ('bi-x-circle-fill' if kind == 'no' else 'bi-info-circle-fill') }}"></i>
+                  <div>{{ txt }}{% if c.get('note') %}<small>{{ c.get('note') }}</small>{% endif %}</div>
+                </div>
+              {% else %}
+                <div class="inf-claim info"><i class="bi bi-info-circle-fill"></i><div>{{ c }}</div></div>
+              {% endif %}
+            {% endfor %}
+          {% else %}
+            <p class="inf-why">{{ T.claims_empty }}</p>
+          {% endif %}
+          <p class="inf-why" style="margin-top:0.6rem"><strong>{{ T.claims_general_h }}</strong></p>
+          <ul class="inf-list">
+            {% for g in T.claims_general %}<li>{{ g }}</li>{% endfor %}
+          </ul>
+
+          <h2 class="inf-section">{{ T.rules_h }}</h2>
+          <ul class="inf-list">
+            {% for r in T.rules %}<li>{{ r }}</li>{% endfor %}
+          </ul>
+
+          <form id="claimForm" data-purpose="agreement" data-action="/basvuru/t/{{ token }}/onay" data-version="{{ consent_version }}" data-msg-submit="{{ T.agr_submit }}" novalidate {{ common_attrs }}>
+            <label class="consent">
+              <input type="checkbox" id="ack" name="ack" required />
+              <span>{{ T.ack }}</span>
+            </label>
+            <button type="submit" class="inf-submit" id="submitBtn">{{ T.agr_submit }}</button>
+            <p class="inf-small">{{ T.agr_note.replace('{v}', consent_version) }}</p>
+          </form>
+          {% endif %}
+        </div>
+
+        <div class="state" id="okState" hidden>
+          <i class="bi bi-check-circle-fill"></i>
+          <h2>{{ T.done_h }}</h2>
+          <p id="okText">{{ T.done_p }}</p>
+        </div>
+
+      {% elif state == 'used' %}
+        <div class="state">
+          <i class="bi bi-check-circle-fill"></i>
+          <h2>{{ T.used_h }}</h2>
+          <p>{{ T.used_p }}</p>
+        </div>
+
+      {% elif state == 'expired' %}
+        <div class="state">
+          <i class="bi bi-hourglass-bottom"></i>
+          <h2>{{ T.expired_h }}</h2>
+          <p>{{ T.expired_p }}</p>
+        </div>
+
+      {% else %}
+        <div class="state">
+          <i class="bi bi-question-circle"></i>
+          <h2>{{ T.notfound_h }}</h2>
+          <p>{{ T.notfound_p }}</p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  <p class="foot">{{ T.foot }}</p>
+
+  {% if state == 'open' %}
+  <script>
+  (function () {
+    'use strict';
+    var form = document.getElementById('claimForm');
+    if (!form) return;
+    var D = form.dataset;
+    var errBox = document.getElementById('formErr');
+    var submitBtn = document.getElementById('submitBtn');
+    var purpose = D.purpose;
+    var MAX_BYTES = (parseInt(D.maxMb, 10) || 60) * 1024 * 1024;
+
+    function showErr(msg) {
+      errBox.textContent = msg;
+      errBox.hidden = false;
+      errBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    function clearErr() { errBox.hidden = true; errBox.textContent = ''; }
+    function val(name) {
+      var el = form.elements[name];
+      return el ? String(el.value || '').trim() : '';
+    }
+    function parseBody(txt) {
+      try { return txt ? JSON.parse(txt) : null; } catch (e) { return null; }
+    }
+    function finish(status, data) {
+      if (status === 200 || status === 201) {
+        document.getElementById('formWrap').hidden = true;
+        var ok = document.getElementById('okState');
+        if (data && data.message) document.getElementById('okText').textContent = data.message;
+        ok.hidden = false;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+      if (status === 429) { showErr(D.msgRate); return; }
+      if (status === 413) { showErr(D.msgSize); return; }
+      var detail = data && data.detail;
+      if (Array.isArray(detail)) detail = detail.length && detail[0].msg ? detail[0].msg : '';
+      showErr(typeof detail === 'string' && detail ? detail : D.msgGeneric);
+    }
+    function setBusy(on, label) {
+      submitBtn.disabled = on;
+      submitBtn.textContent = on ? label : D.msgSubmit;
+    }
+
+    // ── Dosya seçimi (insights) ────────────────────────────────────────
+    var fileInput = document.getElementById('file');
+    if (fileInput) {
+      var fileName = document.getElementById('fileName');
+      var defaultHint = fileName.textContent;
+      var zone = document.getElementById('dropZone');
+      fileInput.addEventListener('change', function () {
+        var f = fileInput.files && fileInput.files[0];
+        clearErr();
+        if (!f) { fileName.textContent = defaultHint; zone.classList.remove('has'); return; }
+        if (f.size > MAX_BYTES) {
+          showErr(D.msgSize);
+          fileInput.value = '';
+          fileName.textContent = defaultHint; zone.classList.remove('has');
+          return;
+        }
+        fileName.textContent = f.name + ' · ' + (f.size / (1024 * 1024)).toFixed(1) + ' MB';
+        zone.classList.add('has');
+      });
+    }
+
+    // ── JSON POST ─────────────────────────────────────────────────────
+    function postJson(url, payload) {
+      return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload)
+      }).then(function (res) {
+        return res.text().then(function (txt) { return { status: res.status, data: parseBody(txt) }; });
+      });
+    }
+
+    // ── multipart POST (XHR — yükleme ilerlemesi için) ─────────────────
+    function postMultipart(url, fd) {
+      return new Promise(function (resolve, reject) {
+        var xhr = new XMLHttpRequest();
+        var bar = document.getElementById('upBar');
+        var fill = document.getElementById('upBarFill');
+        xhr.open('POST', url, true);
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.withCredentials = true;
+        xhr.upload.addEventListener('progress', function (e) {
+          if (!e.lengthComputable) return;
+          bar.style.display = 'block';
+          fill.style.width = Math.round(e.loaded / e.total * 100) + '%';
+        });
+        xhr.addEventListener('load', function () { resolve({ status: xhr.status, data: parseBody(xhr.responseText) }); });
+        xhr.addEventListener('error', function () { reject(new Error('network')); });
+        xhr.addEventListener('abort', function () { reject(new Error('abort')); });
+        xhr.send(fd);
+      });
+    }
+
+    var busy = false;
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      if (busy) return;
+      clearErr();
+      var req;
+
+      if (purpose === 'address') {
+        var addr = {
+          recipient: val('recipient'), line1: val('line1'), line2: val('line2'),
+          district: val('district'), city: val('city'), postal_code: val('postal_code'),
+          country: val('country'), phone: val('phone')
+        };
+        if (!addr.recipient || !addr.line1 || !addr.district || !addr.city || !addr.postal_code || !addr.country || !addr.phone) {
+          showErr(D.msgRequired); return;
+        }
+        busy = true; setBusy(true, D.msgSending);
+        req = postJson(D.action, addr);
+
+      } else if (purpose === 'insights') {
+        var f = fileInput.files && fileInput.files[0];
+        if (!f) { showErr(D.msgFile); return; }
+        if (f.size > MAX_BYTES) { showErr(D.msgSize); return; }
+        var nums = ['reach_30d', 'engaged_30d', 'followers', 'geo_target_pct'];
+        var fd = new FormData();
+        fd.append('file', f, f.name);
+        for (var i = 0; i < nums.length; i++) {
+          var v = val(nums[i]);
+          if (v === '' || !/^\d+$/.test(v)) { showErr(D.msgRequired); return; }
+          fd.append(nums[i], v);
+        }
+        var pct = parseInt(val('geo_target_pct'), 10);
+        if (pct < 0 || pct > 100) { showErr(D.msgRequired); return; }
+        busy = true; setBusy(true, D.msgUploading);
+        req = postMultipart(D.action, fd);
+
+      } else {
+        if (!form.elements.ack.checked) { showErr(D.msgAck); return; }
+        busy = true; setBusy(true, D.msgSending);
+        req = postJson(D.action, { ack: true, version: D.version });
+      }
+
+      req.then(function (r) { finish(r.status, r.data); })
+         .catch(function () { showErr(D.msgNetwork); })
+         .finally(function () { busy = false; setBusy(false); });
+    });
+  })();
+  </script>
+  {% endif %}
+</body>
+</html>

@@ -529,6 +529,25 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   and a shared `label_group`; production resolves the right-language sibling.
 - `Item.current_stock` is the source of truth for stock; production/receiving/QC all
   update it directly and append immutable `Transaction` rows.
+- **Lot düşümü TEK KAYNAK: `core/stock_lots.py`.** `Item.current_stock` ile
+  `Inventory` lot satırları uzun süre İKİ AYRI SAYAÇTI: lot satırı açan tek yol
+  üretim çıktısı + mal kabuldü, buna karşılık teslimat (`routers/delivery.py`
+  içinde `Inventory` kelimesi HİÇ geçmiyordu), Shopify satışı ve elle stok
+  düzeltmesi yalnız `current_stock`'u hareket ettiriyordu → lotlar bir kez
+  açılıp bir daha azalmıyordu. Ölçüldü (09.09.2026): 25 bitmiş üründe 274
+  adetlik sapma (ör. Serenida Bikini Area 200 ml — defter 0, lot tablosu 15).
+  Artık her fiziksel çıkış `stock_lots.consume(db, item, qty, note=, actor=)`
+  üzerinden geçer: FIFO lot düşer + **lot başına ayrı `Transaction(Output)`**
+  (`lot_number` dolu) yazar + `current_stock`'u düşer. Yazılan Output'ların
+  TOPLAMI daima miktara eşittir → `compute_stock_at` rekonstrüksiyonu değişmez.
+  Lot yetmiyorsa artık lotsuz tek Output olarak yazılır, **iş engellenmez**.
+  Elle düzeltme (negatif delta, lot seçilmemiş) `stock_lots.draw_down()`
+  kullanır: yalnız lotu düşer, defter kaydı yine TEK imzalı `Adjustment`'tır
+  (birleştirme script'leri bu konvansiyona dayanıyor). Numune lotu
+  (`is_sample`) hiçbir tüketimde kullanılmaz. `production._plan_lot_allocation`
+  da aynı motoru çağırır — FIFO'nun ikinci bir kopyası YAZILMAZ.
+  **Bilinçli açık:** girişler (iade, '+' düzeltme) lot AÇMAZ; stok lottan fazla
+  kalabilir, `uncovered` bunu sorunsuz karşılar. `tests/test_stock_lots.py`
 - **Samples (numune)**: `Inventory.is_sample=True` marks a lot received from an
   *alternate* supplier for an existing raw material (entered from the Items page
   "Numune" tab → `/api/inventory/receive` with `is_sample`). Sample lots never merge

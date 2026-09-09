@@ -115,6 +115,11 @@ PERMISSION_CATEGORIES = {
     # invite = davet linki üretme, moderate = onay/red/yayından kaldırma,
     # delete = KVKK silme (metaobject+dosya Shopify'dan da kalkar).
     "reviews":       ["view", "invite", "moderate", "delete"],
+    # Influencer / creator programı (cross-cutting).  approve = başvuru +
+    # içerik + karar onayı, ship = ürün gönderimi (Delivery üzerinden),
+    # links = UpPromote link/kod eşlemesi, payout = ödeme kaydı,
+    # settings = kademe/benchmark/skaler ayarlar.
+    "influencer":    ["view", "edit", "approve", "ship", "links", "payout", "settings"],
 }
 
 # Default permission set per role — used when a user's `permissions` JSON is null.
@@ -138,6 +143,7 @@ _DEFAULT_PERMISSIONS = {
         "pdks":          {"check": True, "view_own": True, "view_all": True, "manage": True, "report": True, "kiosk": False},
         "retention":          {"view": True,  "edit": True,  "checkout": True,  "destroy": True},
         "reviews":       {"view": True,  "invite": True,  "moderate": True,  "delete": True},
+        "influencer":    {"view": True,  "edit": True,  "approve": True,  "ship": True,  "links": True,  "payout": True,  "settings": True},
     },
     "LabLead": {
         "items":      {"view": True,  "create": True,  "edit": True,  "delete": True,  "import": True},
@@ -153,6 +159,7 @@ _DEFAULT_PERMISSIONS = {
         "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False, "kiosk": False},
         "retention":       {"view": True,  "edit": True,  "checkout": True,  "destroy": True},
         "reviews":         {"view": False, "invite": False, "moderate": False, "delete": False},
+        "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
     },
     "LabTech": {
         "items":      {"view": True,  "create": True,  "edit": False, "delete": False, "import": False},
@@ -168,6 +175,7 @@ _DEFAULT_PERMISSIONS = {
         "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False, "kiosk": False},
         "retention":       {"view": True,  "edit": True,  "checkout": True,  "destroy": False},
         "reviews":         {"view": False, "invite": False, "moderate": False, "delete": False},
+        "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
     },
     "Staff": {
         # Read-only baseline
@@ -184,6 +192,7 @@ _DEFAULT_PERMISSIONS = {
         "pdks":       {"check": True, "view_own": True, "view_all": False, "manage": False, "report": False, "kiosk": False},
         "retention":       {"view": True,  "edit": False, "checkout": False, "destroy": False},
         "reviews":         {"view": False, "invite": False, "moderate": False, "delete": False},
+        "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
     },
     "Distributor": {
         # Dışa dönük distribütör — YALNIZ sipariş portalı, ERP'ye hiçbir erişim yok.
@@ -202,6 +211,7 @@ _DEFAULT_PERMISSIONS = {
         "pdks":         {"check": False, "view_own": False, "view_all": False, "manage": False, "report": False, "kiosk": False},
         "retention":         {"view": False, "edit": False, "checkout": False, "destroy": False},
         "reviews":           {"view": False, "invite": False, "moderate": False, "delete": False},
+        "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
     },
 }
 

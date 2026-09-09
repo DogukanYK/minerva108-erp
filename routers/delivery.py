@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db, to_tr, tr_now, Item, Transaction, Delivery, DeliveryItem
 from core.permissions import require_permission
+from core.stock_lots import consume as _lot_consume
 from core.auth import require_role
 from core.domain import active_domain
 
@@ -122,16 +123,30 @@ def _legs_of(d) -> list:
     return []
 
 
-@router.post("/delivery", status_code=201)
-def create_delivery(
-    data: DeliveryCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_permission("inventory", "adjust")),
-    domain: str = Depends(active_domain),
-):
-    """Teslimat oluştur: stok düş + Transaction(Output) + DeliveryItem snapshot."""
+class DeliveryError(ValueError):
+    """build_delivery / ship_core iş kuralı hatası → endpoint HTTP `status_code`'a çevirir."""
+
+    def __init__(self, detail: str, status_code: int = 400):
+        super().__init__(detail)
+        self.detail = detail
+        self.status_code = status_code
+
+
+def _actor_of(current_user: dict) -> str:
+    return current_user.get("full_name") or current_user.get("username") or "—"
+
+
+def build_delivery(db: Session, data: DeliveryCreate, actor: str, domain: str) -> Delivery:
+    """Teslimat oluştur (çekirdek): doğrulama + Delivery/DeliveryItem + belge no;
+    anlık türlerde (hediye/numune/diğer) stok düşümü + Transaction(Output).
+
+    COMMIT ÇAĞIRANA AİTTİR (flush yapılır, id/document_no hazır döner).  İş
+    kuralı ihlalinde `DeliveryError(detail, status_code)` fırlatır — endpoint
+    400/404'e çevirir; influencer gönderimi gibi diğer çağıranlar aynı yolu
+    kullanır (yeni stok yolu YOK — defter kuralı).
+    """
     if not data.items:
-        return JSONResponse(status_code=400, content={"detail": "En az bir ürün okutmalısınız."})
+        raise DeliveryError("En az bir ürün okutmalısınız.")
 
     dtype = (data.delivery_type or "hediye").lower()
     if dtype in ("diğer", "diger"):
@@ -145,7 +160,7 @@ def create_delivery(
     # Alıcı adı: kargo'da OPSİYONEL; diğer türlerde zorunlu (en az 2 karakter).
     rname = (data.recipient_name or "").strip()
     if not is_kargo and len(rname) < 2:
-        return JSONResponse(status_code=400, content={"detail": "Alıcı adı zorunludur (en az 2 karakter)."})
+        raise DeliveryError("Alıcı adı zorunludur (en az 2 karakter).")
 
     method = "kargo" if is_kargo else (data.method or "elden").lower()
     if method not in ("elden", "kargo"):
@@ -154,7 +169,6 @@ def create_delivery(
     if doc_lang not in ("TR", "EN"):
         doc_lang = "TR"
     currency = (data.currency or "USD").upper()[:3]
-    actor = current_user.get("full_name") or current_user.get("username") or "—"
 
     # Aynı ürün birden çok satırda gelirse miktarı birleştir; fiyat/ağırlık son değer (proforma)
     qty_by_item: dict = {}
@@ -175,18 +189,16 @@ def create_delivery(
         q = db.query(Item).filter(Item.id == iid, Item.domain == domain)
         it = q.first() if deferred else q.with_for_update().first()
         if not it:
-            return JSONResponse(status_code=404, content={"detail": f"Ürün bulunamadı (id {iid})."})
+            raise DeliveryError(f"Ürün bulunamadı (id {iid}).", 404)
         if is_proforma and not (meta_by_item[iid]["unit_price"] and meta_by_item[iid]["unit_price"] > 0):
-            return JSONResponse(status_code=400,
-                                content={"detail": f"{it.name}: proforma için birim fiyat zorunludur."})
+            raise DeliveryError(f"{it.name}: proforma için birim fiyat zorunludur.")
         if not deferred:
             stock = float(it.current_stock or 0.0)
             if qty > stock + 1e-9:
                 shortages.append(f"{it.name}: stok {_fmt(stock)} {it.unit or ''}, istenen {_fmt(qty)}")
         items[iid] = it
     if shortages:
-        return JSONResponse(status_code=400, content={
-            "detail": "Yetersiz stok — " + "; ".join(shortages)})
+        raise DeliveryError("Yetersiz stok — " + "; ".join(shortages))
 
     status = "pending" if is_proforma else ("preparing" if is_kargo else "completed")
     prefix = "PRF" if is_proforma else ("KRG" if is_kargo else "TES")
@@ -221,24 +233,42 @@ def create_delivery(
             unit_price=meta["unit_price"], weight_ml=meta["weight_ml"],
         ))
         if not deferred:
-            it.current_stock = round(float(it.current_stock or 0.0) - qty, 6)
-            db.add(Transaction(
-                item_id=it.id, transaction_type="Output", quantity=qty,
-                notes=(f"Teslimat ({_TYPE_LABELS.get(dtype, dtype)}) → "
-                       f"{d.recipient_name or '—'} | Belge: {d.document_no}"),
-                performed_by=actor,
-            ))
+            # Stok + LOT birlikte düşer (core/stock_lots) — lot satırları
+            # yıllarca güncellenmediği için 25 üründe sapma birikmişti.
+            _lot_consume(
+                db, it, qty, actor=actor,
+                note=(f"Teslimat ({_TYPE_LABELS.get(dtype, dtype)}) → "
+                      f"{d.recipient_name or '—'} | Belge: {d.document_no}"),
+            )
+    db.flush()
+    return d
+
+
+@router.post("/delivery", status_code=201)
+def create_delivery(
+    data: DeliveryCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("inventory", "adjust")),
+    domain: str = Depends(active_domain),
+):
+    """Teslimat oluştur: stok düş + Transaction(Output) + DeliveryItem snapshot."""
+    actor = _actor_of(current_user)
+    try:
+        d = build_delivery(db, data, actor, domain)
+    except DeliveryError as e:
+        return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
     db.commit()
     db.refresh(d)
+    dtype = d.delivery_type
 
-    if is_proforma:
+    if dtype == "proforma":
         try:
             from core.notifications import notify_proforma_pending
             notify_proforma_pending(d.document_no, d.recipient_name, actor)
         except Exception:
             pass
 
-    return {"id": d.id, "document_no": d.document_no, "item_count": len(qty_by_item),
+    return {"id": d.id, "document_no": d.document_no, "item_count": len(d.items),
             "status": d.status, "delivery_type": dtype}
 
 
@@ -534,12 +564,10 @@ def approve_proforma(
         it = locked.get(li.id)
         if not it:
             continue
-        it.current_stock = round(float(it.current_stock or 0.0) - float(li.quantity), 6)
-        db.add(Transaction(
-            item_id=it.id, transaction_type="Output", quantity=float(li.quantity),
-            notes=f"Proforma onayı → {d.recipient_name} | Belge: {d.document_no}",
-            performed_by=actor,
-        ))
+        _lot_consume(
+            db, it, float(li.quantity), actor=actor,
+            note=f"Proforma onayı → {d.recipient_name} | Belge: {d.document_no}",
+        )
     d.status = "approved"
     d.approved_by = actor
     d.approved_at = datetime.utcnow()
@@ -617,6 +645,62 @@ def proforma_document(
 
 # ─── Kargo / Sevkiyat: takip no atama (stok düş) + iptal + hazırlık listesi ───
 
+def ship_core(db: Session, delivery: Delivery, tracking_no: str, carrier, actor: str) -> dict:
+    """Kargo sevkiyatı çekirdeği: stok O AN düşer + Transaction(Output) + status='shipped'.
+
+    `delivery` çağıran tarafından `with_for_update()` ile kilitlenmiş olmalı
+    (idempotency: yalnız status='preparing' iken düşer; tekrar çağrı
+    DeliveryError 400).  Kalemler hep-ya-hiç (kısmi düşüm olmaz).  COMMIT
+    ÇAĞIRANA AİTTİR.  Döner: {id, status, document_no, tracking_no, carrier}.
+    """
+    d = delivery
+    if d.delivery_type != "kargo":
+        raise DeliveryError("Bu kayıt kargo sevkiyatı değil.")
+    if d.status != "preparing":
+        raise DeliveryError(f"Sevkiyat zaten {_STATUS_LABELS.get(d.status, d.status)}.")
+    tracking = (tracking_no or "").strip()
+    if not tracking:
+        raise DeliveryError("Kargo takip numarası zorunludur.")
+    domain = d.domain
+
+    # Stok yeterlilik (kilitle + doğrula — kısmi düşüm olmasın), sonra düş.
+    shortages, locked = [], {}
+    for li in d.items:
+        if not li.item_id:
+            raise DeliveryError(f"Ürün artık sistemde yok: {li.item_name}.")
+        it = (db.query(Item).filter(Item.id == li.item_id, Item.domain == domain)
+              .with_for_update().first())
+        if not it:
+            raise DeliveryError(f"Ürün bulunamadı: {li.item_name}.")
+        stock = float(it.current_stock or 0.0)
+        if float(li.quantity) > stock + 1e-9:
+            shortages.append(f"{it.name}: stok {_fmt(stock)} {it.unit or ''}, istenen {_fmt(li.quantity)}")
+        locked[li.id] = it
+    if shortages:
+        raise DeliveryError("Kargolama iptal — yetersiz stok: " + "; ".join(shortages))
+
+    for li in d.items:
+        it = locked.get(li.id)
+        if not it:
+            continue
+        _lot_consume(
+            db, it, float(li.quantity), actor=actor,
+            note=(f"Kargo sevkiyatı → {d.recipient_name or '—'} | "
+                  f"Belge: {d.document_no} | Takip: {tracking}"),
+        )
+    d.status = "shipped"
+    d.tracking_no = tracking
+    carrier = (carrier or "").strip() or None
+    d.carrier = carrier
+    d.tracking_legs = json.dumps([{"label": "Yerel (TR)", "carrier": carrier or "",
+                                   "tracking_no": tracking}], ensure_ascii=False)
+    d.shipped_at = datetime.utcnow()
+    d.shipped_by = actor
+    db.flush()
+    return {"id": d.id, "status": "shipped", "document_no": d.document_no,
+            "tracking_no": d.tracking_no, "carrier": d.carrier}
+
+
 @router.post("/delivery/{delivery_id}/ship")
 def ship_delivery(
     delivery_id: int,
@@ -630,64 +714,19 @@ def ship_delivery(
     Proforma 'approve' deseninin operasyonel ikizi.  İDEMPOTENT: Delivery satırı
     with_for_update ile kilitlenir, yalnız status='preparing' iken düşer; tekrar
     çağrıda 400 (çift düşüm engeli).  Kalemler hep-ya-hiç (kısmi düşüm olmaz).
+    Çekirdek `ship_core` — influencer gönderimi de aynı yolu kullanır.
     """
     d = (db.query(Delivery)
          .filter(Delivery.id == delivery_id, Delivery.domain == domain)
          .with_for_update().first())
     if not d:
         return JSONResponse(status_code=404, content={"detail": "Sevkiyat bulunamadı."})
-    if d.delivery_type != "kargo":
-        return JSONResponse(status_code=400, content={"detail": "Bu kayıt kargo sevkiyatı değil."})
-    if d.status != "preparing":
-        return JSONResponse(status_code=400,
-                            content={"detail": f"Sevkiyat zaten {_STATUS_LABELS.get(d.status, d.status)}."})
-    tracking = (body.tracking_no or "").strip()
-    if not tracking:
-        return JSONResponse(status_code=400, content={"detail": "Kargo takip numarası zorunludur."})
-    actor = current_user.get("full_name") or current_user.get("username") or "—"
-
-    # Stok yeterlilik (kilitle + doğrula — kısmi düşüm olmasın), sonra düş.
-    shortages, locked = [], {}
-    for li in d.items:
-        if not li.item_id:
-            return JSONResponse(status_code=400,
-                                content={"detail": f"Ürün artık sistemde yok: {li.item_name}."})
-        it = (db.query(Item).filter(Item.id == li.item_id, Item.domain == domain)
-              .with_for_update().first())
-        if not it:
-            return JSONResponse(status_code=400,
-                                content={"detail": f"Ürün bulunamadı: {li.item_name}."})
-        stock = float(it.current_stock or 0.0)
-        if float(li.quantity) > stock + 1e-9:
-            shortages.append(f"{it.name}: stok {_fmt(stock)} {it.unit or ''}, istenen {_fmt(li.quantity)}")
-        locked[li.id] = it
-    if shortages:
-        return JSONResponse(status_code=400,
-                            content={"detail": "Kargolama iptal — yetersiz stok: " + "; ".join(shortages)})
-
-    for li in d.items:
-        it = locked.get(li.id)
-        if not it:
-            continue
-        it.current_stock = round(float(it.current_stock or 0.0) - float(li.quantity), 6)
-        db.add(Transaction(
-            item_id=it.id, transaction_type="Output", quantity=float(li.quantity),
-            notes=(f"Kargo sevkiyatı → {d.recipient_name or '—'} | "
-                   f"Belge: {d.document_no} | Takip: {tracking}"),
-            performed_by=actor,
-        ))
-    d.status = "shipped"
-    d.tracking_no = tracking
-    carrier = (body.carrier or "").strip() or None
-    d.carrier = carrier
-    d.tracking_legs = json.dumps([{"label": "Yerel (TR)", "carrier": carrier or "",
-                                   "tracking_no": tracking}], ensure_ascii=False)
-    d.shipped_at = datetime.utcnow()
-    d.shipped_by = actor
+    try:
+        out = ship_core(db, d, body.tracking_no, body.carrier, _actor_of(current_user))
+    except DeliveryError as e:
+        return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
     db.commit()
-    db.refresh(d)
-    return {"id": d.id, "status": "shipped", "document_no": d.document_no,
-            "tracking_no": d.tracking_no, "carrier": d.carrier}
+    return out
 
 
 @router.post("/delivery/{delivery_id}/cancel")

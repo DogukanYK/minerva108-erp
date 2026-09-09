@@ -15,6 +15,10 @@ TYPE_LABELS = {"hediye": "Hediye", "numune": "Numune", "diger": "Diğer", "diğe
                "proforma": "Proforma Fatura"}
 METHOD_LABELS = {"elden": "Elden Teslim", "kargo": "Kargo"}
 
+# Numune şerhi bandı (view["sample_notice"] truthy → ürün tablosunun üstünde).
+SAMPLE_NOTICE_TR = "NUMUNEDİR — PARAYLA SATILAMAZ"
+SAMPLE_NOTICE_EN = "SAMPLE — NOT FOR SALE"
+
 # Antetli kağıt (logo + firma bilgisi).  Belgeler bunun üzerine bindirilir.
 LETTERHEAD = Path(__file__).resolve().parent.parent / "static" / "letterhead.pdf"
 
@@ -221,6 +225,22 @@ def _delivery_story(view: dict, s: float = 1.0):
         info.append(("Taşıyıcı", view["carrier"]))
     info.append(("Teslim Eden", view.get("dispatched_by") or "—"))
     story.append(_kv_table(info, [W * 0.32 * mm, W * 0.68 * mm]))
+
+    # Numune şerhi — influencer/tester gönderimi (KDV tebliği I/B-10): ürün
+    # tablosunun ÜSTÜNDE kalın band.  `view["sample_notice"]` truthy ise basılır.
+    if view.get("sample_notice"):
+        en = (str(view.get("doc_lang") or "TR").upper() == "EN")
+        st_band = ParagraphStyle("band", fontName=font_b, fontSize=11 * s, textColor=colors.white,
+                                 leading=14 * s, alignment=1)
+        band = Table([[Paragraph(escape(SAMPLE_NOTICE_EN if en else SAMPLE_NOTICE_TR), st_band)]],
+                     colWidths=[W * mm])
+        band.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#b91c1c")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 6 * s), ("BOTTOMPADDING", (0, 0), (-1, -1), 6 * s),
+        ]))
+        story.append(Spacer(1, 10 * s))
+        story.append(band)
 
     # Ürünler
     story.append(Paragraph("Teslim Edilen Ürünler", st_h2))

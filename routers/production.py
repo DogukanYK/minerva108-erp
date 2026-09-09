@@ -414,16 +414,10 @@ def _plan_lot_allocation(db, item, gross_qty, chosen_inv_id):
             )
         return [(lot, gross_qty)], 0.0
 
-    # FIFO — en eski lotlardan tüket
-    allocations, remaining = [], gross_qty
-    for lot in lots:
-        if remaining <= _EPS:
-            break
-        take = min(float(lot.quantity or 0), remaining)
-        if take > _EPS:
-            allocations.append((lot, round(take, 6)))
-            remaining -= take
-    return allocations, max(0.0, round(remaining, 6))
+    # FIFO — en eski lotlardan tüket.  Motor TEK KAYNAK: core/stock_lots.
+    # (Lotlar yukarıda zaten kilitlendi; tekrar kilitlemeye gerek yok.)
+    from core.stock_lots import plan_fifo
+    return plan_fifo(db, item, gross_qty, exclude_samples=True, lock=False)
 
 
 @router.post("/production", status_code=201)

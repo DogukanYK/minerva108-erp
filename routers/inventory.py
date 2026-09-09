@@ -1194,6 +1194,18 @@ def adjust_stock(
                 inv.quantity = round(new_qty, 6)
                 inv.updated_at = __import__("datetime").datetime.utcnow()
                 lot_note = f" | Lot: {data.lot_number}"
+        elif delta < 0:
+            # Lot SEÇİLMEDİ ve stok DÜŞÜYOR → lotlardan da FIFO düş.  Aksi hâlde
+            # `current_stock` iner ama lot satırları olduğu yerde kalır ve iki
+            # sayaç kalıcı olarak ayrışır (09.09.2026 tespiti, 25 üründe 274
+            # adet sapma).  Defter kaydı yine TEK imzalı Adjustment'tır —
+            # birleştirme script'leri bu konvansiyona dayanıyor.
+            from core.stock_lots import draw_down, lot_summary
+            touched, uncovered = draw_down(db, item, -delta)
+            if touched:
+                lot_note = f" | Lot düşümü: {lot_summary(touched)}"
+            if uncovered > 1e-9:
+                lot_note += f" | lot kaydı dışı: {round(uncovered, 6):g}"
 
         # ── Immutable audit kaydı (delta hem +/- olabilir) ─────────────────
         sign = "+" if delta > 0 else ""

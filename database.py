@@ -1035,6 +1035,15 @@ class CrmTask(Base):
     completed_at        = Column(DateTime, nullable=True)
     # Tekrarlı push'u önlemek için — bir görev için hatırlatma yollandı mı?
     reminder_sent       = Column(Boolean, default=False, nullable=False)
+    # Influencer programı — "ürün ulaştı, içerik bekleniyor" hatırlatmaları
+    # aynı 08:00 taramasından push'lanır; bu kolon görevi iş birliğine bağlar.
+    # FK YOK (bilinçli): crm_task, influencer_collab'dan önce kurulur; kolon
+    # prod'a init_db() alter_safe satırıyla ulaşır (migration b5d7f9a1c3e5).
+    influencer_collab_id = Column(Integer, nullable=True)
+
+    __table_args__ = (
+        Index("ix_crm_task_inf_collab", "influencer_collab_id"),
+    )
 
 
 class CrmSavedView(Base):
@@ -1477,6 +1486,499 @@ class LeaveRequest(Base):
     leave_id      = Column(Integer, ForeignKey("pdks_leaves.id"), nullable=True)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Influencer / Creator programı — cross-cutting modül (domain kolonu YOK;
+# CRM/Drive/PDKS emsali).  Tablolar `influencer_*`; create_all ile gelir,
+# migration `b5d7f9a1c3e5` alembic geçmişi + temiz kurulum içindir.
+#
+# DEFTER KURALI: bu modülde stok hareketi YOKTUR — ürün gönderimi mevcut
+# `Delivery` (kargo) üzerinden yapılır, `InfluencerShipment.delivery_id`
+# yalnız bağdır.  Komisyon HESABI IMS'te yapılmaz (UpPromote'tan okunur).
+# Kişisel veri: T.C. kimlik no ve IBAN TUTULMAZ (bkz. InfluencerCreator /
+# InfluencerPayout docstring'leri).
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class InfluencerTier(Base):
+    """Kademe merdiveni (nano/mikro/orta/makro/ambassador) — takipçi aralığı,
+    komisyon, müşteri indirimi, hediye ürün adedi, lansman erişimi, kod hakkı.
+    `init_db()` boşsa `core.influencer.DEFAULT_TIERS` ile seed'ler; sonra
+    ayarlar ekranından düzenlenir.  `ambassador` takipçiye bakmaz, elle atanır."""
+    __tablename__ = "influencer_tier"
+
+    id                    = Column(Integer, primary_key=True, index=True)
+    key                   = Column(String(20), nullable=False, unique=True, index=True)
+    label                 = Column(String(60), nullable=False)
+    min_followers         = Column(Integer, nullable=False, default=0)
+    max_followers         = Column(Integer, nullable=True)            # NULL = üst sınır yok
+    commission_pct        = Column(Float, nullable=False, default=10.0)
+    customer_discount_pct = Column(Float, nullable=False, default=0.0)
+    max_gift_items        = Column(Integer, nullable=False, default=1)
+    launch_access         = Column(Boolean, nullable=False, default=False)
+    code_allowed          = Column(Boolean, nullable=False, default=False)
+    sort_order            = Column(Integer, nullable=False, default=0)
+    is_active             = Column(Boolean, nullable=False, default=True)
+    updated_at            = Column(DateTime, nullable=True)
+    updated_by            = Column(String(100), nullable=True)
+
+
+class InfluencerBenchmark(Base):
+    """Platform × kademe × metrik için "sağlıklı aralık" (low–high).  Skor
+    motoru (`core.influencer`) hesabı bu satırlara göre normalize eder.
+    Seed: `DEFAULT_BENCHMARKS`.  metric ∈ er_follower | er_view |
+    view_per_follower | comment_like_ratio | geo_target_pct | comment_quality_pct."""
+    __tablename__ = "influencer_benchmark"
+    __table_args__ = (
+        UniqueConstraint("platform", "tier_key", "metric", name="uq_inf_benchmark_platform_tier_metric"),
+    )
+
+    id         = Column(Integer, primary_key=True, index=True)
+    platform   = Column(String(20), nullable=False)       # instagram | tiktok | youtube
+    tier_key   = Column(String(20), nullable=False)       # nano | mikro | orta | makro
+    metric     = Column(String(30), nullable=False)
+    low        = Column(Float, nullable=False, default=0.0)
+    high       = Column(Float, nullable=False, default=0.0)
+    updated_at = Column(DateTime, nullable=True)
+    updated_by = Column(String(100), nullable=True)
+
+
+class InfluencerCreator(Base):
+    """Creator kartı — programın ana öznesi (CrmContact'tan AYRI).
+
+    `slug` UNIQUE: utm_campaign + indirim kodu tabanı.  `birth_year` 18+
+    kontrolü içindir; **T.C. kimlik no TUTULMAZ** (vergi belgesi gerekirse
+    dosya olarak `influencer_file` kind='tax_doc').  `tier_key` motorun
+    hesapladığı kademe, `tier_override_key` yöneticinin elle atadığı
+    (ambassador buradan).  `relationship_stage`: havuz / basvurdu / seeded /
+    affiliate / ambassador / pasif / kara_liste."""
+    __tablename__ = "influencer_creator"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    slug                = Column(String(60), nullable=False, unique=True, index=True)
+    full_name           = Column(String(150), nullable=False, index=True)
+    email               = Column(String(150), nullable=True, index=True)
+    phone               = Column(String(50), nullable=True)
+    country             = Column(String(60), nullable=True)
+    city                = Column(String(100), nullable=True)
+    language            = Column(String(10), nullable=True)           # tr / en / de …
+    birth_year          = Column(Integer, nullable=True)
+    categories_json     = Column(Text, nullable=True)                 # ["cilt bakımı","vegan",…]
+    skin_type           = Column(String(40), nullable=True)           # cilt tipi
+    clothing_size       = Column(String(20), nullable=True)           # beden
+    allergies           = Column(Text, nullable=True)
+    accepted_model      = Column(String(20), nullable=True)           # barter / kod / karma
+    tier_key            = Column(String(20), nullable=True, index=True)
+    tier_override_key   = Column(String(20), nullable=True)
+    relationship_stage  = Column(String(20), nullable=False, default="havuz", index=True)
+    authenticity_score  = Column(Float, nullable=True)                # 0–100 (motor)
+    score_json          = Column(Text, nullable=True)                 # bileşen kırılımı
+    verification_level  = Column(String(4), nullable=True)            # K1 / K2 / K3
+    aqs                 = Column(Float, nullable=True)                # audience quality score
+    fake_pct            = Column(Float, nullable=True)                # tahmini sahte takipçi %
+    do_not_resend       = Column(Boolean, nullable=False, default=False)
+    rating              = Column(Integer, nullable=True)              # 1–5 ekip puanı
+    owner_user_id       = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    owner_name          = Column(String(100), nullable=True)
+    source              = Column(String(50), nullable=True)           # basvuru / manual / import / referral
+    notes               = Column(Text, nullable=True)
+    is_active           = Column(Boolean, nullable=False, default=True)
+    created_at          = Column(DateTime, default=datetime.utcnow)
+    created_by          = Column(String(100), nullable=True)
+    updated_at          = Column(DateTime, nullable=True)
+
+    owner = relationship("User", foreign_keys=[owner_user_id])
+
+
+class InfluencerAccount(Base):
+    """Creator'ın bir platformdaki hesabı (IG/TikTok/YouTube) + son metrikler.
+    Metrik alanları en son snapshot'ın özetidir (seri `influencer_metric_snapshot`).
+    `metrics_source`: manual / api / oauth.  `oauth_token_enc` Faz 4 (şifreli)."""
+    __tablename__ = "influencer_account"
+    __table_args__ = (
+        UniqueConstraint("platform", "handle", name="uq_inf_account_platform_handle"),
+    )
+
+    id                       = Column(Integer, primary_key=True, index=True)
+    creator_id               = Column(Integer, ForeignKey("influencer_creator.id", ondelete="CASCADE"), nullable=False, index=True)
+    platform                 = Column(String(20), nullable=False)     # instagram | tiktok | youtube
+    handle                   = Column(String(120), nullable=False)
+    external_id              = Column(String(80), nullable=True)      # YT channel id / IG user id
+    followers                = Column(Integer, nullable=True)
+    following                = Column(Integer, nullable=True)
+    posts_count              = Column(Integer, nullable=True)
+    hidden_subscriber_count  = Column(Boolean, nullable=False, default=False)
+    avg_views                = Column(Float, nullable=True)
+    avg_likes                = Column(Float, nullable=True)
+    avg_comments             = Column(Float, nullable=True)
+    er_follower              = Column(Float, nullable=True)           # % — etkileşim / takipçi
+    er_view                  = Column(Float, nullable=True)           # % — etkileşim / görüntülenme
+    view_per_follower        = Column(Float, nullable=True)           # %
+    views_cv                 = Column(Float, nullable=True)           # görüntülenme değişkenlik katsayısı
+    audience_geo_json        = Column(Text, nullable=True)
+    audience_age_gender_json = Column(Text, nullable=True)
+    metrics_source           = Column(String(20), nullable=False, default="manual")
+    metrics_at               = Column(DateTime, nullable=True)
+    oauth_token_enc          = Column(Text, nullable=True)
+    is_primary               = Column(Boolean, nullable=False, default=False)
+    created_at               = Column(DateTime, default=datetime.utcnow)
+    updated_at               = Column(DateTime, nullable=True)
+
+    creator = relationship("InfluencerCreator", foreign_keys=[creator_id])
+
+
+class InfluencerMetricSnapshot(Base):
+    """Hesap metrik anlık görüntüsü — büyüme serisi buradan çizilir.
+    `posts_json` son 12/30 gönderinin ham sayıları, `computed_json` motorun
+    türettiği oranlar."""
+    __tablename__ = "influencer_metric_snapshot"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    account_id    = Column(Integer, ForeignKey("influencer_account.id", ondelete="CASCADE"), nullable=False, index=True)
+    taken_at      = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    source        = Column(String(20), nullable=False, default="manual")   # manual / api / oauth
+    followers     = Column(Integer, nullable=True)
+    posts_json    = Column(Text, nullable=True)
+    computed_json = Column(Text, nullable=True)
+    entered_by    = Column(String(100), nullable=True)
+
+
+class InfluencerApplication(Base):
+    """Halka açık başvuru formu kaydı (`/basvuru`, anonim).  Onaylanınca
+    `creator_id` ile creator kartına bağlanır.  KVKK onayı sürüm + zaman + IP
+    olarak tutulur; `honeypot_hit` bot tuzağına takılan gönderim (listede
+    varsayılan gizli)."""
+    __tablename__ = "influencer_application"
+
+    id                   = Column(Integer, primary_key=True, index=True)
+    store_key            = Column(String(20), nullable=False, index=True)   # minerva/evanira/serenida
+    full_name            = Column(String(150), nullable=False)
+    email                = Column(String(150), nullable=False, index=True)
+    phone                = Column(String(50), nullable=True)
+    country              = Column(String(60), nullable=True)
+    city                 = Column(String(100), nullable=True)
+    language             = Column(String(10), nullable=True)
+    birth_year           = Column(Integer, nullable=True)
+    accounts_json        = Column(Text, nullable=True)      # [{platform, handle, followers}, …]
+    form_json            = Column(Text, nullable=True)      # serbest form alanları
+    status               = Column(String(12), nullable=False, default="pending", index=True)  # pending/maybe/approved/rejected
+    reject_reason        = Column(Text, nullable=True)
+    reviewed_by          = Column(String(100), nullable=True)
+    reviewed_at          = Column(DateTime, nullable=True)
+    creator_id           = Column(Integer, ForeignKey("influencer_creator.id", ondelete="SET NULL"), nullable=True, index=True)
+    consent_text_version = Column(String(20), nullable=True)
+    consent_at           = Column(DateTime, nullable=True)
+    consent_ip           = Column(String(64), nullable=True)
+    honeypot_hit         = Column(Boolean, nullable=False, default=False)
+    user_agent           = Column(String(300), nullable=True)
+    created_at           = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class InfluencerAddress(Base):
+    """Gönderim adresi — creator claim-link ile kendisi girer (`verified_at/ip`).
+    Delivery'ye kopyalanır; burada yalnız güncel adres defteri tutulur."""
+    __tablename__ = "influencer_address"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    creator_id     = Column(Integer, ForeignKey("influencer_creator.id", ondelete="CASCADE"), nullable=False, index=True)
+    label          = Column(String(60), nullable=True)           # ev / iş
+    recipient_name = Column(String(150), nullable=True)
+    line1          = Column(String(200), nullable=True)
+    line2          = Column(String(200), nullable=True)
+    district       = Column(String(100), nullable=True)
+    city           = Column(String(100), nullable=True)
+    postal_code    = Column(String(20), nullable=True)
+    country        = Column(String(60), nullable=True)
+    phone          = Column(String(50), nullable=True)
+    is_default     = Column(Boolean, nullable=False, default=False)
+    verified_at    = Column(DateTime, nullable=True)
+    verified_ip    = Column(String(64), nullable=True)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+
+
+class InfluencerCampaign(Base):
+    """Kampanya / lansman — iş birliklerini gruplar; brief, hashtag'ler, claim
+    listesi ve varsayılan teslimatlar buradan miras alınır."""
+    __tablename__ = "influencer_campaign"
+
+    id                        = Column(Integer, primary_key=True, index=True)
+    name                      = Column(String(150), nullable=False)
+    store_key                 = Column(String(20), nullable=False, index=True)
+    market                    = Column(String(10), nullable=True)        # TR / US / UK / DE / EU
+    start_on                  = Column(Date, nullable=True)
+    end_on                    = Column(Date, nullable=True)
+    hashtags                  = Column(String(300), nullable=True)
+    brief_text                = Column(Text, nullable=True)
+    claim_sheet_json          = Column(Text, nullable=True)
+    default_deliverables_json = Column(Text, nullable=True)
+    status                    = Column(String(20), nullable=False, default="taslak", index=True)  # taslak/aktif/kapandi
+    is_active                 = Column(Boolean, nullable=False, default=True)
+    created_at                = Column(DateTime, default=datetime.utcnow)
+    created_by                = Column(String(100), nullable=True)
+    updated_at                = Column(DateTime, nullable=True)
+
+
+class InfluencerCollab(Base):
+    """İş birliği (tek creator × tek mağaza × tek dönem) — Kanban'ın kartı.
+
+    `code` INF-YYYY-NNNNN.  `stage` statü makinesi `core.influencer.STAGES` /
+    `TRANSITIONS` ile doğrulanır; her geçiş `influencer_collab_stage_log`'a
+    yazılır.  `model`: barter / kod / karma.  İptalde `cancel_reason` ZORUNLU.
+    `decision` (devam / kod ver / ambassador / durdur) motorun
+    `decision_suggested_json` önerisi üzerine yöneticinin verdiği karar."""
+    __tablename__ = "influencer_collab"
+
+    id                      = Column(Integer, primary_key=True, index=True)
+    code                    = Column(String(20), nullable=False, unique=True, index=True)
+    creator_id              = Column(Integer, ForeignKey("influencer_creator.id", ondelete="CASCADE"), nullable=False, index=True)
+    campaign_id             = Column(Integer, ForeignKey("influencer_campaign.id", ondelete="SET NULL"), nullable=True, index=True)
+    store_key               = Column(String(20), nullable=False, index=True)
+    market                  = Column(String(10), nullable=True)
+    model                   = Column(String(10), nullable=False, default="barter")
+    tier_key_at_start       = Column(String(20), nullable=True)
+    stage                   = Column(String(30), nullable=False, default="teklif_gonderildi", index=True)
+    stage_changed_at        = Column(DateTime, nullable=True, default=datetime.utcnow)
+    offered_at              = Column(DateTime, nullable=True)
+    accepted_at             = Column(DateTime, nullable=True)
+    content_due_on          = Column(Date, nullable=True)
+    usage_rights            = Column(String(60), nullable=True)          # organik / reklam 6 ay …
+    exclusivity_days        = Column(Integer, nullable=False, default=0)
+    guideline_ack_at        = Column(DateTime, nullable=True)
+    guideline_version       = Column(String(20), nullable=True)
+    guideline_ack_ip        = Column(String(64), nullable=True)
+    deliverables_json       = Column(Text, nullable=True)                # [{platform,type,qty}, …]
+    cancel_reason           = Column(Text, nullable=True)
+    no_post_flagged_at      = Column(DateTime, nullable=True)
+    decision                = Column(String(20), nullable=True)
+    decision_suggested_json = Column(Text, nullable=True)
+    owner_user_id           = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    owner_name              = Column(String(100), nullable=True)
+    notes                   = Column(Text, nullable=True)
+    is_active               = Column(Boolean, nullable=False, default=True)
+    created_at              = Column(DateTime, default=datetime.utcnow)
+    created_by              = Column(String(100), nullable=True)
+    updated_at              = Column(DateTime, nullable=True)
+
+    creator  = relationship("InfluencerCreator",  foreign_keys=[creator_id])
+    campaign = relationship("InfluencerCampaign", foreign_keys=[campaign_id])
+
+
+class InfluencerCollabStageLog(Base):
+    """İş birliği aşama geçiş günlüğü — hangi aşamadan hangisine, kim, neden."""
+    __tablename__ = "influencer_collab_stage_log"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    collab_id  = Column(Integer, ForeignKey("influencer_collab.id", ondelete="CASCADE"), nullable=False, index=True)
+    from_stage = Column(String(30), nullable=True)
+    to_stage   = Column(String(30), nullable=False)
+    reason     = Column(Text, nullable=True)
+    actor      = Column(String(100), nullable=True)
+    at         = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class InfluencerToken(Base):
+    """Tek kullanımlık creator linki (ReviewInvite kalıbı): purpose ∈ address /
+    insights / agreement / draft_upload.  `used_at` satır kilidiyle
+    (`with_for_update`) yazılır — iki eşzamanlı submit aynı token'ı iki kez
+    kullanamaz."""
+    __tablename__ = "influencer_token"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    token      = Column(String(64), nullable=False, unique=True, index=True)
+    purpose    = Column(String(20), nullable=False)
+    creator_id = Column(Integer, ForeignKey("influencer_creator.id", ondelete="CASCADE"), nullable=True, index=True)
+    collab_id  = Column(Integer, ForeignKey("influencer_collab.id", ondelete="SET NULL"), nullable=True, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at    = Column(DateTime, nullable=True)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class InfluencerActivity(Base):
+    """Creator / iş birliği zaman çizelgesi (CrmActivity kalıbı; CRM
+    timeline'ından AYRI).  type: note | dm | email | call | system."""
+    __tablename__ = "influencer_activity"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    creator_id     = Column(Integer, ForeignKey("influencer_creator.id", ondelete="CASCADE"), nullable=True, index=True)
+    collab_id      = Column(Integer, ForeignKey("influencer_collab.id",  ondelete="CASCADE"), nullable=True, index=True)
+    type           = Column(String(20), nullable=False, default="note")
+    subject        = Column(String(200), nullable=True)
+    body           = Column(Text, nullable=True)
+    author_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    author_name    = Column(String(100), nullable=True)
+    is_pinned      = Column(Boolean, nullable=False, default=False)
+    created_at     = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class InfluencerFile(Base):
+    """Program dosyası (Insights videosu/ekran görüntüsü, sözleşme, vergi
+    belgesi, taslak içerik) — fiziksel dosya Drive diskinde (`stored_name`,
+    `core.drive.save_upload` kalıbı; `core/influencer_files.save_media`).
+    entity: creator | collab | content | payout | application."""
+    __tablename__ = "influencer_file"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    entity        = Column(String(20), nullable=False, index=True)
+    entity_id     = Column(Integer, nullable=False, index=True)
+    kind          = Column(String(20), nullable=False)   # insights_video/screenshot/agreement/tax_doc/draft
+    original_name = Column(String(255), nullable=False)
+    stored_name   = Column(String(80), nullable=False)
+    size_bytes    = Column(Integer, nullable=False, default=0)
+    content_type  = Column(String(120), nullable=True)
+    uploaded_by   = Column(String(100), nullable=True)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+
+class InfluencerShipment(Base):
+    """Ürün gönderimi — STOK YOLU DELIVERY'DEDİR, burada yeni stok hareketi
+    YOK.  `delivery_id` → `deliveries.id` UNIQUE (bir teslimat tek gönderim).
+    Maliyet alanları o anki snapshot: `cogs_total` = Σ adet × Item.cost_price,
+    `loaded_cost` = cogs + paketleme + kargo (kırılma/ROI matrahı).
+    `reminder1/2_*` "ürün ulaştı, içerik bekleniyor" hatırlatmaları — mevcut
+    CRM görev taramasından push'lanır (crm_task.influencer_collab_id)."""
+    __tablename__ = "influencer_shipment"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    collab_id         = Column(Integer, ForeignKey("influencer_collab.id", ondelete="CASCADE"), nullable=False, index=True)
+    delivery_id       = Column(Integer, ForeignKey("deliveries.id"), nullable=True, unique=True, index=True)
+    address_id        = Column(Integer, ForeignKey("influencer_address.id", ondelete="SET NULL"), nullable=True)
+    cogs_total        = Column(Float, nullable=False, default=0.0)
+    packaging_cost    = Column(Float, nullable=False, default=0.0)
+    shipping_cost     = Column(Float, nullable=False, default=0.0)
+    loaded_cost       = Column(Float, nullable=False, default=0.0)
+    handwritten_note  = Column(Text, nullable=True)
+    shipped_at        = Column(DateTime, nullable=True)
+    delivered_at      = Column(DateTime, nullable=True)                 # elle işaretlenir
+    reminder1_due     = Column(Date, nullable=True)
+    reminder2_due     = Column(Date, nullable=True)
+    reminder1_task_id = Column(Integer, ForeignKey("crm_task.id", ondelete="SET NULL"), nullable=True)
+    reminder2_task_id = Column(Integer, ForeignKey("crm_task.id", ondelete="SET NULL"), nullable=True)
+    created_at        = Column(DateTime, default=datetime.utcnow)
+    created_by        = Column(String(100), nullable=True)
+
+    collab   = relationship("InfluencerCollab", foreign_keys=[collab_id])
+    delivery = relationship("Delivery", foreign_keys=[delivery_id])
+
+
+class InfluencerContent(Base):
+    """Teslim edilen içerik (reel/story/post/tiktok/short/video/ugc).
+    status: taslak → revizyon → onaylandi → yayinlandi.  Yayın sonrası
+    `compliance_json` (etiket/hashtag/yasaklı kelime kontrolü) + skor,
+    D7/D30 metrikleri elle/API ile girilir."""
+    __tablename__ = "influencer_content"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    collab_id        = Column(Integer, ForeignKey("influencer_collab.id", ondelete="CASCADE"), nullable=False, index=True)
+    platform         = Column(String(20), nullable=True)
+    type             = Column(String(20), nullable=True)
+    url              = Column(String(500), nullable=True)
+    status           = Column(String(20), nullable=False, default="taslak", index=True)
+    draft_file_id    = Column(Integer, ForeignKey("influencer_file.id", ondelete="SET NULL"), nullable=True)
+    caption          = Column(Text, nullable=True)
+    review_note      = Column(Text, nullable=True)
+    approved_by      = Column(String(100), nullable=True)
+    approved_at      = Column(DateTime, nullable=True)
+    published_at     = Column(DateTime, nullable=True)
+    metrics_d7_json  = Column(Text, nullable=True)
+    metrics_d30_json = Column(Text, nullable=True)
+    compliance_json  = Column(Text, nullable=True)
+    compliance_score = Column(Float, nullable=True)
+    created_at       = Column(DateTime, default=datetime.utcnow)
+    created_by       = Column(String(100), nullable=True)
+    updated_at       = Column(DateTime, nullable=True)
+
+
+class InfluencerAffiliate(Base):
+    """UpPromote affiliate eşlemesi — link/kod altyapısı UpPromote'tadır, IMS
+    yalnız eşler.  `affiliate_email` normalize (küçük harf) eşleme anahtarı,
+    `sca_ref` UpPromote link kodu — webhook/sipariş eşleşmesinin anahtarı.
+    `creator_id` NULL = UpPromote'ta var ama creator'a bağlanmamış
+    (`/affiliates/unmatched`)."""
+    __tablename__ = "influencer_affiliate"
+    __table_args__ = (
+        UniqueConstraint("store_key", "affiliate_email", name="uq_inf_affiliate_store_email"),
+        UniqueConstraint("store_key", "sca_ref",         name="uq_inf_affiliate_store_sca_ref"),
+    )
+
+    id                     = Column(Integer, primary_key=True, index=True)
+    creator_id             = Column(Integer, ForeignKey("influencer_creator.id", ondelete="SET NULL"), nullable=True, index=True)
+    store_key              = Column(String(20), nullable=False, index=True)
+    uppromote_affiliate_id = Column(BigInteger, nullable=True)
+    affiliate_email        = Column(String(150), nullable=False)
+    sca_ref                = Column(String(40), nullable=True)
+    affiliate_link         = Column(String(500), nullable=True)
+    coupon_code            = Column(String(60), nullable=True)
+    program                = Column(String(60), nullable=True)            # "Creator %10"
+    commission_pct         = Column(Float, nullable=False, default=10.0)
+    status                 = Column(String(12), nullable=False, default="bekliyor", index=True)  # bekliyor/aktif/pasif
+    linked_at              = Column(DateTime, nullable=True)
+    synced_at              = Column(DateTime, nullable=True)
+    created_at             = Column(DateTime, default=datetime.utcnow)
+
+    creator = relationship("InfluencerCreator", foreign_keys=[creator_id])
+
+
+class InfluencerReferral(Base):
+    """UpPromote referral siparişi — komisyon HESABI IMS'te YAPILMAZ,
+    UpPromote'un değeri okunur (`commission_amount/status`); IMS raporlar.
+    `shopify_order_row_id` webhook'tan eşleşirse `shopify_orders.id`.
+    source: uppromote_api / order_marker / csv / manual."""
+    __tablename__ = "influencer_referral"
+    __table_args__ = (
+        UniqueConstraint("store_key", "shopify_order_id", name="uq_inf_referral_store_order"),
+    )
+
+    id                   = Column(Integer, primary_key=True, index=True)
+    shopify_order_row_id = Column(Integer, ForeignKey("shopify_orders.id", ondelete="SET NULL"), nullable=True)
+    store_key            = Column(String(20), nullable=False, index=True)
+    shopify_order_id     = Column(BigInteger, nullable=False)
+    order_number         = Column(String(40), nullable=True)
+    creator_id           = Column(Integer, ForeignKey("influencer_creator.id",   ondelete="SET NULL"), nullable=True, index=True)
+    affiliate_id         = Column(Integer, ForeignKey("influencer_affiliate.id", ondelete="SET NULL"), nullable=True, index=True)
+    collab_id            = Column(Integer, ForeignKey("influencer_collab.id",    ondelete="SET NULL"), nullable=True, index=True)
+    source               = Column(String(20), nullable=False, default="uppromote_api")
+    order_total          = Column(Float, nullable=False, default=0.0)
+    commission_amount    = Column(Float, nullable=False, default=0.0)
+    commission_status    = Column(String(12), nullable=False, default="pending", index=True)  # pending/approved/paid/declined
+    is_new_customer      = Column(Boolean, nullable=True)
+    refunded_total       = Column(Float, nullable=False, default=0.0)
+    order_at             = Column(DateTime, nullable=True, index=True)
+    imported_at          = Column(DateTime, default=datetime.utcnow)
+
+
+class InfluencerPayout(Base):
+    """IMS tarafı ödeme belge kaydı — ödemenin kendisi UpPromote/banka
+    tarafındadır.  `period` 'YYYY-MM'.  status: uppromote_talep → onaylandi
+    → odendi.  `tax_doc_type`: istisna_20b / fatura / gider_pusulasi /
+    yurtdisi (odendi için zorunlu).  **IBAN TUTULMAZ** — `bank_note` yalnız
+    dekont referansı."""
+    __tablename__ = "influencer_payout"
+    __table_args__ = (
+        UniqueConstraint("creator_id", "period", "store_key", name="uq_inf_payout_creator_period_store"),
+    )
+
+    id                   = Column(Integer, primary_key=True, index=True)
+    creator_id           = Column(Integer, ForeignKey("influencer_creator.id", ondelete="CASCADE"), nullable=False, index=True)
+    period               = Column(String(7), nullable=False, index=True)
+    store_key            = Column(String(20), nullable=True)
+    total                = Column(Float, nullable=False, default=0.0)
+    currency             = Column(String(3), nullable=False, default="TRY")
+    status               = Column(String(20), nullable=False, default="uppromote_talep", index=True)
+    uppromote_payment_id = Column(String(60), nullable=True)
+    tax_doc_type         = Column(String(20), nullable=True)
+    tax_doc_no           = Column(String(60), nullable=True)
+    withholding_pct      = Column(Float, nullable=False, default=0.0)
+    bank_note            = Column(String(200), nullable=True)
+    paid_at              = Column(DateTime, nullable=True)
+    paid_by              = Column(String(100), nullable=True)
+    doc_file_id          = Column(Integer, ForeignKey("influencer_file.id", ondelete="SET NULL"), nullable=True)
+    notes                = Column(Text, nullable=True)
+    created_at           = Column(DateTime, default=datetime.utcnow)
+    created_by           = Column(String(100), nullable=True)
+
+    creator = relationship("InfluencerCreator", foreign_keys=[creator_id])
+
+
 def log_system_event(event_type: str, detail: str = None) -> None:
     """Bir sistem olayını (örn. 'app_start') kaydet.
 
@@ -1728,6 +2230,12 @@ def init_db():
             # PDKS — işten ayrılış tarihi.  deploy.sh alembic ÇALIŞTIRMIYOR;
             # kolon prod'a yalnız bu satırla ulaşır.
             "ALTER TABLE pdks_employees ADD COLUMN end_date DATE",
+            # Influencer programı — influencer_* tabloları create_all ile
+            # gelir; mevcut crm_task'a eklenen tek kolon + indeks burada.
+            # deploy.sh alembic ÇALIŞTIRMIYOR; kolon prod'a yalnız bu satırla
+            # ulaşır (migration b5d7f9a1c3e5 geçmiş + temiz kurulum içindir).
+            "ALTER TABLE crm_task ADD COLUMN influencer_collab_id INTEGER",
+            "CREATE INDEX IF NOT EXISTS ix_crm_task_inf_collab ON crm_task(influencer_collab_id)",
         ):
             alter_safe(stmt)
 
@@ -1798,3 +2306,40 @@ def init_db():
         db.rollback()
     finally:
         db.close()
+
+    # ── Influencer programı — kademe + benchmark seed (idempotent) ─────────
+    # CrmStage kalıbı: tablo BOŞSA varsayılan set kurulur, doluysa dokunulmaz
+    # (yönetici ayarlar ekranından düzenlemiş olabilir).  Varsayılanlar
+    # core/influencer.py'de; modül henüz yoksa seed sessizce atlanır.
+    try:
+        from core.influencer import DEFAULT_TIERS, DEFAULT_BENCHMARKS
+    except ImportError:
+        DEFAULT_TIERS, DEFAULT_BENCHMARKS = None, None
+    if DEFAULT_TIERS is not None:
+        db = SessionLocal()
+        try:
+            if db.query(InfluencerTier).count() == 0:
+                for t in DEFAULT_TIERS:
+                    db.add(InfluencerTier(
+                        key=t["key"], label=t["label"],
+                        min_followers=t.get("min_followers", 0),
+                        max_followers=t.get("max_followers"),
+                        commission_pct=t.get("commission_pct", 10.0),
+                        customer_discount_pct=t.get("customer_discount_pct", 0.0),
+                        max_gift_items=t.get("max_gift_items", 1),
+                        launch_access=bool(t.get("launch_access", False)),
+                        code_allowed=bool(t.get("code_allowed", False)),
+                        sort_order=t.get("sort_order", 0),
+                    ))
+                db.commit()
+            if db.query(InfluencerBenchmark).count() == 0:
+                for b in (DEFAULT_BENCHMARKS or []):
+                    db.add(InfluencerBenchmark(
+                        platform=b["platform"], tier_key=b["tier_key"],
+                        metric=b["metric"], low=b["low"], high=b["high"],
+                    ))
+                db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()

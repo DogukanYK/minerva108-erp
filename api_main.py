@@ -36,7 +36,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions, get_role_labels
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router, shopify as shopify_router, pdks as pdks_router, retention as retention_router, product_images as product_images_router, reviews as reviews_router
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router, shopify as shopify_router, pdks as pdks_router, retention as retention_router, product_images as product_images_router, reviews as reviews_router, influencer as influencer_router
 from core.domain import get_active_domain, domain_label
 
 
@@ -256,6 +256,7 @@ def robots_txt():
         "Disallow: /api/\n"
         "Disallow: /s/\n"
         "Disallow: /yorum/\n"
+        "Disallow: /basvuru/\n"
         "Disallow: /\n"
     )
 templates = Jinja2Templates(directory="templates")
@@ -337,6 +338,10 @@ app.include_router(distributors_router.router)
 app.include_router(portal_router.router)
 app.include_router(reviews_router.router)
 app.include_router(reviews_router.public_router)
+app.include_router(influencer_router.router)
+# PUBLIC — influencer başvuru formu + claim linkleri (auth YOK; CSRF muaf —
+# anonimde access_token cookie yok).  nginx `limit_req zone=basvuru` şart.
+app.include_router(influencer_router.public_router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────
@@ -658,6 +663,40 @@ def reviews_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse("yorumlar.html", _page_ctx(request, payload, user))
 
 
+@app.get("/influencer", response_class=HTMLResponse)
+def influencer_page(request: Request, db: Session = Depends(get_db)):
+    """Influencer programı paneli — başvurular, creator'lar, iş birliği Kanban'ı,
+    gönderimler, ayarlar.  Sabitler TEK KAYNAK core/influencer.py + kademe
+    tablosu DB'den; şablon `window.INF_CFG` olarak alır (pdks kalıbı)."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "influencer", "view"):
+        return RedirectResponse(url="/", status_code=302)
+    from core import influencer as ENG
+    from routers.influencer import (_tier_rows, STORE_KEYS, PLATFORMS, MODELS,
+                                    CONTENT_TYPES, TOKEN_PURPOSES, CONSENT_VERSION)
+    ctx = _page_ctx(request, payload, user)
+    ctx["inf_cfg"] = {
+        "tiers": _tier_rows(db),
+        "label_templates": dict(ENG.LABEL_TEMPLATES),
+        "relationship_stages": [{"key": k, "label": ENG.RELATIONSHIP_LABELS.get(k, k)}
+                                for k in ENG.RELATIONSHIP_STAGES],
+        "stages": [{"key": k, "label": ENG.STAGE_LABELS.get(k, k), "terminal": k in ENG.TERMINAL_STAGES}
+                   for k in ENG.STAGES],
+        "stage_labels": dict(ENG.STAGE_LABELS),
+        "transitions": {k: sorted(v, key=ENG.STAGES.index) for k, v in ENG.TRANSITIONS.items()},
+        "decision_labels": dict(ENG.DECISION_LABELS),
+        "store_keys": list(STORE_KEYS),
+        "platforms": list(PLATFORMS),
+        "models": list(MODELS),
+        "content_types": list(CONTENT_TYPES),
+        "token_purposes": list(TOKEN_PURPOSES),
+        "consent_version": CONSENT_VERSION,
+    }
+    return templates.TemplateResponse("influencer.html", ctx)
+
+
 @app.get("/pdks-qr", response_class=HTMLResponse)
 def pdks_qr_page(request: Request, db: Session = Depends(get_db)):
     """PDKS kiosk — girişteki ekranda dönen imzalı QR (yalnız pdks.kiosk yetkili
@@ -834,3 +873,28 @@ def review_invite_page(token: str, request: Request, db: Session = Depends(get_d
     ctx.update({"request": request, "token": token, "error": None})
     status_code = {"notfound": 404, "expired": 410}.get(ctx["state"], 200)
     return templates.TemplateResponse("yorum.html", ctx, status_code=status_code)
+
+
+@app.get("/basvuru", response_class=HTMLResponse)
+@limiter.limit("60/hour")
+def basvuru_page(request: Request, lang: str = "tr", store: str = ""):
+    """Influencer başvuru formu — auth YOK, token'sız açık sayfa (bio linki).
+    `?lang=en` İngilizce; `?store=` mağazayı önceden seçer.  Gönderim
+    `POST /basvuru/gonder` (routers/influencer.public_router)."""
+    from routers.influencer import CONSENT_VERSION, STORE_KEYS
+    lang = "en" if (lang or "").lower().startswith("en") else "tr"
+    ctx = {"request": request, "lang": lang, "consent_version": CONSENT_VERSION,
+           "store_key": store if store in STORE_KEYS else ""}
+    return templates.TemplateResponse("basvuru.html", ctx)
+
+
+@app.get("/basvuru/t/{token}", response_class=HTMLResponse)
+@limiter.limit("30/hour")
+def basvuru_claim_page(token: str, request: Request, db: Session = Depends(get_db)):
+    """Creator claim sayfası (adres / insights yükleme / kılavuz onayı) —
+    /yorum/{token} kalıbı: state notfound / expired / used / open."""
+    from routers.influencer import load_token_for_page
+    ctx = load_token_for_page(db, token)
+    ctx["request"] = request
+    status_code = {"notfound": 404, "expired": 410, "used": 410}.get(ctx["state"], 200)
+    return templates.TemplateResponse("basvuru_claim.html", ctx, status_code=status_code)

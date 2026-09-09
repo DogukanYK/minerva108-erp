@@ -33,6 +33,7 @@ PAGES = [
     "/quotations",
     "/admin",
     "/system",
+    "/influencer",
 ]
 
 
