@@ -875,6 +875,11 @@
             <input type="text" class="form-control mb-1" id="sampleItemSearch"
                    placeholder="Yazarak süz… (Türkçe ad da aranır)" autocomplete="off" />
             <select class="form-select" id="sampleItem" size="6" required><option value="">— Hammadde seçiniz —</option></select>
+            <div style="font-size:0.8rem;color:#6b7280;margin-top:0.35rem;">
+              Listede yok mu? Elinizde olmayan / ilk kez gelen hammadde için
+              <a href="#" onclick="openAddItemFromSample(); return false;" style="color:var(--navy);font-weight:600;">yeni hammadde kartı açın</a>;
+              kart kaydedilince bu pencereye geri dönülür.
+            </div>
           </div>
           <div class="mb-3">
             <label class="form-label-sm">Numune Tedarikçisi</label>
@@ -1734,7 +1739,40 @@
       } catch { showToast('Sunucuya bağlanılamadı.'); }
     }
 
-    async function openSampleModal() {
+    /* Numune girişinden "yeni hammadde kartı" akışı: girilen alanlar saklanır,
+       kart modalı Hammadde kategorisi + aranan adla açılır, kayıttan sonra
+       numune modalı yeni kart seçili olarak geri gelir (önce kart, sonra numune
+       kuralı korunur; kullanıcı iki ekran arasında dolaşmaz). */
+    let _sampleReturn = null;
+    function openAddItemFromSample() {
+      _sampleReturn = {
+        search:   document.getElementById('sampleItemSearch').value.trim(),
+        supplier: document.getElementById('sampleSupplier').value,
+        lot:      document.getElementById('sampleLot').value,
+        qty:      document.getElementById('sampleQty').value,
+        expiry:   document.getElementById('sampleExpiry').value,
+      };
+      bootstrap.Modal.getInstance(document.getElementById('sampleEntryModal'))?.hide();
+      openAddItemModal();
+      document.getElementById('itemCategory').value = 'Hammadde';
+      updateVariationVisibility();
+      document.getElementById('itemName').value = _sampleReturn.search;
+      const sup = document.getElementById('itemSupplierId');
+      if (sup && _sampleReturn.supplier) sup.value = _sampleReturn.supplier;
+      setTimeout(() => document.getElementById(_sampleReturn.search ? 'itemNameTr' : 'itemName')?.focus(), 350);
+    }
+    async function resumeSampleAfterCreate(newItemId) {
+      const saved = _sampleReturn; _sampleReturn = null;
+      if (window.invalidateItemsCache) window.invalidateItemsCache();
+      await openSampleModal(newItemId);
+      if (!saved) return;
+      document.getElementById('sampleSupplier').value = saved.supplier || '';
+      document.getElementById('sampleLot').value = saved.lot || '';
+      document.getElementById('sampleQty').value = saved.qty || '';
+      document.getElementById('sampleExpiry').value = saved.expiry || '';
+    }
+
+    async function openSampleModal(preselectId) {
       // Hammadde + tedarikçi dropdownlarını doldur
       const itemSel = document.getElementById('sampleItem');
       const suppSel = document.getElementById('sampleSupplier');
@@ -1756,6 +1794,7 @@
             if (i.supplier_name) lbl += `  —  ${i.supplier_name}`;
             lbl += `  (stok ${Number(i.current_stock || 0).toLocaleString('tr-TR',{maximumFractionDigits:2})} ${i.unit || ''})`;
             o.textContent = lbl;
+            o.dataset.name = i.name;
             o.dataset.unit = i.unit || '';
             // 24.08.2026: mevcut kart bulunamayınca stajyer aynı ürünü ikinci
             // kez açtı.  Ad + Türkçe ad (+ tedarikçi) Türkçe-katlanmış olarak
@@ -1769,6 +1808,11 @@
         window.trSortBy(supps, 'name').forEach(s => { const o = document.createElement('option'); o.value = s.id; o.textContent = s.name; suppSel.appendChild(o); });
       } catch {}
       ['sampleLot','sampleQty','sampleExpiry'].forEach(id => document.getElementById(id).value = '');
+      if (preselectId) {
+        itemSel.value = String(preselectId);
+        const opt = itemSel.selectedOptions[0];
+        if (opt) { searchEl.value = opt.dataset.name || ''; opt.scrollIntoView?.({block:'nearest'}); }
+      }
       new bootstrap.Modal(document.getElementById('sampleEntryModal')).show();
     }
 
@@ -1969,6 +2013,9 @@
     /* Reset modal when closed — only clears form if NOT triggered by openAddItemModal
        (editingItemId is null for new-item flow, we rely on openAddItemModal's own reset) */
     document.getElementById('addItemModal').addEventListener('hidden.bs.modal', function () {
+      // Numune akışından gelinip vazgeçildiyse saklanan alanları bırak
+      // (başarılı kayıtta resumeSampleAfterCreate zaten 300 ms sonra devralır).
+      setTimeout(() => { if (!document.getElementById('sampleEntryModal').classList.contains('show')) _sampleReturn = null; }, 800);
       editingItemId = null;
       document.getElementById('addItemModalLabel').textContent = 'Yeni Ürün Ekle';
       document.getElementById('addItemForm').reset();
@@ -2070,8 +2117,10 @@
         }
         if (!res.ok) { showToast(data.detail || 'Kayıt başarısız.'); return; }
         showToast(editingItemId ? 'Ürün güncellendi.' : 'Ürün başarıyla eklendi.', 'success');
+        const resumeSample = !editingItemId && _sampleReturn && data.id;
         bootstrap.Modal.getInstance(document.getElementById('addItemModal')).hide();
         loadItems();
+        if (resumeSample) setTimeout(() => resumeSampleAfterCreate(data.id), 300);
       } catch { showToast('Kayıt sırasında hata oluştu.');
       } finally {
         this.disabled = false;
