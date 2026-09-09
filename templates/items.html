@@ -1750,12 +1750,17 @@
           .forEach(i => {
             const o = document.createElement('option');
             o.value = i.id;
-            o.textContent = i.name_tr ? `${i.name}  ·  ${i.name_tr}` : i.name;
+            // Aynı adlı kartlar tedarikçiye göre ayrı açılmış olabilir
+            // (ör. LAVANTA HİDROSOLÜ ×2) — tedarikçi + stok etikette görünsün.
+            let lbl = i.name_tr ? `${i.name}  ·  ${i.name_tr}` : i.name;
+            if (i.supplier_name) lbl += `  —  ${i.supplier_name}`;
+            lbl += `  (stok ${Number(i.current_stock || 0).toLocaleString('tr-TR',{maximumFractionDigits:2})} ${i.unit || ''})`;
+            o.textContent = lbl;
             o.dataset.unit = i.unit || '';
             // 24.08.2026: mevcut kart bulunamayınca stajyer aynı ürünü ikinci
-            // kez açtı.  Ad + Türkçe ad Türkçe-katlanmış olarak burada
-            // önceden hesaplanır, arama input'u bunu süzer.
-            o.dataset.fold = fold(i.name) + ' ' + fold(i.name_tr);
+            // kez açtı.  Ad + Türkçe ad (+ tedarikçi) Türkçe-katlanmış olarak
+            // burada önceden hesaplanır, arama input'u bunu süzer.
+            o.dataset.fold = fold(i.name) + ' ' + fold(i.name_tr) + ' ' + fold(i.supplier_name);
             itemSel.appendChild(o);
           });
       } catch {}

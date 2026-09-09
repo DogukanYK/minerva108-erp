@@ -336,9 +336,14 @@
     function samplesFor(itemId){ return _samples.filter(x => x.item_id === Number(itemId)); }
 
     function itemOptions(selectedId){
+      // Aynı adlı kartlar (farklı tedarikçi / kopya kart) ayırt edilebilsin:
+      // tedarikçi + mevcut stok etikete eklenir, arama tedarikçi adını da süzer.
       return '<option value="">— Hammadde seçiniz —</option>' + _items.map(i => {
-        const lbl = i.name_tr ? `${i.name}  ·  ${i.name_tr}` : i.name;
-        return `<option value="${i.id}" data-fold="${esc(fold(i.name) + ' ' + fold(i.name_tr))}" ${Number(selectedId) === i.id ? 'selected' : ''}>${esc(lbl)}</option>`;
+        let lbl = i.name_tr ? `${i.name}  ·  ${i.name_tr}` : i.name;
+        if (i.supplier_name) lbl += `  —  ${i.supplier_name}`;
+        lbl += `  (stok ${Number(i.current_stock || 0).toLocaleString('tr-TR',{maximumFractionDigits:2})} ${i.unit || ''})`;
+        const f = fold(i.name) + ' ' + fold(i.name_tr) + ' ' + fold(i.supplier_name);
+        return `<option value="${i.id}" data-fold="${esc(f)}" ${Number(selectedId) === i.id ? 'selected' : ''}>${esc(lbl)}</option>`;
       }).join('');
     }
     function sourceOptions(g){
