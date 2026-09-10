@@ -458,6 +458,8 @@
       font-size: 0.78rem; font-weight: 600; color: #6b7280;
       letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.35rem;
     }
+    .stock-zero-cell { color: #ef4444; font-weight: 700; }
+
     .form-control, .form-select {
       border: 1.5px solid #e5e7eb; border-radius: 8px;
       padding: 0.6rem 0.9rem;
@@ -799,6 +801,7 @@
                 </th>
                 <th class="sortable" data-col="unit">Birim <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="min_stock_level">Min. Stok <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="current_stock" style="text-align:right;">Mevcut Stok <span class="sort-icon"></span></th>
                 {% if can('finance', 'view') %}
                 <th class="sortable" data-col="cost_price" style="text-align:right;">Maliyet <span class="sort-icon"></span></th>
                 {% endif %}
@@ -807,7 +810,7 @@
             </thead>
             <tbody id="itemsBody">
               <tr>
-                <td colspan="7">
+                <td colspan="8">
                   <div class="empty-state">
                     <i class="bi bi-hourglass-split"></i>
                     <p>Yükleniyor…</p>
@@ -1297,6 +1300,12 @@
 
     /* ── Render table ── */
     /* ── Single-row renderer — `mode` ∈ {'parent','variation','standalone'} ── */
+    function stockCell(item) {
+      const v = Number(item.current_stock || 0);
+      const cls = v <= 0 ? 'stock-zero-cell' : '';
+      return `<span class="${cls}">${v.toLocaleString('tr-TR', {maximumFractionDigits:2})}</span>`;
+    }
+
     function renderItemRow(item, mode) {
       const cp = item.cost_price ?? 0;
       const costCellRaw = cp > 0
@@ -1336,6 +1345,7 @@
           <td>${catBadge(item.category, item.pkg_type)}</td>
           <td><span class="parent-muted-cell">—</span></td>
           <td><span class="parent-muted-cell">—</span></td>
+          <td><span class="parent-muted-cell">—</span></td>
           ${parentCostCellTd}
           <td style="text-align:center;">${actions}</td>
         </tr>`;
@@ -1366,6 +1376,7 @@
           <td>${catBadge(item.category, item.pkg_type)}${langChip(item)}</td>
           <td>${escHtml(item.unit)}</td>
           <td>${item.min_stock_level ?? 0}</td>
+          <td style="text-align:right;">${stockCell(item)}</td>
           ${costCellTd}
           <td style="text-align:center;" onclick="event.stopPropagation()">${actions}</td>
         </tr>`;
@@ -1393,6 +1404,7 @@
           <td>${catBadge(item.category, item.pkg_type)}${langChip(item)}</td>
           <td>${escHtml(item.unit)}</td>
           <td>${item.min_stock_level ?? 0}</td>
+          <td style="text-align:right;">${stockCell(item)}</td>
           ${costCellTd}
           <td style="text-align:center;" onclick="event.stopPropagation()">${actions}</td>
         </tr>`;
@@ -1414,7 +1426,7 @@
       const tabCfg  = TABS[activeTab];
 
       if (!data.length) {
-        const cspan = CAN_SEE_FINANCE ? 8 : 7;   // Dynamic — drops by 1 when Maliyet column hidden
+        const cspan = CAN_SEE_FINANCE ? 9 : 8;   // Dynamic — drops by 1 when Maliyet column hidden
         tbody.innerHTML = `<tr><td colspan="${cspan}"><div class="empty-state">
           <i class="bi ${tabCfg.emptyIcon}"></i>
           <p>${tabCfg.emptyText}</p>

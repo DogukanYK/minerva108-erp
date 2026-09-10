@@ -13,7 +13,7 @@ import io
 import re
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, Query, UploadFile, File
+from fastapi import APIRouter, Depends, Query, Request, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func
@@ -22,12 +22,13 @@ from sqlalchemy.orm import Session
 from database import (
     to_tr,
     get_db, Item, Supplier, Recipe, Transaction, ProductionHistory, Inventory,
-    StockSnapshot, SupplierPrice,
+    StockSnapshot, SupplierPrice, StockOrderFlag,
 )
 from core.permissions import require_permission
 from core.auth import require_role
 from core.snapshots import compute_stock_at, snapshot_exists
 from core.domain import active_domain
+from core.audit import log_admin_event
 
 router = APIRouter(prefix="/api", tags=["reports"])
 
@@ -328,44 +329,120 @@ def report_production_trends(
     return list(day_map.values())
 
 
-@router.get("/reports/low-stock-alert")
-def report_low_stock_alert(
+class _OrderFlagIn(BaseModel):
+    supplier_id: Optional[int] = None
+    quantity: Optional[float] = Field(None, gt=0)
+    expected_date: Optional[_dt.date] = None
+    note: Optional[str] = Field(None, max_length=300)
+
+
+@router.get("/reports/stock-gaps")
+def stock_gaps_report(
+    category: str = Query("hammadde", pattern="^(hammadde|ambalaj|all)$"),
+    status: Optional[str] = None,
+    include_undefined_min: int = Query(0, ge=0, le=1),
+    q: Optional[str] = None,
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("reports", "view")),
     domain: str = Depends(active_domain),
 ):
-    items = (
-        db.query(Item)
-        .filter(
-            Item.is_active == True,
-            Item.min_stock_level > 0,
-            Item.current_stock <= Item.min_stock_level,
-            Item.domain == domain,
-        )
-        .order_by(Item.current_stock.asc())
-        .all()
+    """Eksik Hammaddeler — sıfır / kritik altı / sadece numune hammaddeler.
+
+    core/stock_gaps.py TEK KAYNAK. `current_stock<=0 and min_stock_level=0`
+    (min. tanımsız) hiçbir alarma girmiyordu — `include_undefined_min=1` ile
+    görünür kılınır."""
+    from core.stock_gaps import assemble
+    statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
+    return assemble(db, domain, category=category, statuses=statuses,
+                    include_undefined_min=bool(include_undefined_min), q=q)
+
+
+@router.post("/reports/stock-gaps/{item_id}/order", status_code=201)
+def stock_gaps_order(
+    item_id: int,
+    data: _OrderFlagIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("inventory", "adjust")),
+    domain: str = Depends(active_domain),
+):
+    """'Sipariş verildi' işaretle — ürün başına en fazla bir açık bayrak
+    (yeniden işaretleme eskisini 'manual' kapatır). Gerçek mal kabulünde
+    (routers/inventory.py receive_stock / samples/convert) otomatik kapanır."""
+    from core.stock_gaps import open_flag
+    item = db.query(Item).filter(Item.id == item_id).with_for_update().first()
+    if not item or not item.is_active or item.domain != domain:
+        return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+    if data.supplier_id is not None:
+        sup = db.query(Supplier).filter(Supplier.id == data.supplier_id).first()
+        if not sup or sup.domain != domain:
+            return JSONResponse(status_code=400, content={"detail": "Tedarikçi bu panelde değil."})
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
+    flag = open_flag(db, item, supplier_id=data.supplier_id, quantity=data.quantity,
+                     expected_date=data.expected_date, note=data.note, actor=actor, domain=domain)
+    log_admin_event(db, request, actor=current_user, action="stock_gap.order",
+                    target_type="item", target_id=item.id, target_name=item.name,
+                    details={"supplier_id": data.supplier_id, "quantity": data.quantity,
+                             "expected_date": str(data.expected_date) if data.expected_date else None})
+    db.commit()
+    return {"id": flag.id, "message": "Sipariş işaretlendi."}
+
+
+@router.delete("/reports/stock-gaps/{item_id}/order")
+def stock_gaps_order_cancel(
+    item_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("inventory", "adjust")),
+    domain: str = Depends(active_domain),
+):
+    from core.stock_gaps import close_open_flags
+    item = db.query(Item).filter(Item.id == item_id, Item.domain == domain).first()
+    if not item:
+        return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
+    closed = close_open_flags(db, item_id, "manual", actor)
+    if not closed:
+        return JSONResponse(status_code=404, content={"detail": "Açık sipariş bulunamadı."})
+    log_admin_event(db, request, actor=current_user, action="stock_gap.order_cancel",
+                    target_type="item", target_id=item.id, target_name=item.name)
+    db.commit()
+    return {"message": "Sipariş işareti kaldırıldı."}
+
+
+@router.get("/reports/stock-gaps/export")
+def stock_gaps_export(
+    format: str = Query("xlsx", pattern="^(xlsx|pdf)$"),
+    category: str = Query("hammadde", pattern="^(hammadde|ambalaj|all)$"),
+    status: Optional[str] = None,
+    include_undefined_min: int = Query(0, ge=0, le=1),
+    q: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
+):
+    from core.stock_gaps import assemble, build_workbook, render_pdf, export_filename
+    from core.supplier_prices import prices_for_items
+    from core.delivery_note import content_disposition
+    statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
+    report = assemble(db, domain, category=category, statuses=statuses,
+                      include_undefined_min=bool(include_undefined_min), q=q)
+    try:
+        if format == "pdf":
+            content = render_pdf(report)
+            media = "application/pdf"
+        else:
+            order_ids = [r["item_id"] for r in report["rows"] if r.get("order")]
+            prices = prices_for_items(db, order_ids, domain)
+            content = build_workbook(report, prices=prices)
+            media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    except Exception:
+        return JSONResponse(status_code=500, content={"detail": "Rapor üretilemedi."})
+    fname = export_filename(category, format)
+    return StreamingResponse(
+        io.BytesIO(content), media_type=media,
+        headers={"Content-Disposition": content_disposition(fname, inline=(format == "pdf"))},
     )
-    result = []
-    for item in items:
-        # Son tedarikçiyi transactions üzerinden bul
-        last_inv = (
-            db.query(Inventory)
-            .filter(Inventory.item_id == item.id, Inventory.supplier_id != None)
-            .order_by(Inventory.id.desc())
-            .first()
-        )
-        supplier_name = last_inv.supplier.name if last_inv and last_inv.supplier else "—"
-        result.append({
-            "item_id": item.id,
-            "name": item.name,
-            "category": item.category or "—",
-            "unit": item.unit,
-            "current_stock": item.current_stock,
-            "min_stock_level": item.min_stock_level,
-            "deficit": round(item.min_stock_level - item.current_stock, 4),
-            "last_supplier": supplier_name,
-        })
-    return result
 
 
 # ─── Dashboard Stats ─────────────────────────────────────────────────────────
@@ -379,6 +456,12 @@ def dashboard_stats(
     total_items     = db.query(Item).filter(Item.is_active == True, Item.domain == domain).count()
     total_suppliers = db.query(Supplier).filter(Supplier.is_active == True, Supplier.domain == domain).count()
     total_recipes   = db.query(Recipe).filter(Recipe.is_active == True, Recipe.domain == domain).count()
+    zero_stock_raw_count = (
+        db.query(Item)
+        .filter(Item.is_active == True, Item.domain == domain,
+                Item.current_stock <= 0, Item.category.notin_(("Ambalaj", "Bitmiş Ürün")))
+        .count()
+    )
 
     # ── Critical stock: items at or below min level ────────────────────────
     critical_items_raw = (
@@ -442,6 +525,7 @@ def dashboard_stats(
         "total_recipes":        total_recipes,
         "critical_stock_count": len(critical_stock_list),
         "critical_stock_list":  critical_stock_list,
+        "zero_stock_raw_count": zero_stock_raw_count,
         "recent_transactions":  recent_transactions,
         "recent_productions": [
             {

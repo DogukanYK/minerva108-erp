@@ -1137,6 +1137,12 @@ def receive_stock(
             except Exception:
                 pass
 
+        # Eksik Hammaddeler raporunda açık "sipariş verildi" bayrağı varsa
+        # gerçek mal kabulü kapatır (core/stock_gaps.close_open_flags) — elle
+        # kaldırmaya gerek kalmaz.
+        from core.stock_gaps import close_open_flags
+        close_open_flags(db, item.id, "received", actor)
+
         db.commit()
         return {"message": f"Mal kabul başarılı. {data.quantity} {item.unit} stoka eklendi."}
 
@@ -1466,6 +1472,10 @@ def convert_sample_to_stock(
 
     try:
         db.flush()
+        # Numune gerçek Input'a döndü — Eksik Hammaddeler'de açık sipariş
+        # bayrağı varsa (core/stock_gaps.py) kapanır.
+        from core.stock_gaps import close_open_flags
+        close_open_flags(db, item.id, "received", actor)
         log_admin_event(db, request, actor=current_user, action="inventory.sample_convert",
                         target_type="inventory", target_id=inventory_id, target_name=item.name,
                         details={"lot": row.lot_number, "quantity": qty})

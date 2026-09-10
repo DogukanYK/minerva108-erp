@@ -159,6 +159,43 @@
     .stock-zero { color: #ef4444; font-weight: 700; }
     .supplier-chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 2px 10px; border-radius: 20px; background: #eff6ff; color: #1d4ed8; font-size: 0.75rem; font-weight: 600; }
 
+    /* ── Eksik Hammaddeler ── */
+    .sg-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.7rem; padding: 1rem 1.4rem 0; }
+    .sg-tile { background: #faf8f4; border: 1.5px solid #f0ece4; border-radius: 10px; padding: 0.7rem 0.9rem; cursor: pointer; transition: border-color .15s, background .15s; }
+    .sg-tile:hover { border-color: var(--navy); }
+    .sg-tile.active { background: var(--navy); border-color: var(--navy); }
+    .sg-tile.active .sg-tile-n, .sg-tile.active .sg-tile-lbl { color: var(--white); }
+    .sg-tile-n { font-family: 'Playfair Display', serif; font-size: 1.5rem; font-weight: 700; color: var(--navy); line-height: 1; }
+    .sg-tile-lbl { font-size: 0.7rem; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 0.2rem; }
+    .sg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.9rem 1.4rem 0.5rem; }
+    .sg-min-hint { font-size: 0.78rem; color: #9ca3af; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; background: none; border: none; padding: 0; margin-left: auto; }
+    .sg-min-hint:hover { color: var(--navy); }
+    .sg-search { flex: 1; min-width: 160px; max-width: 260px; padding: 0.4rem 0.75rem; border: 1.5px solid #e5e7eb; border-radius: 20px; font-size: 0.82rem; font-family: inherit; }
+    .sg-badge { display: inline-flex; align-items: center; gap: 0.3rem; padding: 3px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+    .sg-badge-sifir { background: #fff1f1; color: #b91c1c; }
+    .sg-badge-kritik { background: #fff7ed; color: #c2410c; }
+    .sg-badge-numune { background: #eef2ff; color: #4338ca; }
+    .sg-badge-min_tanimsiz { background: #f3f4f6; color: #6b7280; }
+    .sg-order-badge { display: inline-flex; align-items: center; gap: 0.3rem; padding: 3px 10px; border-radius: 20px; font-size: 0.72rem; font-weight: 600; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .sg-order-btn { padding: 0.3rem 0.75rem; border-radius: 8px; border: 1.5px solid #e5e7eb; background: #fff; color: var(--navy); font-size: 0.78rem; font-weight: 600; cursor: pointer; }
+    .sg-order-btn:hover { border-color: var(--navy); }
+    .sg-order-cancel { background: none; border: none; color: #9ca3af; font-size: 0.9rem; cursor: pointer; margin-left: 0.4rem; }
+    .sg-order-cancel:hover { color: #ef4444; }
+    .sg-recipe-pill { display: inline-flex; align-items: center; gap: 0.3rem; padding: 2px 9px; border-radius: 20px; background: #f5f4ff; color: #4338ca; font-size: 0.75rem; font-weight: 600; cursor: pointer; border: none; }
+    tr.sg-row { cursor: pointer; }
+    tr.sg-detail td { background: #faf8f4; padding: 0.9rem 1.4rem; font-size: 0.82rem; color: #4b5563; }
+    tr.sg-detail.hidden { display: none; }
+    .sg-detail-cols { display: flex; gap: 2.5rem; flex-wrap: wrap; }
+    .sg-detail-cols b { display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: #9ca3af; margin-bottom: 0.3rem; }
+    .sg-detail-cols ul { margin: 0; padding-left: 1.1rem; }
+
+    /* ── Modal form (paylaşılan kalıp: templates/items.html) ── */
+    .form-label-sm { font-size: 0.78rem; font-weight: 600; color: #6b7280; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.35rem; display: block; }
+    .form-control, .form-select { border: 1.5px solid #e5e7eb; border-radius: 8px; padding: 0.6rem 0.9rem; font-family: 'Jost', sans-serif; font-size: 0.9rem; color: #1f2937; transition: border-color 0.2s, box-shadow 0.2s; }
+    .form-control:focus, .form-select:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(44,44,115,0.10); outline: none; }
+    .btn-save { padding: 0.6rem 1.5rem; background: var(--navy); color: var(--white); border: none; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+    .btn-save:hover { background: #23236b; }
+
     /* ── Empty state ── */
     .empty-state { padding: 2.5rem 1rem; text-align: center; color: #9ca3af; }
     .empty-state i { font-size: 2rem; display: block; margin-bottom: 0.6rem; color: #d1d5db; }
@@ -452,35 +489,102 @@
       </div>
 
       <!-- ── Row 2: Low-Stock Alert ── -->
-      <div class="panel">
-        <div class="panel-header">
+      <div class="panel" id="eksik">
+        <div class="panel-header" style="flex-wrap:wrap;">
           <div class="panel-icon panel-icon-red"><i class="bi bi-exclamation-triangle-fill"></i></div>
-          <div>
-            <p class="panel-title">Acil Tedarik Listesi</p>
-            <p class="panel-subtitle">Min. stok seviyesinin altına düşen ürünler</p>
+          <div style="flex:1;min-width:200px;">
+            <p class="panel-title">Eksik Hammaddeler</p>
+            <p class="panel-subtitle">Sıfır stok, kritik altı ve yalnız numunesi olan kalemler</p>
+          </div>
+          <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
+            <button type="button" class="plan-chip active" data-cat="hammadde" onclick="sgSetCategory('hammadde')">Hammadde</button>
+            <button type="button" class="plan-chip" data-cat="ambalaj" onclick="sgSetCategory('ambalaj')">Ambalaj</button>
+            <button type="button" class="plan-chip" data-cat="all" onclick="sgSetCategory('all')">Tümü</button>
+            <button type="button" class="pill" onclick="sgExport('xlsx')"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+            <button type="button" class="pill" onclick="sgExport('pdf')"><i class="bi bi-file-earmark-pdf"></i> PDF</button>
           </div>
         </div>
+
+        <div class="sg-summary">
+          <div class="sg-tile active" data-status="sifir" onclick="sgToggleStatus('sifir')">
+            <div class="sg-tile-n" id="sgCountSifir">0</div><div class="sg-tile-lbl">Sıfır Stok</div>
+          </div>
+          <div class="sg-tile active" data-status="kritik" onclick="sgToggleStatus('kritik')">
+            <div class="sg-tile-n" id="sgCountKritik">0</div><div class="sg-tile-lbl">Kritik Altı</div>
+          </div>
+          <div class="sg-tile active" data-status="numune" onclick="sgToggleStatus('numune')">
+            <div class="sg-tile-n" id="sgCountNumune">0</div><div class="sg-tile-lbl">Sadece Numune</div>
+          </div>
+          <div class="sg-tile" style="cursor:default;">
+            <div class="sg-tile-n" id="sgCountOrders">0</div><div class="sg-tile-lbl">Sipariş Verildi</div>
+          </div>
+        </div>
+
+        <div class="sg-toolbar">
+          <input type="text" class="sg-search" id="sgSearch" placeholder="Hammadde, Türkçe ad, tedarikçi…" oninput="sgRender()" />
+          <span id="sgCount" style="font-size:0.8rem;color:#9ca3af;">—</span>
+          <button type="button" class="sg-min-hint" id="sgMinHint" onclick="sgToggleMinUndefined()">Min. tanımsız: 0</button>
+        </div>
+
         <div class="table-responsive">
           <table>
             <thead>
               <tr>
-                <th>Ürün</th>
-                <th>Kategori</th>
+                <th>Hammadde</th>
+                <th>Durum</th>
                 <th style="text-align:right;">Mevcut / Min.</th>
-                <th style="text-align:right;">Açık Miktar</th>
-                <th>Son Tedarikçi</th>
+                <th style="text-align:right;">Numune</th>
+                <th>Reçeteler</th>
+                <th>Son Hareket</th>
+                <th>Sipariş</th>
               </tr>
             </thead>
-            <tbody id="alertBody">
-              <tr><td colspan="5"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+            <tbody id="sgBody">
+              <tr><td colspan="7"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
             </tbody>
           </table>
         </div>
-        <div class="panel-footer"><span id="alertFooter">—</span></div>
+        <div class="panel-footer"><span id="sgFooter">—</span></div>
       </div>
 
     </div>
   </main>
+
+  <!-- ── Sipariş modalı ── -->
+  <div class="modal fade" id="sgOrderModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" style="font-family:'Playfair Display',serif;color:var(--navy);" id="sgOrderTitle">Sipariş Ver</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label-sm">Tedarikçi</label>
+            <select class="form-select" id="sgOrderSupplier"><option value="">— Tedarikçi seçiniz —</option></select>
+          </div>
+          <div class="row g-2">
+            <div class="col-6 mb-3">
+              <label class="form-label-sm">Miktar</label>
+              <input type="number" class="form-control" id="sgOrderQty" min="0.001" step="0.001" placeholder="0.00" />
+            </div>
+            <div class="col-6 mb-3">
+              <label class="form-label-sm">Beklenen Tarih</label>
+              <input type="date" class="form-control" id="sgOrderDate" />
+            </div>
+          </div>
+          <div class="mb-1">
+            <label class="form-label-sm">Not</label>
+            <input type="text" class="form-control" id="sgOrderNote" maxlength="300" placeholder="opsiyonel" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">İptal</button>
+          <button type="button" class="btn-save" id="sgOrderSaveBtn" onclick="sgSaveOrder()">Kaydet</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div id="toast-container"></div>
 
@@ -545,61 +649,226 @@
       footer.textContent = `7 günlük toplam: ${totalProd.toLocaleString('tr-TR', {maximumFractionDigits:2})} birim`;
     }
 
-    /* ── Render low-stock alert ── */
-    function renderAlert(data) {
-      const tbody  = document.getElementById('alertBody');
-      const footer = document.getElementById('alertFooter');
-      if (!data.length) {
-        tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">
-          <i class="bi bi-check-circle" style="color:#22c55e;"></i>
-          <p>Tüm ürünler yeterli stok seviyesinde. Kritik ürün yok.</p>
-        </div></td></tr>`;
-        footer.textContent = '0 kritik ürün';
+    /* ══ Eksik Hammaddeler ══ */
+    const sgState = {
+      category: 'hammadde',
+      statuses: new Set(['sifir', 'kritik', 'numune']),
+      includeMin: false,
+      q: '',
+      report: null,
+      openDetailId: null,
+      pendingOrderItemId: null,
+    };
+    let _sgSuppliers = [];
+
+    function sgQueryString(extra) {
+      const p = new URLSearchParams();
+      p.set('category', sgState.category);
+      const statuses = [...sgState.statuses];
+      if (sgState.includeMin) statuses.push('min_tanimsiz');
+      if (statuses.length) p.set('status', statuses.join(','));
+      p.set('include_undefined_min', sgState.includeMin ? '1' : '0');
+      if (sgState.q) p.set('q', sgState.q);
+      if (extra) for (const k in extra) p.set(k, extra[k]);
+      return p.toString();
+    }
+
+    async function sgLoad() {
+      try {
+        const r = await fetch(`/api/reports/stock-gaps?${sgQueryString()}`);
+        if (!r.ok) throw new Error('http ' + r.status);
+        sgState.report = await r.json();
+      } catch {
+        document.getElementById('sgBody').innerHTML =
+          `<tr><td colspan="7"><div class="empty-state"><p>Yüklenemedi.</p></div></td></tr>`;
         return;
       }
-      const catMap = {
-        'Hammadde':'#eff6ff|#1d4ed8','Ambalaj':'#f0fdf4|#15803d',
-        'Kimyasal':'#fefce8|#a16207','Yardımcı':'#fdf4ff|#7e22ce',
-        'Bitmiş Ürün':'#fff7ed|#c2410c',
-      };
-      tbody.innerHTML = data.map(item => {
-        const [bg, fg] = (catMap[item.category] || '#f3f4f6|#4b5563').split('|');
-        const stockClass = item.current_stock <= 0 ? 'stock-zero' : 'stock-low';
-        return `<tr>
-          <td class="td-name">${escHtml(item.name)}</td>
-          <td><span style="display:inline-block;padding:2px 10px;border-radius:20px;font-size:0.7rem;font-weight:600;background:${bg};color:${fg};">${escHtml(item.category)}</span></td>
-          <td style="text-align:right;">
-            <span class="stock-fraction">
-              <span class="${stockClass}">${item.current_stock.toLocaleString('tr-TR', {maximumFractionDigits:2})}</span>
-              <span style="color:#9ca3af;"> / ${item.min_stock_level.toLocaleString('tr-TR', {maximumFractionDigits:2})} ${escHtml(item.unit)}</span>
-            </span>
-          </td>
-          <td style="text-align:right;">
-            <span class="deficit-badge"><i class="bi bi-arrow-down-short"></i>${item.deficit.toLocaleString('tr-TR', {maximumFractionDigits:2})} ${escHtml(item.unit)}</span>
-          </td>
-          <td>
-            ${item.last_supplier !== '—'
-              ? `<span class="supplier-chip"><i class="bi bi-truck"></i>${escHtml(item.last_supplier)}</span>`
-              : '<span style="color:#9ca3af;font-size:0.82rem;">Bilinmiyor</span>'}
-          </td>
-        </tr>`;
+      sgRenderSummary();
+      sgRender();
+    }
+
+    function sgRenderSummary() {
+      const s = sgState.report.summary;
+      document.getElementById('sgCountSifir').textContent  = s.sifir;
+      document.getElementById('sgCountKritik').textContent = s.kritik;
+      document.getElementById('sgCountNumune').textContent = s.numune;
+      document.getElementById('sgCountOrders').textContent = s.open_orders;
+      document.getElementById('sgMinHint').textContent = `Min. tanımsız: ${s.min_undefined}`;
+    }
+
+    const SG_BADGE_ICON = { sifir: 'bi-x-circle-fill', kritik: 'bi-exclamation-triangle-fill',
+                            numune: 'bi-eyedropper', min_tanimsiz: 'bi-question-circle' };
+    function sgBadge(row) {
+      return `<span class="sg-badge sg-badge-${row.status}"><i class="bi ${SG_BADGE_ICON[row.status] || ''}"></i>${escHtml(row.status_label)}</span>`;
+    }
+
+    function sgOrderCell(row) {
+      const canOrder = window.can && window.can('inventory', 'adjust');
+      if (row.order) {
+        const o = row.order;
+        const bits = [o.supplier_name, [o.quantity, o.unit].filter(Boolean).join(' '), o.expected_date]
+          .filter(Boolean).map(escHtml).join(' · ');
+        return `<span class="sg-order-badge"><i class="bi bi-check2-circle"></i>${bits || 'Sipariş verildi'}</span>` +
+          (canOrder ? `<button type="button" class="sg-order-cancel" title="Sipariş işaretini kaldır" onclick="event.stopPropagation();sgCancelOrder(${row.item_id})"><i class="bi bi-x-lg"></i></button>` : '');
+      }
+      return canOrder
+        ? `<button type="button" class="sg-order-btn" onclick="event.stopPropagation();sgOpenOrder(${row.item_id})">Sipariş ver</button>`
+        : '<span style="color:#9ca3af;font-size:0.8rem;">—</span>';
+    }
+
+    function sgDetailHtml(row) {
+      const recipes = row.recipes.length
+        ? `<ul>${row.recipes.map(r => `<li>${escHtml(r.name)}</li>`).join('')}</ul>`
+        : '<span style="color:#9ca3af;">Hiçbir aktif reçetede kullanılmıyor.</span>';
+      const lots = row.sample_lots.length
+        ? `<ul>${row.sample_lots.map(l => `<li>${escHtml(l.lot_number)} · ${(l.quantity).toLocaleString('tr-TR',{maximumFractionDigits:4})} ${escHtml(row.unit)}${l.supplier_name ? ' · ' + escHtml(l.supplier_name) : ''}</li>`).join('')}</ul>`
+        : '';
+      return `<div class="sg-detail-cols">
+        <div><b>Reçeteler (${row.recipe_count})</b>${recipes}</div>
+        ${row.sample_lots.length ? `<div><b>Numune Lotları</b>${lots}</div>` : ''}
+        ${row.order && row.order.note ? `<div><b>Sipariş Notu</b>${escHtml(row.order.note)}</div>` : ''}
+      </div>`;
+    }
+
+    function sgRender() {
+      const q = window.trFold ? window.trFold(sgState.q) : (sgState.q || '').toLowerCase();
+      let rows = (sgState.report.rows || []).filter(r => {
+        if (!q) return true;
+        const hay = window.trFold ? window.trFold(`${r.name} ${r.name_tr} ${r.supplier_name||''} ${r.last_supplier||''}`)
+                                   : `${r.name} ${r.name_tr}`.toLowerCase();
+        return hay.includes(q);
+      });
+      const body = document.getElementById('sgBody');
+      const footer = document.getElementById('sgFooter');
+      document.getElementById('sgCount').textContent = `${rows.length} kayıt`;
+      if (!rows.length) {
+        body.innerHTML = `<tr><td colspan="7"><div class="empty-state">
+          <i class="bi bi-check-circle" style="color:#22c55e;"></i>
+          <p>Seçili filtrelerde eksik hammadde yok.</p></div></td></tr>`;
+        footer.textContent = '0 kayıt';
+        return;
+      }
+      body.innerHTML = rows.map(r => {
+        const cur = r.current_stock.toLocaleString('tr-TR', {maximumFractionDigits:2});
+        const min = r.min_stock_level.toLocaleString('tr-TR', {maximumFractionDigits:2});
+        const stockClass = r.current_stock <= 0 ? 'stock-zero' : 'stock-low';
+        const numune = r.sample_qty > 0
+          ? `${r.sample_qty.toLocaleString('tr-TR',{maximumFractionDigits:2})} ${escHtml(r.unit)}` : '—';
+        const recipePill = r.recipe_count
+          ? `<button type="button" class="sg-recipe-pill" onclick="event.stopPropagation();sgToggleDetail(${r.item_id})">${r.recipe_count} reçete</button>`
+          : '<span style="color:#9ca3af;font-size:0.8rem;">—</span>';
+        const open = sgState.openDetailId === r.item_id;
+        return `<tr class="sg-row" onclick="sgToggleDetail(${r.item_id})">
+          <td class="td-name">${escHtml(r.name)}${r.name_tr ? `<div style="font-weight:400;color:#9ca3af;font-size:0.78rem;">${escHtml(r.name_tr)}</div>` : ''}</td>
+          <td>${sgBadge(r)}</td>
+          <td style="text-align:right;"><span class="stock-fraction"><span class="${stockClass}">${cur}</span><span style="color:#9ca3af;"> / ${min} ${escHtml(r.unit)}</span></span></td>
+          <td style="text-align:right;">${numune}</td>
+          <td>${recipePill}</td>
+          <td style="color:#6b7280;font-size:0.82rem;">${escHtml(r.last_movement || '—')}</td>
+          <td onclick="event.stopPropagation();">${sgOrderCell(r)}</td>
+        </tr>
+        <tr class="sg-detail ${open ? '' : 'hidden'}" data-detail-for="${r.item_id}"><td colspan="7">${sgDetailHtml(r)}</td></tr>`;
       }).join('');
-      footer.textContent = `${data.length} ürün kritik seviyede`;
+      footer.textContent = `${rows.length} kayıt · rapor: ${sgState.report.generated_at}`;
+    }
+
+    function sgToggleDetail(itemId) {
+      sgState.openDetailId = sgState.openDetailId === itemId ? null : itemId;
+      sgRender();
+    }
+
+    function sgToggleStatus(status) {
+      const tile = document.querySelector(`.sg-tile[data-status="${status}"]`);
+      if (sgState.statuses.has(status)) { sgState.statuses.delete(status); tile.classList.remove('active'); }
+      else { sgState.statuses.add(status); tile.classList.add('active'); }
+      sgLoad();
+    }
+
+    function sgToggleMinUndefined() {
+      sgState.includeMin = !sgState.includeMin;
+      document.getElementById('sgMinHint').style.color = sgState.includeMin ? 'var(--navy)' : '';
+      sgLoad();
+    }
+
+    function sgSetCategory(cat) {
+      sgState.category = cat;
+      document.querySelectorAll('#eksik .plan-chip[data-cat]').forEach(b => b.classList.toggle('active', b.dataset.cat === cat));
+      sgLoad();
+    }
+
+    function sgExport(fmt) {
+      window.open(`/api/reports/stock-gaps/export?${sgQueryString({format: fmt})}`, '_blank');
+    }
+
+    /* ── Sipariş modalı ── */
+    async function sgOpenOrder(itemId) {
+      sgState.pendingOrderItemId = itemId;
+      const row = (sgState.report.rows || []).find(r => r.item_id === itemId);
+      document.getElementById('sgOrderTitle').textContent = row ? `Sipariş Ver — ${row.name}` : 'Sipariş Ver';
+      document.getElementById('sgOrderQty').value = '';
+      document.getElementById('sgOrderDate').value = '';
+      document.getElementById('sgOrderNote').value = '';
+      const sel = document.getElementById('sgOrderSupplier');
+      sel.innerHTML = '<option value="">— Tedarikçi seçiniz —</option>';
+      try {
+        if (!_sgSuppliers.length) _sgSuppliers = await fetch('/api/suppliers').then(r => r.json());
+        const sorted = window.trSortBy ? window.trSortBy(_sgSuppliers, 'name') : _sgSuppliers;
+        sorted.forEach(s => { const o = document.createElement('option'); o.value = s.id; o.textContent = s.name; sel.appendChild(o); });
+        if (row && row.supplier_id) sel.value = row.supplier_id;
+      } catch {}
+      new bootstrap.Modal(document.getElementById('sgOrderModal')).show();
+    }
+
+    async function sgSaveOrder() {
+      const itemId = sgState.pendingOrderItemId;
+      if (!itemId) return;
+      const payload = {
+        supplier_id: parseInt(document.getElementById('sgOrderSupplier').value) || null,
+        quantity: parseFloat(document.getElementById('sgOrderQty').value) || null,
+        expected_date: document.getElementById('sgOrderDate').value || null,
+        note: document.getElementById('sgOrderNote').value.trim() || null,
+      };
+      const btn = document.getElementById('sgOrderSaveBtn');
+      btn.disabled = true;
+      try {
+        const r = await fetch(`/api/reports/stock-gaps/${itemId}/order`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(d.detail || 'Kaydedilemedi.'); return; }
+        showToast('Sipariş işaretlendi.', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('sgOrderModal')).hide();
+        sgLoad();
+      } catch { showToast('Sunucuya bağlanılamadı.'); }
+      finally { btn.disabled = false; }
+    }
+
+    async function sgCancelOrder(itemId) {
+      if (!confirm('Sipariş işareti kaldırılsın mı?')) return;
+      try {
+        const r = await fetch(`/api/reports/stock-gaps/${itemId}/order`, { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(d.detail || 'Kaldırılamadı.'); return; }
+        showToast('Sipariş işareti kaldırıldı.', 'success');
+        sgLoad();
+      } catch { showToast('Sunucuya bağlanılamadı.'); }
     }
 
     /* ── Load all ── */
     async function loadAll() {
       try {
-        const [usageRes, trendRes, alertRes] = await Promise.all([
+        const [usageRes, trendRes] = await Promise.all([
           fetch('/api/reports/top-usage'),
           fetch('/api/reports/production-trends'),
-          fetch('/api/reports/low-stock-alert'),
         ]);
         renderUsage(await usageRes.json());
         renderTrend(await trendRes.json());
-        renderAlert(await alertRes.json());
       } catch {
         showToast('Rapor verileri yüklenirken hata oluştu.');
+      }
+      sgLoad();
+      if (location.hash === '#eksik') {
+        setTimeout(() => document.getElementById('eksik')?.scrollIntoView({behavior: 'smooth'}), 300);
       }
     }
 

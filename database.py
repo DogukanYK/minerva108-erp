@@ -239,6 +239,42 @@ class SupplierPrice(Base):
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
 
 
+class StockOrderFlag(Base):
+    """Eksik Hammaddeler raporu — 'sipariş verildi' işareti.
+
+    Ürün başına EN FAZLA bir AÇIK (closed_at IS NULL) bayrak — kısmi tekil
+    indeks bunu DB seviyesinde zorlar. Yeniden işaretlemede eskisi
+    `closed_reason='manual'` ile kapanır. Gerçek mal kabul (receive_stock
+    numune-olmayan dal + samples/convert) `closed_reason='received'` ile
+    kapatır (routers/inventory.py, core/stock_gaps.close_open_flags).
+    Elle stok düzeltmesi (adjust_stock) KAPATMAZ — sayım düzeltmesi teslimat
+    değildir. Görüntüleme core/stock_gaps.py'dedir.
+    """
+    __tablename__ = "stock_order_flags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False, index=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
+    quantity = Column(Float, nullable=True)
+    unit = Column(String(20), nullable=True)             # item.unit snapshot
+    expected_date = Column(Date, nullable=True)
+    note = Column(String(300), nullable=True)
+    ordered_by = Column(String(50), nullable=True)
+    ordered_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    closed_at = Column(DateTime, nullable=True)
+    closed_reason = Column(String(10), nullable=True)    # received | manual
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("uq_stock_order_flags_open_item", "item_id", unique=True,
+              postgresql_where=text("closed_at IS NULL")),
+    )
+
+    item = relationship("Item", foreign_keys=[item_id])
+    supplier = relationship("Supplier", foreign_keys=[supplier_id])
+
+
 class Delivery(Base):
     """Hediye / numune teslimatı — üretim/satış dışı stok çıkışı.
 
@@ -2282,6 +2318,8 @@ def init_db():
             # alembic ÇALIŞTIRMIYOR; kolon prod'a yalnız bu satırla ulaşır
             # (migration c7e9a1b3d5f7 geçmiş + temiz kurulum içindir).
             "ALTER TABLE sample_analyses ADD COLUMN mode VARCHAR(10) NOT NULL DEFAULT 'new'",
+            # Eksik Hammaddeler raporu — stock_order_flags YENİ bir tablo,
+            # create_all ile gelir; buraya eklenecek kolon yok (bilgi notu).
         ):
             alter_safe(stmt)
 
