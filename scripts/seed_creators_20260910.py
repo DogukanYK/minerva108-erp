@@ -114,11 +114,21 @@ CREATORS = [
         "full_name": "Ömür Küçük",
         "email": "kckomur@yahoo.com",
         "phone": "05074374711",
-        "city": None,                        # sözleşmede yok
+        "city": "İstanbul",
         "accepted_model": "karma",
         "relationship_stage": "affiliate",
         "accounts": [("instagram", "omurcoach", True)],
-        "address": None,                     # henüz alınmadı
+        # 10.09.2026 14:07 WhatsApp. İŞ YERİ adresi (muayenehane) — kargo mesai
+        # saatinde ulaşmalı.  Creator "fenneryolu / Muayehanesi" yazmış, yazım
+        # düzeltildi; semt yazılmamıştı, Bağdat Cad. + Feneryolu = Kadıköy.
+        "address": {
+            "recipient_name": "Ömür Küçük",
+            "line1": "Feneryolu Mah. Bağdat Cad. No: 71 Kat: 4 Daire: 10",
+            "line2": "Prof. Dr. Hasan Aydın Muayenehanesi",
+            "district": "Kadıköy",
+            "city": "İstanbul",
+            "phone": "05074374711",
+        },
         "notes": (
             "Sözleşme: 08.09.2026 (2. nüsha, 10.09'da geldi). 1. nüshada EK-1'e "
             "kendi eliyle %20 komisyon / 500 TL eşik yazmıştı ve taramada 4. sayfa "
@@ -134,7 +144,9 @@ CREATORS = [
             "Kimlik unsurları: 5/5 onaylı. KVKK: 3/3 onaylı.\n"
             "İkinci hesap: 'gercekbaglarinpesinde' — sözleşmede yazılı ama "
             "platformu (Instagram mı TikTok mu) belirtilmemiş, teyit edilmeli.\n"
-            "ADRES HENÜZ ALINMADI."
+            "Adres 10.09.2026 WhatsApp ile alındı — İŞ YERİ (muayenehane), kargo\n"
+            "mesai saatinde ulaşmalı. Semt yazılmamıştı, Bağdat Cad.+Feneryolu\n"
+            "= Kadıköy olarak tamamlandı."
         ),
     },
     {
