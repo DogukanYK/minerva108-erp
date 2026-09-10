@@ -1,0 +1,44 @@
+{
+  "_comment": "Faz 0 barkod uzlaştırması — kaynak: MINERVA_TUM_URUNLER_Master (2).xlsx (08.07.2026, 69 ürün, GS1+ÜTS/GGBS onaylı). Lab'ın 03.02.2026 tarihli 'PRODUCT LIST' Excel'i ile Shopify/IMS arasındaki 4 barkod uyuşmazlığının çözümü. IMS'e henüz uygulanmadı — Faz 1 içe aktarma modülü bu dosyayı eski→yeni eşleme kaynağı olarak okuyacak.",
+  "resolved_aliases": [
+    {"old": "8683829206208", "new": "8683829206598", "product": "Kırmızı Yonca Leke Karşıtı Krem, 50 ML",
+     "reason": "lab_excel_stale", "note": "Lab'ın Şubat listesindeki barkod eskiydi; Shopify/IMS'teki 8683829206598 GS1 master ile doğrulandı, DOĞRU. Aksiyon yok."},
+    {"old": "8683829206529", "new": "8683829206420", "product": "Yüz Temizleme Jeli, 200 ML",
+     "reason": "lab_excel_stale", "note": "Aynı durum; Shopify/IMS'teki 8683829206420 doğru. Aksiyon yok."}
+  ],
+  "serenida_uts_migration": {
+    "note": "15 Serenida ürünü eski ÜTS barkodundan (8683829207xxx) yeni GS1 önekine (8685282019xxx) geçti. Shopify'daki Serenida mağazası ZATEN yeni barkodları kullanıyor (2026-09-10 doğrulandı, 15/15 eşleşti) — Shopify/IMS tarafında aksiyon YOK. Kalan tek iş resmi ÜTS kaydının (sağlık.gov.tr) eski barkodla delist edilmesi — bu Fatih Bey'in regülasyon işi, yazılımla ilgisi yok.",
+    "pairs": [
+      {"product": "Besleyici Vücut Losyonu",            "old_uts": "8683829207120", "new_gs1": "8685282019005"},
+      {"product": "Yüz Toniği",                          "old_uts": "8683829207007", "new_gs1": "8685282019012"},
+      {"product": "Bentonit Anti-Aging Kil Maskesi",     "old_uts": "8683829207014", "new_gs1": "8685282019029"},
+      {"product": "Aydınlatıcı Yüz Temizleme Jeli",      "old_uts": "8683829207021", "new_gs1": "8685282019036"},
+      {"product": "Kuru Saçlar İçin Besleyici Şampuan",  "old_uts": "8683829207038", "new_gs1": "8685282019043"},
+      {"product": "Yağlı Saçlar İçin Arındırıcı Şampuan","old_uts": "8683829207045", "new_gs1": "8685282019050"},
+      {"product": "Anti-Akne Yüz ve Vücut Losyonu",      "old_uts": "8683829207052", "new_gs1": "8685282019067"},
+      {"product": "Aloe Vera Ferahlatıcı El ve Ayak Losyonu", "old_uts": "8683829207069", "new_gs1": "8685282019074"},
+      {"product": "Kömürlü Beyazlatıcı Diş Macunu",      "old_uts": "8683829207076", "new_gs1": "8685282019081"},
+      {"product": "Bikini Bölgesi Cilt Tonu Dengeleyici Krem", "old_uts": "8683829207083", "new_gs1": "8685282019098"},
+      {"product": "Niasinamid Aydınlatıcı Losyon",       "old_uts": "8683829207090", "new_gs1": "8685282019104"},
+      {"product": "Stick Deodorant",                     "old_uts": "8683829207106", "new_gs1": "8685282019111"},
+      {"product": "Beyazlık Etkili Diş Macunu",          "old_uts": "8683829207113", "new_gs1": "8685282019128"},
+      {"product": "Leke Karşıtı Krem",                   "old_uts": "8683829207144", "new_gs1": "8685282019135"},
+      {"product": "Yoğun Nem Hyaluronik Asit Serumu",    "old_uts": "8683829207137", "new_gs1": "8685282019142"}
+    ]
+  },
+  "discontinued": [
+    {"barcode": "8683829207151", "product": "Minerva Stick Deodorant, 50 ML",
+     "reason": "market_discontinued", "note": "Resmi ÜTS listesinde 'piyasadan çıktı' — delist edildi. Lab'ın Şubat Excel'inde hâlâ satır olarak görünüyor, GÜNCEL DEĞİL. Minerva'nın piyasadaki deodorantı artık Roll-On Deodorant (8683829206345, Shopify'da DRAFT)."}
+  ],
+  "missing_items": [
+    {"barcode": "8683829206451", "brand": "Minerva", "size": "200 ML",
+     "product_guess": "Yoğun Saç Bakım Maskesi (Intensive Hair Care Mask), 200 ML — master dosyada ürün adı 'MİNERVA 108' olarak kesilmiş görünüyor",
+     "status": "gs1_uts_registered_no_shopify_ims_item",
+     "note": "100 ml eşi (8683829206253) hem Shopify'da hem IMS'te var; 200 ml varyantı GS1/ÜTS'te kayıtlı olduğu hâlde ne Shopify'da ne IMS'te bir ürün/varyant olarak mevcut değil. Faz 1'de bu barkodla yeni bir child item/variant oluşturulmalı — isim laboratuvardan teyit edilmeli."}
+  ],
+  "content_bugs_found_not_fixed": [
+    {"barcode": "8683829206321", "product": "Minerva Sunscreen SPF 30+ (Vegan Mineral Protection)",
+     "issue": "Shopify başlığı '(100 ml)' yazıyor; GS1 master bu barkodu 200 ML olarak kaydediyor (lab listesi de 200 ML diyor).",
+     "action": "SIZE_MISMATCH — core/product_content_rules.validate_card bunu yakalar. Faz 2 onay akışı olmadan düzeltilmedi."}
+  ]
+}
