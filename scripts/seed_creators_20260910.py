@@ -111,6 +111,33 @@ CREATORS = [
         ),
     },
     {
+        "full_name": "Ömür Küçük",
+        "email": "kckomur@yahoo.com",
+        "phone": "05074374711",
+        "city": None,                        # sözleşmede yok
+        "accepted_model": "karma",
+        "relationship_stage": "affiliate",
+        "accounts": [("instagram", "omurcoach", True)],
+        "address": None,                     # henüz alınmadı
+        "notes": (
+            "Sözleşme: 08.09.2026 (2. nüsha, 10.09'da geldi). 1. nüshada EK-1'e "
+            "kendi eliyle %20 komisyon / 500 TL eşik yazmıştı ve taramada 4. sayfa "
+            "(C bölümü) eksikti; ikisi de düzeldi.\n"
+            "KOMİSYON PAZARLIĞI: 09.09'da %13-15 talep etti (son 30 günde 320B+ "
+            "görüntülenme, 1.200+ yeni takipçi gerekçesiyle). Standart %10'da "
+            "kalındı; karşılığında 90 gün sonunda performansa dayalı ambassador "
+            "kademesi (%15) yolu önerildi. Kabul etti ve v2 nüshasını imzaladı — "
+            "EK-1 artık matbu: %10 / 30 gün / aylık / 1.000 TL.\n"
+            "**90 GÜNLÜK DEĞERLENDİRME SÖZÜ VERİLDİ — 08.12.2026'da bakılacak.**\n"
+            "Organik içerik kullanımı: EVET.\n"
+            "Ücretli reklam (paid media): EVET — süre 12 ay, BİTİŞ 08.09.2027.\n"
+            "Kimlik unsurları: 5/5 onaylı. KVKK: 3/3 onaylı.\n"
+            "İkinci hesap: 'gercekbaglarinpesinde' — sözleşmede yazılı ama "
+            "platformu (Instagram mı TikTok mu) belirtilmemiş, teyit edilmeli.\n"
+            "ADRES HENÜZ ALINMADI."
+        ),
+    },
+    {
         "full_name": "Gülşah Özgüler",
         "email": "gulsahcolak95@outlook.com",
         "phone": "05342458441",
@@ -218,6 +245,10 @@ def main() -> int:
 
             # ── Varsayılan adres ────────────────────────────────────────────
             a = rec["address"]
+            if a is None:
+                print("    · adres henüz alınmadı — atlandı")
+                print()
+                continue
             has_addr = (c is not None and db.query(InfluencerAddress.id)
                         .filter(InfluencerAddress.creator_id == c.id).first())
             if has_addr:
