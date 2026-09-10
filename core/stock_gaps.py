@@ -37,12 +37,13 @@ from database import Inventory, Item, Recipe, RecipeIngredient, StockOrderFlag, 
 from core.items_report import tr_key
 from core.supplier_prices import normalize
 
-STATUS_RANK = {"sifir": 0, "numune": 1, "kritik": 2, "min_tanimsiz": 3}
+STATUS_RANK = {"sifir": 0, "numune": 1, "kritik": 2, "min_tanimsiz": 3, "yeterli": 4}
 STATUS_LABELS = {
     "sifir": "Sıfır stok",
     "numune": "Sadece numune",
     "kritik": "Kritik altı",
     "min_tanimsiz": "Min. tanımsız",
+    "yeterli": "Yeterli",
 }
 CATEGORIES = ("hammadde", "ambalaj", "all")
 _NOT_HAMMADDE = ("Ambalaj", "Bitmiş Ürün")
@@ -79,20 +80,29 @@ def status_label(status: str) -> str:
 
 def assemble(db: Session, domain: str, *, category: str = "hammadde",
              statuses: Optional[List[str]] = None, include_undefined_min: bool = False,
-             q: Optional[str] = None) -> dict:
+             q: Optional[str] = None, item_ids: Optional[List[int]] = None) -> dict:
+    """Rapor derle.
+
+    `item_ids` verilirse SEÇİM MODU: kategori/durum/arama süzgeçleri yok sayılır,
+    tam olarak seçilen kartlar döner (kullanıcı hammadde + ambalajı birlikte tek
+    Excel'e alabilsin diye).  Seçilen bir kalem bu arada stoklanmışsa satır
+    düşmez, `yeterli` durumuyla görünür — "12 seçtim, 12 satır aldım".
+    """
     category = (category or "hammadde").lower()
     if category not in CATEGORIES:
         category = "hammadde"
+    picked = [int(i) for i in item_ids] if item_ids else None
 
-    # (1) aday ürünler — aktif + domain + kategori
-    items = (
+    # (1) aday ürünler — aktif + domain + kategori (seçim modunda: yalnız seçilenler)
+    q_items = (
         db.query(Item)
         .options(joinedload(Item.supplier))
-        .filter(Item.is_active == True, Item.domain == domain,  # noqa: E712
-                *category_filter(category))
-        .all()
+        .filter(Item.is_active == True, Item.domain == domain)  # noqa: E712
     )
-    if category == "all":
+    q_items = (q_items.filter(Item.id.in_(picked)) if picked
+               else q_items.filter(*category_filter(category)))
+    items = q_items.all()
+    if category == "all" and not picked:
         # Konteyner (parent) kartlar doğası gereği stoksuzdur — "sıfır" gibi
         # görünüp 25 kap satırıyla raporu boğmasın.
         parent_ids = {i.parent_id for i in items if i.parent_id}
@@ -115,14 +125,17 @@ def assemble(db: Session, domain: str, *, category: str = "hammadde",
         sq = sample_qty_by_item.get(it.id, 0.0)
         st = classify(it.current_stock, it.min_stock_level, sq)
         if st is None:
-            if (it.min_stock_level or 0.0) <= EPS and (it.current_stock or 0.0) > EPS:
+            undefined_min = ((it.min_stock_level or 0.0) <= EPS and (it.current_stock or 0.0) > EPS)
+            if undefined_min:
                 min_undefined += 1
-                if include_undefined_min:
-                    classified.append((it, "min_tanimsiz"))
+            if picked:
+                classified.append((it, "min_tanimsiz" if undefined_min else "yeterli"))
+            elif undefined_min and include_undefined_min:
+                classified.append((it, "min_tanimsiz"))
             continue
         classified.append((it, st))
 
-    if statuses:
+    if statuses and not picked:
         wanted = {s for s in statuses if s in STATUS_RANK}
         classified = [(it, st) for it, st in classified if st in wanted]
 
@@ -207,7 +220,7 @@ def assemble(db: Session, domain: str, *, category: str = "hammadde",
             open_flags_by_item[f.item_id] = f
         open_orders_total = len(flags)
 
-    qn = normalize(q) if q else None
+    qn = normalize(q) if (q and not picked) else None
     rows = []
     for it, st in classified:
         sup_name = it.supplier.name if it.supplier else None

@@ -372,3 +372,59 @@ def test_reports_page_has_eksik_section(authed_client: TestClient):
     r = authed_client.get("/reports")
     assert r.status_code == 200
     assert 'id="eksik"' in r.text
+
+
+# ─── Seçim modu (satır bazlı dışa aktarma) ────────────────────────────────────
+
+def test_assemble_item_ids_ignores_filters(authed_client: TestClient, db_session: Session):
+    """Seçim modu: kategori/durum süzgeçleri yok sayılır — hammadde + ambalaj
+    birlikte, hatta stoğu yeterli olan kalem bile seçildiyse satır olarak döner."""
+    from core.stock_gaps import assemble
+    ham = _item(db_session, "UÇUCU YAĞ A", stock=0, category="Hammadde")
+    amb = _item(db_session, "ŞİŞE 200 ML", stock=0, category="Ambalaj")
+    dolu = _item(db_session, "STOKLU MADDE", stock=50, min_=5, category="Hammadde")
+    _item(db_session, "SEÇİLMEYEN", stock=0, category="Hammadde")
+    db_session.commit()
+
+    rep = assemble(db_session, "cosmetics", category="hammadde",
+                   statuses=["sifir"], item_ids=[ham.id, amb.id, dolu.id])
+    by_name = {r["name"]: r for r in rep["rows"]}
+    assert set(by_name) == {"UÇUCU YAĞ A", "ŞİŞE 200 ML", "STOKLU MADDE"}
+    assert by_name["ŞİŞE 200 ML"]["status"] == "sifir"          # kategori süzgeci yok sayıldı
+    assert by_name["STOKLU MADDE"]["status"] == "yeterli"        # seçilen satır düşmez
+    assert by_name["STOKLU MADDE"]["status_label"] == "Yeterli"
+
+
+def test_export_with_ids(authed_client: TestClient, db_session: Session):
+    ham = _item(db_session, "UÇUCU YAĞ B", stock=0, category="Hammadde")
+    amb = _item(db_session, "KAVANOZ 50 ML", stock=0, category="Ambalaj")
+    _item(db_session, "DIŞARIDA KALAN", stock=0, category="Hammadde")
+    db_session.commit()
+
+    r = authed_client.get(f"{_API}/export?format=xlsx&ids={ham.id},{amb.id}", headers=_HDR)
+    assert r.status_code == 200
+    assert "secim" in r.headers["content-disposition"]
+    wb = load_workbook(BytesIO(r.content))
+    names = [c.value for row in wb["Eksikler"].iter_rows() for c in row if isinstance(c.value, str)]
+    assert "UÇUCU YAĞ B" in names and "KAVANOZ 50 ML" in names
+    assert "DIŞARIDA KALAN" not in names
+
+
+def test_export_ids_pdf_and_validation(authed_client: TestClient, db_session: Session):
+    it = _item(db_session, "PDF SEÇİM", stock=0)
+    db_session.commit()
+    r = authed_client.get(f"{_API}/export?format=pdf&ids={it.id}", headers=_HDR)
+    assert r.status_code == 200 and _all_pages_a4(r.content)
+    assert authed_client.get(f"{_API}/export?format=xlsx&ids=abc", headers=_HDR).status_code == 400
+    assert authed_client.get(f"{_API}/export?format=xlsx&ids=,", headers=_HDR).status_code == 400
+
+
+def test_export_ids_domain_isolation(authed_client: TestClient, db_session: Session):
+    supp = _item(db_session, "SUPP SEÇİM", stock=0, domain="supplement")
+    ok = _item(db_session, "KOZMETİK SEÇİM", stock=0)
+    db_session.commit()
+    r = authed_client.get(f"{_API}/export?format=xlsx&ids={supp.id},{ok.id}", headers=_HDR)
+    assert r.status_code == 200
+    wb = load_workbook(BytesIO(r.content))
+    names = [c.value for row in wb["Eksikler"].iter_rows() for c in row if isinstance(c.value, str)]
+    assert "KOZMETİK SEÇİM" in names and "SUPP SEÇİM" not in names

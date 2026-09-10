@@ -188,6 +188,10 @@
     .sg-detail-cols { display: flex; gap: 2.5rem; flex-wrap: wrap; }
     .sg-detail-cols b { display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: #9ca3af; margin-bottom: 0.3rem; }
     .sg-detail-cols ul { margin: 0; padding-left: 1.1rem; }
+    .sg-sel-chip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 3px 6px 3px 11px; border-radius: 20px; background: var(--navy); color: #fff; font-size: 0.75rem; font-weight: 600; }
+    .sg-sel-chip button { background: none; border: none; color: rgba(255,255,255,0.75); cursor: pointer; padding: 0 3px; font-size: 0.7rem; line-height: 1; }
+    .sg-sel-chip button:hover { color: #fff; }
+    tr.sg-row.sg-picked { background: #f5f4ff; }
 
     /* ── Modal form (paylaşılan kalıp: templates/items.html) ── */
     .form-label-sm { font-size: 0.78rem; font-weight: 600; color: #6b7280; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.35rem; display: block; }
@@ -500,8 +504,8 @@
             <button type="button" class="plan-chip active" data-cat="hammadde" onclick="sgSetCategory('hammadde')">Hammadde</button>
             <button type="button" class="plan-chip" data-cat="ambalaj" onclick="sgSetCategory('ambalaj')">Ambalaj</button>
             <button type="button" class="plan-chip" data-cat="all" onclick="sgSetCategory('all')">Tümü</button>
-            <button type="button" class="pill" onclick="sgExport('xlsx')"><i class="bi bi-file-earmark-excel"></i> Excel</button>
-            <button type="button" class="pill" onclick="sgExport('pdf')"><i class="bi bi-file-earmark-pdf"></i> PDF</button>
+            <button type="button" class="pill" data-export="xlsx" data-label="Excel" onclick="sgExport('xlsx')">Excel</button>
+            <button type="button" class="pill" data-export="pdf" data-label="PDF" onclick="sgExport('pdf')">PDF</button>
           </div>
         </div>
 
@@ -523,6 +527,11 @@
         <div class="sg-toolbar">
           <input type="text" class="sg-search" id="sgSearch" placeholder="Hammadde, Türkçe ad, tedarikçi…" oninput="sgRender()" />
           <span id="sgCount" style="font-size:0.8rem;color:#9ca3af;">—</span>
+          <button type="button" class="plan-chip" id="sgSelectVisibleBtn" onclick="sgSelectVisible()">Görünenleri seç</button>
+          <span class="sg-sel-chip" id="sgSelChip" style="display:none;">
+            <b id="sgSelCount">0</b> seçili
+            <button type="button" onclick="sgClearSelection()" title="Seçimi temizle"><i class="bi bi-x-lg"></i></button>
+          </span>
           <button type="button" class="sg-min-hint" id="sgMinHint" onclick="sgToggleMinUndefined()">Min. tanımsız: 0</button>
         </div>
 
@@ -530,6 +539,10 @@
           <table>
             <thead>
               <tr>
+                <th style="width:38px;padding-left:1.1rem;">
+                  <input type="checkbox" id="sgSelectAll" title="Görünenleri seç / bırak"
+                         style="accent-color:var(--navy);cursor:pointer;" onclick="sgToggleAllVisible(this)" />
+                </th>
                 <th>Hammadde</th>
                 <th>Durum</th>
                 <th style="text-align:right;">Mevcut / Min.</th>
@@ -540,7 +553,7 @@
               </tr>
             </thead>
             <tbody id="sgBody">
-              <tr><td colspan="7"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+              <tr><td colspan="8"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -658,10 +671,20 @@
       report: null,
       openDetailId: null,
       pendingOrderItemId: null,
+      // Seçim süzgeçten BAĞIMSIZ yaşar: kullanıcı Hammadde sekmesinde uçucu
+      // yağları, sonra Ambalaj sekmesinde şişeleri seçip tek Excel alabilsin.
+      selected: new Set(),
+      visibleIds: [],
     };
     let _sgSuppliers = [];
 
+    function sgSyncQuery() {
+      sgState.q = (document.getElementById('sgSearch')?.value || '').trim();
+      return sgState.q;
+    }
+
     function sgQueryString(extra) {
+      sgSyncQuery();
       const p = new URLSearchParams();
       p.set('category', sgState.category);
       const statuses = [...sgState.statuses];
@@ -731,7 +754,8 @@
     }
 
     function sgRender() {
-      const q = window.trFold ? window.trFold(sgState.q) : (sgState.q || '').toLowerCase();
+      sgSyncQuery();
+      const q = window.trFold ? window.trFold(sgState.q) : sgState.q.toLowerCase();
       let rows = (sgState.report.rows || []).filter(r => {
         if (!q) return true;
         const hay = window.trFold ? window.trFold(`${r.name} ${r.name_tr} ${r.supplier_name||''} ${r.last_supplier||''}`)
@@ -741,8 +765,10 @@
       const body = document.getElementById('sgBody');
       const footer = document.getElementById('sgFooter');
       document.getElementById('sgCount').textContent = `${rows.length} kayıt`;
+      sgState.visibleIds = rows.map(r => r.item_id);
+      sgRenderSelection();
       if (!rows.length) {
-        body.innerHTML = `<tr><td colspan="7"><div class="empty-state">
+        body.innerHTML = `<tr><td colspan="8"><div class="empty-state">
           <i class="bi bi-check-circle" style="color:#22c55e;"></i>
           <p>Seçili filtrelerde eksik hammadde yok.</p></div></td></tr>`;
         footer.textContent = '0 kayıt';
@@ -758,7 +784,12 @@
           ? `<button type="button" class="sg-recipe-pill" onclick="event.stopPropagation();sgToggleDetail(${r.item_id})">${r.recipe_count} reçete</button>`
           : '<span style="color:#9ca3af;font-size:0.8rem;">—</span>';
         const open = sgState.openDetailId === r.item_id;
-        return `<tr class="sg-row" onclick="sgToggleDetail(${r.item_id})">
+        const picked = sgState.selected.has(r.item_id);
+        return `<tr class="sg-row${picked ? ' sg-picked' : ''}" onclick="sgToggleDetail(${r.item_id})">
+          <td style="padding-left:1.1rem;" onclick="event.stopPropagation()">
+            <input type="checkbox" class="sg-check" data-id="${r.item_id}" ${picked ? 'checked' : ''}
+                   style="accent-color:var(--navy);cursor:pointer;" onchange="sgTogglePick(${r.item_id}, this.checked)" />
+          </td>
           <td class="td-name">${escHtml(r.name)}${r.name_tr ? `<div style="font-weight:400;color:#9ca3af;font-size:0.78rem;">${escHtml(r.name_tr)}</div>` : ''}</td>
           <td>${sgBadge(r)}</td>
           <td style="text-align:right;"><span class="stock-fraction"><span class="${stockClass}">${cur}</span><span style="color:#9ca3af;"> / ${min} ${escHtml(r.unit)}</span></span></td>
@@ -767,7 +798,7 @@
           <td style="color:#6b7280;font-size:0.82rem;">${escHtml(r.last_movement || '—')}</td>
           <td onclick="event.stopPropagation();">${sgOrderCell(r)}</td>
         </tr>
-        <tr class="sg-detail ${open ? '' : 'hidden'}" data-detail-for="${r.item_id}"><td colspan="7">${sgDetailHtml(r)}</td></tr>`;
+        <tr class="sg-detail ${open ? '' : 'hidden'}" data-detail-for="${r.item_id}"><td colspan="8">${sgDetailHtml(r)}</td></tr>`;
       }).join('');
       footer.textContent = `${rows.length} kayıt · rapor: ${sgState.report.generated_at}`;
     }
@@ -796,8 +827,45 @@
       sgLoad();
     }
 
+    /* ── Seçim (satır bazlı dışa aktarma) ── */
+    function sgTogglePick(itemId, on) {
+      if (on) sgState.selected.add(itemId); else sgState.selected.delete(itemId);
+      const tr = document.querySelector(`.sg-check[data-id="${itemId}"]`)?.closest('tr');
+      if (tr) tr.classList.toggle('sg-picked', on);
+      sgRenderSelection();
+    }
+    function sgSelectVisible() {
+      sgState.visibleIds.forEach(id => sgState.selected.add(id));
+      sgRender();
+    }
+    function sgToggleAllVisible(cb) {
+      if (cb.checked) sgState.visibleIds.forEach(id => sgState.selected.add(id));
+      else sgState.visibleIds.forEach(id => sgState.selected.delete(id));
+      sgRender();
+    }
+    function sgClearSelection() {
+      sgState.selected.clear();
+      sgRender();
+    }
+    function sgRenderSelection() {
+      const n = sgState.selected.size;
+      const chip = document.getElementById('sgSelChip');
+      document.getElementById('sgSelCount').textContent = n;
+      chip.style.display = n ? 'inline-flex' : 'none';
+      const all = document.getElementById('sgSelectAll');
+      const vis = sgState.visibleIds;
+      all.checked = vis.length > 0 && vis.every(id => sgState.selected.has(id));
+      all.indeterminate = !all.checked && vis.some(id => sgState.selected.has(id));
+      document.querySelectorAll('#eksik .pill[data-export]').forEach(b => {
+        b.textContent = b.dataset.label + (n ? ` (${n} seçili)` : '');
+      });
+    }
+
     function sgExport(fmt) {
-      window.open(`/api/reports/stock-gaps/export?${sgQueryString({format: fmt})}`, '_blank');
+      // Seçim varsa TAM OLARAK seçilenler gider (kategori/durum/arama yok sayılır)
+      const extra = { format: fmt };
+      if (sgState.selected.size) extra.ids = [...sgState.selected].join(',');
+      window.open(`/api/reports/stock-gaps/export?${sgQueryString(extra)}`, '_blank');
     }
 
     /* ── Sipariş modalı ── */

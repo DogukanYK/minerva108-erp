@@ -417,16 +417,31 @@ def stock_gaps_export(
     status: Optional[str] = None,
     include_undefined_min: int = Query(0, ge=0, le=1),
     q: Optional[str] = None,
+    ids: Optional[str] = None,
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("reports", "view")),
     domain: str = Depends(active_domain),
 ):
+    """Ekrandaki süzgeçlerle ya da SEÇİLEN kartlarla (`ids`) dışa aktar.
+
+    `ids` verilirse kategori/durum/arama yok sayılır — lab yalnız istediği
+    uçucu yağları, yalnız istediği ambalajları ya da ikisini birlikte tek
+    Excel'de alabilsin diye (10.09.2026 talebi)."""
     from core.stock_gaps import assemble, build_workbook, render_pdf, export_filename
     from core.supplier_prices import prices_for_items
     from core.delivery_note import content_disposition
     statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
+    picked = None
+    if ids:
+        try:
+            picked = [int(x) for x in ids.split(",") if x.strip()][:2000]
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Geçersiz ürün seçimi."})
+        if not picked:
+            return JSONResponse(status_code=400, content={"detail": "Seçili ürün yok."})
     report = assemble(db, domain, category=category, statuses=statuses,
-                      include_undefined_min=bool(include_undefined_min), q=q)
+                      include_undefined_min=bool(include_undefined_min), q=q,
+                      item_ids=picked)
     try:
         if format == "pdf":
             content = render_pdf(report)
@@ -438,7 +453,7 @@ def stock_gaps_export(
             media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     except Exception:
         return JSONResponse(status_code=500, content={"detail": "Rapor üretilemedi."})
-    fname = export_filename(category, format)
+    fname = export_filename("secim" if picked else category, format)
     return StreamingResponse(
         io.BytesIO(content), media_type=media,
         headers={"Content-Disposition": content_disposition(fname, inline=(format == "pdf"))},
