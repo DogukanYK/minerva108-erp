@@ -278,7 +278,10 @@ yok. DNS sonrası → A kayıtlarını geri al + köprüyü kaldır + yeni→esk
 - [ ] nginx: site conf + rate-limits + realip snippet; `nginx -t`; sertifikalar kopyadan
       geliyor → 443 hemen çalışır. systemd: `minerva.service` + snapshot/backup timer'ları
       (timer'lar prova sırasında **disabled**, cutover'da enable).
-- [ ] `make test` (398 test) yeni sunucuda 3.12 ile → kırmızıysa `uv python install 3.10` fallback.
+- [ ] Test paketi sunucuda ÇALIŞTIRILMAZ: `tests/conftest.py` sabit bir yerel test şifresiyle
+      (`minerva_user`) bağlanır, prod rolünün şifresi farklıdır. Python 3.12 uyumu elemanın
+      kendi makinesinde (Gün 1) tam test paketiyle doğrulanır; sunucuda smoke test yapılır.
+      Kırmızı test çıkarsa fallback `uv python install 3.10`.
 
 ### Faz 2 — Prova (T-3)
 - [ ] `migrate/dump_restore.sh` prova: yeni sunucudan `ssh -L 15432:127.0.0.1:5432 turhost` +
@@ -291,11 +294,15 @@ yok. DNS sonrası → A kayıtlarını geri al + köprüyü kaldır + yeni→esk
       Drive indirme, `product_images` public URL, `/api/system/health` (pg_dump bulunuyor,
       scheduler **kapalı** görünmeli), backup endpoint'ten manuel dump, CRM ve siparis host
       yönlendirmeleri, PDKS sayfası.
-- [ ] Köprü (realip) provası, eski nginx'e dokunmadan: eski sunucudan salt-okunur curl —
-      `ssh turhost 'curl -sk -H "Host: ims.minerva108.com" -H "X-Forwarded-For: <ofisIP>"
-      https://<YENİ_IP>/api/pdks/checkin-config'` → yanıt `ip_allowed` alanı ofis IP'sine
-      göre doğru olmalı (kaynak 136.144.251.26 güvenilir proxy olarak tanındığı için
-      `X-Real-IP` = ofis IP). Aynı isteği başlıksız gönderince `ip_allowed=false` beklenir.
+- [ ] Köprü (realip) provası. Yeni sunucuda realip conf'u AÇ ve Turhost iptaline kadar açık
+      bırak (yalnız eski sunucu IP'sine güvenir, zararsız):
+      `mv /etc/nginx/conf.d/minerva-realip-bridge.conf.DISABLED /etc/nginx/conf.d/minerva-realip-bridge.conf && nginx -t && systemctl reload nginx`.
+      Eski sunucudan (salt-okunur istek, eski nginx'e dokunmaz):
+      `curl -sk -o /dev/null -w '%{http_code}\n' --resolve ims.minerva108.com:443:<YENİ_IP> -H "X-Forwarded-For: 203.0.113.7" https://ims.minerva108.com/login`
+      → yeni sunucuda `tail -1 /var/log/nginx/access.log` satırı `203.0.113.7` ile başlamalı
+      (nginx gerçek istemci IP'sini zincirden aldı; PDKS'nin okuduğu `X-Real-IP` bu değerdir).
+      Aynı isteği Mac'ten (eski sunucu dışından) atınca satır Mac'in IP'siyle başlamalı —
+      dışarıdan gelen sahte başlığa güvenilmez.
 - [ ] Turhost panelde TTL 300 (T-48 saat). Rollback provası: eski sunucuda `freeze-on` →
       `freeze-off` symlink swap + `nginx -t && nginx -s reload` kuru çalıştırma (mesai dışı, saniyelik).
 - [ ] Prova DB'sini sıfırla (`DROP/CREATE DATABASE`) — kişisel veri kalıcı kalmasın (KVKK).
@@ -303,17 +310,22 @@ yok. DNS sonrası → A kayıtlarını geri al + köprüyü kaldır + yeni→esk
 ### Faz 3 — Cutover (T-0, hafta içi 20:00-23:00 TR; ayın 1'i değil)
 Go/no-go: KVKK "go" ✔, testler yeşil ✔, prova <60 sn ✔, TTL 300 ≥24 saat ✔, yeni nginx
 sertifikaları geçerli ✔, son saatlik snapshot alınmış ✔, Hetzner snapshot alındı ✔.
-Eski sunucudaki adımlar (1 ve 3) `ops/hetzner/old-server/` altındaki hazır conf'lar ve
-komut listesiyle **kullanıcı tarafından Terminal'den** çalıştırılır (proje hook'u Claude'un
-turhost'ta `systemctl restart` koşmasını bilerek engeller; cutover gecesi de bu kural
-korunur). Yeni sunucu adımlarını (2, 4-6) Claude yürütür.
-1. **Eski sunucu, 20:01**: `systemctl edit --runtime minerva` → `Environment=DISABLE_SCHEDULER=true`,
-   `systemctl restart minerva` (~3 sn; scheduler yazmaları biter) → `freeze-on` symlink +
-   `nginx -s reload` (yazma dondurma başlar; GET çalışır).
-2. **Yeni sunucu**: `dump_restore.sh` (DROP/CREATE + restore + `verify_counts.sh` + ANALYZE)
-   → `rsync_files.sh --delete` (drive_files, product_images, _sozlesmeler, data,
-   system_reports, backups, review_audio, .env) → `.env`'den `DISABLE_SCHEDULER` satırını sil
-   → `systemctl start minerva` → `curl -H "Host: ims.minerva108.com" https://127.0.0.1/login`
+İki sunucudaki komutları **eleman kendi terminalinden** çalıştırır (proje hook'u yalnız
+Claude'un turhost'ta `systemctl restart` koşmasını engeller). Önkoşul (prova haftası):
+`render.sh <YENİ_IP>` çıktıları ve `minerva-freeze-map.conf` eski sunucuda yerinde,
+`nginx -t` temiz; realip conf yeni sunucuda açık.
+1. **Eski sunucu, 20:00** (interaktif editör yok, geçici drop-in; reboot'ta kaybolur):
+   `mkdir -p /run/systemd/system/minerva.service.d && printf '[Service]\nEnvironment=DISABLE_SCHEDULER=true\n' > /run/systemd/system/minerva.service.d/cutover.conf && systemctl daemon-reload && systemctl restart minerva`
+   (~3 sn; scheduler yazmaları biter; eski `.env`'e dokunulmaz) →
+   `ln -sfn /etc/nginx/sites-available/minerva-freeze /etc/nginx/sites-enabled/minerva && nginx -t && nginx -s reload`
+   (yazma dondurma başlar; GET çalışır).
+2. **Yeni sunucu**: `systemctl stop minerva` → `dump_restore.sh cutover` (DROP/CREATE +
+   restore + ANALYZE) → `verify_counts.sh minerva_db` (fark = DUR) →
+   `rsync_files.sh final` (drive_files, product_images, _sozlesmeler, data, system_reports,
+   backups, review_audio, .env; eski `.env`'de `DISABLE_SCHEDULER` yok, yeni `.env` onunla
+   ezilir → scheduler açık gelir; `grep DISABLE_SCHEDULER /var/www/minerva/.env` boş olmalı)
+   → `systemctl start minerva` →
+   `curl -sk -o /dev/null -w '%{http_code}\n' --resolve ims.minerva108.com:443:127.0.0.1 https://ims.minerva108.com/login`
    200 → `systemctl enable --now minerva-snapshot.timer minerva-backup.timer`.
 3. **Eski sunucu**: `sites-enabled/minerva` → `minerva-bridge` symlink, `nginx -t`,
    `nginx -s reload` (dondurma biter, trafik yeni sunucuya akar) → `systemctl stop minerva
@@ -350,7 +362,7 @@ korunur). Yeni sunucu adımlarını (2, 4-6) Claude yürütür.
 - Prova DB'si cutover'dan önce silinmeli (KVKK).
 
 ## Doğrulama
-- Yeni sunucuda `make test` yeşil (3.12).
+- Elemanın makinesinde Python 3.12 ile tam test paketi yeşil (sunucuda test koşulmaz, bkz. Faz 1).
 - `verify_counts.sh`: 79 tablo sayımı eski == yeni, `alembic_version` = `8954ef5ca750`,
   sequence'ler tablo max(id) ≥.
 - `/etc/hosts` smoke listesi (Faz 2) + köprü üzerinden aynı liste (Faz 3.4) + DNS sonrası

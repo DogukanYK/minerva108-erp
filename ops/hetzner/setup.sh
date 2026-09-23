@@ -113,5 +113,5 @@ Sıradaki elle adımlar (RUNBOOK Faz 1):
   7. .env'e DISABLE_SCHEDULER=true ekle
   8. nginx -t && systemctl reload nginx
   9. systemctl enable --now minerva
-  10. make test   (repo kökünde, venv aktifken)
+  10. Test paketi burada KOŞULMAZ (conftest sabit yerel test şifresi kullanır) — smoke test: RUNBOOK Faz 2
 SUMMARY
