@@ -28,12 +28,35 @@ PATHS=(
   backups
   product_images
   _sozlesmeler
+  _kargo_evraklari
+  _excels
   data
   system_reports
   review_audio
   minerva108.db
   .env
+  .vapid_env_snippet
+  .vapid_private.pem
+  .vapid_public.b64
 )
+
+# Emniyet: eski sunucuda git'in izlemediği (untracked/ignored) ama bu listede
+# olmayan bir üst düzey klasör/dosya varsa uyar — yeni bir "_xyz" klasörü
+# eklenip listeye yazılmazsa cutover'da sessizce kaybolmasın.
+echo "→ Liste dışı kalan runtime dosyası kontrolü"
+MISSING=$(ssh -p "$OLD_PORT" -i "$OLD_SSH_KEY" "root@${OLD_HOST}" \
+  "cd /var/www/minerva && git status --porcelain --ignored | awk '{print \$2}' | grep -v __pycache__ | cut -d/ -f1 | sort -u" \
+  | grep -vxE 'venv|__pycache__|\.env\.bak.*|scripts|minerva_boms\.json' \
+  | while read -r top; do
+      found=0; for p in "${PATHS[@]}"; do [[ "$top" == "$p" ]] && found=1; done
+      [[ $found -eq 0 ]] && echo "$top"
+    done || true)
+if [[ -n "$MISSING" ]]; then
+  echo "  ⚠ Listede OLMAYAN runtime öğeleri (gerekiyorsa PATHS'e ekleyip yeniden çalıştır):"
+  echo "$MISSING" | sed 's/^/    - /'
+else
+  echo "  ✓ Liste eksiksiz"
+fi
 
 for p in "${PATHS[@]}"; do
   echo "→ [$MODE] $p"
