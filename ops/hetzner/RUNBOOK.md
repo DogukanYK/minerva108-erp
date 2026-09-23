@@ -333,8 +333,12 @@ Claude'un turhost'ta `systemctl restart` koşmasını engeller). Önkoşul (prov
    `curl -sk -o /dev/null -w '%{http_code}\n' --resolve ims.minerva108.com:443:127.0.0.1 https://ims.minerva108.com/login`
    200 → `systemctl enable --now minerva-snapshot.timer minerva-backup.timer`.
 3. **Eski sunucu**: `sites-enabled/minerva` → `minerva-bridge` symlink, `nginx -t`,
-   `nginx -s reload` (dondurma biter, trafik yeni sunucuya akar) → `systemctl stop minerva
-   minerva-snapshot.timer minerva-backup.timer` + crontab satırını yorumla. **Toplam yazma
+   `nginx -s reload` (dondurma biter, trafik yeni sunucuya akar) →
+   `systemctl disable --now minerva minerva-snapshot.timer minerva-backup.timer && systemctl mask minerva`
+   + crontab satırını yorumla. `mask` ŞART: `active-server.env` yeni sunucuya çevrilmeden biri
+   `./deploy.sh` çalıştırırsa eski uygulama eski veriyle ayağa kalkıp Shopify'a stok basardı;
+   maskeli servis restart'ı reddeder, deploy açıkça hata verir. (Köprü sonrası geri dönüşte
+   önce `systemctl unmask minerva`.) **Toplam yazma
    kesintisi: adım 1 başı → adım 3 sonu, hedef 3-5 dk.**
 4. Doğrulama (köprü üzerinden): login, kayıt oluştur/sil, ofisten PDKS `ip_allowed` doğru
    (realip zinciri), Shopify `webhooks/setup` çağrısı "zaten kurulu" demeli, Kommo test
