@@ -1,0 +1,32 @@
+# Minerva108 IMS — uvicorn (Hetzner, sertleştirilmiş)
+# Eski Turhost unit'inden farklar: User=minerva (root değil), PATH'e /usr/bin
+# eklendi (pg_dump/git shell-out'ları için), Restart=always, systemd sandbox.
+# ProtectSystem=strict tüm FS'i salt-okunur yapar → ReadWritePaths şart
+# (drive_files/, backups/, product_images/, data/, system_reports/ …).
+[Unit]
+Description=Minerva108 Uvicorn Daemon
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=minerva
+Group=minerva
+WorkingDirectory=/var/www/minerva
+Environment="PATH=/var/www/minerva/venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/var/www/minerva/.env
+ExecStart=/var/www/minerva/venv/bin/uvicorn api_main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips="127.0.0.1"
+Restart=always
+RestartSec=3
+# ── sandbox ──
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/minerva
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

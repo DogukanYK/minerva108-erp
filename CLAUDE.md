@@ -659,7 +659,12 @@ Turkish alphabetical sorting uses `window.trSort` / `trSortBy` (Intl.Collator 't
 
 Prod is `turhost` (SSH config alias → `root@136.144.251.26:23422`,
 `/var/www/minerva`, systemd unit `minerva`, PostgreSQL `minerva_db`, public URL
-`https://ims.minerva108.com`).
+`https://ims.minerva108.com`). **Migration in progress (2026-09-22): moving to
+Hetzner Cloud for near-zero-downtime cutover — see `ops/hetzner/RUNBOOK.md`.**
+`deploy.sh` and the ad-hoc-deploy hook both read the live server's IP/user/key
+from `ops/hetzner/active-server.env` (defaults to today's Turhost values if
+that file is absent) — after cutover, only that one file changes, not this doc
+or deploy.sh itself.
 
 **Always deploy with `./deploy.sh` (or `make deploy`) — it is the only sanctioned
 path, and it makes test + verification mandatory.** It is a 5-step fail-fast

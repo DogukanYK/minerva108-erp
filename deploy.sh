@@ -8,18 +8,26 @@
 set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────
-SERVER_IP="136.144.251.26"
-SERVER_PORT="23422"                          # ← Turhost custom SSH port (not 22)
-SERVER_USER="root"
-SERVER_PATH="/var/www/minerva"
-SERVICE_NAME="minerva"
-SSH_KEY="$HOME/.ssh/id_ed25519_minerva"      # Dedicated key created during setup
-SSH_TIMEOUT=15
-PROD_URL="https://ims.minerva108.com"        # Public URL — post-deploy HTTP doğrulaması
-
 # Always operate from the repo root, regardless of where the script is invoked
 cd "$(dirname "$0")"
 PYTEST="./.venv/bin/pytest"
+
+# Canlı sunucu bilgisi TEK KAYNAKTAN gelir (Hetzner cutover'ında sadece bu
+# dosya değişir — bkz. ops/hetzner/RUNBOOK.md).  Dosya yoksa (ör. eski bir
+# checkout) Turhost değerlerine düşer, deploy.sh her zaman çalışır kalır.
+ACTIVE_SERVER_ENV="ops/hetzner/active-server.env"
+if [[ -f "$ACTIVE_SERVER_ENV" ]]; then
+  # shellcheck disable=SC1090
+  source "$ACTIVE_SERVER_ENV"
+fi
+SERVER_IP="${PROD_SERVER_IP:-136.144.251.26}"
+SERVER_PORT="${PROD_SERVER_PORT:-23422}"
+SERVER_USER="${PROD_SERVER_USER:-root}"
+SERVER_PATH="${PROD_SERVER_PATH:-/var/www/minerva}"
+SERVICE_NAME="${PROD_SERVICE_NAME:-minerva}"
+SSH_KEY="${PROD_SSH_KEY:-$HOME/.ssh/id_ed25519_minerva}"
+SSH_TIMEOUT=15
+PROD_URL="https://ims.minerva108.com"        # Public URL — post-deploy HTTP doğrulaması (host değişmez, DNS yönlendirir)
 
 # ── Pretty output helpers ─────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -129,6 +137,11 @@ if ! ssh -p "$SERVER_PORT" \
          "REMOTE_PATH='$SERVER_PATH' SERVICE_NAME='$SERVICE_NAME' bash -s" <<'REMOTE_EOF'
 set -euo pipefail
 
+# root olarak çalışıyorsa sudo gerekmez (bugünkü Turhost); non-root bir
+# deploy kullanıcısıysa (Hetzner sonrası: minerva) systemctl/journalctl için
+# NOPASSWD sudoers kuralı kullanılır — bkz. ops/hetzner/setup.sh.
+if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
+
 echo "→ Host: $(hostname) · User: $(whoami) · UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 echo
 
@@ -179,10 +192,10 @@ fi
 
 # ── Service restart ──
 echo "→ systemctl restart $SERVICE_NAME"
-if ! systemctl restart "$SERVICE_NAME"; then
+if ! $SUDO systemctl restart "$SERVICE_NAME"; then
   echo "✗ HATA: systemctl restart başarısız" >&2
   echo "-- son 25 log satırı --" >&2
-  journalctl -u "$SERVICE_NAME" -n 25 --no-pager >&2 || true
+  $SUDO journalctl -u "$SERVICE_NAME" -n 25 --no-pager >&2 || true
   exit 4
 fi
 
@@ -195,7 +208,7 @@ if systemctl is-active --quiet "$SERVICE_NAME"; then
   echo "  ✓ active (running)"
 else
   echo "  ✗ servis aktif değil!" >&2
-  systemctl status "$SERVICE_NAME" --no-pager --lines=20 >&2 || true
+  $SUDO systemctl status "$SERVICE_NAME" --no-pager --lines=20 >&2 || true
   exit 5
 fi
 echo

@@ -1,0 +1,182 @@
+# ─────────────────────────────────────────────────────────────────────
+# HTTP (port 80) → HTTPS yönlendirmesi
+# ─────────────────────────────────────────────────────────────────────
+server {
+    listen 80;
+    server_name ims.minerva108.com;
+    if ($host = ims.minerva108.com) {
+        return 301 https://$host$request_uri;
+    }
+    return 404;
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# HTTPS (port 443) — Minerva108 ERP
+# ─────────────────────────────────────────────────────────────────────
+server {
+    listen 443 ssl http2;
+    server_name ims.minerva108.com;
+
+    # ── SSL (Certbot-managed; dokunma) ──
+    ssl_certificate /etc/letsencrypt/live/ims.minerva108.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ims.minerva108.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    # ── Security headers ──
+    # HSTS: tarayıcı 1 yıl boyunca sadece HTTPS'le konuşur (downgrade saldırılarını engeller)
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    # MIME type sniffing'i kapat (XSS yüzeyini daraltır)
+    add_header X-Content-Type-Options "nosniff" always;
+    # Iframe'e gömülmeyi sadece kendi domain'imizden izin ver (clickjacking koruması)
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    # Outgoing referrer politikası (hassas URL'lerin sızmasını önler)
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # Kullanılmayan browser API'larını kapat (saldırı yüzeyi azaltma).
+    # microphone=(self): /yorum/ sesli yorum formu için gerekli — app
+    # tarafı (api_main.SecurityHeadersMiddleware) zaten (self); iki
+    # taraftan kısıtlayıcı olan kazandığı için BURASI güncellenmeden
+    # mikrofon canlıda çalışmaz (PDKS kamerasını kıran aynı tuzak,
+    # CLAUDE.md'de belgeli).
+    add_header Permissions-Policy "geolocation=(self), camera=(self), microphone=(self), payment=(), usb=()" always;
+    # CSP: hangi kaynaklardan script/style yüklenebilir (XSS koruması)
+    # NOT: 'unsafe-inline' templates'teki gömülü script/style için zorunlu
+    # NOT: media-src 'self' blob: — /yorum/ formunun kayıt-öncesi
+    # <audio src="blob:..."> önizlemesi için gerekli; tanımsız kalırsa
+    # default-src'ye düşer (blob: kapsamaz) ve önizleme sessizce bloklanır.
+    # İki taraflı CSP header'ı kesişim olarak uygulanır (Permissions-Policy
+    # ile aynı "en kısıtlayıcı kazanır" mantığı) — app zaten media-src
+    # gönderiyor, burası da göndermezse kesişimde media-src hâlâ eksik kalır.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self';" always;
+
+    # ── Amazon ürün görselleri — Python'a HİÇ DOKUNMADAN disk'ten servis ──
+    # (public, kimlik doğrulaması yok; uvicorn TEK süreç çalışıyor, bu yüzden
+    # bu kimliksiz yolu ayrı tutmak ERP'nin geri kalanını izole eder — biri
+    # bu yolu bombalarsa Python süreci hiç etkilenmez).  Ad regex'i
+    # core/product_images.FILENAME_RE ile AYNI olmalı; uymayan istek buraya
+    # düşmez, aşağıdaki genel proxy'ye gider ve Python kendi 404'ünü döner
+    # (whitelist iki kat: nginx + uygulama).
+    # ── Public ürün dosyaları: Amazon görseli (.jpg) + Walmart SDS (.pdf) ──
+    # Python'a HİÇ SORULMAZ; diskten servis edilir.  Regex core/product_images.
+    # FILENAME_RE ile AYNI ve slot/uzantı ÇİFTİNİ zorlar (MAIN.pdf / SDS.jpg yok).
+    # TUZAK: {n,m} içerdiği için regex ÇİFT TIRNAK şart, yoksa nginx '{' i blok
+    # başlangıcı sanar ("pcre_compile() failed").
+    location ~ "^/public/product-images/([A-Za-z0-9][A-Za-z0-9_-]{0,79}\.(?:(?:MAIN|PT0[1-8])\.jpg|SDS\.pdf))$" {
+        alias /var/www/minerva/product_images/$1;
+        limit_req zone=pubimg burst=120 nodelay;
+
+        # TUZAK: bir location kendi add_header'ını tanımlarsa sunucu bloğundaki
+        # TÜM add_header'lar düşer.  Eskiden burada yalnız Cache-Control +
+        # CORS vardı; canlıda ölçüldü, nosniff/CSP/X-Frame-Options dönmüyordu.
+        # PDF servis etmeye başladığımız için bunlar artık kritik — gömülü
+        # JavaScript taşıyan bir belge ims.minerva108.com origin'inde
+        # çalışabilirdi.  Aşağısı sunucu bloğunun ilgili başlıklarını tekrarlar.
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        # sandbox: belge script/plugin/form çalıştıramaz — PDF görüntülenir, JS'i çalışmaz.
+        add_header Content-Security-Policy "sandbox; default-src 'none'" always;
+
+        # immutable YOK: aynı ad üzerine yazılabiliyor (görsel/SDS düzeltme akışı).
+        add_header Cache-Control "public, max-age=3600, must-revalidate" always;
+        # Hotlink/referer koruması YOK — Amazon ve Walmart kendi sunucularından çekiyor.
+        add_header Access-Control-Allow-Origin "*" always;
+    }
+
+    # ── Ürün yorumu davet formu — public, kimlik doğrulaması yok ──
+    # Sesli not yükleme dahil (core.reviews.MAX_UPLOAD_MB=10, altta 12m bol
+    # pay).  IP-bazlı rate limit burada — bkz. conf.d/minerva-rate-limits.conf
+    # üstündeki not: app'teki @limiter.limit("5/hour") tek başına yeterli
+    # değil (URL'ye göre sayıyor, farklı token'lı sele karşı korumasız).
+    # location / ile AYNI proxy ayarları — yalnız body limiti + rate limit
+    # farklı, tek süreçli uvicorn'u bu genel-erişimli yoldan izole eder.
+    location /yorum/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        client_max_body_size 12m;
+        limit_req zone=review burst=5 nodelay;
+    }
+
+    # ── Reverse proxy → uvicorn ──
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;   # gerçek client IP zinciri (rate limiter için)
+        proxy_set_header X-Forwarded-Proto $scheme;                    # https/http bilgisi (cookie security için)
+
+        # Excel upload için body limitini biraz aç
+        client_max_body_size 520M;
+    }
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# crm.minerva108.com — aynı uvicorn (CRM subdomain). certbot 443'ü ekler.
+# ─────────────────────────────────────────────────────────────────────
+server {
+    server_name crm.minerva108.com;
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 520M;
+    }
+
+    listen 443 ssl; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/crm.minerva108.com/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/crm.minerva108.com/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
+
+}
+
+server {
+    if ($host = crm.minerva108.com) {
+        return 301 https://$host$request_uri;
+    } # managed by Certbot
+
+
+    listen 80;
+    server_name crm.minerva108.com;
+    return 404; # managed by Certbot
+
+
+}
+server {
+    server_name siparis.minerva108.com;
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 520M;
+    }
+
+    listen 443 ssl; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/siparis.minerva108.com/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/siparis.minerva108.com/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
+
+}
+
+server {
+    if ($host = siparis.minerva108.com) {
+        return 301 https://$host$request_uri;
+    } # managed by Certbot
+
+
+    listen 80;
+    server_name siparis.minerva108.com;
+    return 404; # managed by Certbot
+
+
+}

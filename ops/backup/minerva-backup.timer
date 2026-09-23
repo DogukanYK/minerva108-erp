@@ -1,0 +1,10 @@
+[Unit]
+Description=Minerva108 backup günlük tetikleyici (03:00 UTC)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+Unit=minerva-backup.service
+
+[Install]
+WantedBy=timers.target

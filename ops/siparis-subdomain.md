@@ -1,5 +1,12 @@
 # siparis.minerva108.com — Distribütör Sipariş Portalı alt-alanı
 
+> **2026-09-22:** IMS'in kendisi Turhost'tan Hetzner'e taşınıyor (bkz.
+> `ops/hetzner/RUNBOOK.md`). Bu doküman DNS/nginx/certbot adımlarının Turhost'ta
+> nasıl yapıldığını anlatır — aynı desen (`ops/hetzner/setup.sh` içindeki nginx
+> site conf'u zaten üçünü de içerir) yeni sunucuda da geçerli; ayrı bir kurulum
+> gerekmiyor, sadece cutover'da diğer iki host'la birlikte taşınıyor.
+
+
 Uygulama **host-agnostik**: `siparis.*` host'undan gelen istekleri `_is_distributor_host`
 algılar, kök (`/`) → `/portal`'a yönlenir, `/login` "Sipariş Portalı" markasıyla gelir.
 Aşağıdaki adımlar `deploy.sh` DIŞINDA, `turhost`'ta bir kez yapılır (crm.minerva108.com ile

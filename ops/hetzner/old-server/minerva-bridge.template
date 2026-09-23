@@ -1,0 +1,59 @@
+# ESKİ sunucu (Turhost): /etc/nginx/sites-available/minerva-bridge
+# Cutover sonrası KÖPRÜ: eski IP'ye gelen her istek yeni Hetzner sunucusuna
+# HTTPS ile iletilir.  Sertifikalar eski sunucudakiler (Kas 2026'ya kadar
+# geçerli).  __NEW_IP__ → ops/hetzner/old-server/render.sh ile doldurulur.
+#
+# Devreye alma (cutover adım 3):
+#   ln -sfn /etc/nginx/sites-available/minerva-bridge /etc/nginx/sites-enabled/minerva
+#   nginx -t && nginx -s reload
+# Geri alma:
+#   ln -sfn /etc/nginx/sites-available/minerva /etc/nginx/sites-enabled/minerva
+#   nginx -t && nginx -s reload
+
+# ── ims ──
+server {
+    listen 80;
+    server_name ims.minerva108.com;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl http2;
+    server_name ims.minerva108.com;
+    ssl_certificate     /etc/letsencrypt/live/ims.minerva108.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ims.minerva108.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+    include /etc/nginx/snippets/minerva-bridge-proxy.conf;
+}
+
+# ── crm ──
+server {
+    listen 80;
+    server_name crm.minerva108.com;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl http2;
+    server_name crm.minerva108.com;
+    ssl_certificate     /etc/letsencrypt/live/crm.minerva108.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/crm.minerva108.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+    include /etc/nginx/snippets/minerva-bridge-proxy.conf;
+}
+
+# ── siparis ──
+server {
+    listen 80;
+    server_name siparis.minerva108.com;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl http2;
+    server_name siparis.minerva108.com;
+    ssl_certificate     /etc/letsencrypt/live/siparis.minerva108.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/siparis.minerva108.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+    include /etc/nginx/snippets/minerva-bridge-proxy.conf;
+}

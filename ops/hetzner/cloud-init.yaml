@@ -1,0 +1,94 @@
+#cloud-config
+# ─────────────────────────────────────────────────────────────────────────────
+# Minerva108 IMS — Hetzner Cloud ilk boot (Ubuntu 24.04).
+#
+#   hcloud server create --name minerva-ims --type cx33 --location fsn1 \
+#     --image ubuntu-24.04 --ssh-key <mac-key-adı> --firewall minerva-fw \
+#     --enable-backup --user-data-from-file ops/hetzner/cloud-init.yaml
+#
+# Yaptıkları: TZ UTC, `minerva` servis kullanıcısı, SSH 23422 + key-only,
+# ufw (23422/80/443), fail2ban, unattended-upgrades, needrestart sessiz,
+# 2 GB swap. Uygulama/PG/nginx kurulumu: ops/hetzner/setup.sh (sonra, elle).
+# ─────────────────────────────────────────────────────────────────────────────
+timezone: Etc/UTC
+locale: C.UTF-8
+package_update: true
+package_upgrade: true
+packages:
+  - ufw
+  - fail2ban
+  - unattended-upgrades
+  - needrestart
+  - git
+  - curl
+  - rsync
+  - nginx
+  - fonts-dejavu-core
+  - python3.12-venv
+  - postgresql-common
+  - snapd
+  - acl
+
+users:
+  - default
+  - name: minerva
+    gecos: Minerva108 IMS service user
+    shell: /bin/bash
+    lock_passwd: true
+    homedir: /home/minerva
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/00-minerva.conf
+    permissions: "0644"
+    content: |
+      Port 23422
+      PasswordAuthentication no
+      PermitRootLogin prohibit-password
+      KbdInteractiveAuthentication no
+      X11Forwarding no
+  - path: /etc/fail2ban/jail.local
+    permissions: "0644"
+    content: |
+      [DEFAULT]
+      bantime  = 1h
+      findtime = 10m
+      maxretry = 5
+      backend  = systemd
+      [sshd]
+      enabled = true
+      port    = 23422
+  - path: /etc/needrestart/conf.d/minerva.conf
+    permissions: "0644"
+    content: |
+      # apt upgrade sırasında servisleri sormadan restart ETME (canlı ERP)
+      $nrconf{restart} = 'l';
+      $nrconf{kernelhints} = -1;
+  - path: /etc/apt/apt.conf.d/52minerva-unattended
+    permissions: "0644"
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+runcmd:
+  # Ubuntu 24.04: ssh socket-activated (port 22 sabit) → servis moduna geç
+  - systemctl disable --now ssh.socket || true
+  - systemctl enable --now ssh.service
+  - systemctl restart ssh
+  # Firewall (Hetzner Cloud Firewall'a ek ikinci katman)
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 23422/tcp comment 'ssh'
+  - ufw allow 80/tcp comment 'http'
+  - ufw allow 443/tcp comment 'https'
+  - ufw --force enable
+  - systemctl enable --now fail2ban
+  # 2 GB swap (eski sunucuda yoktu; OOM sigortası)
+  - fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - sysctl -w vm.swappiness=10 && echo 'vm.swappiness=10' > /etc/sysctl.d/99-minerva.conf
+  # Uygulama dizini
+  - mkdir -p /var/www/minerva && chown minerva:minerva /var/www/minerva
+  - sudo -u minerva mkdir -p /home/minerva/.ssh && chmod 700 /home/minerva/.ssh
+  - timedatectl set-timezone Etc/UTC
+
+final_message: "minerva cloud-init tamam ($UPTIME sn). Sıra: ops/hetzner/setup.sh"
