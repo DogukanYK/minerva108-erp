@@ -106,7 +106,11 @@ cat <<SUMMARY
 Sıradaki elle adımlar (RUNBOOK Faz 1):
   1. minerva kullanıcısı için SSH deploy key üret, GitHub'a read-only deploy key ekle
   2. sudo -u minerva git clone git@github.com:DogukanYK/minerva108-erp.git /var/www/minerva  (veya mevcut boş dizine init+pull)
-  3. sudo -u minerva python3.12 -m venv /var/www/minerva/venv
+  3. Python 3.10 (canlıyla aynı) — uv ile, systemd ProtectHome yüzünden /home DEĞİL /opt altına:
+       mkdir -p /opt/uv-python && chown minerva:minerva /opt/uv-python
+       sudo -u minerva -H bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+       sudo -u minerva -H env UV_PYTHON_INSTALL_DIR=/opt/uv-python /home/minerva/.local/bin/uv python install 3.10
+       sudo -u minerva -H env UV_PYTHON_INSTALL_DIR=/opt/uv-python /home/minerva/.local/bin/uv venv --seed -p 3.10 /var/www/minerva/venv
   4. sudo -u minerva /var/www/minerva/venv/bin/pip install -r /var/www/minerva/requirements.txt
   5. ops/hetzner/migrate/rsync_files.sh initial   (.env, /etc/letsencrypt dahil — ayrı, aşağıda)
   6. rsync -e "ssh -p 23422 -i \$OLD_SSH_KEY" -a root@136.144.251.26:/etc/letsencrypt/ /etc/letsencrypt/

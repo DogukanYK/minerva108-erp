@@ -15,12 +15,17 @@ Erişim hijyeni: eleman kendi SSH anahtarını kullanır, Hetzner'e üye daveti 
 (şifre paylaşımı yok), GitHub'da collaborator olur. Script'ler `hetzner-migration`
 branch'inde; cutover sonrası ilk normal deploy'la main'e birleşir.
 
-**Takvim:** Gün 1 Per 24 Eyl (hesap, KVKK maili, erişimler, ağ ölçümü, Python 3.12 test) →
-Cum 25 Eyl sunucu → 28 Eyl–2 Eki kurulum + prova + iş akışı testi → Paz 4 Eki TTL 300 →
-**Salı 6 Eki 20:00 cutover** (yedek: Çar 7 / Salı 13 Eki; KVKK "go" şart) → 7–20 Eki izleme,
-uzak yedek, Turhost iptali.
+**Takvim — SIKIŞTIRILDI (23.09 gece):** Turhost VPS'i bu hafta kapanıyor (alan adı, DNS
+ve e-posta Turhost'ta kalıyor). İş en geç Cuma bitecek; 7–14 günlük köprü süresi YOK,
+köprü yalnız VPS kapanana kadar yaşar.
+Per 24 Eyl sabah: TTL 300 (Doğukan, ilk iş), Hetzner hesabı (patron), KVKK maili →
+Per gün içi: sunucu + kurulum + veri kopyası + prova + iş akışı testi →
+**Per 24 Eyl 20:00 cutover** (yedek: **Cum 25 Eyl 12:50**, lab öğle arası) → sonrası izleme,
+uzak yedek. Tam arşiv 23.09 23:44'te Doğukan'ın Mac'ine alındı (`~/Minerva-Turhost-Arsiv/`).
+Python: zaman baskısı yüzünden yeni sunucuda canlıyla aynı **3.10** (uv ile, `/opt/uv-python`);
+3.12'ye geçiş taşımadan sonra, sakin bir zamanda.
 
-**Cutover gecesi:**
+**Cutover (Per 24 Eyl akşamı; yedek Cuma 12:50 — saatler aynı sırayla kayar):**
 
 | Saat | Kim | Ne |
 |---|---|---|
@@ -268,7 +273,7 @@ yok. DNS sonrası → A kayıtlarını geri al + köprüyü kaldır + yeni→esk
       `CREATE DATABASE minerva_db OWNER minerva_user LOCALE 'C.UTF-8' TEMPLATE template0`,
       ayrıca `minerva_test` (test suite için).
 - [ ] Uygulama: `minerva` kullanıcısı için ed25519 anahtar → GitHub **deploy key** (read-only);
-      `/var/www/minerva` clone (main), `python3.12 -m venv venv`, `pip install -r
+      `/var/www/minerva` clone (main), Python 3.10 venv (uv, `/opt/uv-python`, `--seed`), `pip install -r
       requirements.txt`; eski sunucudan `pip freeze` çıktısıyla fark karşılaştır.
 - [ ] Eski sunucudan rsync (ilk tam kopya; salt-okunur kaynak): `.env` (+ `.env.bak*`),
       `drive_files/ backups/ product_images/ _sozlesmeler/ data/ system_reports/
@@ -362,7 +367,7 @@ Claude'un turhost'ta `systemctl restart` koşmasını engeller). Önkoşul (prov
 - Prova DB'si cutover'dan önce silinmeli (KVKK).
 
 ## Doğrulama
-- Elemanın makinesinde Python 3.12 ile tam test paketi yeşil (sunucuda test koşulmaz, bkz. Faz 1).
+- Yeni sunucu canlıyla aynı Python 3.10'u kullanır; test paketi zaten bu sürümle deploy.sh kapısında geçiyor (sunucuda test koşulmaz, bkz. Faz 1).
 - `verify_counts.sh`: 79 tablo sayımı eski == yeni, `alembic_version` = `8954ef5ca750`,
   sequence'ler tablo max(id) ≥.
 - `/etc/hosts` smoke listesi (Faz 2) + köprü üzerinden aynı liste (Faz 3.4) + DNS sonrası
