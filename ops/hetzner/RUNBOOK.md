@@ -1,5 +1,44 @@
 # Minerva IMS: Turhost → Hetzner taşıma planı (sıfıra yakın kesinti)
 
+> **Görev dağılımı (2026-09-23).** Hesap patron adına; teknik yürütme eleman;
+> karar, hesaplar, hukuk ve lab iletişimi Doğukan. Gün gün takip ve tikler
+> paylaşılan görev panosunda (Artifact). Özet:
+
+| Kim | Ne yapar | Neyi yapmaz |
+|---|---|---|
+| Patron | Hetzner hesabını kendi adına açar (kimlik + selfie, şirket kartı), DPA'yı akdeder, Doğukan'ı ve elemanı projeye üye olarak davet eder | Teknik iş |
+| Doğukan | Go/no-go ve onaylar, GitHub erişimi, Turhost DNS paneli, avukat + mali müşavir, lab/patron iletişimi, iş akışı testleri, cutover koordinasyonu | Sunucu komutları |
+| Eleman | Sunucuyu oluşturur ve kurar, prova, cutover komutları, sonrası izleme ve uzak yedek | `./deploy.sh` dışında deploy, go/no-go kararı |
+| Claude | Script'ler, teşhis, adım adım eşlik | Onaysız canlı müdahale |
+
+Erişim hijyeni: eleman kendi SSH anahtarını kullanır, Hetzner'e üye daveti ile girer
+(şifre paylaşımı yok), GitHub'da collaborator olur. Script'ler `hetzner-migration`
+branch'inde; cutover sonrası ilk normal deploy'la main'e birleşir.
+
+**Takvim:** Gün 1 Per 24 Eyl (hesap, KVKK maili, erişimler, ağ ölçümü, Python 3.12 test) →
+Cum 25 Eyl sunucu → 28 Eyl–2 Eki kurulum + prova + iş akışı testi → Paz 4 Eki TTL 300 →
+**Salı 6 Eki 20:00 cutover** (yedek: Çar 7 / Salı 13 Eki; KVKK "go" şart) → 7–20 Eki izleme,
+uzak yedek, Turhost iptali.
+
+**Cutover gecesi:**
+
+| Saat | Kim | Ne |
+|---|---|---|
+| 19:30 | Doğukan | Go/no-go |
+| 19:45 | Doğukan | Lab grubuna "20:00–20:15 kayıt girmeyin" |
+| 20:00 | Eleman | Eski sunucuda scheduler kapat + yazma dondurma |
+| 20:02 | Eleman | Son DB dökümü + dosya farkı, sayım doğrulama |
+| 20:08 | Eleman | Yeni uygulama scheduler'lı başlar, yedek timer'ları açılır |
+| 20:10 | Eleman | Eski nginx köprüye geçer, eski uygulama durur (yazma kesintisi biter) |
+| 20:12 | Doğukan | 5 dakikalık iş akışı testi |
+| 20:20 | Doğukan | Turhost panelinde üç A kaydı yeni IP'ye |
+| 20:30 | Eleman | Doğrudan erişim + Shopify/Kommo webhook kontrolü |
+| 20:45 | Doğukan | Lab grubuna "tamam" |
+
+Geri dönüş kararı Doğukan'da, uygulaması elemanda. Ertesi sabah 07:45 eleman ofiste PDKS testi.
+
+---
+
 ## Context
 
 Minerva 108 IMS/ERP (FastAPI + Jinja2 + PostgreSQL) Turhost VPS'te canlı; lab ekibi
