@@ -4,6 +4,7 @@
 location / {
     proxy_pass https://__NEW_IP__;
     proxy_ssl_server_name on;
+    proxy_ssl_session_reuse off;   # 3 host, tek upstream IP: nginx 1.18 oturumu SNI'ler arası yeniden kullanıp yanlış sertifika eşleştiriyor (24.09'da 502)
     proxy_ssl_name $host;
     proxy_ssl_protocols TLSv1.2 TLSv1.3;
     proxy_ssl_verify on;

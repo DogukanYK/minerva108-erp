@@ -42,6 +42,17 @@ Python: zaman baskısı yüzünden yeni sunucuda canlıyla aynı **3.10** (uv il
 
 Geri dönüş kararı Doğukan'da, uygulaması elemanda. Ertesi sabah 07:45 eleman ofiste PDKS testi.
 
+> **24.09 GERÇEK GEÇİŞ NOTLARI (17:34–17:41, lab kapalıyken):**
+> - Adım 1'de eski uygulama yeniden başlatılmadı, **durduruldu** (`systemctl stop minerva`):
+>   proje hook'u Claude'un turhost'ta restart'ını engelliyor, lab kapalı olduğu için GET'lerin
+>   birkaç dakika 502 dönmesi sorun değildi ve eski DB'ye hiç yazma gelmedi.
+> - `systemctl mask minerva` çalışmadı (unit dosyası /etc/systemd/system'da); yerine dosya
+>   `/root/minerva.service.parked-20260924`'e taşındı → eski uygulama başlatılamaz.
+> - Köprüde `proxy_ssl_session_reuse off` ŞART: yoksa nginx 1.18 üç host arasında TLS oturumunu
+>   paylaşıp "upstream SSL certificate does not match" ile ara ara 502 döndü.
+> - Son DB kopyası: 79/79 tablo birebir; dosya sayıları birebir; Shopify senkronu 17:40'ta yeni
+>   sunucudan çalıştı. Donmuş anın dökümü Mac'te: `~/Minerva-Turhost-Arsiv/2026-09-24_gecis-ani/`.
+
 ---
 
 ## Context
