@@ -24,17 +24,20 @@ sudo -u postgres psql -tAc "SHOW lc_collate;" | grep -qi "C.UTF-8\|C.utf8" \
   && echo "  ✓ lc_collate C.UTF-8" \
   || echo "  ⚠ lc_collate C.UTF-8 DEĞİL — initdb'yi kontrol et (RUNBOOK'ta not var)"
 
-step "3/8 — postgresql.conf ayarları (8GB/4vCPU)"
+step "3/8 — postgresql.conf ayarları (RAM'e göre: shared_buffers %25, effective_cache_size %75)"
 PGCONF=$(sudo -u postgres psql -tAc "SHOW config_file;")
 cp "$PGCONF" "${PGCONF}.orig-$(date +%F)"
-python3 - "$PGCONF" <<'PYEOF'
+MEM_MB=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo)
+SB_MB=$(( MEM_MB / 4 )); EC_MB=$(( MEM_MB * 3 / 4 ))
+echo "  RAM ${MEM_MB} MB → shared_buffers ${SB_MB}MB, effective_cache_size ${EC_MB}MB"
+python3 - "$PGCONF" "$SB_MB" "$EC_MB" <<'PYEOF'
 import re, sys
-path = sys.argv[1]
+path, sb, ec = sys.argv[1], sys.argv[2], sys.argv[3]
 settings = {
-    "shared_buffers": "2GB",
-    "effective_cache_size": "6GB",
+    "shared_buffers": f"{sb}MB",
+    "effective_cache_size": f"{ec}MB",
     "work_mem": "16MB",
-    "maintenance_work_mem": "512MB",
+    "maintenance_work_mem": "256MB",
     "wal_compression": "on",
     "password_encryption": "scram-sha-256",
 }
