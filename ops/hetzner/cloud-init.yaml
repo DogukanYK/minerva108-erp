@@ -6,8 +6,8 @@
 #     --image ubuntu-24.04 --ssh-key <mac-key-adı> --firewall minerva-fw \
 #     --enable-backup --user-data-from-file ops/hetzner/cloud-init.yaml
 #
-# Yaptıkları: TZ UTC, `minerva` servis kullanıcısı, SSH 23422 + key-only,
-# ufw (23422/80/443), fail2ban, unattended-upgrades, needrestart sessiz,
+# Yaptıkları: TZ UTC, `minerva` servis kullanıcısı, SSH 22 + key-only,
+# ufw (22/80/443), fail2ban, unattended-upgrades, needrestart sessiz,
 # 2 GB swap. Uygulama/PG/nginx kurulumu: ops/hetzner/setup.sh (sonra, elle).
 # ─────────────────────────────────────────────────────────────────────────────
 timezone: Etc/UTC
@@ -41,7 +41,6 @@ write_files:
   - path: /etc/ssh/sshd_config.d/00-minerva.conf
     permissions: "0644"
     content: |
-      Port 23422
       PasswordAuthentication no
       PermitRootLogin prohibit-password
       KbdInteractiveAuthentication no
@@ -56,7 +55,7 @@ write_files:
       backend  = systemd
       [sshd]
       enabled = true
-      port    = 23422
+      port    = ssh
   - path: /etc/needrestart/conf.d/minerva.conf
     permissions: "0644"
     content: |
@@ -70,14 +69,14 @@ write_files:
       Unattended-Upgrade::Remove-Unused-Dependencies "true";
 
 runcmd:
-  # Ubuntu 24.04: ssh socket-activated (port 22 sabit) → servis moduna geç
-  - systemctl disable --now ssh.socket || true
-  - systemctl enable --now ssh.service
-  - systemctl restart ssh
+  # SSH portu DEĞİŞTİRİLMEZ (22). Ubuntu 24.04'te sshd socket-activated;
+  # 24.09'da Port 23422 + ssh.socket'i kapatma denemesi sshd'yi el sıkışmadan
+  # kapanır hâle getirip sunucuyu kilitledi. Yalnız key-only ayarı yüklenir.
+  - systemctl reload ssh || systemctl restart ssh.socket || true
   # Firewall (Hetzner Cloud Firewall'a ek ikinci katman)
   - ufw default deny incoming
   - ufw default allow outgoing
-  - ufw allow 23422/tcp comment 'ssh'
+  - ufw allow 22/tcp comment 'ssh'
   - ufw allow 80/tcp comment 'http'
   - ufw allow 443/tcp comment 'https'
   - ufw --force enable
