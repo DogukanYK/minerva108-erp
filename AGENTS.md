@@ -94,7 +94,7 @@ whatsapp timeline), `crm_task` (reminders). RBAC via the new **`crm`** category
 `log_admin_event` audit rows; soft-delete (`is_active`) on companies/contacts.
 A daily 08:00 scheduler job (`daily_crm_followup_scan`) web-pushes due/overdue
 task reminders to assignees (`notify_crm_reminder`). **Subdomain serving** (nginx
-server block + DNS A record + TLS) lives on `turhost` outside `deploy.sh`; the app
+server block + DNS A record + TLS) lives on the prod server outside `deploy.sh`; the app
 itself is host-agnostic (`api_main._is_crm_host` redirects `crm.*` root → `/crm`).
 **SSO**: set `COOKIE_DOMAIN=.minerva108.com` in prod `.env` so one login spans
 `ims` + `crm` (handled in `core/auth.set_auth_cookie`; logout deletes with the
@@ -262,14 +262,18 @@ Turkish alphabetical sorting uses `window.trSort` / `trSortBy` (Intl.Collator 't
 
 ## Deploy
 
-Prod is `turhost` (SSH config alias → `root@136.144.251.26:23422`,
-`/var/www/minerva`, systemd unit `minerva`, PostgreSQL `minerva_db`, public URL
-`https://ims.minerva108.com`). **Migration in progress (2026-09-22): moving to
-Hetzner Cloud for near-zero-downtime cutover — see `ops/hetzner/RUNBOOK.md`.**
-`deploy.sh` and the ad-hoc-deploy hook both read the live server's IP/user/key
-from `ops/hetzner/active-server.env` (defaults to today's Turhost values if
-that file is absent) — after cutover, only that one file changes, not this doc
-or deploy.sh itself.
+Prod is **Hetzner Cloud `minerva-ims`** (CPX22, Falkenstein; SSH config alias
+`hetzner` → `minerva@2.28.131.158:22`, root login key-only; `/var/www/minerva`,
+systemd unit `minerva` running as the unprivileged `minerva` user inside a systemd
+sandbox, PostgreSQL 17 `minerva_db`, Python 3.10 venv built with uv under
+`/opt/uv-python`, public URL `https://ims.minerva108.com`). Migrated from Turhost
+on **2026-09-24** — full runbook and lessons in `ops/hetzner/RUNBOOK.md`.
+`deploy.sh` and the ad-hoc-deploy hook read the live server's IP/port/user/key from
+`ops/hetzner/active-server.env`; a future move only changes that file. The old
+Turhost VPS (`turhost`, `136.144.251.26`) is only an nginx reverse-proxy bridge until
+Turhost shuts it down; its app unit is parked, so **never deploy or restart there**.
+The `minerva` user may run exactly `sudo systemctl restart|status minerva` and
+`sudo journalctl -u minerva -n 25 --no-pager` (see `/etc/sudoers.d/minerva-deploy`).
 
 **Always deploy with `./deploy.sh` (or `make deploy`) — it is the only sanctioned
 path, and it makes test + verification mandatory.** It is a 5-step fail-fast
@@ -286,7 +290,8 @@ pipeline:
 Never deploy ad-hoc (raw `git push` + `ssh`) — that skips the test gate and the HTTP
 verification. This is enforced mechanically: a project PreToolUse hook
 (`.Codex/settings.json` → `.Codex/hooks/block-adhoc-deploy.sh`) **blocks** any Bash
-command that ssh's to prod (`turhost` / `136.144.251.26`) and runs `systemctl
+command that ssh's to prod (the server in `ops/hetzner/active-server.env`, plus the
+old `turhost` / `136.144.251.26`) and runs `systemctl
 restart`, `git reset --hard`, or `git pull`. Read-only ssh (`journalctl`, `systemctl
 status`) is allowed; `./deploy.sh`'s own internal ssh is not affected (it runs as a
 script subprocess the hook never sees). Emergency hotfix only: `./deploy.sh

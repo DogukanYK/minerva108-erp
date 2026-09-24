@@ -1,7 +1,7 @@
 #!/bin/bash
 # ──────────────────────────────────────────────────────────────────────
 # Minerva108 — robust deployment script
-# Force-syncs the Turhost server with this Mac's main branch.
+# Force-syncs the prod server (ops/hetzner/active-server.env) with this Mac's main branch.
 # Verbose, fail-fast, surfaces remote errors instead of swallowing them.
 # ──────────────────────────────────────────────────────────────────────
 
