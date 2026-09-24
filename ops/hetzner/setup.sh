@@ -54,8 +54,10 @@ print("  ✓ postgresql.conf güncellendi:", ", ".join(settings))
 PYEOF
 
 step "4/8 — Rol + veritabanları"
-echo "  minerva_user parolasını gir (eski .env DATABASE_URL ile AYNI olmalı — SECRET_KEY gibi bu da değişmemeli):"
-read -rs MINERVA_PW; echo
+if [ -z "${MINERVA_PW:-}" ]; then
+  echo "  minerva_user parolasını gir (eski .env DATABASE_URL ile AYNI olmalı — SECRET_KEY gibi bu da değişmemeli):"
+  read -rs MINERVA_PW; echo
+fi
 sudo -u postgres psql -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='minerva_user') THEN CREATE ROLE minerva_user LOGIN PASSWORD '${MINERVA_PW}'; END IF; END \$\$;"
 sudo -u postgres psql -c "ALTER ROLE minerva_user PASSWORD '${MINERVA_PW}';"
 for db in minerva_db minerva_test minerva_prova; do
