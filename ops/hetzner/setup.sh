@@ -20,7 +20,7 @@ apt update
 apt install -y postgresql-17 postgresql-client-17
 
 step "2/8 — Cluster locale kontrolü (C.UTF-8 bekleniyor)"
-sudo -u postgres psql -tAc "SHOW lc_collate;" | grep -qi "C.UTF-8\|C.utf8" \
+sudo -u postgres psql -tAc "SELECT datcollate FROM pg_database WHERE datname='template1';" | grep -qi "C.UTF-8\|C.utf8" \
   && echo "  ✓ lc_collate C.UTF-8" \
   || echo "  ⚠ lc_collate C.UTF-8 DEĞİL — initdb'yi kontrol et (RUNBOOK'ta not var)"
 
