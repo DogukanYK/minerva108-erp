@@ -50,6 +50,11 @@ Geri dönüş kararı Doğukan'da, uygulaması elemanda. Ertesi sabah 07:45 elem
 >   `/root/minerva.service.parked-20260924`'e taşındı → eski uygulama başlatılamaz.
 > - Köprüde `proxy_ssl_session_reuse off` ŞART: yoksa nginx 1.18 üç host arasında TLS oturumunu
 >   paylaşıp "upstream SSL certificate does not match" ile ara ara 502 döndü.
+> - **Python 3.12'ye geçiş (24.09 21:12):** Mac'te 776/776 test 3.12 + canlı paket sürümleriyle
+>   geçti; sunucuda `venv312` (sistem python3.12) yan yana kuruldu, geçici `venv-active` kısayolu
+>   üzerinden `./deploy.sh` ile yeniden başlatıldı. `venv` artık `venv312`'ye kısayol, `venv310`
+>   geri dönüş için duruyor. Uygulamada 107 fonksiyon-içi import olduğu için çalışan sürecin
+>   venv klasörü yeniden başlatmadan önce ASLA taşınmaz/silinmez.
 > - Son DB kopyası: 79/79 tablo birebir; dosya sayıları birebir; Shopify senkronu 17:40'ta yeni
 >   sunucudan çalıştı. Donmuş anın dökümü Mac'te: `~/Minerva-Turhost-Arsiv/2026-09-24_gecis-ani/`.
 

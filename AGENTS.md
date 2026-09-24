@@ -265,8 +265,9 @@ Turkish alphabetical sorting uses `window.trSort` / `trSortBy` (Intl.Collator 't
 Prod is **Hetzner Cloud `minerva-ims`** (CPX22, Falkenstein; SSH config alias
 `hetzner` → `minerva@2.28.131.158:22`, root login key-only; `/var/www/minerva`,
 systemd unit `minerva` running as the unprivileged `minerva` user inside a systemd
-sandbox, PostgreSQL 17 `minerva_db`, Python 3.10 venv built with uv under
-`/opt/uv-python`, public URL `https://ims.minerva108.com`). Migrated from Turhost
+sandbox, PostgreSQL 17 `minerva_db`, **Python 3.12** (Ubuntu's `/usr/bin/python3.12`,
+security updates via apt; `venv` is a symlink to `venv312`, and `venv310` is kept as a
+rollback target — switch the symlink and restart), public URL `https://ims.minerva108.com`). Migrated from Turhost
 on **2026-09-24** — full runbook and lessons in `ops/hetzner/RUNBOOK.md`.
 `deploy.sh` and the ad-hoc-deploy hook read the live server's IP/port/user/key from
 `ops/hetzner/active-server.env`; a future move only changes that file. The old
