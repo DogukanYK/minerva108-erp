@@ -21,14 +21,16 @@ Veri sözleşmeleri:
 Kurallar (tek kaynak — UI ve Excel bu modülün çıktısını gösterir):
   • Çalışma = kapalı in→out çiftlerinin UTC farkları toplamı (gece yarısını
     aşan çift doğal olarak doğru hesaplanır — fark UTC'de alınır).
-  • Molalar ŞİRKET GENELİ SABİT (BREAKS: 09:30/15 · 12:45/45 · 16:00/15 dk).
+  • Molalar ŞİRKET GENELİ ve TARİHE BAĞLI (BREAK_REGIMES): 23.09.2026'ya
+    kadar 09:30/15 · 12:45/45 · 16:00/15 dk, o günden itibaren mola YOK.
     Gün TEK kapalı çiftten oluşuyorsa, o çiftin TR saat penceresine düşen
     molalar düşülür (kısmi kesişim orantılı — yarım gün çalışandan tam günün
     molası düşmez).  Çoklu çift = personel molada çıkış basmış, kesinti
     yapılmaz.  Programsız günlerde (hafta tatili/izin) kesinti yok.
   • Beklenen süre = program aralığı − o aralığa düşen molalar (iş günü);
     izin/tam tatil/programsız gün = 0; yarım gün resmi tatilde yarısı.
-    Standart mesai 08:30–17:45 → 555 − 75 = net 480 dk (8 saat).
+    Standart mesai 23.09.2026'dan itibaren 09:00–18:00 → net 540 dk (9 saat);
+    öncesi 08:30–17:45 → 555 − 75 = net 480 dk (8 saat).
   • Fazla mesai = max(0, çalışılan − beklenen) → tatil/izin/hafta tatilinde
     çalışılan her dakika mesaidir.
   • Geç gelme / erken çıkma BAYRAĞI YOK (bilinçli karar): saatler dakika
@@ -49,19 +51,31 @@ from datetime import date, datetime, timedelta
 
 from database import TR_OFFSET, to_tr
 
-# ── Şirket geneli sabit mola şeması (TR duvar saati) ────────────────────────
+# ── Şirket geneli mola şeması — TARİHE BAĞLI (TR duvar saati) ───────────────
 # Molalar herkes için aynı; kişi bazlı "öğle molası (dk)" girişi KALDIRILDI.
 # Program versiyonlarındaki `lunch_break_minutes` kolonu DB'de KORUNUR (eski
 # kayıtların bilgisi kaybolmasın) ama hesapta artık kullanılmaz.
-BREAKS = (
+#
+# 23.09.2026'ya kadar 75 dk sabit mola düşülüyordu.  O günden itibaren mesai
+# 09:00–18:00 ve mola DÜŞÜLMEZ — öğle arası da çalışma süresinden sayılır
+# (patron kararı, 2026-09-29).  Şema tarihe bağlı tutulur ki kapanmış puantaj
+# ayları geriye dönük değişmesin: şemayı değiştirmek = BREAK_REGIMES'e yeni
+# satır eklemek, eskisini silmek/düzenlemek DEĞİL.
+LEGACY_BREAKS = (
     {"start": "09:30", "minutes": 15, "label": "Kahvaltı"},
     {"start": "12:45", "minutes": 45, "label": "Öğle yemeği"},
     {"start": "16:00", "minutes": 15, "label": "Mola"},
 )
-# Standart mesai — yeni program varsayılanı (08:30–17:45 = 555 dk brüt,
-# 75 dk mola → net 8 saat).
-DEFAULT_WORK_START = "08:30"
-DEFAULT_WORK_END = "17:45"
+BREAK_REGIMES = (                     # (bu günden itibaren, şema) — artan tarih
+    (date.min, LEGACY_BREAKS),
+    (date(2026, 9, 23), ()),
+)
+# Güncel şema — UI'nın gösterdiği, tarih verilmeyen çağrıların kullandığı.
+BREAKS = BREAK_REGIMES[-1][1]
+# Standart mesai — yeni program varsayılanı (09:00–18:00 = 540 dk, mola
+# düşülmez → net 9 saat).  23.09.2026 öncesi 08:30–17:45 idi.
+DEFAULT_WORK_START = "09:00"
+DEFAULT_WORK_END = "18:00"
 
 # Geriye dönük: eski kayıtlarda tek 'öğle molası' alanı vardı.  Artık
 # kullanılmıyor; sabit tutuluyor ki eski import/testler kırılmasın.
@@ -194,19 +208,30 @@ def validate_template(raw):
 
 # ─── Mola ────────────────────────────────────────────────────────────────────
 
-def break_minutes_within(start_hm: str, end_hm: str) -> int:
+def breaks_for(work_date) -> tuple:
+    """work_date günü geçerli mola şeması (BREAK_REGIMES)."""
+    scheme = BREAK_REGIMES[0][1]
+    for since, regime in BREAK_REGIMES:
+        if work_date >= since:
+            scheme = regime
+    return scheme
+
+
+def break_minutes_within(start_hm: str, end_hm: str, work_date=None) -> int:
     """[start, end) penceresine düşen toplam mola dakikası.
 
     Kısmi kesişim orantılı sayılır — 08:30–13:00 çalışan kahvaltının tamamını
     (15) + öğlenin ilk 15 dakikasını görür.  Böylece yarım gün çalışandan tam
     günün molası düşülmez.  Gece yarısını aşan çift (end <= start) için 0 —
-    mola şeması gündüz mesaisi içindir, gece vardiyasına uydurulmaz."""
+    mola şeması gündüz mesaisi içindir, gece vardiyasına uydurulmaz.
+    work_date: şemanın seçileceği gün (puantaj hesabı DAİMA verir); None →
+    güncel şema."""
     s = _hm_to_minutes(start_hm)
     e = _hm_to_minutes(end_hm)
     if e <= s:
         return 0
     total = 0
-    for b in BREAKS:
+    for b in (BREAKS if work_date is None else breaks_for(work_date)):
         bs = _hm_to_minutes(b["start"])
         be = bs + int(b["minutes"])
         total += max(0, min(e, be) - max(s, bs))
@@ -214,7 +239,7 @@ def break_minutes_within(start_hm: str, end_hm: str) -> int:
 
 
 def breaks_view() -> list:
-    """UI/rapor için mola şeması — bitiş saati hesaplanmış hâlde."""
+    """UI/rapor için GÜNCEL mola şeması — bitiş saati hesaplanmış hâlde."""
     out = []
     for b in BREAKS:
         bs = _hm_to_minutes(b["start"])
@@ -233,10 +258,10 @@ def schedule_for(schedules, work_date):
     """work_date için geçerli program versiyonunun O GÜNKÜ girdisini döndür.
 
     schedules: parse edilmiş versiyon listesi (sıra önemsiz).
-    Dönüş: {"start": "08:30", "end": "17:45", "break_minutes": 75,
-            "span_minutes": 555} — ya da None (o gün çalışma yok / geçerli
-    versiyon yok).  `break_minutes` sabit şemadan (BREAKS) türer, programın
-    eski `lunch_break_minutes` alanından DEĞİL."""
+    Dönüş: {"start": "09:00", "end": "18:00", "break_minutes": 0,
+            "span_minutes": 540} — ya da None (o gün çalışma yok / geçerli
+    versiyon yok).  `break_minutes` o günün mola şemasından (breaks_for)
+    türer, programın eski `lunch_break_minutes` alanından DEĞİL."""
     best = None
     for s in schedules or []:
         ef = s.get("effective_from")
@@ -254,7 +279,7 @@ def schedule_for(schedules, work_date):
     return {
         "start": day["start"],
         "end": day["end"],
-        "break_minutes": break_minutes_within(day["start"], day["end"]),
+        "break_minutes": break_minutes_within(day["start"], day["end"], work_date),
         "span_minutes": max(0, end_m - start_m),
     }
 
@@ -364,7 +389,7 @@ def compute_day(work_date, events, day_schedule, leave_type=None, holiday=None,
         p0 = closed[0]
         break_minutes = break_minutes_within(
             to_tr(p0["in"]["ts_utc"]).strftime("%H:%M"),
-            to_tr(p0["out"]["ts_utc"]).strftime("%H:%M"))
+            to_tr(p0["out"]["ts_utc"]).strftime("%H:%M"), work_date)
         worked = max(0, gross - break_minutes)
         break_deducted = break_minutes > 0
 

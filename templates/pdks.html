@@ -607,8 +607,9 @@
             <input type="date" id="sFrom" class="ipt" style="max-width:220px;" />
           </div>
           <div class="breaks-box">
-            <b><i class="bi bi-cup-hot"></i> Molalar (şirket geneli, sabit)</b>
+            <b><i class="bi bi-cup-hot"></i> Molalar (şirket geneli)</b>
             <div id="breaksList" class="muted">—</div>
+            <div class="muted" style="font-size:0.78rem;margin-top:0.3rem;">23.09.2026'dan itibaren mola düşülmez; öncesindeki günlere 75 dk mola uygulanır.</div>
           </div>
           <p class="muted" style="margin:0 0 0.8rem;">Farklı bir başlangıç tarihi = yeni versiyon; geçmiş günlerin hesabı değişmez.</p>
           <div id="schedVersions" class="muted" style="font-size:0.8rem;margin-bottom:0.5rem;"></div>
@@ -1531,7 +1532,8 @@
           : '<tr><td colspan="6" class="muted" style="padding:1rem;">Henüz personel kaydı yok — "Yeni Personel" ile başlayın.</td></tr>';
       } catch (e) { tb.innerHTML = `<tr><td colspan="6" class="muted" style="padding:1rem;">${esc(e.message)}</td></tr>`; }
     }
-    /* Molalar şirket geneli sabit — düzenlenmez, bilgi olarak gösterilir. */
+    /* Molalar şirket geneli, tarihe bağlı (core/pdks.BREAK_REGIMES) — düzenlenmez;
+       burada GÜNCEL şema bilgi olarak gösterilir. */
     function renderBreaksBox(){
       const el = document.getElementById('breaksList');
       if (!el) return;
@@ -1636,8 +1638,8 @@
           } catch { schedChanged = true; }
         }
         if (schedChanged) {
-          // lunch_break_minutes GÖNDERİLMİYOR — molalar şirket geneli sabit
-          // (core/pdks.BREAKS).  Kolon eski kayıtlar için DB'de duruyor.
+          // lunch_break_minutes GÖNDERİLMİYOR — molalar şirket geneli, tarihe
+          // bağlı (core/pdks.BREAK_REGIMES).  Kolon eski kayıtlar için DB'de duruyor.
           await jpost(`/api/pdks/employees/${empId}/schedule`, {
             effective_from: sFrom,
             weekly_template: tplNow,
