@@ -28,6 +28,9 @@ Yönetici (Doğukan) teyidiyle:
 Doğukan 24.09 sabah geldi, girişi yanlışlıkla 17:50'de bastı; 30.09'da da
 ofisteydi (çıkış saati verilmedi → normal 18:00).
 
+6. tur: Sued 08.09 ve 15.09'da hiç gelmediğini bildirdi — 2. turda "düzenli
+geldi" bilgisiyle eklenen o iki günün kayıtları pasifleşir (devamsız kalır).
+
 4. tur: Doğukan 30.09'da (okul günü) ekstra geldi ve bunu 07.09'daki sınav
 izninin telafisi saydı ("10 saat fazla mesai yazma") → gün değişimi.
 
@@ -83,6 +86,9 @@ SADECE_CIKIS = [
     ("Doğukan Yalçınkaya", date(2026, 9, 24), "18:00", "normal saatte çıktı"),
 ]
 
+# Sued 08.09 ve 15.09'da gelmedi (6. tur) — PASIF + TAM_GUN ikisi de kullanır.
+_SUED_GELMEDI = [date(2026, 9, 8), date(2026, 9, 15)]
+
 # ── Yanlış saatle basılmış olaylar → pasifleştir (personel, gün, TR saat, tip)
 # Doğukan 24.09: sabah gelmiş, girişi 17:50'de basmış (çıkışla aynı anda) —
 # giriş pasifleşir, sabah girişi eklenir, 17:50 çıkışı yerinde kalır.
@@ -92,6 +98,8 @@ PASIF = [
     # 5. tur: "24'ünde normal çıktım" → 17:50 çıkışı da yanlış, 18:00 eklenir
     ("Doğukan Yalçınkaya", date(2026, 9, 24), "17:50", "out",
      "yanlış saatle basılmış çıkış (normal saatte çıktı)"),
+    *[("Sued", d, hm, typ, "personel o gün gelmediğini bildirdi")
+      for d in _SUED_GELMEDI for hm, typ in (("08:30", "in"), ("17:45", "out"))],
 ]
 
 # ── Eksik girişler (personel, gün, TR saat, gerekçe) ───────────────────────
@@ -104,7 +112,9 @@ SADECE_GIRIS = [
 # vardı" (Doğukan izinli, Songül'ün Pazartesi izin günü).  Sued 07.09'da işe
 # başladı, kendi basımları 18.09'da başlıyor — "düzenli geldi, normal saatte
 # çıktı".  Songül: "eksik günü yok, tam yap".
-_SUED_GUNLER = [date(2026, 9, d) for d in (7, 8, 9, 10, 11, 14, 15, 16, 17)]
+# 6. tur: Sued "8 ve 15 Eylül'de hiç gelmedim" → o iki gün listeden çıktı,
+# 2. turda eklenen kayıtları PASIF listesinde pasifleşir.
+_SUED_GUNLER = [date(2026, 9, d) for d in (7, 9, 10, 11, 14, 16, 17)]
 TAM_GUN = [
     ("Betül Akkuş", date(2026, 9, 7), "08:30", "17:45", "07.09 ofisteydi"),
     ("Meltem Erkmen", date(2026, 9, 7), "08:30", "17:45", "07.09 ofisteydi"),
