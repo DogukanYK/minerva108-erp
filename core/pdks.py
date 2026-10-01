@@ -22,15 +22,15 @@ Kurallar (tek kaynak — UI ve Excel bu modülün çıktısını gösterir):
   • Çalışma = kapalı in→out çiftlerinin UTC farkları toplamı (gece yarısını
     aşan çift doğal olarak doğru hesaplanır — fark UTC'de alınır).
   • Molalar ŞİRKET GENELİ ve TARİHE BAĞLI (BREAK_REGIMES): 23.09.2026'ya
-    kadar 09:30/15 · 12:45/45 · 16:00/15 dk, o günden itibaren mola YOK.
+    kadar 09:30/15 · 12:45/45 · 16:00/15 dk, o günden itibaren 12:30/60 dk.
     Gün TEK kapalı çiftten oluşuyorsa, o çiftin TR saat penceresine düşen
     molalar düşülür (kısmi kesişim orantılı — yarım gün çalışandan tam günün
     molası düşmez).  Çoklu çift = personel molada çıkış basmış, kesinti
     yapılmaz.  Programsız günlerde (hafta tatili/izin) kesinti yok.
   • Beklenen süre = program aralığı − o aralığa düşen molalar (iş günü);
     izin/tam tatil/programsız gün = 0; yarım gün resmi tatilde yarısı.
-    Standart mesai 23.09.2026'dan itibaren 09:00–18:00 → net 540 dk (9 saat);
-    öncesi 08:30–17:45 → 555 − 75 = net 480 dk (8 saat).
+    Standart mesai 23.09.2026'dan itibaren 09:00–18:00 → 540 − 60 = net
+    480 dk (8 saat); öncesi 08:30–17:45 → 555 − 75 = net 480 dk (8 saat).
   • Fazla mesai = max(0, çalışılan − beklenen) → tatil/izin/hafta tatilinde
     çalışılan her dakika mesaidir.
   • Geç gelme / erken çıkma BAYRAĞI YOK (bilinçli karar): saatler dakika
@@ -57,9 +57,11 @@ from database import TR_OFFSET, to_tr
 # kayıtların bilgisi kaybolmasın) ama hesapta artık kullanılmaz.
 #
 # 23.09.2026'ya kadar 75 dk sabit mola düşülüyordu.  O günden itibaren mesai
-# 09:00–18:00 ve mola DÜŞÜLMEZ — öğle arası da çalışma süresinden sayılır
-# (patron kararı, 2026-09-29).  Şema tarihe bağlı tutulur ki kapanmış puantaj
-# ayları geriye dönük değişmesin: şemayı değiştirmek = BREAK_REGIMES'e yeni
+# 09:00–18:00 ve TEK 60 dk öğle arası düşülür → net 8 saat (patron kararı,
+# 2026-10-01: "8 saat olarak değiştir"; 29.09'da önce "molaları hiç düşme"
+# denmiş ve 23.09 şeması boş girilmişti — aynı kararın düzeltmesi olduğu için
+# o satır yerinde düzeltildi).  Şema tarihe bağlı tutulur ki kapanmış puantaj
+# ayları geriye dönük değişmesin: YENİ bir mola kararı = BREAK_REGIMES'e yeni
 # satır eklemek, eskisini silmek/düzenlemek DEĞİL.
 LEGACY_BREAKS = (
     {"start": "09:30", "minutes": 15, "label": "Kahvaltı"},
@@ -68,12 +70,12 @@ LEGACY_BREAKS = (
 )
 BREAK_REGIMES = (                     # (bu günden itibaren, şema) — artan tarih
     (date.min, LEGACY_BREAKS),
-    (date(2026, 9, 23), ()),
+    (date(2026, 9, 23), ({"start": "12:30", "minutes": 60, "label": "Öğle arası"},)),
 )
 # Güncel şema — UI'nın gösterdiği, tarih verilmeyen çağrıların kullandığı.
 BREAKS = BREAK_REGIMES[-1][1]
-# Standart mesai — yeni program varsayılanı (09:00–18:00 = 540 dk, mola
-# düşülmez → net 9 saat).  23.09.2026 öncesi 08:30–17:45 idi.
+# Standart mesai — yeni program varsayılanı (09:00–18:00 = 540 dk, 60 dk
+# öğle arası → net 8 saat).  23.09.2026 öncesi 08:30–17:45 idi.
 DEFAULT_WORK_START = "09:00"
 DEFAULT_WORK_END = "18:00"
 
@@ -258,7 +260,7 @@ def schedule_for(schedules, work_date):
     """work_date için geçerli program versiyonunun O GÜNKÜ girdisini döndür.
 
     schedules: parse edilmiş versiyon listesi (sıra önemsiz).
-    Dönüş: {"start": "09:00", "end": "18:00", "break_minutes": 0,
+    Dönüş: {"start": "09:00", "end": "18:00", "break_minutes": 60,
             "span_minutes": 540} — ya da None (o gün çalışma yok / geçerli
     versiyon yok).  `break_minutes` o günün mola şemasından (breaks_for)
     türer, programın eski `lunch_break_minutes` alanından DEĞİL."""

@@ -123,33 +123,37 @@ def test_legacy_workday_nets_eight_hours():
         assert "08:30" < b["start"] < "17:45"
 
 
-def test_current_workday_is_nine_hours_without_breaks():
-    """23.09.2026'dan itibaren 09:00–18:00 ve mola düşülmez → net 9 saat."""
+def test_current_workday_nets_eight_hours_with_one_hour_lunch():
+    """23.09.2026'dan itibaren 09:00–18:00, 60 dk öğle arası → net 8 saat."""
     from core.pdks import (BREAKS, DEFAULT_WORK_END, DEFAULT_WORK_START,
                            TOTAL_BREAK_MINUTES, break_minutes_within, breaks_view)
     assert (DEFAULT_WORK_START, DEFAULT_WORK_END) == ("09:00", "18:00")
-    assert BREAKS == () and TOTAL_BREAK_MINUTES == 0 and breaks_view() == []
+    assert TOTAL_BREAK_MINUTES == 60
+    assert [(b["start"], b["end"], b["minutes"]) for b in breaks_view()] == [("12:30", "13:30", 60)]
+    for b in BREAKS:                             # öğle arası mesainin İÇİNDE
+        assert DEFAULT_WORK_START < b["start"] < DEFAULT_WORK_END
 
     day = date(2026, 9, 28)                      # Pazartesi
-    assert break_minutes_within("09:00", "18:00", day) == 0
+    assert break_minutes_within("09:00", "18:00", day) == 60
+    assert break_minutes_within("09:00", "13:00", day) == 30     # kısmi kesişim
     tpl = {str(i): {"start": "09:00", "end": "18:00"} for i in range(5)}
     tpl.update({"5": None, "6": None})
     s = schedule_for([{"effective_from": date(2026, 9, 23), "template": tpl}], day)
-    assert s["span_minutes"] == 540 and s["break_minutes"] == 0
+    assert s["span_minutes"] == 540 and s["break_minutes"] == 60
     d = compute_day(day,
                     [ev("in", tr(2026, 9, 28, 9, 0)), ev("out", tr(2026, 9, 28, 18, 0))],
                     s)
-    assert d["expected_minutes"] == 540 and d["worked_minutes"] == 540
+    assert d["expected_minutes"] == 480 and d["worked_minutes"] == 480
     assert d["missing_minutes"] == 0 and d["overtime_minutes"] == 0
-    assert not d["break_deducted"] and d["break_minutes"] == 0
+    assert d["break_deducted"] and d["break_minutes"] == 60
 
 
 def test_break_regime_switches_on_2026_09_23():
-    """Sınır günü: 22.09 eski şema (75 dk), 23.09 (dahil) mola yok."""
+    """Sınır günü: 22.09 eski şema (75 dk), 23.09 (dahil) tek 60 dk öğle arası."""
     from core.pdks import break_minutes_within, breaks_for
     assert break_minutes_within("09:00", "18:00", date(2026, 9, 22)) == 75
-    assert break_minutes_within("09:00", "18:00", date(2026, 9, 23)) == 0
-    assert breaks_for(date(2026, 9, 22)) and breaks_for(date(2026, 9, 23)) == ()
+    assert break_minutes_within("09:00", "18:00", date(2026, 9, 23)) == 60
+    assert len(breaks_for(date(2026, 9, 22))) == 3 and len(breaks_for(date(2026, 9, 23))) == 1
 
 
 def test_break_window_intersection_edges():

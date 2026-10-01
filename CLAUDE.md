@@ -190,9 +190,10 @@ puantaj formatı: tik'li tek sayfa grid (✓/R/İ/D/!/—), süre dökümü YOK
 "permission" kavramıyla karıştırma.
 
 **Molalar ŞİRKET GENELİ ve TARİHE BAĞLI** (`core/pdks.BREAK_REGIMES`,
-`breaks_for(work_date)`). **23.09.2026'dan itibaren mesai 09:00–18:00 ve mola
-DÜŞÜLMEZ** (net 9 saat; patron kararı 29.09.2026 — öğle arası da çalışma
-sayılır). Öncesi `LEGACY_BREAKS` — 09:30/15 Kahvaltı · 12:45/45 Öğle ·
+`breaks_for(work_date)`). **23.09.2026'dan itibaren mesai 09:00–18:00, tek
+60 dk öğle arası (12:30–13:30) düşülür → net 8 saat** (patron kararı
+01.10.2026; 29.09'da önce "mola düşme" denmiş, 23.09 satırı yerinde
+düzeltildi). Öncesi `LEGACY_BREAKS` — 09:30/15 Kahvaltı · 12:45/45 Öğle ·
 16:00/15 Mola = 75 dk, mesai 08:30–17:45 → net 8 saat. Şema tarihe bağlı ki
 kapanmış aylar geriye dönük değişmesin: yeni mola kararı = `BREAK_REGIMES`'e
 yeni satır, eskisini DÜZENLEME. Puantaj hesabı `break_minutes_within(...,
