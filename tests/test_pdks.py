@@ -1949,6 +1949,30 @@ def test_report_pdf_returns_grid(authed_client, db_session):
         "/api/pdks/report/pdf?year=2026&month=13").status_code == 400
 
 
+def test_report_pdf_hours_variant(authed_client, db_session):
+    """`hours=true` saatli çizelgeyi ayrı dosya adıyla döner; tikli format
+    varsayılan kalır.  Hücre süresi + toplam satırları PDF metninde görünür."""
+    r = authed_client.post("/api/pdks/employees", headers=ORIGIN, json={
+        "full_name": "Saatli Personel", "start_date": "2026-08-03"})
+    eid = r.json()["id"]
+    authed_client.put(f"/api/pdks/employees/{eid}/schedule", headers=ORIGIN,
+                      json={"effective_from": "2026-08-03",
+                            "weekly_template": STD_TEMPLATE})
+    for typ, hm in (("in", "09:00"), ("out", "18:00")):      # 03.08 Pzt
+        r = authed_client.post("/api/pdks/events", headers=ORIGIN, json={
+            "employee_id": eid, "event_type": typ, "date": "2026-08-03",
+            "time": hm, "note": "test girişi"})
+        assert r.status_code in (200, 201), r.text
+    resp = authed_client.get("/api/pdks/report/pdf?year=2026&month=8&hours=true")
+    assert resp.status_code == 200, resp.text
+    assert "puantaj_cizelge_saatli_2026-08.pdf" in resp.headers["content-disposition"]
+    assert resp.content.startswith(b"%PDF-")
+
+    from core.pdks_pdf import _hm, puantaj_grid_filename
+    assert _hm(545) == "9:05" and _hm(0) == "—"
+    assert puantaj_grid_filename(2026, 8) == "puantaj_cizelge_2026-08.pdf"
+
+
 def test_report_pdf_rbac(staff_employee_client):
     """pdks.report izni olmayan personel çizelgeyi indiremez."""
     c, _emp_id = staff_employee_client

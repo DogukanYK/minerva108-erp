@@ -416,6 +416,7 @@
                 <button class="btn-o" onclick="repShift(1)"><i class="bi bi-chevron-right"></i></button>
               </div>
               <a class="btn-o" id="repPdfBtn" href="#"><i class="bi bi-file-earmark-pdf"></i> Puantaj PDF</a>
+              <a class="btn-o" id="repPdfHoursBtn" href="#"><i class="bi bi-clock-history"></i> Saatli PDF</a>
               <a class="btn-o" id="repExcelBtn" href="#"><i class="bi bi-download"></i> Excel İndir</a>
             </div>
           </div>
@@ -1786,6 +1787,7 @@
       document.getElementById('repMonthLabel').textContent = `${MONTHS[repM]} ${repY}`;
       document.getElementById('repExcelBtn').href = `/api/pdks/report/excel?year=${repY}&month=${repM}`;
       document.getElementById('repPdfBtn').href = `/api/pdks/report/pdf?year=${repY}&month=${repM}`;
+      document.getElementById('repPdfHoursBtn').href = `/api/pdks/report/pdf?year=${repY}&month=${repM}&hours=true`;
       const tb = document.getElementById('repBody');
       tb.innerHTML = '<tr><td colspan="7" class="muted" style="padding:1rem;">Hesaplanıyor…</td></tr>';
       try {

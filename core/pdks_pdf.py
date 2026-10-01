@@ -9,8 +9,12 @@ PDKS aylık puantaj ÇİZELGESİ (tik'li grid) PDF üreticisi — reportlab.
 
 Patronun istediği tek sayfalık klasik form (Ağustos 2026'da elle üretilen
 taslağın sistemleştirilmişi): satır = ayın günü, sütun = personel, hücre =
-✓ / R / İ / D / ! / — işareti.  Süre dökümü İSTENMEDİ — o detay Excel
-raporunda (core/pdks_report.py) yaşamaya devam eder.
+✓ / R / İ / D / ! / — işareti.  Bu varsayılan formatta süre dökümü YOK —
+o detay Excel raporunda (core/pdks_report.py) yaşar.
+
+`hours=True` (01.10.2026, bordro isteği): aynı çizelge, geldiği günlerde ✓
+yerine o gün çalışılan süre (s:dd) + altta Toplam Saat / Fazla Mesai / Eksik
+satırları.  Tikli format değişmez; saatli olan ayrı dosya adıyla iner.
 
 Girdi: routers/pdks._report_data() çıktısı (Excel ile aynı sözleşme).
 Font: core/monthly_report._register_fonts() — Türkçe + ✓ glifi için DejaVu
@@ -22,8 +26,8 @@ from core.monthly_report import _register_fonts
 from core.pdks import WEEKDAY_LABELS
 
 
-def puantaj_grid_filename(year: int, month: int) -> str:
-    return f"puantaj_cizelge_{year}-{month:02d}.pdf"
+def puantaj_grid_filename(year: int, month: int, hours: bool = False) -> str:
+    return f"puantaj_cizelge{'_saatli' if hours else ''}_{year}-{month:02d}.pdf"
 
 
 # Hücre işaretleri — öncelik sırası render_puantaj_grid_pdf._mark içinde.
@@ -31,9 +35,21 @@ LEGEND = ("✓ geldi · R raporlu · İ izinli · D devamsız · ! çıkış eks
           "T resmi tatil · — işe girişten önce / ayrılıştan sonra · "
           "gri satır = hafta tatili. İzin satırı yalnız programlı iş günlerini "
           "sayar; hafta sonuna taşan izin, izin hakkından düşmez.")
+LEGEND_HOURS = ("Sayı = o gün çalışılan süre (saat:dakika) · R raporlu · "
+                "İ izinli · D devamsız · ! çıkış eksik (süre sayılmaz) · "
+                "T resmi tatil · — işe girişten önce / ayrılıştan sonra · "
+                "gri satır = hafta tatili. Fazla mesai = günlük beklenen "
+                "sürenin üstü (izin/tatil gününde çalışılan sürenin tamamı). "
+                "İzin satırı yalnız programlı iş günlerini sayar.")
 
 
-def render_puantaj_grid_pdf(data: dict) -> bytes:
+def _hm(minutes) -> str:
+    """545 → '9:05' (0 → '—') — hücre ve toplam satırları için kısa biçim."""
+    m = int(minutes or 0)
+    return f"{m // 60}:{m % 60:02d}" if m else "—"
+
+
+def render_puantaj_grid_pdf(data: dict, hours: bool = False) -> bytes:
     import io
 
     from reportlab.lib import colors
@@ -61,10 +77,13 @@ def render_puantaj_grid_pdf(data: dict) -> bytes:
     ndays = max(len(e["month"]["days"]) for e in employees) if employees else 30
 
     # ── Hücre işareti: (metin, renk, zemin|None) ────────────────────────────
+    def _worked(day):
+        return _hm(day["worked_minutes"]) if hours else "✓"
+
     def _mark(day):
         st = day["status"]
         if day["worked_minutes"] > 0:
-            return "✓", GREEN, None
+            return _worked(day), GREEN, None
         if st == "eksik_cikis":
             return "!", ORANGE, None
         if st == "izinli":
@@ -126,7 +145,7 @@ def render_puantaj_grid_pdf(data: dict) -> bytes:
             if wd >= 5:
                 # Hafta sonu — izne/işarete boyanmaz (izin hakkından sayılmıyor);
                 # tatilde fiilen çalışıldıysa ✓ yine görünür.
-                txt, col, bg = ("✓", GREEN, None) \
+                txt, col, bg = (_worked(day), GREEN, None) \
                     if day["worked_minutes"] > 0 else ("", MUTED, None)
             else:
                 txt, col, bg = _mark(day)
@@ -155,6 +174,19 @@ def render_puantaj_grid_pdf(data: dict) -> bytes:
         ("BACKGROUND", (0, r + 1), (-1, r + 1), colors.HexColor("#f6f7fb")),
         ("TEXTCOLOR", (0, r + 1), (-1, r + 1), colors.HexColor("#445566")),
     ]
+    if hours:
+        r = len(rows)
+        tot = [e["month"]["totals"] for e in employees]
+        rows.append(["Toplam Saat"] + [_hm(t["toplam_calisma"]) for t in tot])
+        rows.append(["Fazla Mesai"] + [_hm(t["toplam_fazla_mesai"]) for t in tot])
+        rows.append(["Eksik"] + [_hm(t["toplam_eksik"]) for t in tot])
+        style += [
+            ("BACKGROUND", (0, r), (-1, r), LIGHT),
+            ("FONTNAME", (0, r), (-1, r + 2), font_b),
+            ("LINEABOVE", (0, r), (-1, r), 0.8, NAVY),
+            ("TEXTCOLOR", (0, r + 1), (-1, r + 1), GREEN),
+            ("TEXTCOLOR", (0, r + 2), (-1, r + 2), RED),
+        ]
 
     # ── Belge ───────────────────────────────────────────────────────────────
     ncols = len(employees)
@@ -172,11 +204,12 @@ def render_puantaj_grid_pdf(data: dict) -> bytes:
                             textColor=colors.HexColor("#445566"),
                             leading=11.5, spaceBefore=8)
     story = [
-        Paragraph(f"Puantaj — {data['month_label']}", st_h1),
+        Paragraph(f"Puantaj — {data['month_label']}"
+                  + (" (saatli)" if hours else ""), st_h1),
         Paragraph("Minerva 108 Kozmetik · IMS Personel Devam Takip Sistemi",
                   st_sub),
         Table(rows, colWidths=col_w, style=TableStyle(style), repeatRows=1),
-        Paragraph(LEGEND, st_leg),
+        Paragraph(LEGEND_HOURS if hours else LEGEND, st_leg),
         Spacer(1, 1),
     ]
     doc.build(story)
