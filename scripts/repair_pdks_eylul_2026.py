@@ -28,6 +28,9 @@ Yönetici (Doğukan) teyidiyle:
 Doğukan 24.09 sabah geldi, girişi yanlışlıkla 17:50'de bastı; 30.09'da da
 ofisteydi (çıkış saati verilmedi → normal 18:00).
 
+4. tur: Doğukan 30.09'da (okul günü) ekstra geldi ve bunu 07.09'daki sınav
+izninin telafisi saydı ("10 saat fazla mesai yazma") → gün değişimi.
+
 NE YAPAR
 ────────
 1. İşe giriş tarihlerini yazar.
@@ -52,7 +55,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from database import (AttendanceEvent, Employee, EmployeeSchedule,  # noqa: E402
-                      SessionLocal)
+                      LeaveRecord, SessionLocal)
 
 COMMIT = "--commit" in sys.argv
 ACTOR_USER_ID = 1                     # Doğukan (IMS user id)
@@ -144,6 +147,19 @@ PROGRAM = [
     # Çiçek 15.09'da başladı; programı 24.09'dan başlıyordu.
     ("Çiçek Yüksel", date(2026, 9, 15), _tpl({i: ("08:30", "17:45") for i in range(5)})),
     ("Çiçek Yüksel", date(2026, 9, 23), _tpl({i: ("09:00", "18:00") for i in range(5)})),
+    # 4. tur — Doğukan: 07.09 (Pzt) sınav izni 30.09 (Çar, okul günü) ekstra
+    # çalışmasıyla telafi edildi → gün değişimi: 07.09 çalışma günü değil,
+    # 30.09 normal iş günü.  Tek günlük versiyonlar; ertesi gün eski düzen döner.
+    ("Doğukan Yalçınkaya", date(2026, 9, 7), _tpl({i: ("08:30", "17:45") for i in (1, 2, 3, 4)})),
+    ("Doğukan Yalçınkaya", date(2026, 9, 8), _tpl({i: ("08:30", "17:45") for i in range(5)})),
+    ("Doğukan Yalçınkaya", date(2026, 9, 30), _tpl({i: ("09:00", "18:00") for i in (1, 2, 3, 4)})),
+    ("Doğukan Yalçınkaya", date(2026, 10, 1), _tpl({i: ("09:00", "18:00") for i in (1, 3, 4)})),
+]
+
+# ── Telafi edilen izinler → pasifleştir (personel, başlangıç, bitiş, not) ───
+IZIN_PASIF = [
+    ("Doğukan Yalçınkaya", date(2026, 9, 7), date(2026, 9, 7),
+     "30.09 Çarşamba ekstra çalışmasıyla telafi edildi (gün değişimi)"),
 ]
 
 
@@ -155,7 +171,7 @@ def utc_of(d: date, hm: str) -> datetime:
 def main() -> int:
     db = SessionLocal()
     n = {"cikis": 0, "tam_gun": 0, "ayrilis": 0, "baslangic": 0, "program": 0,
-         "pasif": 0, "giris": 0}
+         "pasif": 0, "giris": 0, "izin": 0}
     try:
         by_name = {e.full_name: e for e in db.query(Employee).all()}
 
@@ -315,6 +331,25 @@ def main() -> int:
             print(f"       yeni şablon: {raw}")
             n["program"] += 1
 
+        print("── Telafi edilen izinler (pasifleştirilir)")
+        for name, d1, d2, why in IZIN_PASIF:
+            e = emp(name)
+            lv = (db.query(LeaveRecord)
+                  .filter(LeaveRecord.employee_id == e.id,
+                          LeaveRecord.start_date == d1,
+                          LeaveRecord.end_date == d2).first())
+            if lv is None:
+                raise RuntimeError(f"{name} {d1}–{d2}: izin kaydı bulunamadı")
+            if not lv.is_active:
+                print(f"   · {name:20} {d1:%d.%m} izni zaten pasif")
+                continue
+            print(f"   − {name:20} {d1:%d.%m}–{d2:%d.%m} {lv.leave_type} izni "
+                  f"(id {lv.id}, not: {lv.note!r})  ({why})")
+            if COMMIT:
+                lv.is_active = False
+                lv.note = f"{(lv.note or '').strip()} — {why} — {NOTE}"[:300]
+            n["izin"] += 1
+
         if COMMIT:
             db.commit()
     except Exception as exc:                                   # pragma: no cover
@@ -327,7 +362,8 @@ def main() -> int:
     print("\n" + "═" * 72)
     print(f"Çıkış: {n['cikis']} · giriş: {n['giris']} · pasif: {n['pasif']} · "
           f"tam gün: {n['tam_gun']} · ayrılış: {n['ayrilis']} · "
-          f"başlangıç: {n['baslangic']} · program: {n['program']}")
+          f"başlangıç: {n['baslangic']} · program: {n['program']} · "
+          f"izin pasif: {n['izin']}")
     print("\n✓ YAZILDI." if COMMIT else "\nKURU ÇALIŞTIRMA — yazmak için: --commit")
     return 0
 
