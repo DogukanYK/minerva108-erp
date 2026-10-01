@@ -23,6 +23,11 @@ Yönetici (Doğukan) teyidiyle:
   • Songül'ün eksik günü yok (24.09 tam gün); 14.09 Pazartesi (izin günü)
     geldi, o haftanın iznini 16.09 Çarşamba kullandı.
 
+3. tur: Betül 02.09 gelmedi (devamsız kalır).  Dudu olduğu gibi kalır.
+Çiçek 15.09'da başladı, sistem 24.09'da açıldı, arada düzgün saatlerde geldi.
+Doğukan 24.09 sabah geldi, girişi yanlışlıkla 17:50'de bastı; 30.09'da da
+ofisteydi (çıkış saati verilmedi → normal 18:00).
+
 NE YAPAR
 ────────
 1. İşe giriş tarihlerini yazar.
@@ -70,6 +75,21 @@ SADECE_CIKIS = [
     ("Vedat Doğan", date(2026, 9, 8), "17:45", "normal saatte çıktı"),
     ("Sued", date(2026, 9, 18), "17:45", "normal saatte çıktı"),
     ("Sued", date(2026, 9, 23), "18:00", "normal saatte çıktı"),
+    # 3. tur: "dün de buradaydım" — çıkış saati verilmedi, normal saat
+    ("Doğukan Yalçınkaya", date(2026, 9, 30), "18:00", "ofisteydi, normal saatte çıktı"),
+]
+
+# ── Yanlış saatle basılmış olaylar → pasifleştir (personel, gün, TR saat, tip)
+# Doğukan 24.09: sabah gelmiş, girişi 17:50'de basmış (çıkışla aynı anda) —
+# giriş pasifleşir, sabah girişi eklenir, 17:50 çıkışı yerinde kalır.
+PASIF = [
+    ("Doğukan Yalçınkaya", date(2026, 9, 24), "17:50", "in",
+     "yanlış saatle basılmış giriş (sabah gelmişti)"),
+]
+
+# ── Eksik girişler (personel, gün, TR saat, gerekçe) ───────────────────────
+SADECE_GIRIS = [
+    ("Doğukan Yalçınkaya", date(2026, 9, 24), "09:00", "sabah normal saatte geldi"),
 ]
 
 # ── Hiç kaydı olmayan ama gelinen günler (personel, gün, giriş, çıkış, gerekçe)
@@ -84,6 +104,11 @@ TAM_GUN = [
     ("Vedat Doğan", date(2026, 9, 7), "08:30", "17:45", "07.09 işe başladı, ofisteydi"),
     *[("Sued", d, "08:30", "17:45", "07.09'da başladı, düzenli geldi") for d in _SUED_GUNLER],
     ("Songül Akgül", date(2026, 9, 24), "09:00", "18:00", "eksik günü yok, tam gün"),
+    # 3. tur: Çiçek 15.09'da başladı; sisteme 24.09'da açıldı, arada düzgün geldi
+    *[("Çiçek Yüksel", date(2026, 9, d), "08:30", "17:45",
+       "15.09'da başladı, sisteme sonradan açıldı") for d in (15, 16, 17, 18, 21, 22)],
+    ("Çiçek Yüksel", date(2026, 9, 23), "09:00", "18:00",
+     "15.09'da başladı, sisteme sonradan açıldı"),
 ]
 
 # ── Ayrılış tarihleri (personel, gerçek son gün — dahil) ────────────────────
@@ -116,6 +141,9 @@ PROGRAM = [
      _tpl({0: ("08:30", "17:45"), 1: ("08:30", "17:45"), 3: ("08:30", "17:45"),
            4: ("08:30", "17:45")})),
     ("Songül Akgül", date(2026, 9, 21), _tpl({i: ("08:30", "17:45") for i in (1, 2, 3, 4)})),
+    # Çiçek 15.09'da başladı; programı 24.09'dan başlıyordu.
+    ("Çiçek Yüksel", date(2026, 9, 15), _tpl({i: ("08:30", "17:45") for i in range(5)})),
+    ("Çiçek Yüksel", date(2026, 9, 23), _tpl({i: ("09:00", "18:00") for i in range(5)})),
 ]
 
 
@@ -126,7 +154,8 @@ def utc_of(d: date, hm: str) -> datetime:
 
 def main() -> int:
     db = SessionLocal()
-    n = {"cikis": 0, "tam_gun": 0, "ayrilis": 0, "baslangic": 0, "program": 0}
+    n = {"cikis": 0, "tam_gun": 0, "ayrilis": 0, "baslangic": 0, "program": 0,
+         "pasif": 0, "giris": 0}
     try:
         by_name = {e.full_name: e for e in db.query(Employee).all()}
 
@@ -167,6 +196,56 @@ def main() -> int:
                         work_date=d, source="manual", created_by_user_id=ACTOR_USER_ID,
                         correction_note=f"{why} — {NOTE}"[:300]))
             n["tam_gun"] += 1
+        if COMMIT:
+            db.flush()
+
+        print("── Yanlış basımlar (pasifleştirilir)")
+        for name, d, hm, typ, why in PASIF:
+            e = emp(name)
+            ts = utc_of(d, hm)
+            row = (db.query(AttendanceEvent)
+                   .filter(AttendanceEvent.employee_id == e.id,
+                           AttendanceEvent.work_date == d,
+                           AttendanceEvent.event_type == typ,
+                           AttendanceEvent.ts_utc >= ts,
+                           AttendanceEvent.ts_utc < ts + timedelta(minutes=1))
+                   .first())
+            if row is None:
+                raise RuntimeError(f"{name} {d} {hm} {typ}: olay bulunamadı")
+            if not row.is_active:
+                print(f"   · {name:20} {d:%d.%m} {hm} {typ} zaten pasif")
+                continue
+            print(f"   − {name:20} {d:%d.%m} {hm} {typ} (id {row.id})  ({why})")
+            if COMMIT:
+                row.is_active = False
+                row.corrected_by = "sistem"
+                row.corrected_at = datetime.utcnow()
+                row.correction_note = f"{why} — {NOTE}"[:300]
+            n["pasif"] += 1
+        if COMMIT:
+            db.flush()
+
+        print("── Eksik girişler")
+        for name, d, hm, why in SADECE_GIRIS:
+            e = emp(name)
+            ts = utc_of(d, hm)
+            dup = (db.query(AttendanceEvent.id)
+                   .filter(AttendanceEvent.employee_id == e.id,
+                           AttendanceEvent.work_date == d,
+                           AttendanceEvent.event_type == "in",
+                           AttendanceEvent.ts_utc == ts,
+                           AttendanceEvent.is_active == True)            # noqa: E712
+                   .first())
+            if dup:
+                print(f"   · {name:20} {d:%d.%m} giriş {hm} zaten var")
+                continue
+            print(f"   + {name:20} {d:%d.%m} giriş {hm}  ({why})")
+            if COMMIT:
+                db.add(AttendanceEvent(
+                    employee_id=e.id, event_type="in", ts_utc=ts, work_date=d,
+                    source="manual", created_by_user_id=ACTOR_USER_ID,
+                    correction_note=f"{why} — {NOTE}"[:300]))
+            n["giris"] += 1
         if COMMIT:
             db.flush()
 
@@ -246,7 +325,8 @@ def main() -> int:
         db.close()
 
     print("\n" + "═" * 72)
-    print(f"Çıkış: {n['cikis']} · tam gün: {n['tam_gun']} · ayrılış: {n['ayrilis']} · "
+    print(f"Çıkış: {n['cikis']} · giriş: {n['giris']} · pasif: {n['pasif']} · "
+          f"tam gün: {n['tam_gun']} · ayrılış: {n['ayrilis']} · "
           f"başlangıç: {n['baslangic']} · program: {n['program']}")
     print("\n✓ YAZILDI." if COMMIT else "\nKURU ÇALIŞTIRMA — yazmak için: --commit")
     return 0
