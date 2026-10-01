@@ -80,6 +80,7 @@ SADECE_CIKIS = [
     ("Sued", date(2026, 9, 23), "18:00", "normal saatte çıktı"),
     # 3. tur: "dün de buradaydım" — çıkış saati verilmedi, normal saat
     ("Doğukan Yalçınkaya", date(2026, 9, 30), "18:00", "ofisteydi, normal saatte çıktı"),
+    ("Doğukan Yalçınkaya", date(2026, 9, 24), "18:00", "normal saatte çıktı"),
 ]
 
 # ── Yanlış saatle basılmış olaylar → pasifleştir (personel, gün, TR saat, tip)
@@ -88,6 +89,9 @@ SADECE_CIKIS = [
 PASIF = [
     ("Doğukan Yalçınkaya", date(2026, 9, 24), "17:50", "in",
      "yanlış saatle basılmış giriş (sabah gelmişti)"),
+    # 5. tur: "24'ünde normal çıktım" → 17:50 çıkışı da yanlış, 18:00 eklenir
+    ("Doğukan Yalçınkaya", date(2026, 9, 24), "17:50", "out",
+     "yanlış saatle basılmış çıkış (normal saatte çıktı)"),
 ]
 
 # ── Eksik girişler (personel, gün, TR saat, gerekçe) ───────────────────────
