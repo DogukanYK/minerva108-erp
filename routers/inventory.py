@@ -961,6 +961,32 @@ def create_supplier(data: SupplierCreateRequest, db: Session = Depends(get_db),
     return {"id": supplier.id, "message": "Tedarikçi başarıyla eklendi."}
 
 
+@router.put("/suppliers/{supplier_id}")
+def update_supplier(supplier_id: int, data: SupplierCreateRequest, db: Session = Depends(get_db),
+                    _: dict = Depends(require_permission("items", "edit")),
+                    domain: str = Depends(active_domain)):
+    """Tedarikçi bilgilerini düzenle.  Sayfada düzenleme hiç yoktu (yalnız ekle/sil) —
+    yanlış girilen firma adı/telefonu silip yeniden eklemek gerekiyordu, bu da kayda
+    bağlı mal kabul lotlarını koparırdı.  Aktif panelin (domain) dışındaki tedarikçi
+    değiştirilemez."""
+    supplier = (db.query(Supplier)
+                .filter(Supplier.id == supplier_id, Supplier.is_active == True,   # noqa: E712
+                        Supplier.domain == domain)
+                .first())
+    if not supplier:
+        return JSONResponse(status_code=404, content={"detail": "Tedarikçi bulunamadı."})
+    name = data.name.strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"detail": "Firma adı zorunludur."})
+    supplier.name = name
+    supplier.contact_person = (data.contact_person or "").strip() or None
+    supplier.email = (data.email or "").strip() or None
+    supplier.phone = (data.phone or "").strip() or None
+    supplier.notes = (data.notes or "").strip() or None
+    db.commit()
+    return {"id": supplier.id, "message": "Tedarikçi güncellendi."}
+
+
 @router.delete("/suppliers/{supplier_id}")
 def delete_supplier(supplier_id: int, db: Session = Depends(get_db), _: dict = Depends(require_permission("items", "delete"))):
     supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
