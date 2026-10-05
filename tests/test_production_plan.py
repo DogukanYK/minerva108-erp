@@ -115,3 +115,22 @@ def test_products_endpoint_includes_recipeless(authed_client: TestClient, db_ses
     d = authed_client.get("/api/reports/production-plan/products").json()
     assert "recipeless" in d
     assert any(p["name"] == "Reçetesiz Ürün X" for p in d["recipeless"])
+
+
+def test_producible_never_negative_with_negative_stock(db_session: Session):
+    """Negatif stoklu kalem kapasiteyi 0'a çeker — eskiden floor(−50/11) = −5 çıkıyordu."""
+    rid = _recipe(db_session, waste=10, raw_qty=10, raw_stock=-50, amb_stock=1000)
+    rep = simulate(db_session, [rid], 100, "TR", "cosmetics")
+    p = rep["producible"][0]
+    assert p["producible"] == 0 and p["limiting"] == "Serenida Su"
+    assert p["limit_stock"] == -50                   # gösterimde gerçek stok kalır
+
+
+def test_plan_products_brand_chip_merges_variants(authed_client: TestClient, db_session: Session):
+    """'MİNERVA …' / 'Minerva108 …' hedefli reçeteler tek 'Minerva 108' çipine düşer."""
+    _recipe(db_session, brand="MİNERVA")
+    _recipe(db_session, brand="Minerva108")
+    prods = authed_client.get("/api/reports/production-plan/products").json()["products"]
+    brands = {p["brand"] for p in prods}
+    assert brands == {"Minerva 108"}
+    assert len(prods) == 2

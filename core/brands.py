@@ -23,6 +23,8 @@ Kavram ayrımı — karıştırma:
   • `core.shopify.canonical_brand()` → mağaza env anahtarı; kendi 3-marka
     allowlist'i vardır (marka ≠ mağaza), buradaki alias'lardan bağımsızdır.
 """
+import difflib
+import re
 from typing import Optional
 
 from core.supplier_prices import normalize as fold
@@ -48,6 +50,86 @@ BRAND_LOT_CODES = {
     "serenida": "SR",
     "evanira": "EV",
 }
+
+
+# ─── Sağlam marka anahtarı (raporlar / planlama için) ──────────────────────
+#
+# `brand_of` ilk kelimeyi AYNEN döndürür; elle girilmiş adlarda aynı marka
+# "MİNERVA-108" / "Minerva108" / "Minerva" / "SERENİDE" gibi 4-5 ayrı yazımla
+# yaşadığından Raporlar panelinde marka çipleri çoğalıyordu.  Aşağıdakiler
+# YALNIZ gösterim/gruplama içindir: dolap adı ve lot öneki `brand_of` /
+# `canonical_brand` / `lot_code` sözleşmesine bağlı, onlara DOKUNULMADI.
+_LEAD_ALNUM = re.compile(r"[^a-z0-9]*([a-z0-9]+)")
+_BRAND_FUZZY_CUTOFF = 0.8
+
+
+def _edit_distance(a: str, b: str) -> int:
+    """Optimal string alignment (Damerau) mesafesi — yer değiştirme 1 sayılır."""
+    prev2, prev = None, list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        cur = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            if (prev2 is not None and i > 1 and j > 1
+                    and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]):
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+        prev2, prev = prev, cur
+    return prev[len(b)]
+
+
+def brand_key(name: str) -> str:
+    """Ürün adı → kararlı marka anahtarı ('minerva' / 'serenida' / 'evanira' / …).
+
+    TR-katlanır, baştaki [a-z]+ dizisi alınır ('MİNERVA-108', 'Minerva108',
+    'minerva-108' → 'minerva').  Alias'ta yoksa ilk kelimenin yalnız harfleri
+    ('SER5ENİDA' → 'serenida') ve difflib yakın eşleşmesi (cutoff 0.8 + en
+    fazla tek harf düzeltmesi; 'Serinida' / 'SERENİDE' → 'serenida',
+    'Mineral' → eşleşmez) denenir.  Hiçbiri tutmazsa harf
+    dizisinin kendisi, o da yoksa 'diger'.
+    """
+    s = fold(name)
+    m = _LEAD_ALNUM.match(s)
+    if not m:
+        return "diger"
+    word = m.group(1)                                   # 'ser5enida', 'minerva108'
+    lead = re.match(r"[a-z]*", word).group(0)           # 'ser', 'minerva'
+    letters = re.sub(r"[^a-z]", "", word)               # 'serenida', 'minerva'
+    for cand in (lead, letters):
+        if cand in BRAND_ALIASES:
+            return cand
+    for cand in (letters, lead):
+        if not cand:
+            continue
+        close = difflib.get_close_matches(cand, list(BRAND_ALIASES), n=1,
+                                          cutoff=_BRAND_FUZZY_CUTOFF)
+        # Ek bekçi: yazım hatası = en fazla TEK düzeltme.  difflib tek başına
+        # 'Mineral …' adını da (oran 0.86) Minerva'ya bağlardı.
+        if close and _edit_distance(cand, close[0]) <= 1:
+            return close[0]
+    return lead or letters or "diger"
+
+
+def brand_label(name: str) -> str:
+    """Ürün adı → görüntülenecek marka ('Minerva 108' / 'Serenida' / 'Evanira').
+
+    Tanımlı markaya düşmeyen adlarda eski davranış: ilk kelime (`brand_of`).
+    """
+    return BRAND_ALIASES.get(brand_key(name)) or brand_of(name)
+
+
+def is_known_brand(name: str) -> bool:
+    return brand_key(name) in BRAND_ALIASES
+
+
+def product_brand(target_name: Optional[str], recipe_name: Optional[str] = None) -> str:
+    """Hedef ürün adı ile reçete adından hangisi tanımlı bir markaya düşüyorsa onu
+    kullanır (önce hedef ürün).  İkisi de düşmüyorsa hedef (yoksa reçete) adının
+    `brand_label`'ı."""
+    for nm in (target_name, recipe_name):
+        if nm and is_known_brand(nm):
+            return brand_label(nm)
+    return brand_label(target_name or recipe_name or "")
 
 
 def canonical_brand(name: str) -> str:

@@ -615,6 +615,52 @@ def production_plan_export(
     )
 
 
+# ─── Üretim geçmişi (ürün / marka / ürün grubu bazında) ─────────────────────
+
+@router.get("/reports/production-history")
+def production_history_report(
+    start:  Optional[_dt.date] = Query(None),
+    end:    Optional[_dt.date] = Query(None),
+    brand:  Optional[str] = Query(None, max_length=300),
+    q:      Optional[str] = Query(None, max_length=100),
+    group:  str = Query("product", regex="^(product|brand|category)$"),
+    format: str = Query("json", regex="^(json|xlsx)$"),
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
+):
+    """ProductionHistory toplamları — tarihler TR-yerel gün (varsayılan son 12 ay).
+
+    `brand` virgüllü olabilir; `format=xlsx` → 'Özet' + 'Aylık' sayfalı Excel.
+    """
+    from core import production_history_report as phr
+    # Varsayılan başlangıç hesabından (end − 364 gün) ÖNCE: uç tarih OverflowError → 500
+    if not (phr.date_in_range(start) and phr.date_in_range(end)):
+        return JSONResponse(status_code=400, content={
+            "detail": f"Tarihler {phr.MIN_DATE:%d.%m.%Y} – {phr.MAX_DATE:%d.%m.%Y} aralığında olmalı."})
+    d_start, d_end = phr.default_range()
+    start = start or (d_start if end is None else end - (d_end - d_start))
+    end = end or d_end
+    if start > end:
+        return JSONResponse(status_code=400, content={"detail": "Başlangıç tarihi bitiş tarihinden sonra olamaz."})
+    if (end - start).days > 3660:
+        return JSONResponse(status_code=400, content={"detail": "Tarih aralığı en fazla 10 yıl olabilir."})
+    rep = phr.build_report(db, domain, start, end, brand=brand, q=q, group=group)
+    rep["note"] = phr.since_note(rep["first_record"])
+    if format == "json":
+        return rep
+    try:
+        content = phr.build_workbook(rep)
+    except Exception:
+        return JSONResponse(status_code=500, content={"detail": "Excel üretilemedi."})
+    fname = f"uretim_gecmisi_{start.isoformat()}_{end.isoformat()}_{group}.xlsx"
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 # ─── Tedarikçi fiyat listesi (satın alma raporunu besler) ───────────────────
 _FINANCE = ["SuperAdmin", "Manager"]
 

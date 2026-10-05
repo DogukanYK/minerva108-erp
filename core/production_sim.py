@@ -12,12 +12,15 @@ mi, yetmezse ne kadar eksik, ve tek başına kaç adet üretilebilir?" sorusunu
 yanıtlar.  Lab ekibi Raporlar sayfasından çalıştırır; Excel olarak iner.
 
 Hesap, gerçek üretim tüketim mantığıyla BİREBİR aynıdır (routers/production.py
-`start_production`):
+`start_production`) — kural artık `core/consumption.expand_recipe`'de TEK
+KAYNAK (Satın Alma Planı da aynı motoru kullanır):
   • gross = net × (qty / output) × (1 + fire%/100)
   • Ambalaj/etiket fire MUAF (faktör 1.0)
   • Etiket dil çözümü: seçilen dile (TR/EN) göre kardeş etikete inilir; o
     dilde etiket yoksa kalem atlanır (üretimde de atlanır)
   • Aynı label_group iki kez sayılmaz
+  • "Tek başına üretilebilir" hesabında negatif stok 0 sayılır (eskiden
+    negatif kapasite → negatif adet çıkıyordu)
 
 Domain (Faz 3): yalnızca aktif panele ait reçeteler simüle edilir.
 """
@@ -33,6 +36,8 @@ from database import Recipe, Item
 # RE-EXPORT SHIM'idir: core/shopify.py ve core/ingredients_report.py buradan
 # import ediyor — kaldırılırsa o modüller kırılır.
 from core.brands import brand_of  # noqa: F401  (geriye uyumluluk)
+from core.brands import brand_label, product_brand
+from core.consumption import expand_recipe, load_recipe_recs
 
 
 def list_plan_products(db: Session, domain: str) -> list:
@@ -47,7 +52,10 @@ def list_plan_products(db: Session, domain: str) -> list:
         out.append({
             "recipe_id":  r.id,
             "name":       nm,
-            "brand":      brand_of(nm),
+            # product_brand (→ brand_label): 'MİNERVA-108 …' / 'Minerva 108 …' /
+            # 'Minerva108' tek çip ("Minerva 108") — brand_of ilk kelimeyi aynen
+            # döndürdüğü için Raporlar panelinde aynı marka 3-4 ayrı çipti.
+            "brand":      product_brand(tgt.name if tgt else None, r.name),
             "output":     r.output_quantity,
         })
     out.sort(key=lambda x: (x["brand"].lower(), x["name"].lower()))
@@ -71,22 +79,12 @@ def list_recipeless_products(db: Session, domain: str) -> list:
              .all())
     out = [{
         "name":          it.name,
-        "brand":         brand_of(it.name),
+        "brand":         brand_label(it.name),
         "current_stock": round(float(it.current_stock or 0.0), 2),
         "unit":          it.unit or "adet",
     } for it in items]
     out.sort(key=lambda x: (x["brand"].lower(), x["name"].lower()))
     return out
-
-
-def _resolve_label(db: Session, item, lang: str):
-    """Etiket dil çözümü — seçilen dilin kardeşine in; o dilde yoksa None."""
-    if item.language and item.label_group and item.language != lang:
-        return (db.query(Item)
-                .filter(Item.label_group == item.label_group,
-                        Item.language == lang, Item.is_active == True)
-                .first())   # None → üretimde atlanır
-    return item
 
 
 def simulate(db: Session, recipe_ids: list, qty: float, lang: str, domain: str) -> dict:
@@ -96,60 +94,42 @@ def simulate(db: Session, recipe_ids: list, qty: float, lang: str, domain: str) 
     Döner: { summary, materials[], producible[], purchase[], skipped_labels[] }
     """
     lang = "EN" if (lang or "TR").upper().startswith("EN") else "TR"
-    recs = (db.query(Recipe)
-            .filter(Recipe.id.in_(recipe_ids), Recipe.is_active == True,
-                    Recipe.domain == domain)
-            .all())
+    recs, items, siblings = load_recipe_recs(db, recipe_ids, domain)
 
     used: dict = {}        # item_id -> {name,category,pkg,unit,current,used}
     producible: list = []
     skipped_labels: list = []
 
     for r in recs:
-        tgt = db.query(Item).filter(Item.id == r.target_item_id).first() if r.target_item_id else None
+        tgt = items.get(r.target_item_id) if r.target_item_id else None
         prod_name = (tgt.name if tgt else r.name) or "—"
-        mult = qty / (r.output_quantity or 1.0)
-        wf = 1.0 + (r.waste_percentage or 0.0) / 100.0
-        processed = set()
+        exp = expand_recipe(r, qty, items, siblings, label_mode=lang)
+        for sk in exp.skipped_labels:
+            skipped_labels.append({"product": prod_name, "label": sk["label"]})
+
         min_units = None
         lim = lim_stock = lim_per = lim_unit = None
-
-        for ing in r.ingredients:
-            it = db.query(Item).filter(Item.id == ing.item_id).first()
-            if not it:
-                continue
-            if it.language and it.label_group:
-                if it.label_group in processed:
-                    continue
-                processed.add(it.label_group)
-                sib = _resolve_label(db, it, lang)
-                if sib is None:
-                    skipped_labels.append({"product": prod_name, "label": it.name})
-                    continue
-                it = sib
-            is_amb = (it.category == "Ambalaj")
-            factor = 1.0 if is_amb else wf
-            per_unit = ing.quantity * (1.0 / (r.output_quantity or 1.0)) * factor
-            gross = ing.quantity * mult * factor
-
+        for ln in exp.lines:
+            it = items[ln.item_id]
             d = used.setdefault(it.id, {
                 "item_id": it.id,
                 "name": it.name, "category": it.category or "",
                 "pkg": it.pkg_type or "", "unit": it.unit or "",
                 "current": float(it.current_stock or 0.0), "used": 0.0,
             })
-            d["used"] += gross
+            d["used"] += ln.gross
 
-            if per_unit > 0:
-                cap = float(it.current_stock or 0.0) / per_unit
+            if ln.per_unit > 0:
+                stock = float(it.current_stock or 0.0)
+                cap = max(stock, 0.0) / ln.per_unit     # negatif stok → 0 kapasite
                 if min_units is None or cap < min_units:
                     min_units = cap
-                    lim, lim_stock, lim_per, lim_unit = it.name, float(it.current_stock or 0.0), per_unit, (it.unit or "")
+                    lim, lim_stock, lim_per, lim_unit = it.name, stock, ln.per_unit, (it.unit or "")
 
         producible.append({
             "product":     prod_name,
             "target":      qty,
-            "producible":  0 if min_units is None else int(math.floor(min_units)),
+            "producible":  0 if min_units is None else max(0, int(math.floor(min_units))),
             "limiting":    lim or "—",
             "limit_stock": round(lim_stock, 2) if lim_stock is not None else None,
             "per_unit":    round(lim_per, 4) if lim_per else None,

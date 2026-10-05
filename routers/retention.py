@@ -27,7 +27,7 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -388,21 +388,15 @@ def list_cabinets(
     }
 
 
-@router.get("/retention/samples")
-def list_samples(
-    brand: Optional[str] = Query(None),
-    q: Optional[str] = Query(None, max_length=100),
-    status: Optional[str] = Query(None),
-    expired: Optional[int] = Query(None),
-    needs_review: Optional[int] = Query(None),
-    unchecked: Optional[int] = Query(None),
-    item_id: Optional[int] = Query(None),
-    unsized: Optional[int] = Query(None),
-    limit: int = Query(300, ge=1, le=1000),
-    db: Session = Depends(get_db),
-    _: dict = Depends(require_permission("retention", "view")),
-    domain: str = Depends(active_domain),
-):
+def _filtered_query(db: Session, domain: str, *, brand=None, q=None, status=None,
+                    expired=None, needs_review=None, unchecked=None,
+                    item_id=None, unsized=None):
+    """Liste + dışa aktarım (PDF/Excel) için TEK filtre yolu.
+
+    Rapor ekrandakiyle birebir aynı kayıtları basmalı — iki uç filtreyi ayrı
+    ayrı kursaydı biri değişince "ekranda 40, çıktıda 42" farkı sessizce
+    doğardı.  Sıralama/limit çağırana aittir.
+    """
     query = db.query(RetentionSample).filter(
         RetentionSample.domain == domain,
         RetentionSample.is_active == True)                            # noqa: E712
@@ -436,9 +430,11 @@ def list_samples(
         query = query.filter(~db.query(RetentionSampleCheck)
                              .filter(RetentionSampleCheck.sample_id == RetentionSample.id)
                              .exists())
-    rows = (query.order_by(RetentionSample.retention_until.asc().nullslast(),
-                           RetentionSample.id.desc()).limit(limit).all())
+    return query
 
+
+def _row_views(db: Session, rows) -> list:
+    """Kayıtları `_view` görünümüne çevir — liste ucu ve rapor ortak kullanır."""
     # Son kontrol özeti — TEK ek sorgu (N+1 yok, denormalize kolon yok).
     last, counts = {}, {}
     if rows:
@@ -450,9 +446,93 @@ def list_samples(
             last[c.sample_id] = c                      # son yazan kazanır
             counts[c.sample_id] = counts.get(c.sample_id, 0) + 1
     sizes = _size_map(db, rows)
-    return {"rows": [_view(r, last.get(r.id), counts.get(r.id, 0),
-                           sizes.get(r.item_id)) for r in rows],
-            "count": len(rows)}
+    return [_view(r, last.get(r.id), counts.get(r.id, 0), sizes.get(r.item_id))
+            for r in rows]
+
+
+def _ordered(query):
+    return query.order_by(RetentionSample.retention_until.asc().nullslast(),
+                          RetentionSample.id.desc())
+
+
+@router.get("/retention/samples")
+def list_samples(
+    brand: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, max_length=100),
+    status: Optional[str] = Query(None),
+    expired: Optional[int] = Query(None),
+    needs_review: Optional[int] = Query(None),
+    unchecked: Optional[int] = Query(None),
+    item_id: Optional[int] = Query(None),
+    unsized: Optional[int] = Query(None),
+    limit: int = Query(300, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("retention", "view")),
+    domain: str = Depends(active_domain),
+):
+    query = _filtered_query(db, domain, brand=brand, q=q, status=status,
+                            expired=expired, needs_review=needs_review,
+                            unchecked=unchecked, item_id=item_id, unsized=unsized)
+    rows = _ordered(query).limit(limit).all()
+    return {"rows": _row_views(db, rows), "count": len(rows)}
+
+
+@router.get("/retention/samples/export")
+def export_samples(
+    format: str = Query("pdf", pattern="^(pdf|xlsx)$"),
+    brand: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, max_length=100),
+    status: Optional[str] = Query(None),
+    expired: Optional[int] = Query(None),
+    needs_review: Optional[int] = Query(None),
+    unchecked: Optional[int] = Query(None),
+    item_id: Optional[int] = Query(None),
+    unsized: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("retention", "view")),
+    domain: str = Depends(active_domain),
+):
+    """Dolap raporu — ekrandaki filtrelerle PDF (yazdırma) ya da Excel.
+
+    Filtreler `list_samples` ile AYNI yoldan (`_filtered_query`) geçer; tek
+    fark `limit` yok — "dolaptaki her şeyi yazdır" talebi (Işık Hanım).
+    Bu uç `/retention/samples/{sample_id}`'den ÖNCE tanımlı olmalı; yoksa
+    "export" int'e çevrilemeyip 422 döner.
+    """
+    from core.delivery_note import content_disposition
+    from core.domain import domain_label
+    from core.retention_report import (build_report, filters_text,
+                                       render_pdf, render_xlsx, report_filename)
+    query = _filtered_query(db, domain, brand=brand, q=q, status=status,
+                            expired=expired, needs_review=needs_review,
+                            unchecked=unchecked, item_id=item_id, unsized=unsized)
+    views = _row_views(db, _ordered(query).all())
+
+    item_label = None
+    if item_id:
+        it = (db.query(Item)
+              .filter(Item.id == item_id, Item.domain == domain).first())
+        item_label = it.name if it else f"#{item_id}"
+    report = build_report(
+        views,
+        filters=filters_text(brand=brand, q=q, status=status, expired=expired,
+                             needs_review=needs_review, unchecked=unchecked,
+                             item_label=item_label, unsized=unsized),
+        generated_by=_actor(current_user),
+        domain_label=domain_label(domain))
+    try:
+        if format == "pdf":
+            content = render_pdf(report)
+            media = "application/pdf"
+        else:
+            content = render_xlsx(report)
+            media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    except Exception:
+        return _err(500, "Rapor üretilemedi.")
+    return Response(
+        content=content, media_type=media,
+        headers={"Content-Disposition": content_disposition(
+            report_filename(format), inline=(format == "pdf"))})
 
 
 @router.get("/retention/samples/{sample_id}")

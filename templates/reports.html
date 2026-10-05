@@ -224,6 +224,8 @@
   <script src="/static/undo-watch.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
+  <!-- TR tarih girişi (gg.aa.yyyy) — Üretim Geçmişi tarih aralığı; .value yine ISO döner -->
+  <script src="/static/tr-datetime.js?v=1" defer></script>
 </head>
 <body>
 
@@ -372,6 +374,74 @@
             <span id="planSelCount" style="font-size:0.8rem;color:#9ca3af;align-self:center;"></span>
           </div>
           <div id="planResult" style="margin-top:1rem;display:none;"></div>
+        </div>
+      </div>
+
+      <!-- ════ ÜRETİM GEÇMİŞİ ════ -->
+      <style>
+        .ph-toolbar{display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap;}
+        .ph-field label{display:block;font-size:0.7rem;font-weight:700;text-transform:uppercase;color:#6b7280;margin-bottom:0.25rem;}
+        .ph-field input,.ph-field select{padding:0.45rem 0.7rem;border:1.5px solid #e5e7eb;border-radius:8px;font-size:0.86rem;font-family:inherit;background:#fff;color:#1f2937;}
+        .ph-note{display:flex;gap:0.45rem;align-items:center;font-size:0.8rem;color:#92750e;background:#fffdf5;border:1px solid #f0e3b8;border-radius:8px;padding:0.45rem 0.75rem;margin-bottom:0.9rem;}
+        .ph-num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+        .ph-sub{display:block;font-size:0.72rem;color:#9ca3af;font-weight:400;}
+        .ph-cat{display:inline-block;padding:1px 8px;border-radius:999px;background:#f5f4ff;color:#4338ca;font-size:0.72rem;font-weight:600;white-space:nowrap;}
+        .ph-tbl tr.ph-total td{font-weight:700;background:#f9f7f3;border-top:2px solid #f0ece4;}
+        .ph-tbl td:first-child{min-width:240px;}
+        .ph-tbl th,.ph-nowrap{white-space:nowrap;}
+        .ph-toggle{display:inline-flex;align-items:center;gap:0.35rem;font-size:0.8rem;color:#4b5563;cursor:pointer;align-self:center;}
+        .ph-toggle input{accent-color:var(--navy);}
+        .ph-run{display:inline-flex;align-items:center;gap:0.4rem;padding:0.52rem 1.1rem;background:var(--navy);color:#fff;border:1.5px solid var(--navy);border-radius:8px;font-size:0.88rem;font-weight:600;cursor:pointer;font-family:inherit;}
+        .ph-run:hover{background:#23236b;}
+        /* Koyu tema — dark.css yalnız inline style'ları yakalıyor, sınıflar burada */
+        :root[data-theme="dark"] .ph-note{background:var(--surface-2);border-color:var(--border);color:var(--gold);}
+        :root[data-theme="dark"] .ph-cat{background:#1A1F3F;color:#C7B5F9;}
+        :root[data-theme="dark"] .ph-field label,:root[data-theme="dark"] .ph-toggle{color:var(--text-muted);}
+        :root[data-theme="dark"] .ph-field input,:root[data-theme="dark"] .ph-field select{background:var(--surface-2);border-color:var(--border);color:var(--text);}
+        :root[data-theme="dark"] .ph-tbl tr.ph-total td{background:var(--surface-2);border-top-color:var(--border);}
+        :root[data-theme="dark"] .ph-run{background:var(--gold);border-color:var(--gold);color:#131B40;}
+      </style>
+      <div class="panel" id="uretim-gecmisi" style="margin-bottom:1.5rem;">
+        <div class="panel-header" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;padding:1rem 1.25rem;">
+          <div class="panel-icon panel-icon-navy"><i class="bi bi-clock-history"></i></div>
+          <div style="flex:1;min-width:200px;">
+            <p class="panel-title" style="margin:0;">Üretim Geçmişi</p>
+            <p class="panel-subtitle" style="margin:0;">Seçilen tarih aralığında ürün, marka ya da ürün grubu bazında üretilen miktarlar + Excel.</p>
+          </div>
+        </div>
+        <div class="panel-body" style="padding:1.1rem 1.25rem;">
+          <div class="ph-note"><i class="bi bi-info-circle-fill"></i><span id="phNote">Sistemde üretim kaydı 13.05.2026 tarihinden beri var.</span></div>
+          <div class="ph-toolbar">
+            <div class="ph-field"><label for="phStart">Başlangıç</label><input type="date" id="phStart"></div>
+            <div class="ph-field"><label for="phEnd">Bitiş</label><input type="date" id="phEnd"></div>
+            <div class="ph-field">
+              <label for="phGroup">Gruplama</label>
+              <select id="phGroup">
+                <option value="product">Ürün</option>
+                <option value="brand">Marka</option>
+                <option value="category">Ürün grubu</option>
+              </select>
+            </div>
+            <div class="ph-field" style="flex:1;min-width:160px;">
+              <label for="phSearch">Ara</label>
+              <input type="text" id="phSearch" placeholder="Ürün adı…" style="width:100%;">
+            </div>
+            <label class="ph-toggle"><input type="checkbox" id="phMonthly"> Aylık kırılım</label>
+            <button type="button" id="phRunBtn" class="ph-run"><i class="bi bi-arrow-repeat"></i> Göster</button>
+            <button type="button" id="phXlsBtn"
+              style="display:inline-flex;align-items:center;gap:0.4rem;padding:0.52rem 1.1rem;background:#fff;color:var(--navy);border:1.5px solid #e5e7eb;border-radius:8px;font-size:0.88rem;font-weight:600;cursor:pointer;">
+              <i class="bi bi-filetype-xlsx"></i> Excel İndir
+            </button>
+          </div>
+          <div style="margin-top:0.75rem;display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;">
+            <span style="font-size:0.72rem;font-weight:700;text-transform:uppercase;color:#9ca3af;">Marka:</span>
+            <button type="button" class="plan-chip active" id="phBrandAll">Tümü</button>
+            <span id="phBrands" style="display:flex;gap:0.4rem;flex-wrap:wrap;"></span>
+          </div>
+          <div id="phSummary" style="margin-top:0.85rem;font-size:0.85rem;color:#374151;"></div>
+          <div id="phResult" style="margin-top:0.5rem;">
+            <div style="color:#9ca3af;font-size:0.85rem;">Yükleniyor…</div>
+          </div>
         </div>
       </div>
 
@@ -1197,6 +1267,130 @@
       }catch{ showToast('Excel indirilemedi.'); }
     }
     loadPlanProducts();
+
+    /* ════ Üretim Geçmişi ════
+     * Veri GET /api/reports/production-history'den gelir (tarihler TR günü).
+     * Ürün gruplamasında arama istemcide süzülür (window.trFold = sunucudaki
+     * normalize ile aynı katlama); marka/ürün grubu gruplamasında arama
+     * toplamadan ÖNCE uygulanmalı, o yüzden q sunucuya gider.  Excel her
+     * durumda q'yu gönderir → indirilen dosya ekrandakiyle aynı satırları taşır. */
+    const _ph = { data: null, brands: new Set(), timer: null, seq: 0 };
+    const PH_MONTHS = ['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
+    const PH_GROUP_LABEL = { product: 'Ürün', brand: 'Marka', category: 'Ürün Grubu' };
+    function phEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    function phFmt(n){return Number(n||0).toLocaleString('tr-TR',{maximumFractionDigits:2});}
+    function phFold(s){return window.trFold ? window.trFold(s) : String(s==null?'':s).toLocaleLowerCase('tr').split(/\s+/).filter(Boolean).join(' ');}
+    function phIso(d){const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;}
+    function phTrDate(iso){if(!iso) return '—'; const [y,m,d]=iso.split('-'); return `${d}.${m}.${y}`;}
+    function phMonthLabel(mk){const [y,m]=mk.split('-'); return `${PH_MONTHS[parseInt(m,10)-1]} ${y.slice(2)}`;}
+    function phGroup(){return document.getElementById('phGroup').value;}
+    function phQuery(){return (document.getElementById('phSearch').value||'').trim();}
+    function phParams(forExport){
+      const p=new URLSearchParams();
+      const s=document.getElementById('phStart').value, e=document.getElementById('phEnd').value;
+      if(s) p.set('start',s);
+      if(e) p.set('end',e);
+      p.set('group',phGroup());
+      if(_ph.brands.size) p.set('brand',[..._ph.brands].join(','));
+      const q=phQuery();
+      if(q && (forExport || phGroup()!=='product')) p.set('q',q);
+      if(forExport) p.set('format','xlsx');
+      return p.toString();
+    }
+    (function phInitDates(){
+      // Son 12 ay: bir yıl önceki günün ertesinden bugüne
+      const end=new Date(), start=new Date(end);
+      start.setFullYear(end.getFullYear()-1); start.setDate(start.getDate()+1);
+      document.getElementById('phStart').value=phIso(start);
+      document.getElementById('phEnd').value=phIso(end);
+    })();
+    async function phLoad(){
+      const s=document.getElementById('phStart').value, e=document.getElementById('phEnd').value;
+      if(s && e && s>e){ showToast('Başlangıç tarihi bitişten sonra olamaz.'); return; }
+      const my=++_ph.seq;
+      const res=document.getElementById('phResult');
+      try{
+        const r=await fetch('/api/reports/production-history?'+phParams(false));
+        const d=await r.json().catch(()=>({}));
+        if(my!==_ph.seq) return;                      // daha yeni bir istek var
+        if(!r.ok){ res.innerHTML=`<div style="color:#b91c1c;font-size:0.85rem;">${phEsc(d.detail||'Rapor alınamadı.')}</div>`; return; }
+        _ph.data=d;
+        if(d.note) document.getElementById('phNote').textContent=d.note;
+        phRenderBrands(); phRender();
+      }catch{ if(my===_ph.seq) res.innerHTML='<div style="color:#b91c1c;font-size:0.85rem;">Sunucuya bağlanılamadı.</div>'; }
+    }
+    function phRenderBrands(){
+      const list=[...new Set([...(_ph.data?.brands||[]), ..._ph.brands])]
+        .sort((a,b)=>a.localeCompare(b,'tr'));
+      document.getElementById('phBrands').innerHTML=list.map(b=>
+        `<button type="button" class="plan-chip${_ph.brands.has(b)?' active':''}" data-brand="${phEsc(b)}">${phEsc(b)}</button>`).join('');
+      document.getElementById('phBrandAll').classList.toggle('active', _ph.brands.size===0);
+    }
+    function phVisibleRows(){
+      const d=_ph.data; if(!d) return [];
+      const q=phFold(phQuery());
+      if(d.group!=='product' || !q) return d.rows;
+      return d.rows.filter(r=>[r.name, ...(r.names||[])].some(n=>phFold(n).includes(q)));
+    }
+    function phRender(){
+      const d=_ph.data, res=document.getElementById('phResult'), sum=document.getElementById('phSummary');
+      if(!d){ return; }
+      const rows=phVisibleRows();
+      const monthly=document.getElementById('phMonthly').checked;
+      const g=d.group, months=monthly?d.months:[];
+      const tot={ qty:0, count:0, products:0, m:{} };
+      rows.forEach(r=>{ tot.qty+=r.total; tot.count+=r.count; tot.products+=r.products;
+        months.forEach(mk=>{ tot.m[mk]=(tot.m[mk]||0)+(r.monthly[mk]||0); }); });
+      sum.innerHTML = `<b>${phTrDate(d.start)} – ${phTrDate(d.end)}</b> · <b>${tot.products}</b> ürün · `
+        + `<b>${phFmt(tot.count)}</b> üretim kaydı · toplam <b>${phFmt(tot.qty)}</b> adet`;
+      if(!rows.length){
+        const filtered = phQuery() || _ph.brands.size;
+        res.innerHTML=`<div style="color:#9ca3af;font-size:0.85rem;padding:0.6rem 0;">${filtered?'Seçilen filtrelerle eşleşen kayıt yok.':'Bu aralıkta üretim kaydı yok.'}</div>`;
+        return;
+      }
+      const mh=months.map(mk=>`<th class="ph-num">${phMonthLabel(mk)}</th>`).join('');
+      let head=`<tr><th>${PH_GROUP_LABEL[g]}</th>`;
+      head += g==='product' ? '<th>Marka</th><th>Ürün grubu</th>' : '<th class="ph-num">Ürün sayısı</th>';
+      head += `<th class="ph-num">Toplam</th><th class="ph-num">Üretim</th><th>İlk</th><th>Son</th>${mh}</tr>`;
+      const body=rows.map(r=>{
+        const alt=(g==='product' && r.names && r.names.length)
+          ? `<span class="ph-sub">Eski yazım: ${r.names.map(phEsc).join(' · ')}</span>` : '';
+        let tr=`<tr><td style="font-weight:600;">${phEsc(r.name)}${alt}</td>`;
+        tr += g==='product'
+          ? `<td class="ph-nowrap">${phEsc(r.brand)}</td><td><span class="ph-cat">${phEsc(r.category)}</span></td>`
+          : `<td class="ph-num">${r.products}</td>`;
+        tr += `<td class="ph-num" style="font-weight:700;">${phFmt(r.total)}</td><td class="ph-num">${r.count}</td>`
+            + `<td class="ph-nowrap">${phTrDate(r.first)}</td><td class="ph-nowrap">${phTrDate(r.last)}</td>`;
+        tr += months.map(mk=>`<td class="ph-num">${r.monthly[mk]?phFmt(r.monthly[mk]):'<span style="color:#d1d5db;">—</span>'}</td>`).join('');
+        return tr+'</tr>';
+      }).join('');
+      const span = g==='product' ? 3 : 2;
+      const foot=`<tr class="ph-total"><td colspan="${span}">TOPLAM</td><td class="ph-num">${phFmt(tot.qty)}</td>`
+        + `<td class="ph-num">${phFmt(tot.count)}</td><td></td><td></td>`
+        + months.map(mk=>`<td class="ph-num">${phFmt(tot.m[mk])}</td>`).join('') + '</tr>';
+      res.innerHTML=`<div style="max-height:420px;overflow:auto;border:1px solid #f0ece4;border-radius:10px;">
+        <table class="plan-tbl ph-tbl"><thead>${head}</thead><tbody>${body}${foot}</tbody></table></div>`;
+    }
+    document.getElementById('phRunBtn').addEventListener('click', phLoad);
+    document.getElementById('phStart').addEventListener('change', phLoad);
+    document.getElementById('phEnd').addEventListener('change', phLoad);
+    document.getElementById('phGroup').addEventListener('change', phLoad);
+    document.getElementById('phMonthly').addEventListener('change', phRender);
+    document.getElementById('phSearch').addEventListener('input', function(){
+      if(phGroup()==='product'){ phRender(); return; }
+      clearTimeout(_ph.timer); _ph.timer=setTimeout(phLoad, 300);
+    });
+    document.getElementById('phBrandAll').addEventListener('click', function(){ _ph.brands.clear(); phLoad(); });
+    document.getElementById('phBrands').addEventListener('click', function(ev){
+      const b=ev.target.closest('[data-brand]'); if(!b) return;
+      const name=b.dataset.brand;
+      if(_ph.brands.has(name)) _ph.brands.delete(name); else _ph.brands.add(name);
+      phLoad();
+    });
+    document.getElementById('phXlsBtn').addEventListener('click', function(){
+      window.location.href='/api/reports/production-history?'+phParams(true);
+    });
+    phLoad();
 
     /* ════ Tedarikçi Fiyatları ════ */
     const SP_CAN_EDIT = {{ 'true' if role in ['SuperAdmin','Manager'] else 'false' }};

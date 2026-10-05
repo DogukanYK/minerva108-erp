@@ -149,6 +149,23 @@
     .size-in:focus{ border-color:var(--gold); outline:none; }
     .size-in.dirty{ border-color:#16a34a; background:#f0fdf4; }
     .pill.rev{ background:#fef3c7; color:#92400e; }
+    /* Rapor al — 'btn-*' değil 'rpt-*' (Bootstrap gölgeleme tuzağı) */
+    .rpt-box{ margin-left:auto; display:inline-flex; align-items:center; gap:0.45rem; flex-wrap:wrap;
+      padding:0.3rem 0.35rem 0.3rem 0.75rem; border:1.5px solid #e8e1d3; border-radius:10px; background:#faf8f4; }
+    .rpt-lbl{ display:inline-flex; align-items:center; gap:0.35rem; font-size:0.8rem; font-weight:700;
+      color:var(--navy); text-transform:uppercase; letter-spacing:0.04em; }
+    .rpt-lbl i{ color:var(--gold); }
+    .rpt-act{ display:inline-flex; align-items:center; gap:0.35rem; padding:0.42rem 0.85rem; border-radius:8px;
+      border:1.5px solid var(--navy); background:var(--navy); color:#fff; font-family:'Jost',sans-serif;
+      font-size:0.86rem; font-weight:600; cursor:pointer; white-space:nowrap; }
+    .rpt-act:hover{ background:#23236b; }
+    .rpt-act.alt{ background:#fff; color:var(--navy); border-color:#d1d5db; }
+    .rpt-act.alt:hover{ border-color:var(--navy); }
+    :root[data-theme="dark"] .rpt-box{ background:var(--surface-2); border-color:var(--border); }
+    :root[data-theme="dark"] .rpt-lbl{ color:var(--gold); }
+    :root[data-theme="dark"] .rpt-act{ border-color:var(--gold); }
+    :root[data-theme="dark"] .rpt-act.alt{ background:var(--white); color:var(--text); border-color:var(--border); }
+    :root[data-theme="dark"] .rpt-act.alt:hover{ border-color:var(--gold); }
     .radio-row{ display:flex; gap:1rem; align-items:center; }
     .radio-row label{ display:inline-flex; align-items:center; gap:0.3rem; font-size:0.85rem; cursor:pointer; }
   </style>
@@ -244,6 +261,13 @@
             <label class="chk"><input type="checkbox" id="unsizedOnly" /> Boyu belirsiz
               <span class="cab-x" id="unsizedN" style="display:none;"></span></label>
             <span class="muted" id="rowCount"></span>
+            <!-- Rapor al — ekrandaki dolap/ürün/arama/kutucuk filtreleriyle,
+                 limitsiz (dolaptaki her şey).  PDF yeni sekmede, Excel iner. -->
+            <span class="rpt-box" title="Ekrandaki filtrelerle yazdırılabilir dolap listesi">
+              <span class="rpt-lbl"><i class="bi bi-printer"></i> Rapor al</span>
+              <button type="button" class="rpt-act" onclick="exportReport('pdf')"><i class="bi bi-file-earmark-pdf"></i> PDF</button>
+              <button type="button" class="rpt-act alt" onclick="exportReport('xlsx')"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+            </span>
           </div>
           {% if can('retention','edit') %}
           <div class="filter-row" style="margin-top:0.7rem;border-top:1px solid #f0ece4;padding-top:0.7rem;">
@@ -593,8 +617,9 @@
     function pickProd(id) { _itemId = id || ''; loadCabinets(); loadRows(); }
 
     /* ── Liste ── */
-    async function loadRows() {
-      const tb = document.getElementById('rowsBody');
+    // Ekrandaki filtreler — liste VE rapor aynı parametreleri kullanır
+    // (sunucuda da tek filtre yolu: routers/retention._filtered_query).
+    function filterParams() {
       const params = new URLSearchParams();
       if (_brand) params.set('brand', _brand);
       const q = document.getElementById('qInput').value.trim();
@@ -604,6 +629,18 @@
       if (document.getElementById('uncheckedOnly')?.checked) params.set('unchecked', '1');
       if (document.getElementById('unsizedOnly')?.checked) params.set('unsized', '1');
       if (_itemId) params.set('item_id', _itemId);
+      return params;
+    }
+    function exportReport(fmt) {
+      const params = filterParams();
+      params.set('format', fmt === 'xlsx' ? 'xlsx' : 'pdf');
+      const url = '/api/retention/samples/export?' + params.toString();
+      if (fmt === 'xlsx') window.location.href = url;     // attachment → iner
+      else window.open(url, '_blank');                     // inline → yazdırmaya hazır
+    }
+    async function loadRows() {
+      const tb = document.getElementById('rowsBody');
+      const params = filterParams();
       const lm = document.getElementById('locMode');
       _locMode = !!(lm && lm.checked);
       const tools = document.getElementById('locTools');
