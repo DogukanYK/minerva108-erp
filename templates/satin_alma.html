@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="/static/theme.js"></script>
+
+  {# ─── RBAC 2.0 — server-resolved permissions exposed to JS ────────────── #}
+  <script>
+    window.PERMS = {{ permissions | tojson }};
+    window.DOMAIN = {{ domain | tojson }};
+    window.can = function (category, action) {
+      const cat = window.PERMS && window.PERMS[category];
+      return !!(cat && cat[action]);
+    };
+    window.ME = { id: {{ user_id | tojson }}, name: {{ full_name | tojson }}, role: {{ role | tojson }} };
+  </script>
+  <title>Minerva108 ERP — Satın Alma Planı</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+
+  {# ─── PWA ─────────────────────────────────────────────────────────────── #}
+  <link rel="manifest" href="/static/manifest.json" />
+  <meta name="theme-color" content="#232E6E" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Minerva108" />
+  <link rel="apple-touch-icon" href="/static/images/icon-192.png" />
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' })
+          .catch(function (err) { console.warn('SW registration failed:', err); });
+      });
+    }
+  </script>
+  <script src="/static/push.js" defer></script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/dark.css" />
+  <link rel="stylesheet" href="/static/print.css" media="print" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+
+  <style>
+    :root {
+      --navy:  #232E6E;
+      --gold:  #C9AC6F;
+      --gold2: #D9BE85;
+      --cream: #f5f0e8;
+      --white: #ffffff;
+      --sidebar-width: 240px;
+      --navbar-height: 64px;
+      /* Sayfaya özgü — koyu temada aşağıda yeniden tanımlanır */
+      --sap-ink: #1f2937; --sap-muted: #6b7280; --sap-faint: #9ca3af;
+      --sap-line: #f0ece4; --sap-line2: #e5e7eb; --sap-soft: #faf8f4; --sap-soft2: #f3f0ea;
+      --sap-head: #232E6E;
+      --sap-warn-bg: #fff7ed; --sap-warn-fg: #9a3412; --sap-warn-bd: #fed7aa;
+      --sap-ok-bg: #f0fdf4; --sap-ok-fg: #15803d; --sap-ok-bd: #bbf7d0;
+      --sap-err-bg: #fef2f2; --sap-err-fg: #b91c1c; --sap-err-bd: #fecaca;
+      --sap-info-bg: #eef2ff; --sap-info-fg: #4338ca; --sap-info-bd: #c7d2fe;
+    }
+    :root[data-theme="dark"] {
+      --sap-ink: #E2E5EC; --sap-muted: #9aa3bb; --sap-faint: #6b7594;
+      --sap-line: #222C46; --sap-line2: #2A3454; --sap-soft: #1d2540; --sap-soft2: #232B45;
+      --sap-head: #E6CFA0;
+      --sap-warn-bg: #2D1A0E; --sap-warn-fg: #FDBA74; --sap-warn-bd: #7c2d12;
+      --sap-ok-bg: #0E2A1A; --sap-ok-fg: #6EE7B7; --sap-ok-bd: #14532d;
+      --sap-err-bg: #2E1414; --sap-err-fg: #FCA5A5; --sap-err-bd: #7f1d1d;
+      --sap-info-bg: #142036; --sap-info-fg: #A5B4FC; --sap-info-bd: #312e81;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Jost', sans-serif; background-color: var(--cream); color: var(--sap-ink); }
+
+    /* ══ SIDEBAR / TOPNAV / MAIN — reports.html ile aynı iskelet ══ */
+    .sidebar { position: fixed; top: 0; left: 0; width: var(--sidebar-width); height: 100vh; background: var(--navy); display: flex; flex-direction: column; z-index: 100; }
+    .sidebar-brand { padding: 1.4rem 1.25rem 1.2rem; border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: center; }
+    .sidebar-brand-logo { width: 100%; max-width: 168px; height: auto; opacity: 0.96; }
+    .sidebar-nav { flex: 1; padding: 1.25rem 0.75rem; overflow-y: auto; }
+    .nav-section-label { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.3); padding: 0.5rem 0.75rem 0.4rem; margin-top: 0.5rem; }
+    .nav-link-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.85rem; border-radius: 8px; color: rgba(255,255,255,0.65); font-size: 0.88rem; font-weight: 500; text-decoration: none; transition: background 0.15s, color 0.15s; margin-bottom: 2px; }
+    .nav-link-item:hover { background: rgba(255,255,255,0.07); color: var(--white); }
+    .nav-link-item.active { background: rgba(184,150,90,0.18); color: var(--gold2); }
+    .nav-link-item.active .nav-icon { color: var(--gold); }
+    .nav-icon { font-size: 1rem; width: 18px; text-align: center; flex-shrink: 0; }
+    .sidebar-footer { padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-footer-text { font-size: 0.7rem; color: rgba(255,255,255,0.25); text-align: center; }
+    .topnav { position: fixed; top: 0; left: var(--sidebar-width); right: 0; height: var(--navbar-height); background: var(--white); border-bottom: 1px solid var(--sap-line); display: flex; align-items: center; justify-content: space-between; padding: 0 1.75rem; z-index: 90; box-shadow: 0 1px 8px rgba(0,0,0,0.05); }
+    .topnav-title { font-family: 'Playfair Display', serif; font-size: 1.15rem; font-weight: 600; color: var(--sap-head); }
+    .topnav-right { display: flex; align-items: center; gap: 1rem; }
+    .user-chip { display: flex; align-items: center; gap: 0.5rem; background: var(--cream); border-radius: 20px; padding: 0.35rem 0.9rem 0.35rem 0.5rem; }
+    .user-avatar { width: 28px; height: 28px; background: var(--navy); color: var(--gold2); border-radius: 50%; font-size: 0.7rem; font-weight: 700; display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', serif; }
+    .user-name { font-size: 0.85rem; font-weight: 500; color: var(--sap-ink); }
+    .btn-logout { display: flex; align-items: center; gap: 0.4rem; padding: 0.42rem 1rem; border: 1.5px solid var(--sap-line2); border-radius: 8px; background: var(--white); color: var(--sap-muted); font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 500; cursor: pointer; transition: border-color 0.2s, color 0.2s, background 0.2s; }
+    .btn-logout:hover { border-color: #ef4444; color: #ef4444; background: #fff5f5; }
+    /* Panel düğmesinin satır içi rengi (var(--navy)) koyu temada kart zeminiyle aynı → okunmuyordu */
+    :root[data-theme="dark"] #domainSwitchBtn { color: var(--gold2) !important; }
+    .main-content { margin-left: var(--sidebar-width); padding-top: var(--navbar-height); min-height: 100vh; background: var(--cream); }
+    .content-inner { padding: 2rem 2rem 3rem; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.4rem; }
+    .page-title { font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 700; color: var(--sap-head); margin: 0 0 0.25rem; }
+    .page-subtitle { font-size: 0.88rem; color: var(--sap-muted); margin: 0; max-width: 760px; }
+
+    /* ══ TOAST ══ */
+    #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
+    .toast-msg { min-width: 260px; max-width: 420px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; }
+    .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
+    .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+    .toast-info    { background: #eff6ff; color: #1d4ed8; border-left: 4px solid #3b82f6; }
+
+    /* ══ Satın Alma Planı (önek: sap-; 'btn-' YASAK — Bootstrap gölgeleme tuzağı) ══ */
+    .sap-card { background: var(--white); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(44,44,115,0.06); margin-bottom: 1.4rem; }
+    :root[data-theme="dark"] .sap-card { border: 1px solid var(--sap-line); box-shadow: none; }
+    .sap-head { display: flex; align-items: center; gap: 0.65rem; padding: 0.95rem 1.25rem; border-bottom: 1px solid var(--sap-line); flex-wrap: wrap; }
+    .sap-head h2 { font-family: 'Playfair Display', serif; font-size: 1.05rem; font-weight: 700; color: var(--sap-head); margin: 0; }
+    .sap-num { width: 26px; height: 26px; border-radius: 50%; background: var(--navy); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 700; flex-shrink: 0; }
+    :root[data-theme="dark"] .sap-num { background: var(--gold); color: #131B40; }
+    .sap-head-right { margin-left: auto; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .sap-body { padding: 1rem 1.25rem 1.15rem; }
+    .sap-muted { color: var(--sap-muted); font-size: 0.82rem; }
+    .sap-faint { color: var(--sap-faint); font-size: 0.78rem; }
+    .sap-link { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--navy); font-size: 0.85rem; font-weight: 600; text-decoration: none; padding: 0.45rem 0.85rem; border: 1.5px solid var(--sap-line2); border-radius: 8px; background: var(--white); }
+    .sap-link:hover { border-color: var(--navy); }
+    :root[data-theme="dark"] .sap-link { color: var(--gold2); }
+
+    /* Düğmeler */
+    .sap-b { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.48rem 0.95rem; border: 1.5px solid var(--sap-line2); border-radius: 8px; background: var(--white); color: var(--navy); font-family: 'Jost', sans-serif; font-size: 0.84rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .sap-b:hover:not(:disabled) { border-color: var(--navy); background: var(--sap-soft); }
+    .sap-b:disabled { opacity: 0.5; cursor: not-allowed; }
+    .sap-b-main { background: var(--navy); border-color: var(--navy); color: #fff; }
+    .sap-b-main:hover:not(:disabled) { background: #1b2456; color: #fff; }
+    .sap-b-danger { color: #b91c1c; }
+    .sap-b-danger:hover:not(:disabled) { border-color: #ef4444; background: #fff5f5; }
+    .sap-b-sm { padding: 0.3rem 0.65rem; font-size: 0.78rem; border-radius: 7px; }
+    :root[data-theme="dark"] .sap-b { color: var(--gold2); }
+    :root[data-theme="dark"] .sap-b-main { background: var(--gold); border-color: var(--gold); color: #131B40; }
+    :root[data-theme="dark"] .sap-b-danger { color: #FCA5A5; }
+    :root[data-theme="dark"] .sap-b-danger:hover:not(:disabled), :root[data-theme="dark"] .sap-b:hover:not(:disabled) { background: var(--sap-soft2); }
+
+    /* Form alanları */
+    .sap-in, .sap-sel { padding: 0.42rem 0.65rem; border: 1.5px solid var(--sap-line2); border-radius: 8px; font-family: inherit; font-size: 0.86rem; background: var(--white); color: var(--sap-ink); }
+    .sap-in:focus, .sap-sel:focus { outline: none; border-color: var(--navy); }
+    .sap-lbl { display: block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--sap-muted); margin-bottom: 0.25rem; }
+    .sap-check { display: inline-flex; align-items: flex-start; gap: 0.45rem; font-size: 0.86rem; color: var(--sap-ink); cursor: pointer; line-height: 1.35; }
+    .sap-check input { accent-color: var(--navy); margin-top: 0.2rem; }
+    .sap-check small { display: block; color: var(--sap-muted); font-size: 0.76rem; }
+
+    /* Senaryo çubuğu */
+    .sap-scbar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.85rem 1.25rem; }
+    .sap-scbar > i { color: var(--gold); font-size: 1.1rem; }
+    .sap-scbar .sap-sel { min-width: 240px; max-width: 360px; }
+    #sapScInfo { flex-basis: 100%; }
+
+    /* Uyarı kutuları */
+    .sap-box { border-radius: 10px; padding: 0.7rem 0.95rem; font-size: 0.84rem; margin-bottom: 1rem; border: 1px solid; }
+    .sap-box-warn { background: var(--sap-warn-bg); color: var(--sap-warn-fg); border-color: var(--sap-warn-bd); }
+    .sap-box-ok { background: var(--sap-ok-bg); color: var(--sap-ok-fg); border-color: var(--sap-ok-bd); }
+    .sap-box-err { background: var(--sap-err-bg); color: var(--sap-err-fg); border-color: var(--sap-err-bd); }
+    .sap-box-info { background: var(--sap-info-bg); color: var(--sap-info-fg); border-color: var(--sap-info-bd); }
+    .sap-box ul { margin: 0.35rem 0 0; padding-left: 1.1rem; }
+    .sap-box b { color: inherit; }
+
+    /* Marka çipleri */
+    .sap-chips { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
+    .sap-chip { font-size: 0.8rem; font-weight: 600; padding: 0.3rem 0.8rem; border-radius: 20px; border: 1.5px solid var(--sap-line2); background: var(--white); color: var(--sap-ink); cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem; font-family: inherit; }
+    .sap-chip:hover { border-color: var(--navy); }
+    .sap-chip.on { background: var(--navy); border-color: var(--navy); color: #fff; }
+    .sap-chip.part { border-color: var(--navy); background: var(--sap-info-bg); color: var(--sap-info-fg); }
+    .sap-chip .sap-cnt { font-size: 0.7rem; opacity: 0.75; }
+    :root[data-theme="dark"] .sap-chip.on { background: var(--gold); border-color: var(--gold); color: #131B40; }
+    .sap-toolbar { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: flex-end; margin: 0.8rem 0; }
+    .sap-toolbar .sap-grow { flex: 1; min-width: 200px; }
+    .sap-sep { width: 1px; align-self: stretch; background: var(--sap-line2); margin: 0 0.2rem; }
+
+    /* Tablolar */
+    .sap-scroll { max-height: 460px; overflow: auto; border: 1px solid var(--sap-line); border-radius: 10px; }
+    .sap-tbl { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+    .sap-tbl th { position: sticky; top: 0; z-index: 1; background: var(--sap-soft2); color: var(--sap-muted); text-align: left; padding: 0.5rem 0.65rem; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; border-bottom: 2px solid var(--sap-line); }
+    .sap-tbl td { padding: 0.45rem 0.65rem; border-bottom: 1px solid var(--sap-line); vertical-align: top; color: var(--sap-ink); }
+    .sap-tbl td.num, .sap-tbl th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .sap-tbl tr.sap-row-on td { background: rgba(35,46,110,0.045); }
+    :root[data-theme="dark"] .sap-tbl tr.sap-row-on td { background: rgba(217,190,133,0.07); }
+    .sap-tbl input[type=checkbox] { accent-color: var(--navy); width: 16px; height: 16px; }
+    .sap-qty { width: 92px; text-align: right; }
+    .sap-qty.sap-need { border-color: #f59e0b; }
+    .sap-pname { font-weight: 600; }
+    .sap-psub { font-size: 0.74rem; color: var(--sap-muted); margin-top: 0.1rem; }
+    .sap-gear { background: none; border: 1.5px solid transparent; border-radius: 7px; color: var(--sap-faint); cursor: pointer; padding: 0.15rem 0.4rem; font-size: 1rem; }
+    .sap-gear:hover, .sap-gear.set { color: var(--navy); border-color: var(--sap-line2); }
+    :root[data-theme="dark"] .sap-gear:hover, :root[data-theme="dark"] .sap-gear.set { color: var(--gold2); }
+    .sap-foot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; font-size: 0.84rem; color: var(--sap-muted); }
+    .sap-foot b { color: var(--sap-ink); }
+
+    /* Rozetler */
+    .sap-pill { display: inline-block; font-size: 0.68rem; font-weight: 700; border-radius: 20px; padding: 2px 8px; white-space: nowrap; border: 1px solid; margin: 0 0.2rem 0.15rem 0; }
+    .sap-pill-ok { background: var(--sap-ok-bg); color: var(--sap-ok-fg); border-color: var(--sap-ok-bd); }
+    .sap-pill-warn { background: var(--sap-warn-bg); color: var(--sap-warn-fg); border-color: var(--sap-warn-bd); }
+    .sap-pill-err { background: var(--sap-err-bg); color: var(--sap-err-fg); border-color: var(--sap-err-bd); }
+    .sap-pill-info { background: var(--sap-info-bg); color: var(--sap-info-fg); border-color: var(--sap-info-bd); }
+    .sap-brand { font-size: 0.75rem; font-weight: 700; color: var(--sap-muted); white-space: nowrap; }
+
+    /* Seçenekler ızgarası */
+    .sap-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 1.1rem 1.5rem; }
+    .sap-group { border: 1px solid var(--sap-line); border-radius: 10px; padding: 0.8rem 0.95rem; background: var(--sap-soft); }
+    .sap-group h3 { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sap-head); margin: 0 0 0.6rem; }
+    .sap-stack { display: flex; flex-direction: column; gap: 0.55rem; }
+    .sap-row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; }
+    .sap-row3 .sap-in { width: 100%; }
+    .sap-seg { display: inline-flex; border: 1.5px solid var(--sap-line2); border-radius: 9px; overflow: hidden; flex-wrap: wrap; }
+    .sap-seg label { padding: 0.35rem 0.75rem; font-size: 0.82rem; font-weight: 600; cursor: pointer; color: var(--sap-muted); border-right: 1px solid var(--sap-line2); margin: 0; }
+    .sap-seg label:last-child { border-right: none; }
+    .sap-seg input { display: none; }
+    .sap-seg label.on { background: var(--navy); color: #fff; }
+    :root[data-theme="dark"] .sap-seg label.on { background: var(--gold); color: #131B40; }
+    .sap-ichips { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.45rem; }
+    .sap-ichip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 3px 5px 3px 10px; border-radius: 20px; font-size: 0.76rem; font-weight: 600; background: var(--white); border: 1px solid var(--sap-line2); color: var(--sap-ink); max-width: 100%; }
+    .sap-ichip.missing { background: var(--sap-err-bg); border-color: var(--sap-err-bd); color: var(--sap-err-fg); }
+    .sap-ichip .sap-x { background: none; border: none; color: var(--sap-faint); cursor: pointer; padding: 0 3px; font-size: 0.8rem; line-height: 1; }
+    .sap-ichip .sap-x:hover { color: #ef4444; }
+    .sap-ichip input { border: 1px solid var(--sap-line2); border-radius: 6px; font-size: 0.74rem; padding: 1px 5px; width: 150px; background: var(--white); color: var(--sap-ink); }
+
+    /* Kalem arama (açılır liste) */
+    .sap-pick { position: relative; }
+    .sap-pick .sap-in { width: 100%; }
+    .sap-drop { position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 50; background: var(--white); border: 1px solid var(--sap-line2); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); max-height: 260px; overflow-y: auto; display: none; }
+    .sap-drop.open { display: block; }
+    .sap-drop button { display: block; width: 100%; text-align: left; padding: 0.4rem 0.7rem; background: none; border: none; border-bottom: 1px solid var(--sap-line); font-size: 0.82rem; color: var(--sap-ink); cursor: pointer; font-family: inherit; }
+    .sap-drop button:hover, .sap-drop button.act { background: var(--sap-soft2); }
+    .sap-drop .sap-drop-sub { color: var(--sap-muted); font-size: 0.72rem; }
+
+    /* Önizleme */
+    .sap-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+    .sap-kpi { background: var(--sap-soft); border: 1px solid var(--sap-line); border-radius: 10px; padding: 0.7rem 0.9rem; }
+    .sap-kpi .v { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 700; color: var(--sap-head); line-height: 1.1; }
+    .sap-kpi .l { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--sap-muted); margin-top: 0.25rem; }
+    .sap-kpi .s { font-size: 0.74rem; color: var(--sap-faint); margin-top: 0.1rem; }
+    .sap-scope { font-size: 0.86rem; line-height: 1.5; color: var(--sap-ink); margin: 0 0 0.9rem; }
+    .sap-tabs { display: flex; gap: 0.35rem; flex-wrap: wrap; border-bottom: 2px solid var(--sap-line); margin-bottom: 0.9rem; }
+    .sap-tab { padding: 0.5rem 0.95rem; border: none; background: none; font-family: inherit; font-size: 0.86rem; font-weight: 600; color: var(--sap-muted); cursor: pointer; border-bottom: 2.5px solid transparent; margin-bottom: -2px; }
+    .sap-tab.on { color: var(--navy); border-bottom-color: var(--navy); }
+    :root[data-theme="dark"] .sap-tab.on { color: var(--gold2); border-bottom-color: var(--gold); }
+    .sap-tab .sap-cnt { font-size: 0.7rem; background: var(--sap-soft2); border-radius: 10px; padding: 0 0.4rem; margin-left: 0.2rem; }
+    .sap-pane { display: none; } .sap-pane.on { display: block; }
+    .sap-sec { margin-bottom: 1.4rem; }
+    .sap-sec h4 { font-family: 'Playfair Display', serif; font-size: 1rem; font-weight: 700; color: var(--sap-head); margin: 0 0 0.15rem; }
+    .sap-sec .sap-sub { font-size: 0.78rem; color: var(--sap-muted); margin: 0 0 0.45rem; }
+    .sap-sup div { line-height: 1.35; }
+    .sap-sup .b { font-weight: 700; }
+    .sap-sup .g { color: var(--sap-muted); font-size: 0.78rem; }
+    .sap-sup .r { color: var(--sap-err-fg); font-weight: 700; }
+    .sap-caut { font-size: 0.75rem; line-height: 1.35; margin-top: 0.2rem; }
+    .sap-caut.warn { color: var(--sap-warn-fg); }
+    .sap-caut.info { color: var(--sap-muted); }
+    .sap-tbl details summary { cursor: pointer; font-size: 0.74rem; color: var(--sap-muted); margin-top: 0.2rem; }
+    .sap-tbl details ul { margin: 0.2rem 0 0; padding-left: 1rem; font-size: 0.76rem; color: var(--sap-muted); }
+    .sap-tbl tr.sap-total td { font-weight: 700; background: var(--sap-soft2); }
+    .sap-supblk { border: 1px solid var(--sap-line); border-radius: 10px; padding: 0.7rem 0.9rem; margin-bottom: 0.7rem; }
+    .sap-supblk h5 { font-size: 0.92rem; font-weight: 700; margin: 0; color: var(--sap-ink); display: flex; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
+    .sap-supblk .sap-contact { font-size: 0.78rem; color: var(--sap-muted); margin: 0.15rem 0 0.4rem; }
+    .sap-supblk .sap-contact.none { color: var(--sap-err-fg); font-weight: 600; }
+    .sap-supblk ul { margin: 0; padding-left: 1.1rem; font-size: 0.82rem; }
+    .sap-notes { margin: 0; padding-left: 1.1rem; font-size: 0.84rem; line-height: 1.5; }
+    .sap-empty { text-align: center; color: var(--sap-faint); padding: 2rem 1rem; font-size: 0.88rem; }
+    .sap-empty i { display: block; font-size: 1.8rem; margin-bottom: 0.4rem; color: var(--sap-line2); }
+    .sap-stale { display: none; }
+    .sap-stale.on { display: block; }
+
+    /* Modal */
+    .sap-ov { position: fixed; inset: 0; background: rgba(15,20,40,0.45); z-index: 1050; display: none; align-items: flex-start; justify-content: center; padding: 5vh 1rem; overflow-y: auto; }
+    .sap-ov.open { display: flex; }
+    .sap-modal { background: var(--white); border-radius: 14px; width: 100%; max-width: 640px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+    :root[data-theme="dark"] .sap-modal { border: 1px solid var(--sap-line2); }
+    .sap-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 0.95rem 1.2rem; border-bottom: 1px solid var(--sap-line); font-family: 'Playfair Display', serif; font-weight: 700; color: var(--sap-head); font-size: 1.02rem; }
+    .sap-modal-body { padding: 1rem 1.2rem; display: flex; flex-direction: column; gap: 0.8rem; }
+    .sap-modal-foot { display: flex; justify-content: flex-end; gap: 0.5rem; padding: 0.8rem 1.2rem; border-top: 1px solid var(--sap-line); flex-wrap: wrap; }
+    .sap-modal-foot .sap-left { margin-right: auto; }
+    .sap-close { background: none; border: none; font-size: 1.3rem; color: var(--sap-faint); cursor: pointer; line-height: 1; }
+    .sap-close:hover { color: #ef4444; }
+    .sap-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+    .sap-2col .sap-in, .sap-2col .sap-sel, .sap-modal-body .sap-full { width: 100%; }
+    .sap-xrow { display: grid; grid-template-columns: 1fr 80px 1fr 28px; gap: 0.4rem; align-items: center; font-size: 0.82rem; margin-bottom: 0.3rem; }
+    .sap-xrow .sap-in { width: 100%; padding: 0.3rem 0.5rem; font-size: 0.8rem; }
+    .sap-mtbl input, .sap-mtbl select { width: 100%; padding: 0.3rem 0.45rem; font-size: 0.8rem; }
+
+    @media (max-width: 768px) {
+      .content-inner { padding: 1rem 0.9rem 4rem; }
+      .sap-2col, .sap-row3 { grid-template-columns: 1fr; }
+      .sap-xrow { grid-template-columns: 1fr 70px 28px; }
+      .sap-xrow .sap-xnote { grid-column: 1 / -1; }
+      .sap-in, .sap-sel { font-size: 16px; }
+      .sap-scbar .sap-sel { min-width: 0; width: 100%; max-width: none; }
+      #sapProdTbl { min-width: 640px; }          /* dar ekranda kutu içinde yatay kayar, ad sütunu ezilmez */
+    }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+  <script src="/static/toast.js" defer></script>
+  <script src="/static/tr-sort.js" defer></script>
+  <script src="/static/items-cache.js" defer></script>
+  <script src="/static/undo-watch.js" defer></script>
+  <script src="/static/fetch-guard.js" defer></script>
+  <script src="/static/idle-watch.js" defer></script>
+  <!-- TR tarih girişi (gg.aa.yyyy) — "Geçmiş üretimden doldur" tarih aralığı; .value yine ISO döner -->
+  <script src="/static/tr-datetime.js?v=1" defer></script>
+</head>
+<body>
+
+  <!-- ════ SIDEBAR ════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <img src="/static/images/logo_sidebar.png" alt="Minerva 108 Vegan Cosmetics" class="sidebar-brand-logo" />
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      <a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>
+      <a href="/suppliers" class="nav-link-item"><i class="bi bi-truck nav-icon"></i>Tedarikçiler</a>
+      <a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>
+      <a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
+      <a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
+      <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
+      <a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>
+      <a href="/delivery" class="nav-link-item"><i class="bi bi-box-arrow-up nav-icon"></i>Teslimat</a>
+      <a href="/returns" class="nav-link-item"><i class="bi bi-arrow-return-left nav-icon"></i>İadeler</a>
+      <a href="/numune-analiz" class="nav-link-item"><i class="bi bi-clipboard2-pulse nav-icon"></i>Numune Analizi</a>
+      <a href="/sahit-numune" class="nav-link-item"><i class="bi bi-archive nav-icon"></i>Şahit Numune</a>
+      <a href="/urun-gorselleri" class="nav-link-item"><i class="bi bi-images nav-icon"></i>Ürün Görselleri</a>
+      <a href="/pdks" class="nav-link-item"><i class="bi bi-fingerprint nav-icon"></i>PDKS</a>
+      <a href="/yorumlar" class="nav-link-item"><i class="bi bi-chat-square-text nav-icon"></i>Yorumlar</a>
+      {% if can('influencer','view') %}<a href="/influencer" class="nav-link-item"><i class="bi bi-stars nav-icon"></i>Creator Programı</a>{% endif %}
+      <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
+      <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+      {% if can('reports','view') %}<a href="/satin-alma" class="nav-link-item active"><i class="bi bi-cart-check nav-icon"></i>Satın Alma</a>{% endif %}
+      <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
+      <a href="/drive" class="nav-link-item"><i class="bi bi-folder-fill nav-icon"></i>Dosya Paylaşım</a>
+      {% if can('crm','view') %}<a href="/crm" class="nav-link-item"><i class="bi bi-people-fill nav-icon"></i>CRM</a>{% endif %}
+      {% if can('distributors','view') %}<a href="/distributors" class="nav-link-item"><i class="bi bi-shop nav-icon"></i>Distribütörler</a>{% endif %}
+      {% if can('b2b', 'view') %}
+      <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
+      {% endif %}
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sidebar-footer-row">
+        <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir" title="Tema değiştir">
+          <i class="bi bi-moon-stars-fill"></i>
+          <i class="bi bi-sun-fill"></i>
+        </button>
+        <p class="sidebar-footer-text" style="margin:0;">v2.0.0 &nbsp;·&nbsp; 2026</p>
+        <p class="sidebar-footer-text" style="margin:0.35rem 0 0;font-style:italic;">Geliştirici: Doğukan Yalçınkaya</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ════ TOPNAV ════ -->
+  <header class="topnav">
+    <span class="topnav-title">Satın Alma Planı</span>
+    <div class="topnav-right">
+      <button id="domainSwitchBtn" type="button" title="Panel değiştir (Kozmetik ↔ Food Supplement)"
+        onclick="fetch('/api/domain/switch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:(window.DOMAIN==='supplement'?'cosmetics':'supplement')})}).then(function(r){if(r.ok)location.reload();})"
+        style="display:flex;align-items:center;gap:0.4rem;padding:0.4rem 0.85rem;border:1.5px solid var(--gold);border-radius:8px;background:var(--white);color:var(--navy);font-family:'Jost',sans-serif;font-size:0.82rem;font-weight:600;cursor:pointer;">
+        <i class="bi bi-arrow-left-right"></i><span>{{ domain_label }}</span>
+      </button>
+      <button
+        id="enablePushBtn"
+        type="button"
+        onclick="setupPushNotifications()"
+        title="Tarayıcı bildirimlerini etkinleştir"
+        style="display:none;align-items:center;gap:0.4rem;padding:0.42rem 0.85rem;border:1.5px solid #e5e7eb;border-radius:8px;background:var(--white);color:#6b7280;font-family:'Jost',sans-serif;font-size:0.82rem;font-weight:500;cursor:pointer;">
+        <i class="bi bi-bell"></i><span>Bildirimleri Aç</span>
+      </button>
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+      <button class="btn-logout" id="logoutBtn"><i class="bi bi-box-arrow-right"></i>Çıkış Yap</button>
+    </div>
+  </header>
+
+  <!-- ════ MAIN ════ -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Satın Alma Planı</h1>
+          <p class="page-subtitle">Ürünleri ve adetleri seçin → hangi malzemeden ne kadar, kimden ve kaça alınacağını
+            hesaplar; elimizdeki stok her zaman görünür. Tedarikçili ve fiyatlı alım listesi PDF ve Excel olarak
+            indirilebilir. Panel: <b>{{ domain_label }}</b>.</p>
+        </div>
+        <a href="/reports" class="sap-link"><i class="bi bi-arrow-left"></i>Raporlar</a>
+      </div>
+
+      <!-- ════ SENARYO ÇUBUĞU ════ -->
+      <div class="sap-card">
+        <div class="sap-scbar">
+          <i class="bi bi-bookmark-star-fill"></i>
+          <label for="sapScenario" class="sap-lbl" style="margin:0;">Senaryo</label>
+          <select id="sapScenario" class="sap-sel"><option value="">— Kaydedilmemiş taslak —</option></select>
+          <button type="button" class="sap-b sap-b-main" id="sapScSave"><i class="bi bi-floppy"></i>Kaydet</button>
+          <button type="button" class="sap-b" id="sapScSaveAs"><i class="bi bi-files"></i>Farklı kaydet</button>
+          <button type="button" class="sap-b sap-b-danger" id="sapScDelete" disabled><i class="bi bi-trash3"></i>Sil</button>
+          <button type="button" class="sap-b" id="sapNew" title="Seçimleri ve seçenekleri sıfırla"><i class="bi bi-file-earmark-plus"></i>Yeni plan</button>
+          <span id="sapScInfo" class="sap-faint">Taslak bu tarayıcıda otomatik saklanır.</span>
+        </div>
+      </div>
+      <div id="sapMissing"></div>
+
+      <!-- ════ 1. ÜRÜNLER ════ -->
+      <section class="sap-card">
+        <div class="sap-head">
+          <span class="sap-num">1</span><h2>Ürünler</h2>
+          <span class="sap-faint" id="sapStockAsOf"></span>
+        </div>
+        <div class="sap-body">
+          <div class="sap-chips">
+            <span class="sap-lbl" style="margin:0 0.2rem 0 0;">Marka</span>
+            <span id="sapBrands" class="sap-chips"></span>
+            <button type="button" class="sap-chip" id="sapAllOn">Tümü</button>
+            <button type="button" class="sap-chip" id="sapAllOff">Temizle</button>
+          </div>
+
+          <div class="sap-toolbar">
+            <div class="sap-grow">
+              <label class="sap-lbl" for="sapSearch">Ara</label>
+              <input type="search" id="sapSearch" class="sap-in" style="width:100%;" placeholder="Ürün ya da marka adı…" autocomplete="off">
+            </div>
+            <label class="sap-check" style="align-self:center;"><input type="checkbox" id="sapOnlySel"> Yalnız seçilenler</label>
+            <span class="sap-sep"></span>
+            <div>
+              <label class="sap-lbl" for="sapBulkQty">Toplu adet</label>
+              <input type="number" id="sapBulkQty" class="sap-in" style="width:100px;" min="1" step="1" placeholder="ör. 250">
+            </div>
+            <button type="button" class="sap-b" id="sapBulkSel" title="İşaretli ürünlerin adedini yaz">Seçililere</button>
+            <select id="sapBulkBrand" class="sap-sel" aria-label="Marka"></select>
+            <button type="button" class="sap-b" id="sapBulkBrandBtn" title="Seçilen markanın bütün ürünlerini işaretle ve adedi yaz">Markaya</button>
+            <button type="button" class="sap-b" id="sapBulkAll" title="Listede görünen bütün ürünleri işaretle ve adedi yaz">Tümüne</button>
+          </div>
+
+          <div class="sap-toolbar" style="margin-top:0;">
+            <div>
+              <label class="sap-lbl" for="sapHistStart">Geçmiş üretim — başlangıç</label>
+              <input type="date" id="sapHistStart" class="sap-in">
+            </div>
+            <div>
+              <label class="sap-lbl" for="sapHistEnd">Bitiş</label>
+              <input type="date" id="sapHistEnd" class="sap-in">
+            </div>
+            <button type="button" class="sap-b" id="sapHistBtn"><i class="bi bi-clock-history"></i>Geçmiş üretimden doldur</button>
+            <span class="sap-faint" style="align-self:center;">İşaretli ürün varsa yalnız onlara, yoksa geçmişte üretilen bütün ürünlere yazar. Sistemde üretim kaydı 13.05.2026'dan beri var.</span>
+          </div>
+
+          <div class="sap-scroll">
+            <table class="sap-tbl" id="sapProdTbl">
+              <thead>
+                <tr>
+                  <th style="width:34px;"><input type="checkbox" id="sapCkAll" title="Görünenlerin hepsini seç / bırak" aria-label="Hepsini seç"></th>
+                  <th>Marka</th>
+                  <th>Ürün</th>
+                  <th class="num">Bitmiş stok</th>
+                  <th>Reçete</th>
+                  <th class="num">Adet</th>
+                  <th style="width:44px;" title="Satır ayarları">⚙</th>
+                </tr>
+              </thead>
+              <tbody id="sapProdBody"><tr><td colspan="7" class="sap-empty">Yükleniyor…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="sap-foot">
+            <span id="sapProdFoot"></span>
+            <span class="sap-faint">⚙: başka ürünün reçetesi, ölçek, ek ambalaj, etiket yüzü, görünen ad.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════ 2. SEÇENEKLER ════ -->
+      <section class="sap-card">
+        <div class="sap-head"><span class="sap-num">2</span><h2>Seçenekler</h2></div>
+        <div class="sap-body">
+          <div class="sap-grid">
+            <div class="sap-group">
+              <h3>Stok modu</h3>
+              <div class="sap-stack">
+                <label class="sap-check"><input type="radio" name="sapStockMode" value="net">
+                  <span><b>Net</b> — Alınacak = toplam gereken − elimizde
+                    <small>Elimizde yeten malzeme alınmaz; "Yeterli olanlar" ayrıca listelenir.</small></span></label>
+                <label class="sap-check"><input type="radio" name="sapStockMode" value="gross">
+                  <span><b>Brüt</b> — stoktan bağımsız
+                    <small>Yalnız seçilen ürünler için gereken miktar; elimizdeki stok bilgi olarak görünür.</small></span></label>
+                <label class="sap-check"><input type="checkbox" id="sapOpenOrders">
+                  <span>Açık siparişleri düş
+                    <small>"Sipariş verildi" işaretli, henüz gelmemiş miktar yolda sayılır.</small></span></label>
+                <label class="sap-check"><input type="checkbox" id="sapFinished">
+                  <span>Bitmiş ürün stoğunu düş
+                    <small>Üretilecek = hedef adet − depodaki bitmiş ürün.</small></span></label>
+              </div>
+            </div>
+
+            <div class="sap-group">
+              <h3>Etiket</h3>
+              <div class="sap-stack">
+                <div class="sap-seg" id="sapLabelSeg">
+                  <label data-v="TR"><input type="radio" name="sapLabel" value="TR">Türkçe</label>
+                  <label data-v="EN"><input type="radio" name="sapLabel" value="EN">İngilizce</label>
+                  <label data-v="exclude"><input type="radio" name="sapLabel" value="exclude">Hariç</label>
+                  <label data-v="new"><input type="radio" name="sapLabel" value="new">Yeni basılacak</label>
+                </div>
+                <div id="sapNewLabelWrap">
+                  <label class="sap-lbl" for="sapNewLabelTitle">Yeni etiketin adı</label>
+                  <input type="text" id="sapNewLabelTitle" class="sap-in" style="width:100%;" maxlength="80" placeholder="ör. Rusça etiket">
+                  <div class="sap-faint" style="margin-top:0.25rem;">Ürün başına adet × yüz sayısı kadar yeni etiket satırı eklenir; yüz sayısı ⚙'den elle verilebilir.</div>
+                </div>
+              </div>
+              <h3 style="margin-top:0.9rem;">Alım firesi (%)</h3>
+              <div class="sap-row3">
+                <div><label class="sap-lbl" for="sapWasteRaw">Hammadde</label><input type="number" id="sapWasteRaw" class="sap-in" min="0" max="100" step="0.5"></div>
+                <div><label class="sap-lbl" for="sapWastePkg">Ambalaj</label><input type="number" id="sapWastePkg" class="sap-in" min="0" max="100" step="0.5"></div>
+                <div><label class="sap-lbl" for="sapWasteLbl">Etiket</label><input type="number" id="sapWasteLbl" class="sap-in" min="0" max="100" step="0.5"></div>
+              </div>
+              <div class="sap-faint" style="margin-top:0.3rem;">Üretim firesi reçeteden gelir; bu oran alımın üstüne eklenir.</div>
+            </div>
+
+            <div class="sap-group">
+              <h3>Hesap</h3>
+              <div class="sap-stack">
+                <label class="sap-check"><input type="checkbox" id="sapMerge">
+                  <span>Aynı adlı kartları birleştir
+                    <small>Aynı ad + birim → stoklar toplanır (veritabanı değişmez; lab'ın "farklı" dediği kartlar birleşmez).</small></span></label>
+                <label class="sap-check"><input type="checkbox" id="sapSafe">
+                  <span>Güvenli yuvarlama
+                    <small>Gereken yukarı, elimizde aşağı yuvarlanır; alınacak gerçek eksiğin altına inmez.</small></span></label>
+                <label class="sap-check"><input type="checkbox" id="sapPkgRound">
+                  <span>Ambalaj katına yuvarla
+                    <small>En ucuz teklifin ambalaj boyuna göre alınacak ve tutar ayrıca gösterilir.</small></span></label>
+                <label class="sap-check"><input type="checkbox" id="sapLookalike">
+                  <span>Benzer adlı kart uyarısı</span></label>
+                <div>
+                  <label class="sap-lbl" for="sapCurrency">Para birimi</label>
+                  <select id="sapCurrency" class="sap-sel">
+                    <option value="USD">USD ($)</option><option value="EUR">EUR (€)</option><option value="TRY">TRY (₺)</option>
+                  </select>
+                  <div class="sap-faint" style="margin-top:0.25rem;">Farklı para birimindeki fiyatlar bugünün TCMB kuruyla çevrilir. Sıvılarda 1 l ≈ 1 kg kabul edilir.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="sap-group">
+              <h3>Hariç tutulan kalemler</h3>
+              <div class="sap-pick" id="sapExPick"><input type="text" class="sap-in" placeholder="Kalem ara ve ekle…" autocomplete="off"><div class="sap-drop"></div></div>
+              <div class="sap-ichips" id="sapExChips"></div>
+              <div class="sap-faint" id="sapExHint" style="margin-top:0.3rem;"></div>
+              <h3 style="margin-top:0.9rem;">Bekletilen kalemler</h3>
+              <div class="sap-pick" id="sapHeldPick"><input type="text" class="sap-in" placeholder="Kalem ara ve ekle…" autocomplete="off"><div class="sap-drop"></div></div>
+              <div class="sap-ichips" id="sapHeldChips"></div>
+              <div class="sap-faint" style="margin-top:0.3rem;">Bekletilen kalem listeye ve toplama girmez; "alınırsa" tutarıyla notlarda görünür.</div>
+            </div>
+
+            <div class="sap-group" style="grid-column:1/-1;">
+              <h3>Serbest satırlar (koli, palet, ara levha…)</h3>
+              <div style="overflow-x:auto;">
+                <table class="sap-tbl sap-mtbl">
+                  <thead><tr><th style="width:130px;">Bölüm</th><th>Ad</th><th style="width:100px;">Miktar</th><th style="width:150px;">Miktar (metin)</th><th style="width:90px;">Birim</th><th>Not</th><th style="width:36px;"></th></tr></thead>
+                  <tbody id="sapManualBody"></tbody>
+                </table>
+              </div>
+              <button type="button" class="sap-b sap-b-sm" id="sapManualAdd" style="margin-top:0.5rem;"><i class="bi bi-plus-lg"></i>Satır ekle</button>
+            </div>
+
+            <div class="sap-group" style="grid-column:1/-1;">
+              <h3>Rapor</h3>
+              <div class="sap-2col">
+                <div><label class="sap-lbl" for="sapTitle">Başlık</label><input type="text" id="sapTitle" class="sap-in" maxlength="150" placeholder="ör. Rusya Siparişi — Tedarikçili ve Fiyatlı Alım Listesi"></div>
+                <div><label class="sap-lbl" for="sapOwner">Kontrol listesi sorumlusu</label><input type="text" id="sapOwner" class="sap-in" maxlength="120" placeholder="ör. Satın alma ekibi"></div>
+              </div>
+              <div style="margin-top:0.6rem;">
+                <label class="sap-lbl" for="sapNotes">Notlar (her satır ayrı not)</label>
+                <textarea id="sapNotes" class="sap-in" rows="3" style="width:100%;resize:vertical;" placeholder="Rapordaki 'Notlar ve kaynaklar' bölümüne eklenir."></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════ 3. ÖNİZLEME ════ -->
+      <section class="sap-card">
+        <div class="sap-head">
+          <span class="sap-num">3</span><h2>Önizleme</h2>
+          <div class="sap-head-right">
+            <button type="button" class="sap-b sap-b-main" id="sapRun"><i class="bi bi-play-fill"></i>Önizle</button>
+            <button type="button" class="sap-b" id="sapPdf"><i class="bi bi-filetype-pdf"></i>PDF indir</button>
+            <button type="button" class="sap-b" id="sapXls"><i class="bi bi-filetype-xlsx"></i>Excel indir</button>
+          </div>
+        </div>
+        <div class="sap-body">
+          <div class="sap-box sap-box-info sap-stale" id="sapStale"><i class="bi bi-arrow-repeat"></i> Plan önizlemeden sonra değişti — güncel sonuç için <b>Önizle</b>'ye basın.</div>
+          <div id="sapPreview"><div class="sap-empty"><i class="bi bi-cart-check"></i>Ürün ve adet seçip <b>Önizle</b>'ye basın.</div></div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- ════ MODAL (satır ayarları / senaryo adı) ════ -->
+  <div class="sap-ov" id="sapModal" aria-hidden="true">
+    <div class="sap-modal" role="dialog" aria-modal="true" aria-labelledby="sapModalTitle">
+      <div class="sap-modal-head"><span id="sapModalTitle">—</span><button type="button" class="sap-close" data-close aria-label="Kapat">&times;</button></div>
+      <div class="sap-modal-body" id="sapModalBody"></div>
+      <div class="sap-modal-foot" id="sapModalFoot"></div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="/static/satin-alma.js?v=1" defer></script>
+  <script>
+    document.getElementById('logoutBtn').addEventListener('click', async function () {
+      try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}
+      window.location.href = '/login';
+    });
+  </script>
+</body>
+</html>

@@ -254,6 +254,7 @@
       {% if can('influencer','view') %}<a href="/influencer" class="nav-link-item"><i class="bi bi-stars nav-icon"></i>Creator Programı</a>{% endif %}
       <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
       <a href="/reports" class="nav-link-item active"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+      {% if can('reports','view') %}<a href="/satin-alma" class="nav-link-item"><i class="bi bi-cart-check nav-icon"></i>Satın Alma</a>{% endif %}
       <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
       <a href="/drive" class="nav-link-item"><i class="bi bi-folder-fill nav-icon"></i>Dosya Paylaşım</a>
       {% if can('crm','view') %}<a href="/crm" class="nav-link-item"><i class="bi bi-people-fill nav-icon"></i>CRM</a>{% endif %}
@@ -328,16 +329,22 @@
         .plan-tbl td{padding:0.35rem 0.6rem;border-bottom:1px solid #f3f0ea;}
         .plan-short{color:#b91c1c;font-weight:700;}
         .plan-ok{color:#15803d;}
+        .plan-adv-link{display:inline-flex;align-items:center;gap:0.3rem;padding:0.4rem 0.85rem;border:1.5px solid var(--gold);border-radius:8px;background:#fff;color:var(--navy);font-size:0.82rem;font-weight:600;text-decoration:none;white-space:nowrap;}
+        .plan-adv-link:hover{background:var(--navy);border-color:var(--navy);color:#fff;}
+        :root[data-theme="dark"] .plan-adv-link{background:var(--surface-2);color:var(--gold2);}
+        :root[data-theme="dark"] .plan-adv-link:hover{background:var(--gold);border-color:var(--gold);color:#131B40;}
       </style>
 
       <!-- ════ ÜRETİM STOK ANALİZİ ════ -->
       <div class="panel" style="margin-bottom:1.5rem;">
-        <div class="panel-header" style="display:flex;align-items:center;gap:0.75rem;padding:1rem 1.25rem;">
+        <div class="panel-header" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;padding:1rem 1.25rem;">
           <div class="panel-icon panel-icon-gold"><i class="bi bi-calculator"></i></div>
           <div style="flex:1;min-width:200px;">
             <p class="panel-title" style="margin:0;">Üretim Stok Analizi</p>
             <p class="panel-subtitle" style="margin:0;">Seçilen ürünlerden kaç adet üretsek malzeme yeter mi? Eksikler + tek başına üretilebilir adet + satın alma listesi + Excel.</p>
           </div>
+          <!-- Ürün başına adet, net/brüt stok, tedarikçili-fiyatlı PDF/Excel ve kayıtlı senaryolar → /satin-alma -->
+          <a href="/satin-alma" class="plan-adv-link" title="Ürün başına adet, net/brüt stok modu, tedarikçili ve fiyatlı alım listesi (PDF/Excel), kayıtlı senaryolar">Gelişmiş: Satın Alma Planı →</a>
         </div>
         <div class="panel-body" style="padding:1.1rem 1.25rem;">
           <div style="margin-bottom:0.6rem;display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;">
@@ -464,6 +471,35 @@
           {% if role in ['SuperAdmin','Manager'] %}
           <div style="font-size:0.76rem;color:#9ca3af;margin-bottom:0.6rem;">
             Işık Hanım'ın <b>“Stok Son Durum”</b> Excel'ini (Malzeme + 3 tedarikçiye kadar ad/miktar/fiyat) yükleyin; malzeme başına eski fiyatlar değiştirilir.
+            Fiyatın para birimini ve birimini aşağıdan seçin — adet birimli malzemelerin fiyatı her zaman adet başına sayılır.
+          </div>
+          <div class="ph-toolbar" style="margin-bottom:0.8rem;">
+            <div class="ph-field">
+              <label for="spCurrency">Para birimi</label>
+              <select id="spCurrency">
+                <option value="USD" selected>USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="TRY">TRY (₺)</option>
+              </select>
+            </div>
+            <div class="ph-field">
+              <label for="spUnit">Fiyat birimi</label>
+              <!-- "adet başına" bilinçli yok: adet birimli malzeme zaten otomatik
+                   adet başına yazılır; seçilseydi tüm g/kg/ml/lt fiyatları
+                   satın alma planında kullanılamaz olurdu. -->
+              <select id="spUnit" title="Ağırlık/hacim malzemeleri için listenin birimi — adet birimli malzemeler her zaman adet başına">
+                <option value="kg" selected>kg başına</option>
+                <option value="l">litre başına</option>
+              </select>
+            </div>
+            <div class="ph-field" style="flex:1;min-width:180px;">
+              <label for="spLabel">Kaynak etiketi</label>
+              <input type="text" id="spLabel" maxlength="120" placeholder="ör. Stok Son Durum — Ekim 2026 (boşsa dosya adı)" style="width:100%;">
+            </div>
+            <div class="ph-field">
+              <label for="spQuoted">Liste tarihi</label>
+              <input type="date" id="spQuoted">
+            </div>
           </div>
           {% endif %}
           <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin-bottom:0.7rem;">
@@ -478,7 +514,7 @@
                 <tr style="text-align:left;color:#6b7280;border-bottom:2px solid #f0ece4;">
                   <th style="padding:0.4rem 0.5rem;">Malzeme</th>
                   <th style="padding:0.4rem 0.5rem;">Birim</th>
-                  <th style="padding:0.4rem 0.5rem;">Tedarikçiler (ucuzdan pahalıya · ad · miktar · ₺)</th>
+                  <th style="padding:0.4rem 0.5rem;">Tedarikçiler (ucuzdan pahalıya · ad · miktar · birim fiyat)</th>
                 </tr>
               </thead>
               <tbody id="spBody"><tr><td colspan="3" style="padding:0.8rem;color:#9ca3af;">Yükleniyor…</td></tr></tbody>
@@ -1396,7 +1432,27 @@
     const SP_CAN_EDIT = {{ 'true' if role in ['SuperAdmin','Manager'] else 'false' }};
     let _spData = [];
     function _spEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-    function _spMoney(v){ return v==null?'—':Number(v).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+    // Birim fiyat: 1'in altında 4 hane (ambalaj/etiket — 0,1193 $/adet), değilse
+    // 2 hane.  Eskiden hep 2 haneydi → 0,0045 "0,00" görünüyordu.
+    function _spMoney(v){
+      if(v==null) return '—';
+      const n=Number(v), d=(n!==0&&Math.abs(n)<1)?4:2;
+      return n.toLocaleString('tr-TR',{minimumFractionDigits:d,maximumFractionDigits:d});
+    }
+    // Fiyat temeli: satırın kendi para birimi + birimi ("25,80 $/kg").  Birimi
+    // boş eski satırda yalnız sembol basılır — ₺ artık varsayılmıyor.
+    const _SP_SYM={USD:'$',EUR:'€',TRY:'₺'};
+    function _spPrice(s){
+      const cur=(s.currency||'').toUpperCase();
+      const sym=_SP_SYM[cur]||cur;
+      return `${_spMoney(s.unit_price)}${sym?' '+_spEsc(sym):''}${s.price_unit?'/'+_spEsc(s.price_unit):''}`;
+    }
+    function _spSourceTitle(s){
+      const parts=[];
+      if(s.source_label) parts.push('Kaynak: '+s.source_label);
+      if(s.quoted_at){ const d=String(s.quoted_at).split('-'); if(d.length===3) parts.push('Liste tarihi: '+d[2]+'.'+d[1]+'.'+d[0]); }
+      return parts.join(' · ');
+    }
     async function spLoad(){
       const body=document.getElementById('spBody');
       try{
@@ -1417,10 +1473,11 @@
         const sup=(it.suppliers||[]).map((s,i)=>{
           const style=i===0?'background:#15803d;color:#fff;':'background:#eef0f5;color:#374151;';
           const pkg=s.package_size!=null?` · ${s.package_size}`:'';
-          const price=s.unit_price!=null?` · <b>${_spMoney(s.unit_price)}₺</b>`:'';
+          const price=s.unit_price!=null?` · <b>${_spPrice(s)}</b>`:'';
           const warn=s.matched?'':' <span title="tedarikçi sistemde eşleşmedi — serbest metin" style="color:#b45309;">⚠</span>';
           const del=SP_CAN_EDIT?` <a href="#" onclick="spDelete(${s.id});return false;" title="sil" style="color:#fff;opacity:0.85;text-decoration:none;font-weight:700;">×</a>`:'';
-          return `<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:999px;${style}font-size:0.78rem;">${_spEsc(s.supplier_name)}${pkg}${price}${warn}${del}</span>`;
+          const ttl=_spSourceTitle(s);
+          return `<span${ttl?` title="${_spEsc(ttl)}"`:''} style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:999px;${style}font-size:0.78rem;">${_spEsc(s.supplier_name)}${pkg}${price}${warn}${del}</span>`;
         }).join('');
         return `<tr style="border-bottom:1px solid #f5f2ea;"><td style="padding:0.4rem 0.5rem;font-weight:600;">${_spEsc(it.material)}</td><td style="padding:0.4rem 0.5rem;color:#6b7280;">${_spEsc(it.unit||'')}</td><td style="padding:0.4rem 0.5rem;">${sup||'<span style="color:#9ca3af;">—</span>'}</td></tr>`;
       }).join('');
@@ -1438,11 +1495,17 @@
       const info=document.getElementById('spImportInfo');
       info.style.display='block'; info.style.color='#6b7280'; info.textContent='İçe aktarılıyor…';
       const fd=new FormData(); fd.append('file',f);
+      const _v=id=>{ const el=document.getElementById(id); return el?(el.value||'').trim():''; };
+      fd.append('currency',_v('spCurrency')||'USD');
+      fd.append('price_unit',_v('spUnit')||'kg');
+      if(_v('spLabel')) fd.append('label',_v('spLabel'));
+      if(_v('spQuoted')) fd.append('quoted_at',_v('spQuoted'));
       try{
         const r=await fetch('/api/supplier-prices/import',{method:'POST',body:fd});
         const j=await r.json().catch(()=>({}));
         if(!r.ok){ info.style.color='#b91c1c'; info.textContent=j.detail||'İçe aktarılamadı.'; input.value=''; return; }
-        let msg=`✓ ${j.items_updated} malzeme güncellendi · ${j.prices_inserted} fiyat satırı.`;
+        const _sym=_SP_SYM[(j.currency||'').toUpperCase()]||j.currency||'';
+        let msg=`✓ ${j.items_updated} malzeme güncellendi · ${j.prices_inserted} fiyat satırı (${_sym}/${j.price_unit||'kg'}; adet birimliler adet başına).`;
         if(j.unmatched_materials&&j.unmatched_materials.length) msg+=` ⚠ Eşleşmeyen malzeme (${j.unmatched_materials.length}): ${j.unmatched_materials.slice(0,10).join(', ')}${j.unmatched_materials.length>10?'…':''}.`;
         if(j.unmatched_suppliers&&j.unmatched_suppliers.length) msg+=` Tedarikçi eşleşmedi (${j.unmatched_suppliers.length}, serbest metin saklandı): ${j.unmatched_suppliers.slice(0,10).join(', ')}${j.unmatched_suppliers.length>10?'…':''}.`;
         info.style.color='#15803d'; info.textContent=msg;

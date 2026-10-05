@@ -29,6 +29,7 @@ PAGES = [
     "/stocks",
     "/ledger",
     "/reports",
+    "/satin-alma",
     "/traceability",
     "/quotations",
     "/admin",

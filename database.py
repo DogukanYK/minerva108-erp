@@ -220,6 +220,13 @@ class SupplierPrice(Base):
     (tedarikçisi) olabilir; rapor en ucuzdan başlayarak ilk N tanesini gösterir.
     `supplier_name` her zaman saklanır (görüntü için); `supplier_id` eşleşirse
     bağlanır, eşleşmezse NULL kalır (serbest metin tedarikçi).
+
+    Fiyat temeli: `currency` + `price_unit` (kg | l | adet) birlikte okunur —
+    Stok Son Durum listesi USD/kg'dir, adet birimli malzemede fiyat adet
+    başınadır.  `currency` model varsayılanı tarihsel olarak 'TRY'; eski satırlar
+    `_backfill_supplier_price_units()` ile bir kez USD + kg/adet işaretlendi.
+    `source` (stok_son_durum | manual) + `source_label` + `quoted_at` raporda
+    "fiyat kaynağı" notunu besler.
     """
     __tablename__ = "supplier_prices"
 
@@ -230,6 +237,10 @@ class SupplierPrice(Base):
     package_size = Column(Float, nullable=True)          # alınabilecek miktar / min sipariş (malzeme birimi cinsinden)
     unit_price = Column(Float, nullable=True)            # birim fiyat
     currency = Column(String(8), default="TRY")
+    price_unit = Column(String(8), nullable=True)        # fiyatın temeli: kg / l / adet
+    source = Column(String(30), nullable=True)           # stok_son_durum / manual
+    source_label = Column(String(120), nullable=True)    # ör. "Stok Son Durum — Eylül 2026"
+    quoted_at = Column(Date, nullable=True)              # teklif/liste tarihi
     note = Column(Text, nullable=True)
     domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Kozmetik / Food Supplement
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -273,6 +284,40 @@ class StockOrderFlag(Base):
 
     item = relationship("Item", foreign_keys=[item_id])
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
+
+
+class PurchasePlan(Base):
+    """Satın Alma Planı — kaydedilmiş senaryo ("Rusya Siparişi" gibi).
+
+    `config` = `core.purchase_plan_models.PlanRequest`'in JSON'u, sürümlü:
+    `{"version": 1, "title", "lines", "manual_lines", "options"}`.  Model
+    alanları daima varsayılanlı genişletilir → eski senaryo aynen açılır.
+    Senaryo id'lere (reçete/kalem) bakar; silinmiş ya da pasif reçete/kart
+    `GET /api/purchase-plan/scenarios/{id}` yanıtında `missing[]` olarak
+    işaretlenir, sessizce düşürülmez.  Domain-kapsamlı; ad AKTİF kayıtlarda
+    panel içinde tekil (kısmi tekil indeks).  Düzenleme/silme: sahibi
+    (`created_by_id`), SuperAdmin ya da Manager.  Silme yumuşak
+    (`is_active=False`).  `last_run_at` önizleme/dışa aktarma
+    `?scenario_id=` ile çağrılınca damgalanır.  Uçlar `routers/purchase_plan.py`.
+    """
+    __tablename__ = "purchase_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(150), nullable=False)
+    config = Column(Text, nullable=False)                # JSON {"version": 1, ...}
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by = Column(String(80), nullable=True)
+    updated_by = Column(String(80), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_run_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    __table_args__ = (
+        Index("uq_purchase_plans_domain_name_active", "domain", "name", unique=True,
+              postgresql_where=text("is_active")),
+    )
 
 
 class Delivery(Base):
@@ -2108,6 +2153,48 @@ def _backfill_retention_needs_review():
         db.close()
 
 
+def _backfill_supplier_price_units():
+    """Eski tedarikçi fiyat satırlarına fiyat temelini yaz (USD + kg/adet).
+
+    Stok Son Durum listesi USD/kg'dir ama satırlar model varsayılanıyla
+    `currency='TRY'` yazılmış, birim hiç tutulmamıştı (panel her fiyatı "₺"
+    gösteriyordu).  `price_unit IS NULL` olan her satır: `currency='USD'`,
+    `source='stok_son_durum'`, `price_unit` = malzeme adet (sayılan) birimliyse
+    'adet', değilse 'kg' (`core.supplier_prices.default_price_unit` — içe
+    aktarmayla aynı kural).
+
+    BİR KEZ çalışır — `AppSetting` sentinel'i ile korunur (kalıp:
+    `_backfill_retention_needs_review`).  Alembic revizyonu a3c5e7f9b1d4 aynı
+    doldurmayı SQL ile yapar (yalnız bu UPDATE sıra-bağımsızdır, WHERE
+    price_unit IS NULL); revizyon alembic geçmişi + temiz kurulum içindir —
+    kolonları alter_safe'in zaten eklediği DB'de `alembic stamp head` kullan,
+    `upgrade` `add_column`'da duplicate-column ile düşer.
+    """
+    from core.supplier_prices import default_price_unit, SOURCE_STOK_SON_DURUM
+
+    SENTINEL = "backfill.supplier_price_units.v1"
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter(AppSetting.key == SENTINEL).first():
+            return                                  # zaten koştu → O(1) no-op
+        rows = (db.query(SupplierPrice, Item.unit)
+                .join(Item, Item.id == SupplierPrice.item_id)
+                .filter(SupplierPrice.price_unit.is_(None)).all())
+        for sp, item_unit in rows:
+            sp.currency = "USD"
+            sp.source = SOURCE_STOK_SON_DURUM
+            sp.price_unit = default_price_unit(item_unit)
+        db.add(AppSetting(key=SENTINEL, value=str(len(rows))))
+        db.commit()
+        if rows:
+            print(f"[init_db] supplier_prices birim backfill: {len(rows)} satır USD + kg/adet işaretlendi")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _backfill_drive_folders():
     """original_name'inde '/' olan DriveFile'ları gerçek klasör ağacına yerleştir.
 
@@ -2320,6 +2407,18 @@ def init_db():
             "ALTER TABLE sample_analyses ADD COLUMN mode VARCHAR(10) NOT NULL DEFAULT 'new'",
             # Eksik Hammaddeler raporu — stock_order_flags YENİ bir tablo,
             # create_all ile gelir; buraya eklenecek kolon yok (bilgi notu).
+            # Tedarikçi fiyatları — fiyat temeli (birim + kaynak + tarih).
+            # deploy.sh alembic ÇALIŞTIRMIYOR; kolonlar prod'a yalnız bu
+            # satırlarla ulaşır (migration a3c5e7f9b1d4 geçmiş + temiz kurulum
+            # içindir).  Eski satırların doldurulması aşağıda, sentinel'li.
+            "ALTER TABLE supplier_prices ADD COLUMN price_unit VARCHAR(8)",
+            "ALTER TABLE supplier_prices ADD COLUMN source VARCHAR(30)",
+            "ALTER TABLE supplier_prices ADD COLUMN source_label VARCHAR(120)",
+            "ALTER TABLE supplier_prices ADD COLUMN quoted_at DATE",
+            # Satın Alma Planı senaryoları — purchase_plans YENİ bir tablo,
+            # create_all ile gelir (kısmi tekil indeks dahil); buraya eklenecek
+            # kolon yok (bilgi notu).  Migration b7d9f1a3c5e8 geçmiş + temiz
+            # kurulum içindir.
         ):
             alter_safe(stmt)
 
@@ -2333,6 +2432,12 @@ def init_db():
 
     try:
         _backfill_drive_folders()
+    except Exception:
+        pass
+
+    # Tedarikçi fiyatlarının para birimi/birim düzeltmesi — sentinel'li, bir kez.
+    try:
+        _backfill_supplier_price_units()
     except Exception:
         pass
 

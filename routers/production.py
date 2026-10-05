@@ -157,16 +157,10 @@ def suggest_next_lot(
 
 # ─── Üretim föyü (production sheet) ─────────────────────────────────────────
 
-def _parse_ml(*texts) -> Optional[float]:
-    """İsim/varyasyondan ml değeri çek — '50ml', '100 ML' → 50 / 100."""
-    for t in texts:
-        m = re.search(r'(\d+(?:[.,]\d+)?)\s*ml', str(t or ''), re.IGNORECASE)
-        if m:
-            try:
-                return float(m.group(1).replace(',', '.'))
-            except ValueError:
-                pass
-    return None
+# İsim/varyasyondan ml değeri çeken yardımcı core/consumption.parse_ml'e taşındı
+# (Satın Alma Planı da ürün boyunu aynı kuralla okuyor).  Bu satır RE-EXPORT
+# SHIM'idir — eski ad buradan çağrılıyor.
+from core.consumption import parse_ml as _parse_ml  # noqa: E402
 
 
 def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[dict]:

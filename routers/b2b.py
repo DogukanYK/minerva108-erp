@@ -17,46 +17,14 @@ from database import get_db, Item, Transaction, Quotation, QuotationItem, to_tr
 from core.permissions import require_permission
 from core.notifications import notify_low_stock
 from core.domain import active_domain
+from core import fx
 
 router = APIRouter(prefix="/api", tags=["b2b"])
 
 
 # ─── Currency Rates (Phase 3 / Task 2 — TCMB live feed) ─────────────────────
-
-_rate_cache = {"data": None, "fetched_at": None}
-_RATE_TTL_SECONDS = 3600   # 1 hour
-
-# Last-known-good fallback (overwritten on first successful TCMB fetch)
-_RATE_FALLBACK = {"USD": 34.50, "EUR": 37.20}
-
-
-def _fetch_tcmb_rates():
-    """
-    Fetch today's USD/EUR forex selling rates from TCMB.
-    Returns dict like {"USD": 34.61, "EUR": 37.25} on success, None on failure.
-    Uses stdlib only — no extra deps.
-    """
-    import urllib.request
-    import xml.etree.ElementTree as ET
-
-    url = "https://www.tcmb.gov.tr/kurlar/today.xml"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Minerva108-ERP/1.0"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            xml_data = resp.read().decode("utf-8")
-
-        root = ET.fromstring(xml_data)
-        out = {}
-        for currency in root.findall("Currency"):
-            code = currency.get("CurrencyCode")
-            if code in ("USD", "EUR"):
-                node = currency.find("ForexSelling")
-                if node is not None and node.text:
-                    out[code] = float(node.text.strip())
-        return out if {"USD", "EUR"}.issubset(out.keys()) else None
-    except Exception:
-        return None
-
+# TCMB çekimi + 1 saatlik önbellek core/fx.py'ye taşındı (satın alma planı da
+# kullanıyor).  Bu uç ince bir sarmalayıcı — yanıt şekli birebir aynı.
 
 @router.get("/currency-rates")
 def get_currency_rates(_: dict = Depends(require_permission("finance", "view"))):
@@ -69,47 +37,16 @@ def get_currency_rates(_: dict = Depends(require_permission("finance", "view")))
     All rates are TRY per 1 unit of foreign currency.
     e.g. usd_amount = try_amount / response.USD
     """
-    from datetime import datetime as _dt
-    now = _dt.utcnow()
-    cached_data = _rate_cache.get("data")
-    cached_at   = _rate_cache.get("fetched_at")
-
-    # ── Serve fresh cache ───────────────────────────────────────────────
-    if cached_data and cached_at and (now - cached_at).total_seconds() < _RATE_TTL_SECONDS:
-        return {
-            **cached_data,
-            "fetched_at": cached_at.isoformat() + "Z",
-            "cached": True,
-        }
-
-    # ── Try live fetch ──────────────────────────────────────────────────
-    fresh = _fetch_tcmb_rates()
-    if fresh and "USD" in fresh and "EUR" in fresh:
-        data = {"source": "TCMB", "USD": fresh["USD"], "EUR": fresh["EUR"]}
-        _rate_cache["data"]       = data
-        _rate_cache["fetched_at"] = now
-        return {**data, "fetched_at": now.isoformat() + "Z", "cached": False}
-
-    # ── Fall back to stale cache if available ──────────────────────────
-    if cached_data:
-        return {
-            **cached_data,
-            "fetched_at": cached_at.isoformat() + "Z" if cached_at else None,
-            "cached": True,
-            "stale":  True,
-            "warning": "TCMB'ye ulaşılamadı; önceki kur kullanılıyor.",
-        }
-
-    # ── Final hardcoded fallback ───────────────────────────────────────
-    return {
-        "source":     "fallback",
-        "USD":        _RATE_FALLBACK["USD"],
-        "EUR":        _RATE_FALLBACK["EUR"],
-        "fetched_at": now.isoformat() + "Z",
-        "cached":     False,
-        "stale":      True,
-        "warning":    "TCMB'ye ulaşılamadı; varsayılan kurlar kullanılıyor. Manuel doğrulama önerilir.",
+    st = fx.lookup()
+    out = {
+        **st["data"],
+        "fetched_at": st["fetched_at"].isoformat() + "Z" if st["fetched_at"] else None,
+        "cached": st["cached"],
     }
+    if st["stale"]:
+        out["stale"] = True
+        out["warning"] = st["warning"]
+    return out
 
 
 # ─── Quotations / Order Fulfillment (Phase 3 / Task 3) ──────────────────────

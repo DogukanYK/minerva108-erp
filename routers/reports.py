@@ -13,7 +13,7 @@ import io
 import re
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, Query, Request, UploadFile, File
+from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, Form
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func
@@ -692,6 +692,10 @@ def list_supplier_prices(
             "supplier_name": r.supplier_name or (r.supplier.name if r.supplier else "—"),
             "package_size": r.package_size,
             "unit_price": r.unit_price,
+            "currency": r.currency,
+            "price_unit": r.price_unit,
+            "source_label": r.source_label,
+            "quoted_at": r.quoted_at.isoformat() if r.quoted_at else None,
             "matched": r.supplier_id is not None,
         })
     out = sorted(groups.values(), key=lambda g: (g["material"] or "").lower())
@@ -702,15 +706,44 @@ def list_supplier_prices(
 
 @router.post("/supplier-prices/import")
 async def import_supplier_prices(
+    request: Request,
     file: UploadFile = File(...),
+    currency: str = Form("USD"),
+    price_unit: str = Form("kg"),
+    label: Optional[str] = Form(None),
+    quoted_at: Optional[str] = Form(None),
     db: Session = Depends(get_db),
-    _: dict = Depends(require_role(_FINANCE)),
+    current_user: dict = Depends(require_role(_FINANCE)),
     domain: str = Depends(active_domain),
 ):
-    """Işık Hanım'ın 'Stok Son Durum' Excel'ini içe aktarır (malzeme başına eski satırları değiştirir)."""
+    """Işık Hanım'ın 'Stok Son Durum' Excel'ini içe aktarır (malzeme başına eski satırları değiştirir).
+
+    Form alanları fiyat temelini belirler: `currency` (USD|EUR|TRY, vars. USD),
+    `price_unit` (kg|l, vars. kg — listenin ağırlık/hacim temeli; adet birimli
+    malzemeler her zaman 'adet', 'adet' seçeneği bu yüzden yok), `label` (kaynak etiketi, boşsa dosya adı), `quoted_at`
+    (YYYY-MM-DD liste/teklif tarihi).  Audit: `supplier_prices.import`.
+    """
     from core import supplier_prices as SP
     if not (file.filename or "").lower().endswith((".xlsx", ".xlsm")):
         return JSONResponse(status_code=400, content={"detail": "Lütfen .xlsx dosyası yükleyin."})
+    currency = (currency or "USD").strip().upper()
+    if currency not in SP.CURRENCIES:
+        return JSONResponse(status_code=400, content={"detail": "Para birimi USD, EUR ya da TRY olmalı."})
+    price_unit = (price_unit or "kg").strip().lower()
+    if price_unit not in SP.LIST_PRICE_UNITS:
+        return JSONResponse(status_code=400, content={
+            "detail": "Fiyat birimi kg ya da l olmalı (adet birimli malzemeler zaten adet başına yazılır)."})
+    label = SP.clean_name(label)
+    if label and len(label) > SP.SOURCE_LABEL_MAX:
+        return JSONResponse(status_code=400, content={
+            "detail": f"Etiket en fazla {SP.SOURCE_LABEL_MAX} karakter olabilir."})
+    quoted = None
+    if quoted_at and quoted_at.strip():
+        try:
+            quoted = _dt.date.fromisoformat(quoted_at.strip())
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Geçersiz liste tarihi."})
+    source_label = label or SP.clean_name(file.filename)
     data = await file.read()
     try:
         rows = SP.parse_stok_son_durum(data)
@@ -718,7 +751,17 @@ async def import_supplier_prices(
         return JSONResponse(status_code=400, content={"detail": "Excel okunamadı — beklenen 'Stok Son Durum' düzeni mi?"})
     if not rows:
         return JSONResponse(status_code=400, content={"detail": "Dosyada veri satırı bulunamadı."})
-    summary = SP.import_prices(db, rows, domain)
+    summary = SP.import_prices(db, rows, domain, currency=currency, price_unit=price_unit,
+                               source_label=source_label, quoted_at=quoted)
+    log_admin_event(db, request, actor=current_user, action="supplier_prices.import",
+                    target_type="supplier_prices", target_name=summary["source_label"],
+                    details={"domain": domain, "filename": file.filename,
+                             "currency": summary["currency"], "price_unit": summary["price_unit"],
+                             "quoted_at": summary["quoted_at"],
+                             "items_updated": summary["items_updated"],
+                             "prices_inserted": summary["prices_inserted"],
+                             "unmatched_materials": len(summary["unmatched_materials"]),
+                             "unmatched_suppliers": len(summary["unmatched_suppliers"])})
     return summary
 
 

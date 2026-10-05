@@ -190,3 +190,205 @@ def test_import_requires_finance_role(labtech_client: TestClient, db_session):
     assert r.status_code == 403
     # ama listeyi görebilir (reports.view)
     assert labtech_client.get("/api/supplier-prices").status_code == 200
+
+
+# ─── fiyat temeli (C1): para birimi + birim + kaynak ────────────────────────
+
+def _seed_unit_items(db):
+    """g / ml / adet birimli üç malzeme + bir tedarikçi."""
+    db.add_all([
+        Item(name="ARGAN YAĞI", sku="SKU-ARG", category="Hammadde", unit="g", current_stock=0, domain="cosmetics"),
+        Item(name="GÜL SUYU", sku="SKU-GUL", category="Hammadde", unit="ml", current_stock=0, domain="cosmetics"),
+        Item(name="POMPA 24/410", sku="SKU-POM", category="Ambalaj", unit="adet", current_stock=0, domain="cosmetics"),
+        Supplier(name="NATURALYA", domain="cosmetics"),
+    ])
+    db.commit()
+
+
+def _basis_xlsx():
+    return _make_xlsx([
+        ("ARGAN YAĞI", "Hammadde", "g", [("NATURALYA", 25, 25.8)]),
+        ("GÜL SUYU", "Hammadde", "ml", [("NATURALYA", 30, 4.2)]),
+        ("POMPA 24/410", "Ambalaj", "adet", [("NATURALYA", 1000, 0.11)]),
+    ])
+
+
+def _rows_by_item(db):
+    out = {}
+    for sp in db.query(SupplierPrice).all():
+        out[db.get(Item, sp.item_id).name] = sp
+    return out
+
+
+def test_import_endpoint_defaults_usd_kg_and_adet(authed_client: TestClient, db_session):
+    _seed_unit_items(db_session)
+    r = authed_client.post("/api/supplier-prices/import",
+                           files={"file": ("STOK SON DURUM.xlsx", _basis_xlsx(), _MIME)}, headers=_H)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["currency"] == "USD" and body["price_unit"] == "kg"
+    assert body["source_label"] == "STOK SON DURUM.xlsx"       # etiket boş → dosya adı
+    db_session.expire_all()
+    rows = _rows_by_item(db_session)
+    assert rows["ARGAN YAĞI"].currency == "USD" and rows["ARGAN YAĞI"].price_unit == "kg"
+    assert rows["GÜL SUYU"].price_unit == "kg"                 # liste USD/kg; ml kalemi de kg fiyatı
+    assert rows["POMPA 24/410"].price_unit == "adet"           # adet birimli → daima adet
+    assert all(sp.source == "stok_son_durum" for sp in rows.values())
+    assert all(sp.quoted_at is None for sp in rows.values())
+
+
+def test_import_endpoint_form_sets_currency_unit_label_date(authed_client: TestClient, db_session):
+    import datetime as dt
+    _seed_unit_items(db_session)
+    r = authed_client.post("/api/supplier-prices/import",
+                           files={"file": ("x.xlsx", _basis_xlsx(), _MIME)},
+                           data={"currency": "eur", "price_unit": "l",
+                                 "label": "  Ekim   teklifleri ", "quoted_at": "2026-10-01"},
+                           headers=_H)
+    assert r.status_code == 200, r.text
+    assert r.json()["currency"] == "EUR" and r.json()["quoted_at"] == "2026-10-01"
+    db_session.expire_all()
+    rows = _rows_by_item(db_session)
+    assert rows["GÜL SUYU"].currency == "EUR" and rows["GÜL SUYU"].price_unit == "l"
+    assert rows["ARGAN YAĞI"].price_unit == "l"                # kullanıcının seçtiği temel
+    assert rows["POMPA 24/410"].price_unit == "adet"
+    assert rows["ARGAN YAĞI"].source_label == "Ekim teklifleri"
+    assert rows["ARGAN YAĞI"].quoted_at == dt.date(2026, 10, 1)
+
+    lst = authed_client.get("/api/supplier-prices").json()
+    by_name = {it["material"]: it["suppliers"][0] for it in lst["items"]}
+    assert by_name["GÜL SUYU"]["currency"] == "EUR" and by_name["GÜL SUYU"]["price_unit"] == "l"
+    assert by_name["POMPA 24/410"]["price_unit"] == "adet"
+    assert by_name["ARGAN YAĞI"]["quoted_at"] == "2026-10-01"
+    assert by_name["ARGAN YAĞI"]["source_label"] == "Ekim teklifleri"
+
+
+def test_import_endpoint_rejects_bad_basis(authed_client: TestClient, db_session):
+    _seed_unit_items(db_session)
+    for data, frag in (({"currency": "GBP"}, "Para birimi"),
+                       ({"price_unit": "ton"}, "Fiyat birimi"),
+                       # liste birimi 'adet' olamaz: her g/kg/ml/lt fiyatını
+                       # satın alma planında kullanılamaz yapardı
+                       ({"price_unit": "adet"}, "Fiyat birimi"),
+                       ({"quoted_at": "01.10.2026"}, "tarih"),
+                       ({"label": "x" * 121}, "Etiket")):
+        r = authed_client.post("/api/supplier-prices/import",
+                               files={"file": ("x.xlsx", _basis_xlsx(), _MIME)}, data=data, headers=_H)
+        assert r.status_code == 400, (data, r.text)
+        assert frag in r.json()["detail"]
+    assert db_session.query(SupplierPrice).count() == 0       # hiçbiri yazılmadı
+
+
+def test_import_endpoint_writes_audit_row(authed_client: TestClient, db_session):
+    import json
+    from database import AdminAuditLog
+    _seed_unit_items(db_session)
+    r = authed_client.post("/api/supplier-prices/import",
+                           files={"file": ("liste.xlsx", _basis_xlsx(), _MIME)},
+                           data={"currency": "USD", "price_unit": "kg", "label": "Eylül"}, headers=_H)
+    assert r.status_code == 200, r.text
+    logs = db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "supplier_prices.import").all()
+    assert len(logs) == 1
+    det = json.loads(logs[0].details)
+    assert logs[0].target_name == "Eylül"
+    assert det["currency"] == "USD" and det["price_unit"] == "kg"
+    assert det["items_updated"] == 3 and det["prices_inserted"] == 3
+    assert det["filename"] == "liste.xlsx" and det["domain"] == "cosmetics"
+
+
+def test_import_prices_core_kwargs_and_validation(db_session):
+    import datetime as dt
+    import pytest
+    from core.supplier_prices import parse_stok_son_durum, import_prices, prices_for_items
+    _seed_unit_items(db_session)
+    rows = parse_stok_son_durum(_basis_xlsx())
+    summ = import_prices(db_session, rows, "cosmetics", currency="TRY", price_unit="kg",
+                         source_label="Elle", quoted_at=dt.date(2026, 9, 30))
+    assert summ["prices_inserted"] == 3
+    pump = db_session.query(Item).filter(Item.name == "POMPA 24/410").first()
+    argan = db_session.query(Item).filter(Item.name == "ARGAN YAĞI").first()
+    out = prices_for_items(db_session, [pump.id, argan.id], "cosmetics")
+    assert out[pump.id][0]["price_unit"] == "adet" and out[pump.id][0]["currency"] == "TRY"
+    assert out[argan.id][0]["price_unit"] == "kg"
+    assert out[argan.id][0]["source_label"] == "Elle"
+    assert out[argan.id][0]["quoted_at"] == dt.date(2026, 9, 30)
+    with pytest.raises(ValueError):
+        import_prices(db_session, rows, "cosmetics", currency="GBP")
+    with pytest.raises(ValueError):
+        import_prices(db_session, rows, "cosmetics", price_unit="ton")
+    with pytest.raises(ValueError):
+        import_prices(db_session, rows, "cosmetics", price_unit="adet")
+
+
+# ─── tek seferlik geri doldurma (sentinel'li) ───────────────────────────────
+
+def test_backfill_supplier_price_units_runs_once(db_session):
+    from database import AppSetting, _backfill_supplier_price_units
+    SENT = "backfill.supplier_price_units.v1"
+    _seed_unit_items(db_session)
+    # init_db (conftest) boş tabloda sentinel'i zaten yazdı → eski DB'yi taklit et
+    db_session.query(AppSetting).filter(AppSetting.key == SENT).delete()
+    items = {it.name: it for it in db_session.query(Item).all()}
+    db_session.add_all([   # eski satırlar: model varsayılanı TRY, birimsiz, kaynaksız
+        SupplierPrice(item_id=items["ARGAN YAĞI"].id, supplier_name="A", unit_price=25.8, domain="cosmetics"),
+        SupplierPrice(item_id=items["GÜL SUYU"].id, supplier_name="B", unit_price=4.2, domain="cosmetics"),
+        SupplierPrice(item_id=items["POMPA 24/410"].id, supplier_name="C", unit_price=0.11, domain="cosmetics"),
+        # zaten temeli olan satıra DOKUNULMAZ
+        SupplierPrice(item_id=items["ARGAN YAĞI"].id, supplier_name="D", unit_price=30.0, currency="EUR",
+                      price_unit="l", source="manual", domain="cosmetics"),
+    ])
+    db_session.commit()
+    assert db_session.query(SupplierPrice).filter(SupplierPrice.supplier_name == "A").one().currency == "TRY"
+
+    _backfill_supplier_price_units()
+    db_session.expire_all()
+    got = {sp.supplier_name: sp for sp in db_session.query(SupplierPrice).all()}
+    assert (got["A"].currency, got["A"].price_unit, got["A"].source) == ("USD", "kg", "stok_son_durum")
+    assert (got["B"].currency, got["B"].price_unit) == ("USD", "kg")
+    assert (got["C"].currency, got["C"].price_unit) == ("USD", "adet")
+    assert (got["D"].currency, got["D"].price_unit, got["D"].source) == ("EUR", "l", "manual")
+    sent = db_session.query(AppSetting).filter(AppSetting.key == SENT).one()
+    assert sent.value == "3"
+
+    # İkinci çağrı no-op: sentinel var → yeni birimsiz satır olduğu gibi kalır
+    db_session.add(SupplierPrice(item_id=items["ARGAN YAĞI"].id, supplier_name="E",
+                                 unit_price=1.0, domain="cosmetics"))
+    db_session.commit()
+    _backfill_supplier_price_units()
+    db_session.expire_all()
+    e = db_session.query(SupplierPrice).filter(SupplierPrice.supplier_name == "E").one()
+    assert e.price_unit is None and e.currency == "TRY"
+
+
+# ─── fiyatın alım birimine çevrilmesi ───────────────────────────────────────
+
+def test_price_per_purchase_unit_cases():
+    from core.supplier_prices import price_per_purchase_unit as ppu, LITRE_KG_NOTE
+    kg = {"unit_price": 66.0, "price_unit": "kg"}
+    lt = {"unit_price": 5.0, "price_unit": "l"}
+    ad = {"unit_price": 0.11, "price_unit": "adet"}
+    # g/kg kalem → kg temeli
+    assert ppu(kg, "g") == (66.0, "kg", None)
+    assert ppu(kg, "kg") == (66.0, "kg", None)
+    assert ppu(kg, " KG ") == (66.0, "kg", None)
+    # ml/l kalem → l temeli; kg fiyatı uygulanınca not düşülür
+    assert ppu(kg, "ml") == (66.0, "l", LITRE_KG_NOTE)
+    assert LITRE_KG_NOTE == "1 l ≈ 1 kg kabulüyle"
+    assert ppu(lt, "ml") == (5.0, "l", None)
+    assert ppu(lt, "lt") == (5.0, "l", None)
+    assert ppu(lt, "g") == (5.0, "kg", LITRE_KG_NOTE)          # simetrik
+    # adet
+    assert ppu(ad, "adet") == (0.11, "adet", None)
+    assert ppu(ad, "kutu") == (0.11, "adet", None)             # sayılan birim
+    # çevrilemeyen temel → fiyat kullanılmaz, not açıklar
+    price, unit, note = ppu(kg, "adet")
+    assert price is None and unit == "adet" and "uyuşmuyor" in note
+    price, unit, note = ppu(ad, "g")
+    assert price is None and unit == "kg" and "uyuşmuyor" in note
+    # fiyatsız teklif
+    assert ppu({"unit_price": None, "price_unit": "kg"}, "g") == (None, "kg", None)
+    # birimsiz eski satır → varsayılan kural (adet kalemde adet, diğerinde kg)
+    assert ppu({"unit_price": 2.0, "price_unit": None}, "adet") == (2.0, "adet", None)
+    assert ppu({"unit_price": 2.0}, "ml") == (2.0, "l", LITRE_KG_NOTE)
+    # SupplierPrice nesnesi de kabul edilir
+    assert ppu(SupplierPrice(unit_price=7.5, price_unit="kg"), "g") == (7.5, "kg", None)

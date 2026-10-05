@@ -39,6 +39,7 @@ Kurallar (start_production ile birebir):
 Çekirdek fonksiyon SAFTIR (DB'siz) — girdiler küçük donmuş dataclass'lar;
 DB'den toplu yükleme `load_recipe_recs()` ile yapılır.
 """
+import re
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
@@ -294,3 +295,24 @@ def load_recipe_recs(db, recipe_ids, domain: str, *, active_only: bool = True):
         ingredients=tuple(by_recipe.get(r.id, ())), domain=r.domain or "cosmetics",
     ) for r in recipes]
     return out, items, label_siblings
+
+
+# ─── Yardımcılar ────────────────────────────────────────────────────────────
+
+_ML_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*ml", re.IGNORECASE)
+
+
+def parse_ml(*texts) -> Optional[float]:
+    """İsim/varyasyondan ml değeri çek — '50ml', '100 ML' → 50 / 100.
+
+    İlk eşleşen metin kazanır.  Eskiden `routers/production.py::_parse_ml`
+    (üretim föyü şişe boyu); orada aynı adla re-export edilir.
+    """
+    for t in texts:
+        m = _ML_RE.search(str(t or ""))
+        if m:
+            try:
+                return float(m.group(1).replace(",", "."))
+            except ValueError:
+                pass
+    return None

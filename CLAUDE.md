@@ -404,6 +404,56 @@ Bilinçli ertelenen: talebi personelin geri çekmesi (yönetici silebiliyor),
 yarım gün izin, rapor PDF yükleme, onay push bildirimi (7 kişilik ekipte
 rozet yeterli).
 
+**Satın Alma Planı** (`/satin-alma`; `routers/purchase_plan.py`, motor
+`core/purchase_plan.py`, fiyat/tedarikçi `core/purchase_pricing.py`, çıktılar
+`core/purchase_plan_pdf.py` + `core/purchase_plan_xlsx.py` + `core/xlsx_cache.py`,
+istek modeli `core/purchase_plan_models.py`, UI `templates/satin_alma.html` +
+`static/satin-alma.js`) — Rusya siparişi için yazılan tek seferlik betiklerin
+(`~/Desktop/Claude/Rusya-Siparis`) sistemleşmiş hâli: ürün × adet (+ ⚙ başka
+ürünün reçetesi / ölçek / ek ambalaj / etiket yüzü) → hangi malzemeden ne kadar,
+kimden, kaça; "Tedarikçili ve Fiyatlı Alım Listesi" PDF (yatay A4) + Excel
+(formül + gömülü önbellek değeri). **Domain-scoped**, RBAC `reports.view` —
+fiyatlar raporu gören herkese açık (kullanıcı kararı 05.10.2026, rol bazlı
+gizleme YOK). Uçlar `/api/purchase-plan/*`: `GET /products` (aktif reçeteler
+`r:<id>` + reçetesiz somut bitmiş ürünler `i:<id>`, soyut varyasyon ebeveyni
+hariç; marka `core.brands`; varsayılan hariçler), `POST /preview` (rapor +
+`sections` — malzeme bölümlerinde satır yerine `row_keys`; satırda sunucu
+biçimli `ui.sup`/`ui.amount`, TR sayı biçimi JS'te yeniden yazılmasın),
+`POST /export?format=pdf|xlsx` (audit `purchase_plan.export`, 20/dk),
+`GET /history-fill` (`production_history_report.history_quantities` →
+`{target_item_id: adet}`), senaryo CRUD `/scenarios[/{id}]`. Akış
+`build_report`: `load_inputs` (TEK DB okuyucu; panel dışı id →
+`PlanInputError` → 400 "Bu panelde değil", pasif reçete → 400) → `compute`
+(SAF) → `load_price_inputs` → `attach`; hiçbir satırın reçetesi yoksa 400.
+Kur (`core.fx.today_rates`, TCMB) YALNIZ rapor para biriminden farklı fiyatlı
+teklif varsa çekilir — USD liste + USD rapor ağa çıkmaz. **Senaryolar**
+`purchase_plans` (create_all + migration `b7d9f1a3c5e8`): `config` =
+PlanRequest JSON'u `{"version": 1, …}` — modele yeni alan DAİMA varsayılanlı
+eklenir, eski senaryo açılabilsin. Ad AKTİF kayıtlarda panel içinde tekil
+(TR-katlanmış uygulama kontrolü + `is_active` koşullu kısmi tekil indeks),
+silme yumuşak; düzenleme/silme sahibi (`created_by_id`), SuperAdmin ya da
+Manager — rol DB'den CANLI okunur (JWT'deki değil); create/update/delete
+audit'li. `GET /scenarios/{id}` artık olmayan/pasif reçete ve kartları
+`missing[]` ile döner; UI bunları "eksik kayıt" kutusunda gösterir,
+önizlemeye/çıktıya KATMAZ ama kaydederken KORUR (sessiz düşürme yok; kullanıcı
+"Kaldır" ile çıkarır). `?scenario_id=` önizleme/dışa aktarma `last_run_at`'i
+damgalar (`updated_at`'e dokunmadan). Taslak tarayıcıda (`localStorage`
+`sap.draft.v1.<domain>`) otomatik saklanır; geri yüklenirken kart durumu
+SUNUCUDAN sorulur (`GET /item-refs?ids=` → senaryodaki `missing[]` biçimi) —
+`/api/items`'a bakılmaz: o liste pasif kartı vermez ve `items-cache.js`
+önbelleği panele göre ayrılmaz (sayfa listeyi `fetchItems(true)` ile taze çeker).
+Kapasite ("elimizdekiyle üretilebilir") hariç kalemleri kısıt saymaz (su kartı
+0 stokta durur). Varsayılanlar: alım firesi %0, USD,
+"1 l ≈ 1 kg" notu, DİSTİLE SU / SAF SU hariç (AppSetting
+`purchase_plan.default_excluded[.<domain>]`), bitmiş ürün stoğunu düşme kapalı;
+kontrol listesi sorumlusu senaryoda girilir (kişi adı SABİT YAZILMAZ).
+Raporlar'daki "Üretim Stok Analizi" paneli hızlı araç olarak kalır, başlığında
+"Gelişmiş: Satın Alma Planı →" bağlantısı var. Nav linki
+`scripts/add_satin_alma_nav.py` (idempotent, `reports.view` kapılı). Paraşüt
+alış faturası fiyatları SONRAKİ AŞAMA. Testler `tests/test_purchase_plan_api.py`
+(+ `_engine`, `_render`, `_acceptance` — sonuncusu `RUSYA_FIXTURE_DIR` ile
+açılır) ve `tests/test_purchase_pricing.py`.
+
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +
 low-stock alerts + CRM task reminders), `scheduler.py` (APScheduler — daily 08:00 CRM
@@ -636,6 +686,20 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   Alma Listesi** sheet with up to 3 suppliers (cheapest-first) — `build_workbook(...,
   prices=…)`; empty → the old plain 6-column sheet. A "Tedarikçi Fiyatları" panel on the
   Reports page lists/imports/deletes (import+delete gated to `SuperAdmin`/`Manager`).
+  **Fiyat temeli** (2026-10-05): fiyat `currency` + `price_unit` (`kg`|`l`|`adet`)
+  ile birlikte okunur (+ `source`/`source_label`/`quoted_at`; migration
+  `a3c5e7f9b1d4` + `init_db` alter_safe). Stok Son Durum listesi **USD/kg**'dir —
+  eski satırlar model varsayılanıyla yanlışlıkla TRY + birimsiz yazılmıştı;
+  `_backfill_supplier_price_units()` (sentinel `backfill.supplier_price_units.v1`)
+  bir kez USD + kg (adet birimli malzemede `adet`) işaretledi. İçe aktarma formu
+  `currency` / `price_unit` / `label` / `quoted_at` alır ve `supplier_prices.import`
+  audit'i yazar; panel kayıttaki para birimini/birimi gösterir (sabit ₺ değil).
+  `price_per_purchase_unit(offer, item_unit)`: g/kg kalemi kg'dan, ml/l kalemi
+  litreden, adet adetten fiyatlanır; kg fiyatı ml kalemine uygulanırsa "1 l ≈ 1 kg
+  kabulüyle" notu düşer. **Kur `core/fx.py`** (TCMB ForexSelling, 1 saat önbellek →
+  bayat önbellek → sabit yedek, uyarılı; `today_rates()` / `convert()`, testlerde
+  fetcher enjekte edilir — ağa çıkılmaz); `b2b.get_currency_rates` aynı yanıtı
+  veren ince sarmalayıcıdır.
 
 ### Timezone
 
