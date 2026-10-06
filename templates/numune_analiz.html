@@ -328,13 +328,19 @@
         _items = window.trSortBy ? window.trSortBy(raw, 'name') : raw;
       } catch { _items = []; }
       try {
-        const r = await fetch('/api/inventory/samples');
+        // include_empty: uç varsayılan olarak tükenmiş (0) numuneleri vermiyor;
+        // bu analizin kendi tükettiği lot düzenlemede görünür kalmalı, yeni
+        // satır seçicisi ise yalnız kalanı olanları gösterir (samplesFor).
+        const r = await fetch('/api/inventory/samples?include_empty=1');
         _samples = r.ok ? await r.json() : [];
       } catch { _samples = []; }
     }
     function fold(s){ return window.trFold ? window.trFold(s || '') : String(s || '').toLowerCase(); }
     function itemById(id){ return _items.find(i => i.id === Number(id)); }
-    function samplesFor(itemId){ return _samples.filter(x => x.item_id === Number(itemId)); }
+    function samplesFor(itemId, keepInvId){
+      return _samples.filter(x => x.item_id === Number(itemId)
+        && (Number(x.quantity) > 0 || (keepInvId && x.inventory_id === Number(keepInvId))));
+    }
 
     function itemOptions(selectedId){
       // Aynı adlı kartlar (farklı tedarikçi / kopya kart) ayırt edilebilsin:
@@ -348,12 +354,12 @@
       }).join('');
     }
     function sourceOptions(g){
-      const hasSample = samplesFor(g.item_id).length > 0 || g.source === 'sample';
+      const hasSample = samplesFor(g.item_id, g.inventory_id).length > 0 || g.source === 'sample';
       return Object.entries(SAMPLE_SOURCES).map(([k, v]) =>
         `<option value="${k}" ${g.source === k ? 'selected' : ''} ${(k === 'sample' && !hasSample) ? 'disabled' : ''}>${esc(v)}</option>`).join('');
     }
     function lotOptions(g){
-      const lots = samplesFor(g.item_id);
+      const lots = samplesFor(g.item_id, g.inventory_id);
       let html = '<option value="">— Lot seçiniz —</option>' + lots.map(l =>
         `<option value="${l.inventory_id}" ${Number(g.inventory_id) === l.inventory_id ? 'selected' : ''}>${esc(l.lot_number)} · ${esc(l.supplier_name || '—')} · kalan ${Number(l.quantity).toLocaleString('tr-TR',{maximumFractionDigits:4})} ${esc(l.unit || '')}</option>`).join('');
       if (g.source === 'sample' && g.lot_number && !lots.some(l => l.inventory_id === Number(g.inventory_id))) {

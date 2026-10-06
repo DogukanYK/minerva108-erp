@@ -8,14 +8,16 @@
 Inventory router — items, suppliers, receiving, transactions, traceability,
 and Excel imports (both classic templated import + smart auto-detect import).
 """
+import math
 import re
 
 from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 
 # ── Etiket dil/grup yardımcıları ────────────────────────────────────────────
@@ -40,8 +42,8 @@ def _norm_language(val: Optional[str]) -> Optional[str]:
 
 from database import (
     to_tr,
-    get_db, DuplicateItemDecision, Item, Supplier, Inventory, Transaction,
-    Recipe, RecipeIngredient, RetentionSample,
+    get_db, DuplicateItemDecision, Item, MaterialGroup, Supplier, Inventory, Transaction,
+    Recipe, RecipeIngredient, RetentionSample, User,
 )
 from core.auth import get_current_user
 from core.permissions import (_can_see_finance, require_any_permission, require_internal_user,
@@ -51,6 +53,8 @@ from core.undo import record as record_undoable
 from core.domain import active_domain
 from core.audit import log_admin_event
 from core.supplier_prices import normalize as _tr_fold
+from core import material_groups, stock_lots
+from core.stock_lots import LotMoveError
 
 router = APIRouter(prefix="/api", tags=["inventory"])
 
@@ -111,6 +115,18 @@ class StockReceiveRequest(BaseModel):
     is_sample: Optional[bool] = False
 
 
+def _finite(v) -> bool:
+    """NaN/Infinity değil mi.  JSON gövdesinde `NaN` geçer (Starlette
+    json.loads), pydantic float'ı da kabul eder; NaN her karşılaştırmada False
+    döndüğü için `<= 0` kontrollerini atlayıp deftere NaN yazardı (defter
+    değişmez → compute_stock_at kalıcı NaN).  `allow_inf_nan=False` YETMEZ:
+    422 gövdesi girdiyi (nan) geri yazar, JSON'a dökülemez → 500."""
+    try:
+        return math.isfinite(float(v))
+    except (TypeError, ValueError):
+        return False
+
+
 class StockAdjustRequest(BaseModel):
     """
     Manual stock correction. The user supplies the *target* quantity that
@@ -147,6 +163,19 @@ def list_items(
     supplier_name_by_id = {
         s.id: s.name for s in db.query(Supplier).filter(Supplier.is_active == True).all()
     }
+    # Kartta bekleyen numune miktarı — stoğa DAHİL DEĞİL, ama "Mevcut Stok"
+    # yanında görünmezse lab numuneyi kayıp sanıyor (Songül Hanım, 05.10).
+    # Tek GROUP BY sorgusu.
+    sample_qty = dict(
+        db.query(Inventory.item_id, func.sum(Inventory.quantity))
+        .filter(Inventory.is_sample == True, Inventory.quantity > 0,     # noqa: E712
+                Inventory.domain == domain)
+        .group_by(Inventory.item_id).all()
+    )
+    group_name_by_id = dict(
+        db.query(MaterialGroup.id, MaterialGroup.name)
+        .filter(MaterialGroup.domain == domain, MaterialGroup.is_active == True).all()  # noqa: E712
+    )
 
     finance_ok = _can_see_finance(current_user)
     return [
@@ -173,6 +202,9 @@ def list_items(
             "supplier_id":     i.supplier_id,
             "supplier_name":   supplier_name_by_id.get(i.supplier_id) if i.supplier_id else None,
             "created_at":      to_tr(i.created_at).strftime("%d.%m.%Y") if i.created_at else "",
+            "sample_qty":      round(float(sample_qty.get(i.id) or 0.0), 4),
+            "material_group_id":   i.material_group_id if i.material_group_id in group_name_by_id else None,
+            "material_group_name": group_name_by_id.get(i.material_group_id),
         }
         for i in items
     ]
@@ -687,6 +719,11 @@ def _item_has_audit(db: Session, item_id: int) -> bool:
         return True
     if db.query(Inventory.id).filter(Inventory.item_id == item_id).first():
         return True
+    # Lotu başka karta taşınmış kart ("Karta taşı" / hedefli çevirme): kartta
+    # Transaction da lot da kalmayabilir ama lot izi (`moved_from_item_id`, FK)
+    # ona bakar — hard-delete FK ihlaliyle 500 verirdi; soft-delete, iz korunur.
+    if db.query(Inventory.id).filter(Inventory.moved_from_item_id == item_id).first():
+        return True
     # Numune analiz formunda bileşen olarak geçen kart (pending satırda ne
     # Transaction ne Inventory olabilir) — FK kırılmasın, soft-delete.
     from database import SampleAnalysisIngredient
@@ -1045,7 +1082,7 @@ def receive_stock(
     current_user: dict = Depends(require_permission("inventory", "receive")),
     domain: str = Depends(active_domain),
 ):
-    if data.quantity <= 0:
+    if not _finite(data.quantity) or data.quantity <= 0:
         return JSONResponse(status_code=400, content={"detail": "Miktar sıfırdan büyük olmalıdır."})
 
     item = db.query(Item).filter(Item.id == data.item_id).with_for_update().first()
@@ -1194,6 +1231,8 @@ def adjust_stock(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("inventory", "adjust")),
 ):
+    if not _finite(data.new_quantity):
+        return JSONResponse(status_code=400, content={"detail": "Stok miktarı geçerli bir sayı olmalıdır."})
     if data.new_quantity < 0:
         return JSONResponse(status_code=400, content={"detail": "Stok miktarı negatif olamaz."})
 
@@ -1352,7 +1391,10 @@ def inventory_by_item(
 
     Lokasyon kırılımı `by_location` alanında özetlenir — üretimde şahit
     numune ayrımı yapılan ürünlerde "kaçı showroom, kaçı şahit" tek bakışta
-    görülür.
+    görülür.  Her lot `inventory_id` + `supplier_id` taşır ("Taşı" düğmesi
+    POST /inventory/lots/{id}/move'a gider); başka karttan taşındıysa
+    `moved_from` ilk kartı gösterir.  `item_group` kartın "aynı malzeme"
+    grubu ve üyeleridir (yoksa null).
     """
     item = db.query(Item).filter(Item.id == item_id, Item.domain == domain).first()
     if not item:
@@ -1365,6 +1407,9 @@ def inventory_by_item(
         .order_by(Inventory.id.desc())
         .all()
     )
+    moved_ids = {r.moved_from_item_id for r in rows if r.moved_from_item_id}
+    moved_names = (dict(db.query(Item.id, Item.name).filter(Item.id.in_(moved_ids)).all())
+                   if moved_ids else {})
 
     lots = []
     by_location: dict[str, float] = {}
@@ -1373,16 +1418,23 @@ def inventory_by_item(
         qty = float(r.quantity or 0)
         by_location[loc] = round(by_location.get(loc, 0.0) + qty, 4)
         lots.append({
+            "inventory_id":  r.id,
             "lot_number":    r.lot_number,
             "location":      loc,
             "quantity":      round(qty, 4),
             "status":        r.status or "",
             "qc_required":   bool(r.qc_required),
             "is_sample":     bool(r.is_sample),
+            "supplier_id":   r.supplier_id,
             "supplier_name": (r.supplier.name if r.supplier else "—"),
             "expiry_date":   r.expiry_date or "",
             "received_by":   r.received_by or "",
             "created_at":    to_tr(r.created_at).strftime("%d.%m.%Y %H:%M") if r.created_at else "",
+            "moved_from":    ({"id": r.moved_from_item_id,
+                               "name": moved_names.get(r.moved_from_item_id, "—")}
+                              if r.moved_from_item_id else None),
+            "sample_converted_at": (to_tr(r.sample_converted_at).strftime("%d.%m.%Y %H:%M")
+                                    if r.sample_converted_at else ""),
         })
 
     # lot_total STOK karşılığı — numune satırları hariç (numune current_stock'a
@@ -1406,43 +1458,327 @@ def inventory_by_item(
             for loc, tot in sorted(by_location.items(), key=lambda x: -x[1])
         ],
         "lots":          lots,
+        "item_group":    material_groups.group_payload(db, item.material_group_id),
     }
 
 
 @router.get("/inventory/samples")
-def list_samples(db: Session = Depends(get_db), _: dict = Depends(require_internal_user()),
+def list_samples(include_empty: bool = False,
+                 db: Session = Depends(get_db), _: dict = Depends(require_internal_user()),
                  domain: str = Depends(active_domain)):
     """
-    Numune lotları — Ürünler sayfası "Numune" sekmesini besler.  Var olan
-    hammaddelere bağlı, alternatif tedarikçilerden gelen numune partileri.
+    Numune lotları — Ürünler sayfası "Numune" sekmesini ve Numune Analizi
+    lot seçicisini besler.  Var olan hammaddelere bağlı, alternatif
+    tedarikçilerden gelen numune partileri.
+
+    Varsayılan yalnız miktarı kalan (> 0) satırlar — analizde tükenmiş
+    numuneler listeyi doldurmasın; `?include_empty=1` hepsini verir.  Pasif
+    karta bağlı numune GİZLENMEZ (`item_active=false` ile işaretli) — yoksa
+    lot görünmez olur, kimse taşıyamaz.  `card_supplier_*` kartın kendi
+    tedarikçisidir: numunenin tedarikçisinden farklıysa (`supplier_mismatch`)
+    numune büyük ihtimalle yanlış tedarikçinin kartına girilmiştir (Naturalya
+    jojobası KRK GIDA kartında, 05.10) → arayüz "Karta taşı" önerir.
     """
-    rows = (
+    q = (
         db.query(Inventory)
-        .options(joinedload(Inventory.item), joinedload(Inventory.supplier))
+        .options(joinedload(Inventory.item).joinedload(Item.supplier),
+                 joinedload(Inventory.supplier))
         .filter(Inventory.is_sample == True, Inventory.domain == domain)   # noqa: E712
-        .order_by(Inventory.id.desc())
-        .all()
     )
-    return [
-        {
+    if not include_empty:
+        q = q.filter(Inventory.quantity > 0)
+    rows = q.order_by(Inventory.id.desc()).all()
+    group_name_by_id = dict(
+        db.query(MaterialGroup.id, MaterialGroup.name)
+        .filter(MaterialGroup.domain == domain, MaterialGroup.is_active == True).all()  # noqa: E712
+    )
+    out = []
+    for r in rows:
+        it = r.item
+        card_sup_id = it.supplier_id if it else None
+        gid = it.material_group_id if it else None
+        out.append({
             "inventory_id":  r.id,
             "item_id":       r.item_id,
-            "item_name":     r.item.name if r.item else "—",
-            "unit":          (r.item.unit if r.item else "") or "",
+            "item_name":     it.name if it else "—",
+            "item_active":   bool(it.is_active) if it else False,
+            "unit":          (it.unit if it else "") or "",
+            "supplier_id":   r.supplier_id,
             "supplier_name": (r.supplier.name if r.supplier else "—"),
+            "card_supplier_id":   card_sup_id,
+            "card_supplier_name": (it.supplier.name if it and it.supplier else None),
+            "supplier_mismatch":  bool(r.supplier_id and card_sup_id and r.supplier_id != card_sup_id),
+            "material_group_id":   gid if gid in group_name_by_id else None,
+            "material_group_name": group_name_by_id.get(gid),
+            "moved_from_item_id":  r.moved_from_item_id,
             "lot_number":    r.lot_number,
             "quantity":      round(float(r.quantity or 0), 4),
             "expiry_date":   r.expiry_date or "—",
             "created_at":    to_tr(r.created_at).strftime("%d.%m.%Y") if r.created_at else "—",
-        }
-        for r in rows
-    ]
+        })
+    return out
+
+
+# ─── Numune → stok: hedef seçimi + çift sayım koruması (06.10.2026) ─────────
+# 05.10'da Naturalya'nın jojoba/portakal/lavanta numuneleri KRK GIDA ve İPEDA
+# kartlarına girilmiş olduğu için "Stoğa çevir" stoğu yanlış tedarikçinin
+# kartına yazdı; Songül Hanım 5 dk sonra Naturalya kartını açtı, o kart 0
+# gösterdi.  Ayrıca 758 JOJOBA UÇUCU YAĞI kartında numune zaten 10.09'da elle
+# +20 sayılmıştı, çevirme +20 daha ekledi (stok 40, lot 20).  Çevirme artık
+# hedef kart (aynı malzeme grubundan / yeni kart) seçtirir ve hedefte numune
+# geldikten sonra yapılmış elle "Stok düzeltme"leri gösterip onay ister.
+
+#: Tek bir elle düzeltme numune miktarının bu oranı içindeyse "aynı numune
+#: zaten sayılmış olabilir" denir (+20 düzeltme ↔ 20 ml numune).
+COUNT_GUARD_TOLERANCE = 0.05
+
+
+class SampleConvertNewItem(BaseModel):
+    name: str = Field(..., min_length=1, max_length=150)
+    name_tr: Optional[str] = Field(None, max_length=150)
+    force: bool = False                  # ad çakışması (409) görüldükten sonra
+
+
+class SampleConvertBody(BaseModel):
+    """Numune çevirme seçenekleri — HEPSİ isteğe bağlı.  Gövdesiz eski çağrı
+    "bu numuneyi bağlı olduğu karta stok olarak ekle" demektir."""
+    target_item_id: Optional[int] = None             # başka (aynı birimli) kart
+    new_item: Optional[SampleConvertNewItem] = None  # numunenin tedarikçisiyle yeni kart
+    # add: Input + current_stock (bugünkü davranış).  link_only: numune zaten
+    # elle sayılmış — yalnız lot normal lota döner, defter/stok DEĞİŞMEZ.
+    mode: Literal["add", "link_only"] = "add"
+    acknowledge_counted: bool = False                # çift sayım uyarısını gördüm, yine de ekle
+    # Yalnız bu kartların uyarısı görüldü (arayüz).  Hedef değişince yeni bir
+    # kartın bulgusu çıkarsa yine 409 — görülmemiş uyarı onaylanmış sayılmaz.
+    acknowledged_item_ids: List[int] = Field(default_factory=list, max_length=20)
+    lot_number: Optional[str] = Field(None, max_length=100)   # lot_collision çözümü
+
+
+def _count_guard(db: Session, item_id: int, since: Optional[datetime], qty: float) -> dict:
+    """Numune zaten elle sayılmış olabilir mi?
+
+    Kartta numune geldikten SONRA (`since` = numune satırının created_at'i)
+    yazılmış "Stok düzeltme…" Adjustment'larına bakar (adjust_stock'un not
+    öneki; lot taşıma ve çevirme bu öneki KULLANMAZ).  Tek bir pozitif kayıt
+    numune miktarının ±%5'i içindeyse ya da bu kayıtların net toplamı numune
+    miktarını karşılıyorsa bayrak kalkar.  Numuneden önceki düzeltmeler
+    sayılmaz — numune o gün yoktu.
+    """
+    q = (db.query(Transaction)
+         .filter(Transaction.item_id == item_id,
+                 Transaction.transaction_type == "Adjustment",
+                 Transaction.notes.like("Stok düzeltme%")))
+    if since is not None:
+        q = q.filter(Transaction.timestamp >= since)
+    rows = q.order_by(Transaction.timestamp.asc(), Transaction.id.asc()).all()
+    qty = float(qty or 0.0)
+    net = sum(float(t.quantity or 0.0) for t in rows)
+    single = any(float(t.quantity or 0.0) > 0
+                 and abs(float(t.quantity) - qty) <= qty * COUNT_GUARD_TOLERANCE
+                 for t in rows)
+    flagged = qty > 0 and bool(rows) and (single or net >= qty - 1e-9)
+    return {
+        "maybe_already_counted": flagged,
+        "adjustments": [{
+            "id": t.id,
+            "date": to_tr(t.timestamp).strftime("%d.%m.%Y %H:%M") if t.timestamp else "",
+            "qty": round(float(t.quantity or 0.0), 4),
+            "by": t.performed_by or "",
+            "note": (t.notes or "")[:300],
+        } for t in rows[-30:]],
+    }
+
+
+def _convert_guards(db: Session, row: Inventory, source: Item, target: Optional[Item],
+                    *, moving: bool) -> List[dict]:
+    """Çevirmede çift sayım bakılacak kartlar — yalnız bayrak kalkanlar döner.
+
+    Sıra: hedef kart (`target`; yeni kartta None — hareketi yok), numune başka
+    karta gidiyorsa numunenin DURDUĞU kart (`on='source'`) ve numune daha önce
+    "Karta taşı" ile taşınmışsa İLK girildiği kart (`moved_from_item_id`,
+    `on='origin'`).  Kaynakta elle sayılmış numune başka karta eklenirse aynı
+    fiziksel miktar İKİ kartta sayılır: kaynak +20 (lotsuz), hedef +20 —
+    758'in iki kart arasındaki tekrarı (06.10 incelemesi, prob ile doğrulandı).
+    """
+    qty = float(row.quantity or 0.0)
+    checks = [("target", target)] if target is not None else []
+    if moving:
+        checks.append(("source", source))
+    if row.moved_from_item_id:
+        origin = db.query(Item).filter(Item.id == row.moved_from_item_id).first()
+        if origin is not None:
+            checks.append(("origin", origin))
+    out, seen = [], set()
+    for on, it in checks:
+        if it.id in seen:
+            continue
+        seen.add(it.id)
+        g = _count_guard(db, it.id, row.created_at, qty)
+        if g["maybe_already_counted"]:
+            out.append({"on": on, "item_id": it.id, "item_name": it.name,
+                        "adjustments": g["adjustments"]})
+    return out
+
+
+def _guard_detail(g: dict, target_name: str) -> str:
+    """409 `maybe_already_counted` mesajı — bulgunun hangi kartta olduğuna göre
+    doğru yolu söyler."""
+    if g["on"] == "source":
+        return (f"«{g['item_name']}» kartında (numunenin bağlı olduğu kart) numune geldikten "
+                f"sonra elle yapılmış stok düzeltmesi var — numune orada zaten sayılmış "
+                f"olabilir; «{target_name}» kartına da eklenirse iki kartta sayılır.  Doğru "
+                f"yol: önce numuneyi kendi kartında \"Zaten sayıldı — yalnız lotu bağla\" ile "
+                f"çevirin, sonra lotu \"Taşı\" ile hedef karta taşıyın.")
+    if g["on"] == "origin":
+        return (f"«{g['item_name']}» kartında (numunenin ilk girildiği kart) numune geldikten "
+                f"sonra elle yapılmış stok düzeltmesi var — numune orada zaten sayılmış "
+                f"olabilir.  Doğru yol: numuneyi «{g['item_name']}» kartına geri taşıyıp orada "
+                f"\"yalnız lotu bağla\" deyin, sonra lotu \"Taşı\" ile hedef karta taşıyın.")
+    return (f"«{g['item_name']}» kartında numune geldikten sonra elle yapılmış stok "
+            f"düzeltmesi var — bu numune zaten sayılmış olabilir.")
+
+
+def _sample_analysis_use(db: Session, inventory_id: int) -> tuple:
+    """Numune Analizi'nde bu numune lotundan şu an düşülmüş miktar + belge
+    numaraları (`consumed_qty > 0`, source='sample')."""
+    from database import SampleAnalysis, SampleAnalysisIngredient
+    rows = (db.query(SampleAnalysisIngredient.consumed_qty, SampleAnalysis.document_no)
+            .join(SampleAnalysis, SampleAnalysis.id == SampleAnalysisIngredient.analysis_id)
+            .filter(SampleAnalysisIngredient.inventory_id == inventory_id,
+                    SampleAnalysisIngredient.source == "sample",
+                    SampleAnalysisIngredient.consumed_qty > 0).all())
+    used = round(sum(float(q or 0.0) for q, _ in rows), 6)
+    docs = sorted({d for _, d in rows if d})
+    return used, docs
+
+
+def _name_tokens(name) -> set:
+    """Benzer ad karşılaştırması için TR-katlanmış sözcükler — parantez içi
+    ("(NUMUNE)") ve noktalama atılır."""
+    s = re.sub(r"\([^)]*\)", " ", _tr_fold(name or ""))
+    return set(re.sub(r"[^0-9a-z]+", " ", s).split())
+
+
+def _names_similar(a: Item, b: Item) -> bool:
+    """Basit benzer ad: birinin sözcükleri diğerinde tamamen geçiyor (name ya
+    da name_tr).  Tek sözcükte en az 5 harf aranır — "YAĞ" her yağa uymasın."""
+    for x in (_name_tokens(a.name), _name_tokens(a.name_tr)):
+        for y in (_name_tokens(b.name), _name_tokens(b.name_tr)):
+            small, big = (x, y) if len(x) <= len(y) else (y, x)
+            if not small or not small <= big:
+                continue
+            if len(small) >= 2 or len(next(iter(small))) >= 5:
+                return True
+    return False
+
+
+@router.get("/inventory/samples/{inventory_id}/convert-options")
+def sample_convert_options(
+    inventory_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("inventory", "receive")),
+    domain: str = Depends(active_domain),
+):
+    """"Stoğa çevir" penceresinin verisi — numune, bağlı olduğu kart, aday
+    hedef kartlar, çift sayım bulguları ve önerilen yeni kart adı.
+
+    Aday sırası: aynı grup + numunenin tedarikçisi > aynı grup > kart
+    tedarikçisi = numune tedarikçisi ve benzer ad > benzer ad.  Yalnız aktif,
+    aynı panel, aynı tür (hammadde/ambalaj; Bitmiş Ürün asla) ve aynı birim
+    ailesi (`core.purchase_plan.unit_norm`) kartlar.  `guard` bağlı olduğu
+    kart içindir (eski alan); `guards` HER hedefte geçerli bulgulardır —
+    numunenin durduğu kart ve ilk girildiği kart (`_convert_guards`).  Seçilen
+    başka hedefin kendi bulgusunu POST 409 `maybe_already_counted` söyler.
+    `sample.analysis_used` Numune Analizi'nde bu lottan düşülmüş miktardır
+    ("yalnız lotu bağla" uyarısı için).
+    """
+    from core.purchase_plan import unit_norm
+
+    row = (db.query(Inventory).options(joinedload(Inventory.supplier))
+           .filter(Inventory.id == inventory_id).first())
+    if not row or not row.is_sample or row.domain != domain:
+        return JSONResponse(status_code=404, content={"detail": "Numune kaydı bulunamadı."})
+    source = db.query(Item).filter(Item.id == row.item_id).first()
+    if not source:
+        return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+
+    sup_name = row.supplier.name if row.supplier else None
+    sup_names = dict(db.query(Supplier.id, Supplier.name).all())
+    groups = dict(db.query(MaterialGroup.id, MaterialGroup.name)
+                  .filter(MaterialGroup.domain == domain,
+                          MaterialGroup.is_active == True).all())    # noqa: E712
+    src_gid = source.material_group_id if source.material_group_id in groups else None
+
+    kind = stock_lots.lot_kind(source.category)
+    unit_key = unit_norm(source.unit)
+    ranked = []
+    if kind != "finished":
+        cards = (db.query(Item)
+                 .filter(Item.domain == domain, Item.is_active == True,   # noqa: E712
+                         Item.id != source.id).all())
+        for it in cards:
+            if stock_lots.lot_kind(it.category) != kind or unit_norm(it.unit) != unit_key:
+                continue
+            same_group = src_gid is not None and it.material_group_id == src_gid
+            same_sup = row.supplier_id is not None and it.supplier_id == row.supplier_id
+            if same_group and same_sup:
+                tier, reason = 0, "Aynı malzeme grubu · numunenin tedarikçisi"
+            elif same_group:
+                tier, reason = 1, "Aynı malzeme grubu"
+            elif _names_similar(source, it):
+                tier, reason = ((2, "Numunenin tedarikçisi · benzer ad") if same_sup
+                                else (3, "Benzer ad"))
+            else:
+                continue
+            ranked.append((tier, _tr_fold(it.name), it.id, {
+                "item_id": it.id, "name": it.name, "name_tr": it.name_tr or "",
+                "unit": it.unit or "",
+                "supplier_id": it.supplier_id,
+                "supplier_name": sup_names.get(it.supplier_id) if it.supplier_id else None,
+                "stock": round(float(it.current_stock or 0.0), 4),
+                "material_group_id": it.material_group_id if it.material_group_id in groups else None,
+                "reason": reason,
+            }))
+    ranked.sort(key=lambda x: x[:3])
+
+    suggested = f"{source.name} — {sup_name}" if sup_name else source.name
+    conflict = _find_name_conflict(db, domain, suggested, None)
+    qty = round(float(row.quantity or 0.0), 4)
+    used, used_docs = _sample_analysis_use(db, row.id)
+    return {
+        "sample": {
+            "id": row.id, "item_id": row.item_id, "lot": row.lot_number, "qty": qty,
+            "unit": source.unit or "", "supplier_id": row.supplier_id,
+            "supplier_name": sup_name,
+            "created_at": to_tr(row.created_at).strftime("%d.%m.%Y") if row.created_at else "",
+            "analysis_used": round(used, 4), "analysis_docs": used_docs,
+        },
+        "source": {
+            "id": source.id, "name": source.name, "unit": source.unit or "",
+            "category": source.category or "",
+            "supplier_id": source.supplier_id,
+            "supplier_name": sup_names.get(source.supplier_id) if source.supplier_id else None,
+            "stock": round(float(source.current_stock or 0.0), 4),
+            "is_active": bool(source.is_active),
+            "group": {"id": src_gid, "name": groups[src_gid]} if src_gid else None,
+        },
+        "candidates": [c for *_, c in ranked[:30]],
+        "guard": _count_guard(db, source.id, row.created_at, qty),
+        "guards": _convert_guards(db, row, source, None, moving=True),
+        "new_card": {
+            "suggested_name": suggested[:150], "unit": source.unit or "",
+            "category": source.category or "",
+            "supplier_id": row.supplier_id, "supplier_name": sup_name,
+            "conflict": _conflict_payload(conflict) if conflict else None,
+        },
+    }
 
 
 @router.post("/inventory/samples/{inventory_id}/convert", status_code=200)
 def convert_sample_to_stock(
     inventory_id: int,
     request: Request,
+    data: Optional[SampleConvertBody] = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("inventory", "receive")),
     domain: str = Depends(active_domain),
@@ -1456,7 +1792,32 @@ def convert_sample_to_stock(
     `Transaction(Input)` + `current_stock` artışı yazılır — böylece snapshot/
     trace/aylık rapor hep tutarlı kalır (numune hiçbir aşamada iki kere
     sayılmaz).
+
+    Gövde isteğe bağlı (`SampleConvertBody`; gövdesiz çağrı eskisi gibi):
+      • `target_item_id` — numune başka karta (aynı panel, aynı tür, aynı
+        birim ailesi, aktif, Bitmiş Ürün değil) taşınıp orada çevrilir;
+        `new_item` — numunenin tedarikçisiyle kaynak kartın kategori/birimini
+        alan yeni kart açılır (ad çakışması 409, `force`) ve kaynakla aynı
+        malzeme grubuna katılır.
+      • Hedefte aynı lot no'lu normal satır: tedarikçi aynı ya da biri boşsa
+        birleşir (analiz satırları silinmeden önce yönlenir); farklıysa 409
+        `lot_collision` — istemci `lot_number` ile tekrar dener.
+      • Çift sayım koruması (`_convert_guards`): hedef kart, numune başka
+        karta gidiyorsa numunenin durduğu kart ve ilk girildiği kart.  "add"
+        modunda bayrak kalkarsa 409 `maybe_already_counted` (`guards` hepsini
+        listeler) — `acknowledge_counted` hepsini, `acknowledged_item_ids`
+        yalnız görülen kartları onaylar.
+      • `mode="link_only"`: numune zaten sayılmış — lot normal lota döner,
+        `sample_converted_at` damgalanır; Transaction YOK, stok DEĞİŞMEZ,
+        sipariş bayrağı kapanmaz.  Yalnız numunenin kendi kartında.  Numune
+        Analizi bu lottan düşmüşse yanıt uyarır (bkz. aşağıdaki not).
+    Not öneki "Numune stoğa çevrildi" KORUNUR — satın alma motoru çevrilmiş
+    lotu bu işaretle tanır (core/purchase_plan.SAMPLE_CONVERTED_MARK).
     """
+    from core.purchase_plan import SAMPLE_CONVERTED_MARK
+    from core.stock_gaps import close_open_flags
+
+    data = data or SampleConvertBody()
     row = (db.query(Inventory).filter(Inventory.id == inventory_id)
           .with_for_update().first())
     if not row or not row.is_sample:
@@ -1464,9 +1825,14 @@ def convert_sample_to_stock(
     if row.domain != domain:
         return JSONResponse(status_code=404, content={"detail": "Numune kaydı bulunamadı."})
 
-    item = db.query(Item).filter(Item.id == row.item_id).with_for_update().first()
-    if not item:
+    source = db.query(Item).filter(Item.id == row.item_id).with_for_update().first()
+    if not source:
         return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+
+    qty = round(float(row.quantity or 0), 6)
+    if qty <= 1e-9:
+        return JSONResponse(status_code=400, content={
+            "detail": "Numune lotunda miktar kalmamış — stoğa çevrilecek bir şey yok."})
 
     # Şahit numune dolabı bu lotu izlemiyor olmalı — production'daki -S
     # lotları ayrı bir akış (routers/production.py); burada sadece emin ol.
@@ -1474,49 +1840,256 @@ def convert_sample_to_stock(
         return JSONResponse(status_code=400, content={
             "detail": "Bu kayıt şahit numune dolabına bağlı, buradan çevrilemez."})
 
-    qty = float(row.quantity or 0)
     actor = current_user.get("full_name") or current_user.get("username") or "—"
 
-    target = (db.query(Inventory)
-             .filter(Inventory.item_id == row.item_id,
-                     Inventory.lot_number == row.lot_number,
-                     Inventory.is_sample == False)                       # noqa: E712
-             .with_for_update().first())
-    if target:
-        target.quantity += qty
-        target.updated_at = __import__("datetime").datetime.utcnow()
-        db.delete(row)
-        lot_row_msg = f"lot {row.lot_number} — mevcut normal lotla birleşti"
-    else:
-        row.is_sample = False
-        if row.location == "Numune":
-            row.location = None
-        lot_row_msg = f"lot {row.lot_number}"
+    # ── Hedef kartı çöz (mutasyon yok — önce tüm kontroller) ────────────────
+    if data.target_item_id and data.new_item:
+        return JSONResponse(status_code=400, content={
+            "detail": "Ya mevcut bir kart ya da yeni kart seçin — ikisi birden olmaz."})
+    target = source
+    new_name = new_name_tr = None
+    if data.target_item_id and data.target_item_id != source.id:
+        target = db.query(Item).filter(Item.id == data.target_item_id).with_for_update().first()
+        if not target or (target.domain or "cosmetics") != domain:
+            return JSONResponse(status_code=404, content={"detail": "Hedef kart bulunamadı."})
+        problem = stock_lots.target_problem(source, target)
+        if problem:
+            return JSONResponse(status_code=400, content={"detail": problem})
+    elif data.new_item:
+        user = db.query(User).filter(User.id == int(current_user.get("sub", 0))).first()
+        from core.permissions import _has_permission
+        if not (user and _has_permission(user, "items", "create")):
+            return JSONResponse(status_code=403, content={
+                "detail": "Yeni kart açma yetkiniz yok (items.create)."})
+        if stock_lots.lot_kind(source.category) == "finished":
+            return JSONResponse(status_code=400, content={
+                "detail": "Bitmiş ürün numunesinden yeni kart açılamaz."})
+        new_name = data.new_item.name.strip()
+        new_name_tr = (data.new_item.name_tr or "").strip() or None
+        if not new_name:
+            return JSONResponse(status_code=400, content={"detail": "Yeni kartın adı boş olamaz."})
+        if not data.new_item.force:
+            conflict = _find_name_conflict(db, domain, new_name, new_name_tr)
+            if conflict:
+                return JSONResponse(status_code=409, content={
+                    "code": "name_conflict",
+                    "detail": f"Aynı isimde ürün zaten kayıtlı: {conflict.name}",
+                    "existing": _conflict_payload(conflict),
+                })
+    if target is source and not data.new_item and not source.is_active:
+        return JSONResponse(status_code=400, content={
+            "detail": f"«{source.name}» kartı pasif — numuneyi aktif bir karta çevirmek için "
+                      f"hedef kart seçin."})
+    moving = bool(data.new_item) or target.id != source.id
+    if data.mode == "link_only" and moving:
+        return JSONResponse(status_code=400, content={
+            "detail": "\"Yalnız lotu bağla\" yalnız numunenin kendi kartında kullanılabilir — "
+                      "önce lotu karta taşıyın."})
 
-    tx = Transaction(
-        item_id=item.id, lot_number=row.lot_number, transaction_type="Input",
-        quantity=qty,
-        notes=f"Numune stoğa çevrildi — Lot: {row.lot_number}",
-        performed_by=actor,
-    )
-    db.add(tx)
-    item.current_stock = round((item.current_stock or 0.0) + qty, 6)
+    new_lot = (data.lot_number or "").strip() or row.lot_number
+    twin = None
+    if not data.new_item:
+        twin = stock_lots.find_twin(db, target.id, new_lot, is_sample=False, exclude_id=row.id)
+        if twin is not None and not stock_lots.suppliers_compatible(twin.supplier_id, row.supplier_id):
+            return JSONResponse(status_code=409,
+                                content=stock_lots.collision_error(db, twin, new_lot).payload())
+    guards = _convert_guards(db, row, source, None if data.new_item else target, moving=moving)
+    acked = set(data.acknowledged_item_ids or ())
+    pending = [g for g in guards
+               if not (data.acknowledge_counted or g["item_id"] in acked)]
+    if data.mode == "add" and pending:
+        first = pending[0]
+        return JSONResponse(status_code=409, content={
+            "code": "maybe_already_counted",
+            "detail": _guard_detail(first, data.new_item.name if data.new_item else target.name),
+            # Eski alanlar ilk bulgudan; `guards` hepsini taşır.
+            "item_id": first["item_id"], "item_name": first["item_name"], "on": first["on"],
+            "sample_qty": qty, "unit": source.unit or "",
+            "adjustments": first["adjustments"],
+            "guards": guards,
+        })
+    used, used_docs = _sample_analysis_use(db, row.id) if data.mode == "link_only" else (0.0, [])
 
+    # ── Uygula ──────────────────────────────────────────────────────────────
+    sup_name = row.supplier.name if row.supplier else "—"
+    supplier_id = row.supplier_id
+    old_lot = row.lot_number
+    created_item_id = group_id = None
+    warning = None
+    now = datetime.utcnow()
     try:
-        db.flush()
-        # Numune gerçek Input'a döndü — Eksik Hammaddeler'de açık sipariş
-        # bayrağı varsa (core/stock_gaps.py) kapanır.
-        from core.stock_gaps import close_open_flags
-        close_open_flags(db, item.id, "received", actor)
-        log_admin_event(db, request, actor=current_user, action="inventory.sample_convert",
-                        target_type="inventory", target_id=inventory_id, target_name=item.name,
-                        details={"lot": row.lot_number, "quantity": qty})
+        if data.new_item:
+            target = Item(name=new_name, name_tr=new_name_tr, category=source.category,
+                          unit=source.unit, supplier_id=row.supplier_id, domain=domain,
+                          min_stock_level=0.0, cost_price=0.0, current_stock=0.0)
+            db.add(target)
+            db.flush()
+            created_item_id = target.id
+            grp = material_groups.join(db, source, target, actor=actor)
+            group_id = grp.id if grp else None
+        moved = target.id != source.id
+        if moved:
+            stock_lots.move_sample_row(db, row, target)
+        row.lot_number = new_lot
+
+        if twin is not None:
+            stock_lots.absorb_row(db, row, twin, item_id=target.id)
+            if twin.sample_converted_at is None:
+                twin.sample_converted_at = now
+            lot_row = twin
+            lot_row_msg = f"lot {new_lot} — mevcut normal lotla birleşti"
+        else:
+            row.is_sample = False
+            if row.location == "Numune":
+                row.location = None
+            row.sample_converted_at = now
+            row.updated_at = now
+            lot_row = row
+            lot_row_msg = f"lot {new_lot}"
+
+        if data.mode == "add":
+            note = f"{SAMPLE_CONVERTED_MARK} — Lot: {new_lot} | Tedarikçi: {sup_name}"
+            if moved:
+                note += f" | Kart: {source.name} → {target.name}"
+            db.add(Transaction(
+                item_id=target.id, lot_number=new_lot, transaction_type="Input",
+                quantity=qty, notes=note[:500], performed_by=actor,
+            ))
+            target.current_stock = round((target.current_stock or 0.0) + qty, 6)
+            db.flush()
+            # Numune gerçek Input'a döndü — Eksik Hammaddeler'de açık sipariş
+            # bayrağı varsa (core/stock_gaps.py) kapanır.
+            close_open_flags(db, target.id, "received", actor)
+        else:
+            db.flush()
+            lot_total = float(
+                db.query(func.coalesce(func.sum(Inventory.quantity), 0.0))
+                .filter(Inventory.item_id == target.id, Inventory.is_sample == False,  # noqa: E712
+                        Inventory.quantity > 0).scalar() or 0.0)
+            stock = float(target.current_stock or 0.0)
+            warns = []
+            if lot_total > stock + 1e-6:
+                warns.append(f"Kartın normal lot toplamı ({lot_total:g} {target.unit or ''}) stoktan "
+                             f"({stock:g} {target.unit or ''}) fazla — numune elle sayılmamış "
+                             f"olabilir, stoğu kontrol edin.")
+            # Analizde numuneden düşülen kısım stoğa hiç yazılmadı (numune stok
+            # değildi); elle sayım numunenin TAMAMINI saydıysa bu kısım stokta
+            # fazladan durur.  Analiz silinir/azaltılırsa core.sample_trial_stock
+            # ._release lot artık normal olduğu için +Adjustment yazar → stok bir
+            # kez daha artar.  Hangisi olduğunu sistem bilemez: sayım ister.
+            if used > 1e-9:
+                warns.append(f"Bu numuneden Numune Analizi'nde {used:g} {target.unit or ''} "
+                             f"kullanılmış ({', '.join(used_docs) or 'analiz'}). Elle sayım "
+                             f"numunenin tamamını kapsadıysa bu kısım stokta fazladan duruyor "
+                             f"olabilir — sayımla kontrol edip Stok düzeltme yapın. Analiz "
+                             f"silinir ya da miktarı azaltılırsa iade stoğa da eklenir.")
+            warning = " ".join(warns) or None
+        lot_row_id = lot_row.id
         db.commit()
     except Exception:
         db.rollback()
         return JSONResponse(status_code=500, content={"detail": "Numune stoğa çevrilemedi."})
 
-    return {"message": f"Numune stoğa çevrildi — {qty} {item.unit or ''} {item.name} ({lot_row_msg})."}
+    log_admin_event(
+        db, request, actor=current_user,
+        action="inventory.sample_convert" if data.mode == "add" else "inventory.sample_link",
+        target_type="inventory", target_id=inventory_id, target_name=target.name,
+        details={"lot": new_lot, "old_lot": old_lot if old_lot != new_lot else None,
+                 "quantity": qty, "unit": target.unit, "supplier_id": supplier_id,
+                 "source_item_id": source.id, "target_item_id": target.id,
+                 "mode": data.mode, "created_item_id": created_item_id,
+                 "group_id": group_id, "merged_into": twin.id if twin is not None else None,
+                 "guard_item_ids": [g["item_id"] for g in guards],
+                 "guard_adjustment_ids": [a["id"] for g in guards for a in g["adjustments"]],
+                 "analysis_used": used or None})
+
+    unit = target.unit or ""
+    if data.mode == "add":
+        msg = f"Numune stoğa çevrildi — {qty:g} {unit} {target.name} ({lot_row_msg})."
+    else:
+        msg = (f"Numune lotu karta bağlandı — {qty:g} {unit} {target.name} ({lot_row_msg}); "
+               f"stok değişmedi.")
+    return {"message": msg, "mode": data.mode, "item_id": target.id, "item_name": target.name,
+            "inventory_id": lot_row_id, "lot_number": new_lot, "quantity": qty,
+            "moved": target.id != source.id, "source_item_id": source.id,
+            "created_item_id": created_item_id, "group_id": group_id, "warning": warning}
+
+
+# ─── Lotu başka karta taşı (06.10.2026) ─────────────────────────────────────
+# Naturalya lotlarını lab KENDİSİ doğru karta taşısın diye (kullanıcı kararı).
+# Defter kuralı core/stock_lots.move_lot docstring'inde: normal lot Adjustment
+# çiftiyle, numune lotu deftersiz.
+
+class LotMoveBody(BaseModel):
+    target_item_id: int
+    # boş = lotun tamamı (numunede zorunlu tam).  NaN/Infinity'yi
+    # core.stock_lots.move_lot 400 ile keser (bkz. `_finite`).
+    quantity: Optional[float] = None
+    supplier_id: Optional[int] = None                # lot tedarikçisini düzelt (boş = aynı)
+    lot_number: Optional[str] = Field(None, max_length=100)   # lot_collision çözümü
+    reason: str = Field(..., min_length=3, max_length=200)
+
+
+@router.post("/inventory/lots/{inventory_id}/move")
+def move_inventory_lot(
+    inventory_id: int,
+    data: LotMoveBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("inventory", "receive")),
+    domain: str = Depends(active_domain),
+):
+    """Lotu başka karta taşı — numune lotu `inventory.receive` ile, normal
+    (stoktaki) lot ayrıca `inventory.adjust` ister (iki kartın stoğunu
+    değiştirir; LabTech varsayılanında yok).  Kurallar ve defter kaydı
+    `core.stock_lots.move_lot`'ta; engeller 400/409 (`lot_collision`)."""
+    reason = (data.reason or "").strip()
+    if len(reason) < 3:
+        return JSONResponse(status_code=422, content={"detail": "Sebep en az 3 karakter olmalıdır."})
+
+    lot = db.query(Inventory).filter(Inventory.id == inventory_id).with_for_update().first()
+    if not lot or lot.domain != domain:
+        return JSONResponse(status_code=404, content={"detail": "Lot bulunamadı."})
+    if not lot.is_sample:
+        from core.permissions import _has_permission
+        user = db.query(User).filter(User.id == int(current_user.get("sub", 0))).first()
+        if not (user and _has_permission(user, "inventory", "adjust")):
+            return JSONResponse(status_code=403, content={
+                "detail": "Stoktaki lotu taşımak stok düzeltme yetkisi ister (inventory.adjust)."})
+
+    source = db.query(Item).filter(Item.id == lot.item_id).with_for_update().first()
+    if not source or (source.domain or "cosmetics") != domain:
+        return JSONResponse(status_code=404, content={"detail": "Lotun kartı bulunamadı."})
+    target = db.query(Item).filter(Item.id == data.target_item_id).with_for_update().first()
+    if not target or (target.domain or "cosmetics") != domain:
+        return JSONResponse(status_code=404, content={"detail": "Hedef kart bulunamadı."})
+    if data.supplier_id is not None:
+        sup = db.query(Supplier).filter(Supplier.id == data.supplier_id).first()
+        if not sup or (sup.domain or "cosmetics") != domain:
+            return JSONResponse(status_code=400, content={"detail": "Tedarikçi bulunamadı."})
+
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
+    try:
+        res = stock_lots.move_lot(db, lot, source, target, data.quantity, actor=actor,
+                                  reason=reason, supplier_id=data.supplier_id,
+                                  lot_number=data.lot_number)
+        db.commit()
+    except LotMoveError as exc:
+        db.rollback()
+        return JSONResponse(status_code=exc.status, content=exc.payload())
+    except Exception:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"detail": "Lot taşınamadı — hiçbir şey değişmedi."})
+
+    log_admin_event(db, request, actor=current_user, action="inventory.lot_move",
+                    target_type="inventory", target_id=inventory_id, target_name=target.name,
+                    details={**res, "reason": reason, "source_name": source.name})
+    tail = " (hedefteki aynı lotla birleşti)" if res["merged"] else ""
+    return {
+        "message": (f"Lot {res['lot_number']} taşındı: {res['quantity']:g} {res['unit']} "
+                    f"«{source.name}» → «{target.name}»{tail}."),
+        **res,
+    }
 
 
 class _AvailableLotsRequest(BaseModel):

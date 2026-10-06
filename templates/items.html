@@ -575,6 +575,121 @@
     .ing-chip.active{background:var(--navy);color:#fff;border-color:var(--navy);}
     .ing-prow{display:flex;align-items:center;font-size:0.84rem;color:#374151;padding:0.18rem 0;gap:0.5rem;}
     .ing-prow input{accent-color:var(--navy);}
+
+    /* ── Numune görünürlüğü + "Stoğa çevir" penceresi (06.10.2026) ──────────
+       Önekler smp- / cv-; btn-* adı YASAK (Bootstrap gölgeleme tuzağı). */
+    .smp-badge {
+      display: table; margin: 3px 0 0 auto; padding: 1px 8px; border-radius: 10px;
+      background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe;
+      font-size: 0.68rem; font-weight: 700; white-space: nowrap; cursor: help;
+    }
+    .smp-warn { display: block; margin-top: 2px; font-size: 0.72rem; font-weight: 600; color: #b45309; }
+    .smp-warn i { margin-right: 3px; }
+    .smp-pasif {
+      display: inline-block; padding: 0 7px; border-radius: 10px; margin-left: 4px;
+      background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;
+      font-size: 0.66rem; font-weight: 700; vertical-align: middle;
+    }
+    .smp-hint {
+      margin-top: 0.45rem; padding: 0.5rem 0.75rem; border-radius: 8px;
+      background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 0.8rem;
+    }
+    .smp-hint a { color: var(--navy); font-weight: 600; }
+    .cv-sum {
+      padding: 0.7rem 0.9rem; border-radius: 10px; background: #f9f7f3;
+      border: 1px solid #f0ece4; font-size: 0.87rem; line-height: 1.6;
+    }
+    .cv-mis {
+      margin-top: 0.6rem; padding: 0.55rem 0.85rem; border-radius: 8px;
+      background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 0.82rem;
+    }
+    .cv-opt {
+      display: flex; gap: 0.55rem; align-items: flex-start; margin: 0.4rem 0 0;
+      padding: 0.55rem 0.75rem; border: 1.5px solid #e5e7eb; border-radius: 10px;
+      cursor: pointer; font-size: 0.88rem;
+    }
+    .cv-opt input, .cv-cand input { margin-top: 0.22rem; accent-color: var(--navy); flex-shrink: 0; }
+    .cv-opt.cv-on { border-color: var(--navy); background: #f5f3ff; }
+    .cv-opt.cv-dis { opacity: 0.55; cursor: not-allowed; }
+    .cv-sub { margin: 0.45rem 0 0.2rem 1.6rem; }
+    .cv-list {
+      border: 1px solid #e5e7eb; border-radius: 8px; margin-top: 0.4rem;
+      max-height: 230px; overflow-y: auto;
+    }
+    .cv-cand {
+      display: flex; gap: 0.5rem; align-items: flex-start; margin: 0;
+      padding: 0.42rem 0.7rem; border-bottom: 1px solid #f3f0ea; cursor: pointer; font-size: 0.85rem;
+    }
+    .cv-cand:last-child { border-bottom: none; }
+    .cv-cand:hover { background: #faf8f4; }
+    .cv-cand.cv-on { background: #f5f3ff; }
+    .cv-meta { display: block; font-size: 0.74rem; color: #6b7280; }
+    .cv-why {
+      display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 8px;
+      background: #fef3c7; color: #92400e; font-size: 0.68rem; font-weight: 600;
+    }
+    .cv-muted { font-size: 0.8rem; color: #6b7280; margin-top: 0.35rem; }
+    .cv-lot {
+      margin-top: 0.85rem; padding: 0.65rem 0.9rem; border-radius: 8px;
+      background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 0.83rem;
+    }
+    .cv-guard {
+      margin-top: 0.85rem; padding: 0.75rem 0.95rem; border-radius: 10px;
+      background: #fef2f2; border: 1.5px solid #fca5a5; color: #7f1d1d; font-size: 0.85rem;
+    }
+    .cv-adj { margin: 0.5rem 0 0; overflow-x: auto; }
+    .cv-adj table { width: 100%; border-collapse: collapse; }
+    .cv-adj td { padding: 0.25rem 0.45rem; border-top: 1px solid #fecaca; font-size: 0.78rem; color: inherit; }
+    .cv-acts { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.6rem; }
+    .cv-act {
+      padding: 0.45rem 0.95rem; border-radius: 8px; border: 1.5px solid #e5e7eb;
+      background: var(--white); color: #374151; cursor: pointer;
+      font-family: 'Jost', sans-serif; font-size: 0.84rem; font-weight: 600;
+    }
+    .cv-act-main { background: var(--navy); border-color: var(--navy); color: #fff; }
+    .cv-act-warn { background: #fff7ed; border-color: #fdba74; color: #9a3412; }
+    .cv-act:disabled, .cv-go:disabled { opacity: 0.6; cursor: wait; }
+    .cv-go {
+      padding: 0.6rem 1.5rem; background: var(--navy); color: var(--white);
+      border: none; border-radius: 8px; cursor: pointer;
+      font-family: 'Jost', sans-serif; font-size: 0.9rem; font-weight: 600;
+    }
+    .cv-cancel {
+      padding: 0.6rem 1.2rem; background: transparent; color: #6b7280;
+      border: 1.5px solid #e5e7eb; border-radius: 8px; cursor: pointer;
+      font-family: 'Jost', sans-serif; font-size: 0.9rem; font-weight: 500;
+    }
+    :root[data-theme="dark"] .cv-sum,
+    :root[data-theme="dark"] .cv-opt.cv-on,
+    :root[data-theme="dark"] .cv-cand.cv-on,
+    :root[data-theme="dark"] .cv-cand:hover { background: var(--surface-2); }
+    :root[data-theme="dark"] .cv-opt,
+    :root[data-theme="dark"] .cv-list,
+    :root[data-theme="dark"] .cv-cand,
+    :root[data-theme="dark"] .cv-sum { border-color: var(--border); }
+    /* dark.css span/div/b'yi `color: inherit` yapıyor — açık pastel zeminler
+       burada koyu karşılıklarına çevrilir (dark.css'teki inline paletle aynı). */
+    :root[data-theme="dark"] .smp-badge { background: #1A1F3F; color: #C7B5F9; border-color: #3B3F7A; }
+    :root[data-theme="dark"] .smp-warn { color: #FCD34D; }
+    :root[data-theme="dark"] .smp-pasif,
+    :root[data-theme="dark"] .cv-guard { background: #2E1414; color: #FCA5A5; border-color: #5A1F1F; }
+    :root[data-theme="dark"] .cv-adj td { border-color: #5A1F1F; }
+    :root[data-theme="dark"] .cv-act { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+    :root[data-theme="dark"] .smp-hint,
+    :root[data-theme="dark"] .cv-mis,
+    :root[data-theme="dark"] .cv-lot,
+    :root[data-theme="dark"] .cv-why,
+    :root[data-theme="dark"] .cv-act-warn { background: #2D2114; color: #FCD34D; border-color: #5A4520; }
+    /* birincil/ikincil düğmeler dark.css'teki .btn-save / .btn-cancel karşılıkları */
+    :root[data-theme="dark"] .cv-act-main,
+    :root[data-theme="dark"] .cv-go { background: var(--navy); color: var(--text); border: 1px solid var(--gold); }
+    :root[data-theme="dark"] .cv-act-main:hover,
+    :root[data-theme="dark"] .cv-go:hover { background: var(--gold); color: #1A1208; }
+    :root[data-theme="dark"] .cv-cancel { background: var(--white); color: var(--text-muted); border-color: var(--border); }
+    :root[data-theme="dark"] .cv-cancel:hover { border-color: var(--gold); color: var(--gold); }
+    :root[data-theme="dark"] .smp-hint a { color: var(--gold); }
+    :root[data-theme="dark"] .cv-opt input,
+    :root[data-theme="dark"] .cv-cand input { accent-color: var(--gold); }
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
@@ -584,6 +699,7 @@
   <script src="/static/undo-watch.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
+  <script src="/static/lot-move.js?v=1" defer></script>
 </head>
 <body>
 
@@ -888,6 +1004,7 @@
           <div class="mb-3">
             <label class="form-label-sm">Numune Tedarikçisi</label>
             <select class="form-select" id="sampleSupplier"><option value="">— Tedarikçi seçiniz —</option></select>
+            <div class="smp-hint" id="sampleSupHint" hidden></div>
           </div>
           <div class="row g-2">
             <div class="col-12 col-md-6 mb-3">
@@ -907,6 +1024,72 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-light" data-bs-dismiss="modal">İptal</button>
           <button type="button" class="btn-save" id="sampleSaveBtn" onclick="submitSample()">Numuneyi Kaydet</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: NUMUNEYİ STOĞA ÇEVİR (06.10.2026) ════
+       Hedef kart (bu kart / başka kart / yeni kart) + çift sayım bandı.
+       Veri: GET /api/inventory/samples/{id}/convert-options. -->
+  <div class="modal fade" id="cvModal" tabindex="-1" aria-hidden="true" aria-labelledby="cvTitle">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="cvTitle">Numuneyi stoğa çevir</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body">
+          <div class="cv-muted" id="cvLoading">Yükleniyor…</div>
+          <div id="cvContent" hidden>
+            <div class="cv-sum" id="cvSum"></div>
+            <div class="cv-mis" id="cvMismatch" hidden></div>
+            <div class="form-label-sm" style="margin-top:1rem;">Stok hangi karta eklensin?</div>
+            <label class="cv-opt" id="cvOptSource">
+              <input type="radio" name="cvTarget" value="source" />
+              <span id="cvSourceLbl"></span>
+            </label>
+            <label class="cv-opt" id="cvOptOther">
+              <input type="radio" name="cvTarget" value="other" />
+              <span><b>Başka kart</b> — aynı malzemenin başka (tedarikçi) kartı</span>
+            </label>
+            <div class="cv-sub" id="cvOtherBox" hidden>
+              <input type="text" class="form-control" id="cvCandSearch" autocomplete="off"
+                     placeholder="Kart ara — ad, Türkçe ad, tedarikçi ya da #no" />
+              <div class="cv-list" id="cvCandList" role="radiogroup" aria-label="Hedef kart"></div>
+              <div class="cv-muted" id="cvCandPicked"></div>
+            </div>
+            <label class="cv-opt" id="cvOptNew">
+              <input type="radio" name="cvTarget" value="new" />
+              <span><b>Yeni kart aç</b> — numunenin tedarikçisiyle, aynı birim ve kategoride</span>
+            </label>
+            <div class="cv-sub" id="cvNewBox" hidden>
+              <input type="text" class="form-control" id="cvNewName" maxlength="150" autocomplete="off" />
+              <div class="cv-muted" id="cvNewInfo"></div>
+              <div class="cv-mis" id="cvNewConflict" hidden></div>
+            </div>
+            <div class="cv-lot" id="cvLotWrap" hidden>
+              <div id="cvLotMsg"></div>
+              <label class="form-label-sm" for="cvLot" style="margin-top:0.55rem;">Yeni lot numarası</label>
+              <input type="text" class="form-control" id="cvLot" maxlength="100" autocomplete="off" />
+            </div>
+            <div class="cv-guard" id="cvGuard" hidden>
+              <div id="cvGuardMsg"></div>
+              <div class="cv-adj" id="cvGuardAdj"></div>
+              <div class="cv-acts">
+                <button type="button" class="cv-act cv-act-main" id="cvLinkBtn">
+                  <i class="bi bi-link-45deg"></i> Zaten sayıldı — yalnız lotu bağla
+                </button>
+                <button type="button" class="cv-act cv-act-warn" id="cvAckBtn">Yine de stoğa ekle</button>
+                <button type="button" class="cv-act" data-bs-dismiss="modal">Vazgeç</button>
+              </div>
+              <div class="cv-muted" id="cvGuardHelp" style="color:inherit;"></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="cv-cancel" data-bs-dismiss="modal">Vazgeç</button>
+          <button type="button" class="cv-go" id="cvGoBtn" hidden>Stoğa çevir</button>
         </div>
       </div>
     </div>
@@ -1304,7 +1487,13 @@
     function stockCell(item) {
       const v = Number(item.current_stock || 0);
       const cls = v <= 0 ? 'stock-zero-cell' : '';
-      return `<span class="${cls}">${v.toLocaleString('tr-TR', {maximumFractionDigits:2})}</span>`;
+      // Bekleyen numune stoğa DAHİL DEĞİL ama görünmezse lab numuneyi kayıp
+      // sanıyor (Songül Hanım, 05.10) — ayrı rozet, sayıya eklenmez.
+      const sq = Number(item.sample_qty || 0);
+      const smp = sq > 0
+        ? `<span class="smp-badge" title="Numune — stoğa dahil değil (Numune sekmesinde)">+${sq.toLocaleString('tr-TR', {maximumFractionDigits:2})} numune</span>`
+        : '';
+      return `<span class="${cls}">${v.toLocaleString('tr-TR', {maximumFractionDigits:2})}</span>${smp}`;
     }
 
     function renderItemRow(item, mode) {
@@ -1541,6 +1730,9 @@
       const q      = window.trFold ? window.trFold(document.getElementById('searchInput').value)
                                    : document.getElementById('searchInput').value.toLowerCase();
       const tabCfg = TABS[activeTab];
+      // Numune sekmesinde ürün tablosu gizli (TABS'ta yok) — numune çevirme/
+      // taşıma sonrası loadItems() buraya düşer; tablo sekmeye dönünce çizilir.
+      if (!tabCfg) return;
 
       // 1. Tab filter first
       let data = allItems.filter(tabCfg.filter);
@@ -1714,50 +1906,461 @@
     });
 
     /* ── Numune paneli ── */
+    // Satır verisi id → kayıt; düğmeler yalnız inventory_id taşır (adları
+    // onclick içinde kaçışlamak yerine).
+    let _sampleRows = new Map();
+
     async function renderSamples() {
       const tbody = document.getElementById('sampleBody');
       try {
         const res = await fetch('/api/inventory/samples');
         const rows = res.ok ? await res.json() : [];
+        _sampleRows = new Map(rows.map(r => [r.inventory_id, r]));
         const cnt = document.getElementById('count-numune');
         if (cnt) cnt.textContent = rows.length;
         if (!rows.length) {
-          tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i class="bi bi-eyedropper"></i><p>Henüz numune girişi yok. "Numune Girişi" ile ekleyin.</p></div></td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><i class="bi bi-eyedropper"></i><p>Bekleyen numune yok. "Numune Girişi" ile ekleyin.</p></div></td></tr>`;
           return;
         }
         const canReceive = {{ 'true' if can('inventory','receive') else 'false' }};
-        tbody.innerHTML = rows.map(r => `
+        tbody.innerHTML = rows.map(r => {
+          // Kart ipuçları: pasif kart GİZLENMEZ (lot görünmez olur, kimse
+          // taşıyamaz); kartın tedarikçisi numuneninkinden farklıysa numune
+          // büyük ihtimalle yanlış kartta (Naturalya jojobası KRK GIDA
+          // kartında, 05.10) → "Karta taşı" öne çıkar.
+          const hints = [];
+          if (!r.item_active) hints.push(`<span class="smp-pasif" title="Kart pasifleştirilmiş — numuneyi aktif bir karta taşıyın">pasif kart</span>`);
+          if (r.supplier_mismatch) {
+            hints.push(`<span class="smp-warn" title="Numunenin tedarikçisi kartın tedarikçisinden farklı — numune yanlış tedarikçinin kartına girilmiş olabilir"><i class="bi bi-exclamation-triangle"></i>Kartın tedarikçisi: ${escHtml(r.card_supplier_name)}</span>`);
+          } else if (r.card_supplier_name) {
+            hints.push(`<span class="item-supplier-hint"><i class="bi bi-truck"></i>Kart: ${escHtml(r.card_supplier_name)}</span>`);
+          }
+          if (r.material_group_name) {
+            hints.push(`<span class="item-supplier-hint"><i class="bi bi-diagram-3"></i>Grup: ${escHtml(r.material_group_name)}</span>`);
+          }
+          const moveHot = r.supplier_mismatch || !r.item_active;
+          const acts = canReceive ? `
+              <button class="btn btn-sm btn-outline-secondary" onclick="convertSample(${r.inventory_id})">Stoğa Çevir</button>
+              <button class="btn btn-sm ${moveHot ? 'btn-outline-warning' : 'btn-outline-secondary'}" onclick="moveSampleLot(${r.inventory_id})"
+                      title="Numune lotunu başka bir karta taşı — stok değişmez">Karta taşı</button>` : '';
+          return `
           <tr>
-            <td style="padding-left:1.1rem;font-weight:600;color:#1f2937;">${escHtml(r.item_name)}</td>
+            <td style="padding-left:1.1rem;font-weight:600;color:#1f2937;">${escHtml(r.item_name)} ${hints.join('')}</td>
             <td><i class="bi bi-truck" style="color:var(--gold);"></i> ${escHtml(r.supplier_name || '—')}</td>
             <td style="font-family:monospace;font-size:0.82rem;color:var(--navy);">${escHtml(r.lot_number)}</td>
             <td style="text-align:right;font-weight:600;">${Number(r.quantity).toLocaleString('tr-TR',{maximumFractionDigits:4})} ${escHtml(r.unit || '')}</td>
             <td style="color:#6b7280;">${escHtml(r.expiry_date || '—')}</td>
             <td style="color:#6b7280;">${escHtml(r.created_at || '—')}</td>
-            <td>${canReceive ? `<button class="btn btn-sm btn-outline-secondary" onclick="convertSample(${r.inventory_id}, '${escHtml(r.item_name).replace(/'/g, "\\'")}', ${r.quantity}, '${escHtml(r.unit || '')}', '${escHtml(r.lot_number).replace(/'/g, "\\'")}')">Stoğa Çevir</button>` : ''}</td>
-          </tr>`).join('');
+            <td style="white-space:nowrap;">${acts}</td>
+          </tr>`;
+        }).join('');
       } catch { tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><p>Numuneler yüklenemedi.</p></div></td></tr>`; }
     }
 
-    async function convertSample(inventoryId, itemName, qty, unit, lot) {
-      const ok = confirm(`${qty} ${unit} "${itemName}" (Lot ${lot}) gerçek stoğa geçirilsin mi?\nBu işlem geri alınamaz — stok artışı ve giriş kaydı yazılır.`);
-      if (!ok) return;
+    /* Numune lotunu başka karta taşı — static/lot-move.js penceresi.  Numune
+       stok olmadığı için yalnız kart değişir (defter/stok yok). */
+    function moveSampleLot(inventoryId) {
+      const r = _sampleRows.get(inventoryId);
+      if (!r) return;
+      if (!window.openLotMoveModal) { showToast('Sayfa tam yüklenmedi — yenileyip tekrar deneyin.'); return; }
+      window.openLotMoveModal({
+        inventory_id: r.inventory_id, item_id: r.item_id, item_name: r.item_name, unit: r.unit,
+        lot_number: r.lot_number, quantity: r.quantity, is_sample: true,
+        supplier_id: r.supplier_id, supplier_name: r.supplier_name,
+        material_group_id: r.material_group_id,
+        reason: r.supplier_mismatch
+          ? `Numune ${r.supplier_name} malı, ${r.card_supplier_name} kartına girilmişti`
+          : '',
+        onDone: () => { renderSamples(); loadItems(); },
+      });
+    }
+
+    /* ── Numune → stok: hedef seçmeli çevirme (06.10.2026) ───────────────────
+       Eski confirm() stoğu numunenin bağlı olduğu karta sessizce yazıyordu;
+       05.10'da Naturalya numuneleri KRK GIDA / İPEDA kartlarında olduğu için
+       stok yanlış tedarikçinin kartına gitti.  Pencere convert-options'tan
+       beslenir: bu kart / başka kart (adaylar + arama) / yeni kart.
+       409 cevapları `code` ile ayrılır:
+         maybe_already_counted → çift sayım bandı (yalnız lotu bağla · yine de
+           ekle · vazgeç); 758'de numune 10.09'da elle +20 sayılmış, 05.10
+           çevirme +20 daha eklemişti.
+         lot_collision → hedefte aynı lot no başka tedarikçide: yeni lot no.
+         name_conflict → yeni kart adı dolu: o kartı seç ya da yine de aç. */
+    let _cv = null;   // {id, opt, items, target, candId, candName, guard, collision, forceName, busy}
+
+    function cvFmt(n) { return Number(n || 0).toLocaleString('tr-TR', { maximumFractionDigits: 4 }); }
+    function cvFold(s) { return window.trFold ? window.trFold(s) : String(s || '').toLowerCase(); }
+    function cvEl(id) { return document.getElementById(id); }
+    function cvKey() { return _cv.target === 'other' ? 'item:' + (_cv.candId || '') : _cv.target; }
+    /* Seçili hedefin çift sayım bulguları: o hedef için 409 geldiyse sunucunun
+       tam listesi (`guards`), yoksa convert-options'ın her hedefte geçerli
+       bulguları.  "Yine de ekle" yalnız BUNLARI onaylar (acknowledged_item_ids)
+       — hedefin görülmemiş bulgusu varsa sunucu yine 409 der. */
+    function cvGuards() {
+      const c = _cv;
+      if (c.guard && c.guard.for === cvKey()) return c.guard.data.guards || [c.guard.data];
+      return c.preGuards || [];
+    }
+
+    async function convertSample(inventoryId) {
+      const cur = { id: inventoryId, opt: null, items: [], target: 'source', candId: null, candName: '',
+                    guard: null, preGuards: [], collision: null, forceName: false, busy: false };
+      _cv = cur;
+      cvEl('cvLoading').hidden = false;
+      cvEl('cvLoading').textContent = 'Yükleniyor…';
+      cvEl('cvContent').hidden = true;
+      cvEl('cvGoBtn').hidden = true;
+      ['cvCandSearch', 'cvLot', 'cvNewName'].forEach(id => { cvEl(id).value = ''; });
+      cvSetBusy(false);
+      bootstrap.Modal.getOrCreateInstance(cvEl('cvModal')).show();
       try {
-        const res = await fetch(`/api/inventory/samples/${inventoryId}/convert`, { method: 'POST' });
-        const data = await res.json();
+        const itemsP = (window.fetchItems ? window.fetchItems()
+                        : fetch('/api/items').then(r => r.ok ? r.json() : [])).catch(() => []);
+        const [res, items] = await Promise.all([
+          fetch(`/api/inventory/samples/${inventoryId}/convert-options`), itemsP,
+        ]);
+        const data = await res.json().catch(() => ({}));
+        if (_cv !== cur) return;
+        if (!res.ok) { cvEl('cvLoading').textContent = data.detail || 'Numune bilgisi alınamadı.'; return; }
+        cur.opt = data;
+        cur.items = Array.isArray(items) ? items : [];
+        cvInit();
+      } catch {
+        if (_cv === cur) cvEl('cvLoading').textContent = 'Sunucuya bağlanılamadı.';
+      }
+    }
+
+    function cvInit() {
+      const c = _cv, o = c.opt, s = o.sample, src = o.source;
+      cvEl('cvSum').innerHTML =
+        `<b>${cvFmt(s.qty)} ${escHtml(s.unit)}</b> numune · Lot <b>${escHtml(s.lot)}</b> · ` +
+        `<i class="bi bi-truck" style="color:var(--gold);"></i> ${escHtml(s.supplier_name || 'tedarikçi yok')}` +
+        `${s.created_at ? ` · giriş ${escHtml(s.created_at)}` : ''}<br>` +
+        `Bağlı olduğu kart: <b>${escHtml(src.name)}</b>${src.supplier_name ? ` — ${escHtml(src.supplier_name)}` : ''}` +
+        ` · stok ${cvFmt(src.stock)} ${escHtml(src.unit)}` +
+        `${src.group ? ` · grup: ${escHtml(src.group.name)}` : ''}` +
+        `${src.is_active ? '' : '<span class="smp-pasif">pasif kart</span>'}`;
+
+      const mismatch = !!(s.supplier_id && src.supplier_id && s.supplier_id !== src.supplier_id);
+      cvEl('cvMismatch').hidden = !mismatch;
+      if (mismatch) {
+        cvEl('cvMismatch').innerHTML =
+          `<i class="bi bi-exclamation-triangle"></i> Numunenin tedarikçisi (<b>${escHtml(s.supplier_name)}</b>) ` +
+          `kartın tedarikçisinden (<b>${escHtml(src.supplier_name)}</b>) farklı. Bu karta eklenirse stok ` +
+          `${escHtml(src.supplier_name)} kartında görünür — numunenin tedarikçisinin kartını seçin ya da yeni kart açın.`;
+      }
+
+      cvEl('cvSourceLbl').innerHTML =
+        `<b>Bu kart</b> — ${escHtml(src.name)}${src.supplier_name ? ` (${escHtml(src.supplier_name)})` : ''}` +
+        `${src.is_active ? '' : ' <span class="smp-pasif">pasif — seçilemez</span>'}`;
+      cvEl('cvOptSource').classList.toggle('cv-dis', !src.is_active);
+      cvEl('cvOptSource').querySelector('input').disabled = !src.is_active;
+
+      const canCreate = window.can('items', 'create') && src.category !== 'Bitmiş Ürün';
+      cvEl('cvOptNew').hidden = !canCreate;
+      cvEl('cvNewName').value = o.new_card.suggested_name || '';
+      cvEl('cvNewInfo').innerHTML =
+        `Birim <b>${escHtml(o.new_card.unit || '—')}</b> · kategori ${escHtml(o.new_card.category || '—')} · ` +
+        `tedarikçi <b>${escHtml(o.new_card.supplier_name || '—')}</b> · «${escHtml(src.name)}» ile aynı malzeme grubuna katılır.`;
+      cvShowNameConflict(o.new_card.conflict, false);
+
+      // Varsayılan hedef: tedarikçi farkı ya da pasif kartta numunenin
+      // tedarikçisinin kartı (aday) > yeni kart; aksi hâlde bu kart.
+      const cands = o.candidates || [];
+      const sameSup = cands.find(x => s.supplier_id && x.supplier_id === s.supplier_id);
+      const conflictCand = o.new_card.conflict && cands.find(x => x.item_id === o.new_card.conflict.id);
+      if (mismatch || !src.is_active) {
+        const pick = sameSup || conflictCand;
+        if (pick) { c.target = 'other'; c.candId = pick.item_id; c.candName = pick.name; }
+        else if (canCreate) c.target = 'new';
+        else c.target = 'other';
+      }
+      // HER hedefte geçerli bulgular (numunenin durduğu kart + ilk girildiği
+      // kart): bant 'başka kart' / 'yeni kart' seçiliyken de görünür — kaynakta
+      // elle sayılmış numune başka karta eklenince iki kartta sayılıyordu.
+      c.preGuards = Array.isArray(o.guards) ? o.guards : [];
+      c.guard = null;
+
+      cvEl('cvLoading').hidden = true;
+      cvEl('cvContent').hidden = false;
+      cvSync();
+    }
+
+    /* Aday listesi: convert-options adayları (sunucu sıralı) + aramada aynı
+       tür ve birim ailesindeki diğer kartlar (sunucu yine doğrular). */
+    function cvRenderCands() {
+      const c = _cv, o = c.opt, H = window.lotMoveHelpers;
+      const q = cvFold(cvEl('cvCandSearch').value);
+      const toks = q ? q.split(' ') : [];
+      const hay = x => cvFold([x.name, x.name_tr, x.supplier_name, '#' + x.item_id].join(' '));
+      const match = x => !toks.length || toks.every(t => hay(x).includes(t));
+      let rows = (o.candidates || []).filter(match);
+      if (toks.length && H) {
+        const seen = new Set(rows.map(r => r.item_id).concat([o.source.id]));
+        const uk = H.unitKey(o.source.unit), kind = H.lotKind(o.source.category);
+        c.items.forEach(it => {
+          if (seen.has(it.id) || kind === 'finished' || H.lotKind(it.category) !== kind
+              || H.unitKey(it.unit) !== uk) return;
+          const x = { item_id: it.id, name: it.name, name_tr: it.name_tr, unit: it.unit,
+                      supplier_id: it.supplier_id, supplier_name: it.supplier_name,
+                      stock: it.current_stock, reason: '' };
+          if (match(x)) rows.push(x);
+        });
+      }
+      rows = rows.slice(0, 40);
+      const list = cvEl('cvCandList');
+      if (!rows.length) {
+        list.innerHTML = `<div class="cv-muted" style="padding:0.7rem;">${toks.length
+          ? 'Aramaya uyan uygun kart yok (aynı tür ve birim ailesi aranır).'
+          : 'Önerilecek kart yok — hedef kartı adıyla arayın.'}</div>`;
+      } else {
+        list.innerHTML = rows.map(x => {
+          const on = c.candId === x.item_id;
+          return `<label class="cv-cand${on ? ' cv-on' : ''}">
+            <input type="radio" name="cvCand" value="${x.item_id}" data-name="${escHtml(x.name)}"${on ? ' checked' : ''} />
+            <span><b>${escHtml(x.name)}</b>${x.name_tr ? ` <span style="color:#6b7280;">· ${escHtml(x.name_tr)}</span>` : ''}
+              ${x.reason ? `<span class="cv-why">${escHtml(x.reason)}</span>` : ''}
+              <span class="cv-meta">#${x.item_id} · ${x.supplier_name ? '🚚 ' + escHtml(x.supplier_name) + ' · ' : ''}stok ${cvFmt(x.stock)} ${escHtml(x.unit || '')}</span></span>
+          </label>`;
+        }).join('');
+      }
+      cvEl('cvCandPicked').innerHTML = c.candId
+        ? `<i class="bi bi-check2-circle" style="color:#15803d;"></i> Seçili: <b>${escHtml(c.candName || '#' + c.candId)}</b>` : '';
+    }
+
+    function cvSync() {
+      const c = _cv;
+      if (!c || !c.opt) return;
+      document.querySelectorAll('input[name="cvTarget"]').forEach(r => { r.checked = (r.value === c.target); });
+      cvEl('cvOptSource').classList.toggle('cv-on', c.target === 'source');
+      cvEl('cvOptOther').classList.toggle('cv-on', c.target === 'other');
+      cvEl('cvOptNew').classList.toggle('cv-on', c.target === 'new');
+      cvEl('cvOtherBox').hidden = c.target !== 'other';
+      cvEl('cvNewBox').hidden = c.target !== 'new';
+      if (c.target === 'other') cvRenderCands();
+
+      const key = cvKey();
+      const gs = cvGuards();
+      const src = c.opt.source, s = c.opt.sample, unit = escHtml(s.unit || '');
+      cvEl('cvGuard').hidden = !gs.length;
+      if (gs.length) {
+        const where = g => g.item_id === src.id ? ' (numunenin bağlı olduğu kart)'
+                         : g.on === 'origin' ? ' (numunenin ilk girildiği kart)' : '';
+        cvEl('cvGuardMsg').innerHTML =
+          `<i class="bi bi-exclamation-octagon"></i> <b>Bu numune zaten sayılmış olabilir.</b> ` +
+          gs.map(g => `«${escHtml(g.item_name)}» kartında${where(g)} numune geldikten sonra elle ` +
+                      `yapılmış stok düzeltmesi var.`).join(' ') +
+          ` Stoğa eklenirse ${cvFmt(s.qty)} ${unit} iki kez sayılır.`;
+        const adj = gs.flatMap(g => (g.adjustments || []).map(a => `<tr>
+              ${gs.length > 1 ? `<td>${escHtml(g.item_name)}</td>` : ''}
+              <td style="white-space:nowrap;">${escHtml(a.date)}</td>
+              <td style="white-space:nowrap;font-weight:700;">${a.qty > 0 ? '+' : ''}${cvFmt(a.qty)} ${unit}</td>
+              <td>${escHtml(a.by)}</td>
+              <td>${escHtml(String(a.note || '').slice(0, 140))}</td></tr>`));
+        cvEl('cvGuardAdj').innerHTML = adj.length ? `<table>${adj.join('')}</table>` : '';
+        // "Yalnız lotu bağla" yalnız numunenin KENDİ kartında (sunucu başka
+        // hedefte 400 der).  Bulgu o karttaysa her hedeften sunulur: önce orada
+        // bağla, sonra lotu Taşı ile hedefe götür — stok iki kartta sayılmaz.
+        const own = !!src.is_active && gs.some(g => g.item_id === src.id);
+        const here = key === 'source';
+        const link = cvEl('cvLinkBtn');
+        link.hidden = !own;
+        link.innerHTML = here
+          ? '<i class="bi bi-link-45deg"></i> Zaten sayıldı — yalnız lotu bağla'
+          : `<i class="bi bi-link-45deg"></i> «${escHtml(src.name)}» kartında sayıldı — orada yalnız lotu bağla`;
+        const help = [];
+        if (own) help.push(here
+          ? '<b>Yalnız lotu bağla:</b> lot normal stok lotu olur; stok ve hareket defteri değişmez.'
+          : `<b>Orada yalnız lotu bağla:</b> lot «${escHtml(src.name)}» kartında normal stok lotu olur ` +
+            '(stok değişmez); ardından lotu <b>Taşı</b> ile hedef karta götürün (iki kartta −/+ ' +
+            '"Lot taşındı" düzeltmesi yazılır, stok bir kez sayılır).');
+        const org = gs.find(g => g.on === 'origin');
+        if (org) help.push(
+          `Numune önce «${escHtml(org.item_name)}» kartına girilip taşınmış: Numune sekmesinde <b>Karta taşı</b> ` +
+          `ile «${escHtml(org.item_name)}» kartına geri taşıyın → <b>Stoğa Çevir</b> → <b>yalnız lotu bağla</b> ` +
+          '→ sonra lotu <b>Taşı</b> ile hedef karta götürün.');
+        if (gs.some(g => g.on === 'target' && g.item_id !== src.id)) help.push(
+          'Numune hedef kartta zaten sayıldıysa: Vazgeç → Numune sekmesinde <b>Karta taşı</b> ile lotu ' +
+          'o karta taşıyın → sonra <b>Stoğa Çevir</b> → <b>Zaten sayıldı — yalnız lotu bağla</b>.');
+        if (own && Number(s.analysis_used) > 0) help.push(
+          `<b>Dikkat:</b> bu numuneden Numune Analizi'nde ${cvFmt(s.analysis_used)} ${unit} kullanılmış — ` +
+          'bağladıktan sonra kart stoğunu sayımla kontrol edin.');
+        cvEl('cvGuardHelp').innerHTML = help.join('<br>');
+      }
+      cvEl('cvLotWrap').hidden = !(c.collision && c.collision.for === key);
+
+      const go = cvEl('cvGoBtn');
+      go.hidden = gs.length > 0;
+      go.textContent = c.target === 'new' ? 'Yeni kart aç ve stoğa çevir'
+                     : c.target === 'other' ? 'Seçilen karta stoğa çevir' : 'Bu karta stoğa çevir';
+    }
+
+    function cvShowNameConflict(ex, fromServer) {
+      const box = cvEl('cvNewConflict');
+      if (!ex) { box.hidden = true; box.innerHTML = ''; return; }
+      box.hidden = false;
+      box.innerHTML =
+        `${fromServer ? '<b>Bu adla kart zaten var:</b>' : 'Önerilen adla bir kart zaten var:'} ` +
+        `«${escHtml(ex.name)}»${ex.name_tr ? ' · ' + escHtml(ex.name_tr) : ''} (#${ex.id}` +
+        `${ex.category ? ', ' + escHtml(ex.category) : ''}, stok ${cvFmt(ex.current_stock)} ${escHtml(ex.unit || '')}).` +
+        `<div class="cv-acts"><button type="button" class="cv-act" data-cv-pick="${ex.id}" data-cv-name="${escHtml(ex.name)}">Bu kartı seç</button>` +
+        `${fromServer ? '<button type="button" class="cv-act cv-act-warn" data-cv-force="1">Yine de yeni kart aç</button>' : ''}</div>`;
+    }
+
+    function cvShowCollision() {
+      const c = _cv, col = c.collision, ex = col.existing || {}, s = c.opt.sample;
+      cvEl('cvLotMsg').innerHTML =
+        `Hedef kartta <b>${escHtml(col.lot_number)}</b> lot numarası ` +
+        `${ex.supplier_name ? `<b>${escHtml(ex.supplier_name)}</b> tedarikçisiyle` : 'başka bir tedarikçiyle'} kayıtlı ` +
+        `(${cvFmt(ex.quantity)} ${escHtml(s.unit || '')}). İki tedarikçinin malı aynı lotta birleşemez — ` +
+        `bu numune için yeni bir lot numarası girin.`;
+      const inp = cvEl('cvLot');
+      if (!inp.value) {
+        const tag = String(s.supplier_name || '').trim().split(/\s+/)[0] || '2';
+        inp.value = (col.lot_number + '-' + tag).slice(0, 100);
+      }
+      setTimeout(() => { inp.focus(); inp.select(); }, 50);
+    }
+
+    function cvSetBusy(b) {
+      if (_cv) _cv.busy = b;
+      ['cvGoBtn', 'cvLinkBtn', 'cvAckBtn'].forEach(id => { cvEl(id).disabled = b; });
+    }
+
+    async function cvSubmit(extra) {
+      const c = _cv;
+      if (!c || !c.opt || c.busy) return;
+      const body = { mode: extra.mode || 'add' };
+      if (c.target === 'other') {
+        if (!c.candId) { showToast('Listeden hedef kartı seçin.'); return; }
+        body.target_item_id = c.candId;
+      } else if (c.target === 'new') {
+        const name = cvEl('cvNewName').value.trim();
+        if (!name) { showToast('Yeni kartın adını yazın.'); cvEl('cvNewName').focus(); return; }
+        body.new_item = { name, force: !!c.forceName };
+      } else if (!c.opt.source.is_active) {
+        showToast('Kart pasif — başka bir kart seçin ya da yeni kart açın.'); return;
+      }
+      if (extra.ack) body.acknowledged_item_ids = cvGuards().map(g => g.item_id);
+      const key = cvKey();
+      if (c.collision && c.collision.for === key) {
+        const lot = cvEl('cvLot').value.trim();
+        if (!lot) { showToast('Yeni lot numarasını girin.'); return; }
+        if (lot === c.collision.lot_number) { showToast('Hedefte kayıtlı olmayan bir lot numarası girin.'); return; }
+        body.lot_number = lot;
+      }
+      cvSetBusy(true);
+      try {
+        const res = await fetch(`/api/inventory/samples/${c.id}/convert`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (_cv !== c) return;
+        if (res.status === 409 && data.code === 'maybe_already_counted') {
+          c.guard = { for: key, data }; cvSync(); return;
+        }
+        if (res.status === 409 && data.code === 'lot_collision') {
+          c.collision = { for: key, lot_number: data.lot_number, existing: data.existing };
+          cvShowCollision(); cvSync(); return;
+        }
+        if (res.status === 409 && data.code === 'name_conflict') {
+          c.forceName = false; cvShowNameConflict(data.existing, true); return;
+        }
         if (!res.ok) { showToast(data.detail || 'Numune stoğa çevrilemedi.'); return; }
         showToast(data.message, 'success');
-        renderSamples();
+        if (data.warning) showToast(data.warning, 'info', 9000);
+        const next = extra.then ? cvChainMove(c, data, extra.then) : null;
+        if (next) cvEl('cvModal').addEventListener('hidden.bs.modal', next, { once: true });
+        bootstrap.Modal.getInstance(cvEl('cvModal'))?.hide();
         if (window.invalidateItemsCache) window.invalidateItemsCache();
-      } catch { showToast('Sunucuya bağlanılamadı.'); }
+        renderSamples();
+        loadItems();      // "Mevcut Stok" sayfa yenilenmeden güncellensin
+      } catch {
+        if (_cv === c) showToast('Sunucuya bağlanılamadı.');
+      } finally {
+        if (_cv === c) cvSetBusy(false);
+      }
     }
+
+    document.querySelectorAll('input[name="cvTarget"]').forEach(r => r.addEventListener('change', function () {
+      if (!_cv || !this.checked) return;
+      _cv.target = this.value;
+      cvSync();
+      if (this.value === 'other') cvEl('cvCandSearch').focus();
+    }));
+    cvEl('cvCandList').addEventListener('change', function (e) {
+      if (!_cv || e.target.name !== 'cvCand') return;
+      _cv.candId = parseInt(e.target.value, 10);
+      _cv.candName = e.target.dataset.name || '';
+      cvSync();
+    });
+    cvEl('cvCandSearch').addEventListener('input', () => { if (_cv && _cv.opt) cvRenderCands(); });
+    cvEl('cvNewName').addEventListener('input', () => {
+      if (!_cv) return;
+      _cv.forceName = false;
+      cvShowNameConflict(null);
+    });
+    cvEl('cvNewConflict').addEventListener('click', function (e) {
+      const pick = e.target.closest('[data-cv-pick]');
+      if (pick && _cv) {
+        _cv.target = 'other';
+        _cv.candId = parseInt(pick.dataset.cvPick, 10);
+        _cv.candName = pick.dataset.cvName || '';
+        cvEl('cvCandSearch').value = '#' + _cv.candId;
+        cvSync();
+        return;
+      }
+      if (e.target.closest('[data-cv-force]') && _cv) {
+        _cv.forceName = true;
+        cvSubmit({});
+      }
+    });
+    cvEl('cvGoBtn').addEventListener('click', () => cvSubmit({}));
+    /* Başka/yeni kart seçiliyken "orada yalnız lotu bağla": bağlama numunenin
+       kendi kartında yapılır (hedef 'Bu kart'a döner), ardından normal lotu
+       hedefe götürmek için Taşı penceresi açılır — stok bir kez sayılır. */
+    cvEl('cvLinkBtn').addEventListener('click', () => {
+      if (!_cv || _cv.busy) return;
+      const then = _cv.target !== 'source' ? { target: _cv.target, candId: _cv.candId } : null;
+      _cv.target = 'source';
+      cvSync();
+      cvSubmit({ mode: 'link_only', then });
+    });
+    function cvChainMove(c, data, then) {
+      if (!window.openLotMoveModal || !window.can('inventory', 'adjust')) {
+        showToast('Lot bağlandı. Hedef karta taşımak için Stoklar → lot satırında "Taşı" ' +
+                  '(stok düzeltme yetkisi gerekir).', 'info', 9000);
+        return null;
+      }
+      if (then.target === 'new') {
+        showToast('Lot bağlandı. Yeni kartı açtıktan sonra lotu Stoklar → "Taşı" ile oraya götürün.',
+                  'info', 9000);
+        return null;
+      }
+      const s = c.opt.sample, src = c.opt.source;
+      const opts = {
+        inventory_id: data.inventory_id, item_id: data.item_id, item_name: data.item_name,
+        unit: s.unit, lot_number: data.lot_number, quantity: data.quantity, is_sample: false,
+        supplier_id: s.supplier_id, supplier_name: s.supplier_name, category: src.category,
+        material_group_id: src.group ? src.group.id : null,
+        preselect_target_id: then.candId || null,
+        reason: `Numune ${s.supplier_name || ''} malı, «${src.name}» kartında sayılmıştı`.replace(/\s+/g, ' '),
+        onDone: () => { renderSamples(); loadItems(); },
+      };
+      return () => window.openLotMoveModal(opts);
+    }
+    cvEl('cvAckBtn').addEventListener('click', () => cvSubmit({ ack: true }));
+    cvEl('cvModal').addEventListener('hidden.bs.modal', () => { _cv = null; });
 
     /* Numune girişinden "yeni hammadde kartı" akışı: girilen alanlar saklanır,
        kart modalı Hammadde kategorisi + aranan adla açılır, kayıttan sonra
        numune modalı yeni kart seçili olarak geri gelir (önce kart, sonra numune
-       kuralı korunur; kullanıcı iki ekran arasında dolaşmaz). */
+       kuralı korunur; kullanıcı iki ekran arasında dolaşmaz).  `prefill`
+       ({name, unit, category}) tedarikçi farkı ipucundan gelir: "JOJOBA YAĞI
+       — NATURALYA" gibi seçili kartın birimi ve kategorisiyle. */
     let _sampleReturn = null;
-    function openAddItemFromSample() {
+    function openAddItemFromSample(prefill) {
+      const pre = (prefill && typeof prefill === 'object') ? prefill : null;
       _sampleReturn = {
         search:   document.getElementById('sampleItemSearch').value.trim(),
         supplier: document.getElementById('sampleSupplier').value,
@@ -1767,12 +2370,15 @@
       };
       bootstrap.Modal.getInstance(document.getElementById('sampleEntryModal'))?.hide();
       openAddItemModal();
-      document.getElementById('itemCategory').value = 'Hammadde';
+      document.getElementById('itemCategory').value = (pre && pre.category) || 'Hammadde';
       updateVariationVisibility();
-      document.getElementById('itemName').value = _sampleReturn.search;
+      const name = (pre && pre.name) || _sampleReturn.search;
+      document.getElementById('itemName').value = name;
+      const unitSel = document.getElementById('itemUnit');
+      if (pre && pre.unit && [...unitSel.options].some(o => o.value === pre.unit)) unitSel.value = pre.unit;
       const sup = document.getElementById('itemSupplierId');
       if (sup && _sampleReturn.supplier) sup.value = _sampleReturn.supplier;
-      setTimeout(() => document.getElementById(_sampleReturn.search ? 'itemNameTr' : 'itemName')?.focus(), 350);
+      setTimeout(() => document.getElementById(name ? 'itemNameTr' : 'itemName')?.focus(), 350);
     }
     async function resumeSampleAfterCreate(newItemId) {
       const saved = _sampleReturn; _sampleReturn = null;
@@ -1783,7 +2389,10 @@
       document.getElementById('sampleLot').value = saved.lot || '';
       document.getElementById('sampleQty').value = saved.qty || '';
       document.getElementById('sampleExpiry').value = saved.expiry || '';
+      updateSampleSupHint();
     }
+
+    let _sampleItemsById = new Map();   // numune modalındaki kartlar (ipucu için)
 
     async function openSampleModal(preselectId) {
       // Hammadde + tedarikçi dropdownlarını doldur
@@ -1793,11 +2402,14 @@
       itemSel.innerHTML = '<option value="">— Hammadde seçiniz —</option>';
       suppSel.innerHTML = '<option value="">— Tedarikçi seçiniz —</option>';
       searchEl.value = '';
+      _sampleItemsById = new Map();
       try {
         const items = window.fetchItems ? await window.fetchItems()
                     : await fetch('/api/items').then(r => r.json());
         const fold = window.trFold || (s => (s || '').toLowerCase());
-        window.trSortBy(items.filter(i => i.category !== 'Ambalaj' && i.category !== 'Bitmiş Ürün'), 'name')
+        const raws = items.filter(i => i.category !== 'Ambalaj' && i.category !== 'Bitmiş Ürün');
+        _sampleItemsById = new Map(raws.map(i => [i.id, i]));
+        window.trSortBy(raws, 'name')
           .forEach(i => {
             const o = document.createElement('option');
             o.value = i.id;
@@ -1826,6 +2438,7 @@
         const opt = itemSel.selectedOptions[0];
         if (opt) { searchEl.value = opt.dataset.name || ''; opt.scrollIntoView?.({block:'nearest'}); }
       }
+      updateSampleSupHint();
       new bootstrap.Modal(document.getElementById('sampleEntryModal')).show();
     }
 
@@ -1836,6 +2449,64 @@
         if (!o.value) { o.style.display = ''; return; }   // placeholder hep görünür
         o.style.display = (!q || (o.dataset.fold || '').includes(q)) ? '' : 'none';
       });
+    });
+
+    /* Tedarikçi farkı ipucu (06.10.2026): seçilen kartın tedarikçisi numunenin
+       tedarikçisinden farklıysa numune yanlış karta giriyor olabilir (05.10
+       Naturalya jojobası KRK GIDA kartına girildi).  Lab'ın düzeni "her
+       tedarikçi ayrı kart": aynı gruptaki (ya da benzer adlı) o tedarikçinin
+       kartı varsa onu seçtirir, yoksa o tedarikçi için yeni kart açtırır. */
+    function updateSampleSupHint() {
+      const box = document.getElementById('sampleSupHint');
+      const item = _sampleItemsById.get(parseInt(document.getElementById('sampleItem').value, 10));
+      const supSel = document.getElementById('sampleSupplier');
+      const supId = parseInt(supSel.value, 10) || null;
+      if (!item || !supId || !item.supplier_id || item.supplier_id === supId) {
+        box.hidden = true; box.innerHTML = ''; return;
+      }
+      const supName = supSel.selectedOptions[0]?.textContent || 'seçilen tedarikçi';
+      const H = window.lotMoveHelpers;
+      const uk = H ? H.unitKey(item.unit) : null;
+      const sameGroup = i => !!item.material_group_id && i.material_group_id === item.material_group_id;
+      const sibs = [..._sampleItemsById.values()]
+        .filter(i => i.id !== item.id && i.supplier_id === supId
+                  && (!H || H.unitKey(i.unit) === uk)
+                  && (sameGroup(i) || (H && H.similar(item, i))))
+        .sort((a, b) => (sameGroup(b) - sameGroup(a)) || String(a.name).localeCompare(String(b.name), 'tr'));
+      let html = `<i class="bi bi-exclamation-triangle"></i> «${escHtml(item.name)}» kartının tedarikçisi ` +
+                 `<b>${escHtml(item.supplier_name)}</b>; numune ise <b>${escHtml(supName)}</b> tedarikçisinden. `;
+      if (sibs.length) {
+        html += 'Bu tedarikçinin kartı var: ' + sibs.slice(0, 3).map(s =>
+          `<a href="#" data-smp-pick="${s.id}">«${escHtml(s.name)}» kartını seç</a>`).join(' · ');
+      } else {
+        html += `Her tedarikçi ayrı kartta tutuluyor — <a href="#" data-smp-new="1">${escHtml(supName)} için yeni kart açın</a>.`;
+      }
+      box.innerHTML = html;
+      box.hidden = false;
+    }
+    document.getElementById('sampleItem').addEventListener('change', updateSampleSupHint);
+    document.getElementById('sampleSupplier').addEventListener('change', updateSampleSupHint);
+    document.getElementById('sampleSupHint').addEventListener('click', function (e) {
+      const pick = e.target.closest('[data-smp-pick]');
+      const mk = e.target.closest('[data-smp-new]');
+      if (!pick && !mk) return;
+      e.preventDefault();
+      const itemSel = document.getElementById('sampleItem');
+      if (pick) {
+        const searchEl = document.getElementById('sampleItemSearch');
+        searchEl.value = '';
+        searchEl.dispatchEvent(new Event('input'));       // süzgeç seçeneği gizlemesin
+        itemSel.value = pick.dataset.smpPick;
+        itemSel.selectedOptions[0]?.scrollIntoView?.({ block: 'nearest' });
+        updateSampleSupHint();
+        return;
+      }
+      const item = _sampleItemsById.get(parseInt(itemSel.value, 10));
+      const supSel = document.getElementById('sampleSupplier');
+      const supName = supSel.selectedOptions[0]?.textContent || '';
+      if (!item) return;
+      openAddItemFromSample({ name: `${item.name} — ${supName}`.slice(0, 150),
+                              unit: item.unit, category: item.category });
     });
 
     async function submitSample() {
@@ -1860,6 +2531,7 @@
         bootstrap.Modal.getInstance(document.getElementById('sampleEntryModal')).hide();
         renderSamples();
         if (window.invalidateItemsCache) window.invalidateItemsCache();
+        loadItems();      // stoktaki "+N numune" rozeti güncellensin
       } catch { showToast('Sunucuya bağlanılamadı.'); }
       finally { btn.disabled = false; }
     }

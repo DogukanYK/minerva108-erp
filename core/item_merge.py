@@ -46,11 +46,15 @@ class MergeError(Exception):
     """Kullanıcıya gösterilebilir birleştirme engeli."""
 
 
-def _adjust(db: Session, item: Item, delta: float, note: str, actor: str) -> None:
+def _adjust(db: Session, item: Item, delta: float, note: str, actor: str,
+            lot_number: Optional[str] = None) -> None:
+    """İmzalı Adjustment yaz + `current_stock`'u kaydır (lot taşıma da kullanır,
+    core/stock_lots.move_lot — orada `lot_number` dolu)."""
     if abs(delta) < 1e-9:
         return
     db.add(Transaction(item_id=item.id, transaction_type="Adjustment",
                        quantity=round(delta, 6), timestamp=datetime.utcnow(),
+                       lot_number=lot_number,
                        notes=note[:500], performed_by=actor))
     item.current_stock = round((item.current_stock or 0.0) + delta, 6)
 

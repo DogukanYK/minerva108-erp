@@ -455,3 +455,73 @@ def test_snapshot_reconstruction_unaffected_by_sample_lifecycle(authed_client: T
     # TAM O ANDA tek bir Input yazması sayesinde ikisi hep tutarlı kalıyor.
     reconstructed, _ = compute_stock_at(db_session, datetime.utcnow() + timedelta(days=1))
     assert abs(reconstructed.get(it.id, 0.0) - it.current_stock) < 1e-6
+
+
+# ─── Görünürlük — 06.10.2026 (Songül Hanım: "numunede görülen hammaddeler
+#     stokta görülsün") ─────────────────────────────────────────────────────
+
+def test_samples_list_hides_empty_unless_asked(authed_client: TestClient, db_session: Session):
+    nat, krk = _supplier(db_session, "NATURALYA"), _supplier(db_session, "KRK GIDA")
+    it = _hammadde(db_session, "JOJOBA YAĞI", 5710)
+    it.supplier_id = krk
+    gone = _hammadde(db_session, "Arşiv Yağı", 0)
+    gone.is_active = False
+    full = _lot(db_session, it.id, "MİNERVA", 50, supplier_id=nat, is_sample=True)
+    empty = _lot(db_session, it.id, "BİTTİ", 0, supplier_id=nat, is_sample=True)
+    orphan = _lot(db_session, gone.id, "ESKİ", 3, is_sample=True)
+    db_session.commit()
+
+    rows = {r["inventory_id"]: r for r in authed_client.get("/api/inventory/samples").json()}
+    assert set(rows) == {full.id, orphan.id}                 # 0'lık satır varsayılan gizli
+    x = rows[full.id]
+    assert (x["supplier_id"], x["supplier_name"]) == (nat, "NATURALYA")
+    assert (x["card_supplier_id"], x["card_supplier_name"]) == (krk, "KRK GIDA")
+    assert x["supplier_mismatch"] is True and x["item_active"] is True
+    assert rows[orphan.id]["item_active"] is False           # pasif karttaki numune GİZLENMEZ
+
+    rows = authed_client.get("/api/inventory/samples?include_empty=1").json()
+    assert {r["inventory_id"] for r in rows} == {full.id, empty.id, orphan.id}
+
+
+def test_items_list_sample_qty_and_group_fields(authed_client: TestClient, db_session: Session):
+    from database import MaterialGroup
+    g = MaterialGroup(name="JOJOBA", domain="cosmetics")
+    db_session.add(g); db_session.flush()
+    it = _hammadde(db_session, "JOJOBA YAĞI", 100)
+    it.material_group_id = g.id
+    plain = _hammadde(db_session, "Grupsuz", 10)
+    _lot(db_session, it.id, "N1", 50, is_sample=True)
+    _lot(db_session, it.id, "N2", 20, is_sample=True)
+    _lot(db_session, it.id, "N0", 0, is_sample=True)
+    _lot(db_session, it.id, "STOK", 100)                     # normal lot sayılmaz
+    sup_item = _hammadde(db_session, "Takviye", 0, domain="supplement")
+    _lot(db_session, sup_item.id, "S", 9, is_sample=True).domain = "supplement"
+    db_session.commit()
+
+    rows = {r["id"]: r for r in authed_client.get("/api/items").json()}
+    assert rows[it.id]["sample_qty"] == 70 and rows[it.id]["current_stock"] == 100
+    assert (rows[it.id]["material_group_id"], rows[it.id]["material_group_name"]) == (g.id, "JOJOBA")
+    assert rows[plain.id]["sample_qty"] == 0
+    assert rows[plain.id]["material_group_id"] is None and rows[plain.id]["material_group_name"] is None
+
+
+def test_by_item_lot_ids_moved_from_and_group(authed_client: TestClient, db_session: Session):
+    from database import MaterialGroup
+    g = MaterialGroup(name="JOJOBA", domain="cosmetics")
+    db_session.add(g); db_session.flush()
+    nat = _supplier(db_session, "NATURALYA")
+    krk_card = _hammadde(db_session, "JOJOBA YAĞI", 0)
+    nat_card = _hammadde(db_session, "JOJOBA YAĞI (NUMUNE)", 50)
+    krk_card.material_group_id = nat_card.material_group_id = g.id
+    lot = _lot(db_session, nat_card.id, "MİNERVA", 50, supplier_id=nat)
+    lot.moved_from_item_id = krk_card.id
+    db_session.commit()
+
+    d = authed_client.get(f"/api/inventory/by-item/{nat_card.id}").json()
+    x = d["lots"][0]
+    assert (x["inventory_id"], x["supplier_id"]) == (lot.id, nat)
+    assert x["moved_from"] == {"id": krk_card.id, "name": "JOJOBA YAĞI"}
+    assert d["item_group"]["id"] == g.id
+    assert {m["item_id"] for m in d["item_group"]["members"]} == {krk_card.id, nat_card.id}
+    plain = authed_client.get(f"/api/inventory/by-item/{krk_card.id}").json()
+    assert plain["lots"] == [] and plain["item_group"]["name"] == "JOJOBA"

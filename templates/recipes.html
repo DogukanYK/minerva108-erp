@@ -167,6 +167,11 @@
     #ingredientRows { display: flex; flex-direction: column; gap: 0.5rem; max-height: 320px; overflow-y: auto; padding-right: 2px; }
     /* 46px FAZ · 1fr ürün · 90px % (BÜYÜK) · 90px gram · 32px sil */
     .ingredient-row { display: grid; grid-template-columns: 46px 1fr 90px 90px 32px; gap: 0.5rem; align-items: center; }
+    /* Ürün hücresi: satır başına arama kutusu + seçici (06.10.2026).  Uzun
+       etiket (tedarikçi · stok · numune) grid hücresini taşırmasın. */
+    .ing-pick { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+    .ing-pick .ing-item { width: 100%; min-width: 0; text-overflow: ellipsis; }
+    .ing-search { padding: 0.28rem 0.6rem !important; font-size: 0.8rem !important; }
     .ingredient-row .row-grid-header,
     .ingredient-row-header {
       display: grid; grid-template-columns: 46px 1fr 90px 90px 32px; gap: 0.5rem;
@@ -993,65 +998,111 @@
       return (grp && _labelRepByGroup[grp]) ? _labelRepByGroup[grp] : itemId;
     }
 
-    function buildIngredientOptions() {
-      let opts = '<option value="">— Hammadde seçiniz —</option>';
-      // Türkçe alfabetik — her kategori kendi içinde
-      const hammadde = window.trSortBy(allItems.filter(i => i.category === 'Hammadde'), 'name');
-      const ambalaj  = window.trSortBy(allItems.filter(i => i.category === 'Ambalaj'),  'name');
+    /* Reçete bileşen seçenekleri (06.10.2026 genişletildi).
+       • Kimyasal / Yardımcı / Diğer (ve kategorisiz) kartlar eskiden SESSİZCE
+         düşüyordu — yalnız 'Hammadde' + 'Ambalaj' listeleniyordu, böyle bir
+         bileşeni olan reçete düzenlenince satır boş kalıyordu.  Artık hammadde
+         optgroup'larıyla listelenir; data-category GERÇEK kategoridir
+         (calculateYield yalnız 'Ambalaj'ı ayırır, diğerleri hammadde).
+       • Etiket `ad · TR ad (birim) · 🚚 tedarikçi · stok X · numune Y`: lab'ın
+         düzeninde her tedarikçi ayrı kart → kart seçmek tedarikçi seçmektir
+         (Songül Hanım: "reçeteleri tedarikçisiyle kaydetmem gerekiyor").
+       • `q` satırın arama kutusundan gelir (TR-katlanmış, sözcük sözcük —
+         hepsi geçmeli).  Safari <option> display:none'ı uygulamadığı için
+         süzgeç seçenekleri YENİDEN KURAR; `keepId` süzgece uymasa da listede
+         kalır (data-keep) ki seçili değer kaybolmasın. */
+    function buildIngredientOptions(q, keepId) {
+      const fold = window.trFold || (x => String(x || '').toLowerCase());
+      const toks = fold(q || '').split(' ').filter(Boolean);
+      const keep = keepId ? String(keepId) : '';
+      const fmtN = n => Number(n || 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 });
+      let shown = 0;
 
-      // Helper — ürünün option label'ı (isim + birim + tedarikçi rozeti)
-      function ingLabel(item) {
-        const unitPart = item.unit ? ' (' + item.unit + ')' : '';
-        const supp     = item.supplier_name ? ' · 🚚 ' + item.supplier_name : '';
-        return escHtml(item.name) + unitPart + supp;
+      function ingLabel(item, shownName) {
+        let head = escHtml(shownName);
+        if (item.name_tr && fold(item.name_tr) !== fold(shownName)) head += ' · ' + escHtml(item.name_tr);
+        if (item.unit) head += ' (' + escHtml(item.unit) + ')';
+        const parts = [head];
+        if (item.supplier_name) parts.push('🚚 ' + escHtml(item.supplier_name));
+        parts.push('stok ' + fmtN(item.current_stock));
+        if (Number(item.sample_qty || 0) > 0) parts.push('numune ' + fmtN(item.sample_qty));
+        return parts.join(' · ');
       }
+      function opt(item, cat, pkg, nameOverride) {
+        const shownName = nameOverride || item.name;
+        const hit = !toks.length || toks.every(t => fold(
+          [shownName, item.name_tr, item.supplier_name, item.category].join(' ')).includes(t));
+        const isKeep = keep && String(item.id) === keep;
+        if (!hit && !isKeep) return '';
+        if (hit) shown++;
+        return `<option value="${item.id}" data-category="${escHtml(cat)}"${pkg ? ` data-pkg="${pkg}"` : ''}` +
+               `${hit ? '' : ' data-keep="1"'} data-supplier="${escHtml(item.supplier_name || '')}">` +
+               `${ingLabel(item, shownName)}</option>`;
+      }
+      const group = (label, html) => html ? `<optgroup label="${escHtml(label)}">${html}</optgroup>` : '';
 
-      if (hammadde.length) {
-        opts += '<optgroup label="Hammadde">';
-        hammadde.forEach(item => {
-          opts += `<option value="${item.id}" data-category="Hammadde" data-supplier="${escHtml(item.supplier_name || '')}">${ingLabel(item)}</option>`;
+      let body = '';
+      // Hammadde-benzeri kartlar: önce 'Hammadde', sonra diğer kategoriler TR sırasıyla
+      const byCat = {};
+      allItems.filter(i => i.category !== 'Ambalaj' && i.category !== 'Bitmiş Ürün').forEach(i => {
+        const c = i.category || 'Diğer';
+        (byCat[c] = byCat[c] || []).push(i);
+      });
+      Object.keys(byCat)
+        .sort((a, b) => a === 'Hammadde' ? -1 : b === 'Hammadde' ? 1 : a.localeCompare(b, 'tr'))
+        .forEach(c => {
+          body += group(c, window.trSortBy(byCat[c], 'name').map(i => opt(i, i.category || '')).join(''));
         });
-        opts += '</optgroup>';
-      }
 
-      if (ambalaj.length) {
-        // Bölümle: pkg_type'a göre indeksle, sıralı şekilde işle, sonra tipsizler
-        const byType = {};
-        const tipless = [];
-        ambalaj.forEach(item => {
-          const t = (item.pkg_type || '').toLowerCase();
-          if (_PKG_ORDER.includes(t)) {
-            (byType[t] = byType[t] || []).push(item);
-          } else {
-            tipless.push(item);
+      // Ambalaj: pkg_type'a göre sıralı gruplar, sonra tipsizler
+      const byType = {};
+      const tipless = [];
+      window.trSortBy(allItems.filter(i => i.category === 'Ambalaj'), 'name').forEach(item => {
+        const t = (item.pkg_type || '').toLowerCase();
+        if (_PKG_ORDER.includes(t)) (byType[t] = byType[t] || []).push(item);
+        else tipless.push(item);
+      });
+      _PKG_ORDER.forEach(t => {
+        body += group(_PKG_GROUP_LABEL[t], (byType[t] || []).map(item => {
+          // Etiket: TR+EN aynı label_group → listede sadece temsilciyi göster,
+          // ismi dil belirteçsiz ("...(TR)" → "...").  Üretimde dil seçilince
+          // doğru dildeki kardeşe inilir, o yüzden hangi üye saklandığı önemsiz.
+          if (t === 'etiket' && item.label_group) {
+            if (_labelRepByGroup[item.label_group] !== item.id) return '';   // kardeş — atla
+            return opt(item, 'Ambalaj', t, stripLangTokens(item.name));
           }
-        });
-        _PKG_ORDER.forEach(t => {
-          if (!byType[t] || !byType[t].length) return;
-          opts += `<optgroup label="${_PKG_GROUP_LABEL[t]}">`;
-          byType[t].forEach(item => {
-            // Etiket: TR+EN aynı label_group → listede sadece temsilciyi göster,
-            // ismi dil belirteçsiz ("...(TR)" → "...").  Üretimde dil seçilince
-            // doğru dildeki kardeşe inilir, o yüzden hangi üye saklandığı önemsiz.
-            if (t === 'etiket' && item.label_group) {
-              if (_labelRepByGroup[item.label_group] !== item.id) return;  // kardeş — atla
-              const clean = { ...item, name: stripLangTokens(item.name) };
-              opts += `<option value="${item.id}" data-category="Ambalaj" data-pkg="${t}" data-supplier="${escHtml(item.supplier_name || '')}">${ingLabel(clean)}</option>`;
-              return;
-            }
-            opts += `<option value="${item.id}" data-category="Ambalaj" data-pkg="${t}" data-supplier="${escHtml(item.supplier_name || '')}">${ingLabel(item)}</option>`;
-          });
-          opts += '</optgroup>';
-        });
-        if (tipless.length) {
-          opts += '<optgroup label="Ambalaj — (Tipsiz)">';
-          tipless.forEach(item => {
-            opts += `<option value="${item.id}" data-category="Ambalaj" data-supplier="${escHtml(item.supplier_name || '')}">${ingLabel(item)}</option>`;
-          });
-          opts += '</optgroup>';
-        }
+          return opt(item, 'Ambalaj', t);
+        }).join(''));
+      });
+      body += group('Ambalaj — (Tipsiz)', tipless.map(item => opt(item, 'Ambalaj', '')).join(''));
+
+      const head = !toks.length ? '— Hammadde seçiniz —'
+                 : shown ? `— ${shown} sonuç — seçiniz —` : '— Eşleşme yok —';
+      return `<option value="">${head}</option>` + body;
+    }
+
+    /* Satırın arama kutusu → seçenekleri süzgeçle yeniden kur, seçili değeri
+       koru.  Enter: ilk eşleşmeyi seçer (klavyeyle hızlı giriş). */
+    function filterIngredientOptions(rowId) {
+      const row = document.querySelector(`.ingredient-row[data-row-id="${rowId}"]`);
+      if (!row) return;
+      const sel = row.querySelector('.ing-item');
+      const cur = sel.value;
+      sel.innerHTML = buildIngredientOptions(row.querySelector('.ing-search').value, cur);
+      sel.value = cur;
+    }
+    function onIngredientSearchKey(e, rowId) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const row = document.querySelector(`.ingredient-row[data-row-id="${rowId}"]`);
+      const sel = row && row.querySelector('.ing-item');
+      const first = sel && [...sel.options].find(o => o.value && !o.dataset.keep);
+      if (!first) return;
+      if (sel.value !== first.value) {
+        sel.value = first.value;
+        onIngredientChange(rowId, 'item');
       }
-      return opts;
+      sel.focus();
     }
 
     /* ── Brüt Girdi Hesaplama ──────────────────────────────────────────────
@@ -1144,7 +1195,13 @@
         <input type="text" class="form-control ing-phase" maxlength="4"
                placeholder="Faz" title="Üretim föyü FAZ (A/B/D/E)"
                style="text-align:center;text-transform:uppercase;padding:0.55rem 0.2rem;" />
-        <select class="form-select ing-item" onchange="onIngredientChange(${rowCounter}, 'item')">${buildIngredientOptions()}</select>
+        <div class="ing-pick">
+          <input type="search" class="form-control ing-search" autocomplete="off"
+                 placeholder="Ara: ad, Türkçe ad, tedarikçi…" aria-label="Bileşen ara"
+                 oninput="filterIngredientOptions(${rowCounter})"
+                 onkeydown="onIngredientSearchKey(event, ${rowCounter})" />
+          <select class="form-select ing-item" onchange="onIngredientChange(${rowCounter}, 'item')">${buildIngredientOptions()}</select>
+        </div>
         <input type="number" class="ing-percent" min="0" max="100" step="0.01"
                placeholder="%"
                oninput="onIngredientChange(${rowCounter}, 'percent')" />

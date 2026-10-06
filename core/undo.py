@@ -247,6 +247,13 @@ def _undo_inventory_receive(db: Session, entry: UndoLog) -> str:
 
     inv = db.query(Inventory).filter(Inventory.id == inventory_id).first()
     if inv:
+        # Lot başka karta taşınmış mı? (core/stock_lots.move_lot)  Stok sonradan
+        # elle eski değerine getirilmiş olsa bile satır artık hedef kartın
+        # lotudur — silmek o kartın lotunu yok ederdi.
+        if inv.item_id != item_id:
+            raise UndoConflict(
+                f"Lot ({lot_number}) başka bir karta taşınmış, kabul geri alınamaz."
+            )
         # Lot tüketilmiş mi?
         if abs(float(inv.quantity or 0.0) - received_quantity) > 1e-6:
             raise UndoConflict(

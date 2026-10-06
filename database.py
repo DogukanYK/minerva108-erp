@@ -135,6 +135,10 @@ class Item(Base):
     # Ürün bazlı üretim sayacı — lot önerisi (MNR006).  Geçmiş taramasıyla
     # birlikte kullanılır (core/lots.next_sequence), tek başına otorite değil.
     lot_seq = Column(Integer, nullable=False, default=0)
+    # "Aynı malzeme" grubu — lab aynı malzemenin her tedarikçisini AYRI kart
+    # tutuyor (stearil alkol: Tatlıdilimler / Yiğitoğlu / Veser); grup bu
+    # kartların aynı malzeme olduğunu bilir.  Kart en fazla tek grupta.
+    material_group_id = Column(Integer, ForeignKey("material_groups.id"), nullable=True, index=True)
 
     supplier = relationship("Supplier", back_populates="items")
     recipe_ingredients = relationship("RecipeIngredient", back_populates="item")
@@ -205,6 +209,12 @@ class Inventory(Base):
     domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Faz 3 — item.domain ile aynı
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
+    # Lot başka karta taşındıysa (core/stock_lots.move_lot / move_sample_row)
+    # İLK geldiği kart — sonraki taşımalarda korunur.
+    moved_from_item_id = Column(Integer, ForeignKey("items.id"), nullable=True)
+    # Numune stoğa çevrildiği an.  "Yalnız lotu bağla" (link_only) Transaction
+    # yazmadığı için çevrilmiş numunenin tek izi budur.
+    sample_converted_at = Column(DateTime, nullable=True)
 
     item = relationship("Item", foreign_keys=[item_id])
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
@@ -923,6 +933,33 @@ class DuplicateItemDecision(Base):
     decided_at     = Column(DateTime, nullable=True)
     result_note    = Column(Text, nullable=True)             # birleştirme özeti / sebep
     created_at     = Column(DateTime, default=datetime.utcnow)
+
+
+class MaterialGroup(Base):
+    """"Aynı malzeme" grubu — farklı tedarikçi kartlarını bağlar, BİRLEŞTİRMEZ.
+
+    Lab'ın düzeni: aynı malzemenin her tedarikçisi ayrı kart (24.08 sonrası 18
+    kopya kümesinde "farklı ürün, ayrı kalsın" kararı).  Grup stok/defteri
+    birleştirmez; yalnız "bu kartlar aynı malzeme" bilgisini taşır — numune
+    çevirme hedefi, lot taşıma araması ve satın almada alternatif tedarikçi
+    bundan beslenir (core/material_groups.py).  Kart en fazla tek grupta
+    (`items.material_group_id`).  Ad AKTİF kayıtlarda panel içinde
+    TR-katlanmış tekil — uygulama kontrolü.
+    source: manual | dup_kept (lab'ın "ayrı kalsın" kararından tohumlandı,
+    source_ref = karar id) | convert (numune yeni karta çevrilirken açıldı).
+    """
+    __tablename__ = "material_groups"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    name       = Column(String(150), nullable=False)
+    note       = Column(Text, nullable=True)
+    domain     = Column(String(20), default="cosmetics", nullable=False, index=True)
+    is_active  = Column(Boolean, default=True, nullable=False)
+    source     = Column(String(20), default="manual", nullable=False)   # manual | dup_kept | convert
+    source_ref = Column(Integer, nullable=True)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class SystemEvent(Base):
@@ -2195,6 +2232,68 @@ def _backfill_supplier_price_units():
         db.close()
 
 
+def _backfill_material_groups_from_kept():
+    """Lab'ın "farklı ürünler, kartlar ayrı kalacak" kararlarını gruba çevir.
+
+    24.08 sonrası kopya kümelerinin 18'inde lab "ayrı kalsın" dedi — yani bu
+    kartlar aynı malzemenin FARKLI tedarikçi kartları.  Her böyle küme bir
+    `MaterialGroup` olur (ad = karar başlığı, source='dup_kept',
+    source_ref = karar id).  Atlananlar:
+      • `decided_by == 'sistem'` — `pending_clusters` tek aktif kart kalınca
+        kümeyi kendisi kapatır; bu bir lab kararı değildir.
+      • pending (henüz karar yok) ve merged (zaten tek kart) kümeler.
+      • panelde 2'den az aktif kartı kalan küme.
+      • kartlarından biri zaten bir gruptaysa (elle kurulmuş düzen ezilmez).
+
+    BİR KEZ çalışır — `AppSetting` sentinel'i ile korunur (kalıp:
+    `_backfill_supplier_price_units`); değer = açılan grup sayısı.
+    """
+    import json as _json
+    from core.material_groups import unique_name
+
+    SENTINEL = "backfill.material_groups_from_kept.v1"
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter(AppSetting.key == SENTINEL).first():
+            return                                  # zaten koştu → O(1) no-op
+        decisions = (db.query(DuplicateItemDecision)
+                     .filter(DuplicateItemDecision.status == "kept",
+                             DuplicateItemDecision.decided_by.isnot(None),
+                             DuplicateItemDecision.decided_by != "sistem")
+                     .order_by(DuplicateItemDecision.id).all())
+        n = 0
+        for dec in decisions:
+            try:
+                ids = [int(x) for x in _json.loads(dec.item_ids)]
+            except (TypeError, ValueError):
+                continue
+            by_domain = {}
+            for it in (db.query(Item)
+                       .filter(Item.id.in_(ids), Item.is_active == True)   # noqa: E712
+                       .order_by(Item.id).all()):
+                by_domain.setdefault(it.domain or "cosmetics", []).append(it)
+            for dom, items in by_domain.items():
+                if len(items) < 2 or any(it.material_group_id for it in items):
+                    continue
+                grp = MaterialGroup(name=unique_name(db, dom, dec.title), domain=dom,
+                                    source="dup_kept", source_ref=dec.id,
+                                    created_by="sistem")
+                db.add(grp)
+                db.flush()
+                for it in items:
+                    it.material_group_id = grp.id
+                n += 1
+        db.add(AppSetting(key=SENTINEL, value=str(n)))
+        db.commit()
+        if n:
+            print(f"[init_db] aynı malzeme grupları: {n} lab 'ayrı kalsın' kümesinden tohumlandı")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _backfill_drive_folders():
     """original_name'inde '/' olan DriveFile'ları gerçek klasör ağacına yerleştir.
 
@@ -2419,6 +2518,14 @@ def init_db():
             # create_all ile gelir (kısmi tekil indeks dahil); buraya eklenecek
             # kolon yok (bilgi notu).  Migration b7d9f1a3c5e8 geçmiş + temiz
             # kurulum içindir.
+            # "Aynı malzeme" grupları + lot taşıma izi — material_groups YENİ
+            # tablo (create_all); mevcut tablolara eklenen kolonlar burada.
+            # deploy.sh alembic ÇALIŞTIRMIYOR; kolonlar prod'a yalnız bu
+            # satırlarla ulaşır (migration c9e1a3b5d7f2 geçmiş + temiz kurulum).
+            "ALTER TABLE items ADD COLUMN material_group_id INTEGER REFERENCES material_groups(id)",
+            "CREATE INDEX IF NOT EXISTS ix_items_material_group_id ON items(material_group_id)",
+            "ALTER TABLE inventory ADD COLUMN moved_from_item_id INTEGER REFERENCES items(id)",
+            "ALTER TABLE inventory ADD COLUMN sample_converted_at TIMESTAMP",
         ):
             alter_safe(stmt)
 
@@ -2438,6 +2545,13 @@ def init_db():
     # Tedarikçi fiyatlarının para birimi/birim düzeltmesi — sentinel'li, bir kez.
     try:
         _backfill_supplier_price_units()
+    except Exception:
+        pass
+
+    # Lab'ın "ayrı kalsın" kopya kararlarından "aynı malzeme" grupları —
+    # sentinel'li, bir kez.
+    try:
+        _backfill_material_groups_from_kept()
     except Exception:
         pass
 

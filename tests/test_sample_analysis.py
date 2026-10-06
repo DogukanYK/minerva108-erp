@@ -418,19 +418,28 @@ def test_release_after_sample_converted(authed_client, db_session):
     assert _stock(db_session, item) == 10 and _inv_qty(db_session, inv) == 10
     adj = _tx(db_session, item, "Adjustment")
     assert len(adj) == 1 and adj[0].quantity == 3 and adj[0].lot_number == "NUM-C"
-    # merge yolu: aynı lotlu normal satır var → numune satırı silinir → FK NULL → iade no-op
+    # merge yolu: aynı lotlu normal satır var → numune satırı silinir.  06.10.2026'dan
+    # beri bağ silmeden ÖNCE hayatta kalan satıra yönlenir (eskiden FK SET NULL ile
+    # kopuyor, iade sessizce kayboluyordu) → iade o lota + stoğa Adjustment ile döner.
     item2 = _raw(db_session, name="Merge Item", stock=0)
-    db_session.add(Inventory(item_id=item2, lot_number="NUM-M", quantity=5, status="APPROVED", domain="cosmetics"))
+    survivor = Inventory(item_id=item2, lot_number="NUM-M", quantity=5, status="APPROVED",
+                         domain="cosmetics")
+    db_session.add(survivor)
     db_session.commit()
     inv2 = _sample_lot(db_session, item2, 10, lot="NUM-M")
     rid2 = _post(authed_client, ingredients=[
         {"item_id": item2, "source": "sample", "inventory_id": inv2, "quantity": 4}])
     assert authed_client.post(f"/api/inventory/samples/{inv2}/convert", headers=_HDR).status_code == 200
     assert _inv_qty(db_session, inv2) is None
+    assert _inv_qty(db_session, survivor.id) == 11                      # 5 + kalan 6
     x = authed_client.get(f"{_API}/{rid2}").json()["ingredients"][0]
-    assert x["inventory_id"] is None and x["lot_number"] == "NUM-M"     # snapshot kaldı
+    assert x["inventory_id"] == survivor.id and x["lot_number"] == "NUM-M"
+    assert _stock(db_session, item2) == 6
     assert authed_client.delete(f"{_API}/{rid2}", headers=_HDR).status_code == 200
-    assert _stock(db_session, item2) == 6                               # değişmedi
+    assert _stock(db_session, item2) == 10                              # 4 iade defterle döndü
+    assert _inv_qty(db_session, survivor.id) == 15
+    adj = _tx(db_session, item2, "Adjustment")
+    assert len(adj) == 1 and adj[0].quantity == 4 and adj[0].lot_number == "NUM-M"
 
 
 def test_item_with_pending_row_soft_deletes(authed_client, db_session):
