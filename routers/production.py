@@ -22,7 +22,6 @@ from database import (
     RetentionSample, RetentionSampleMovement,
 )
 from core import lots
-from core.auth import get_current_user
 from core.brands import cabinet_location, cabinet_of
 from core.permissions import require_internal_user, require_permission
 from core.notifications import notify_low_stock
@@ -242,7 +241,7 @@ def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[di
 def production_detail(
     prod_id: int,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_internal_user()),
+    _: dict = Depends(require_internal_user(("production", "view"))),
     domain: str = Depends(active_domain),
 ):
     """Tek üretim kaydının föyü — canlı önizleme tarzı brüt/fireli döküm."""
@@ -262,7 +261,7 @@ def production_detail(
 def production_export(
     prod_id: int,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_internal_user()),
+    _: dict = Depends(require_internal_user(("production", "view"))),
     domain: str = Depends(active_domain),
 ):
     """Üretim föyünü .xlsx olarak indir — lab Excel formatının birebir aynısı."""

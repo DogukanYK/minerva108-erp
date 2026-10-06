@@ -131,3 +131,61 @@ def test_recipe_and_production_detail_domain_scoped(authed_client: TestClient, d
     assert authed_client.get(f"/api/production/{ph.id}").status_code == 404
     authed_client.cookies.set("active_domain", "supplement")
     assert authed_client.get(f"/api/recipes/{rc.id}").status_code == 200
+
+
+def _override_client(client, db, username, perms: dict):
+    import json
+    u = User(username=username,
+             password_hash=bcrypt.hashpw(b"minerva123", bcrypt.gensalt()).decode(),
+             full_name=username, role="Staff", is_active=True)
+    u.permissions = json.dumps(perms)
+    db.add(u); db.commit()
+    r = client.post("/api/login", json={"username": username, "password": "minerva123"}, headers=_H)
+    assert r.status_code == 200, r.text
+    return client
+
+
+def test_kiosk_account_cannot_read_formulas_or_drive(client: TestClient, db_session: Session):
+    """Kiosk tableti (yalnız pdks.kiosk, 10 yıllık token) reçete formülü,
+    izlenebilirlik ve Drive okuyamaz."""
+    c = _override_client(client, db_session, "kiosk-tablet", {"pdks": {"kiosk": True}})
+    for p in ("/api/recipes", "/api/drive/files", "/api/traceability/expiring",
+              "/api/inventory/samples", "/api/suppliers", "/api/transactions"):
+        assert c.get(p).status_code == 403, p
+
+
+def test_any_permission_accepts_each_page_gate(client: TestClient, db_session: Session):
+    """Ortak okuma uçları, çağıran sayfaların kapılarından HERHANGİ biriyle açılır:
+    yalnız reports.view olan (Defter sayfası) /api/suppliers + /api/transactions
+    okur; yalnız inventory.view olan (Stoklar) /api/transactions okur."""
+    c = _override_client(client, db_session, "raporcu", {"reports": {"view": True}})
+    for p in ("/api/suppliers", "/api/transactions", "/api/inventory/summary"):
+        assert c.get(p).status_code == 200, p
+    assert c.get("/api/inventory").status_code == 403          # Mal Kabul: inventory.view şart
+    c.post("/api/logout", headers=_H)
+    c = _override_client(client, db_session, "depocu", {"inventory": {"view": True}})
+    for p in ("/api/transactions", "/api/inventory", "/api/suppliers"):
+        assert c.get(p).status_code == 200, p
+    assert c.get("/api/production").status_code == 403
+
+
+def test_production_detail_positive_in_own_domain(authed_client: TestClient, db_session: Session):
+    rc = Recipe(name="Kapsül reçete 2", output_quantity=1, domain="supplement", is_active=True)
+    db_session.add(rc); db_session.commit()
+    ph = ProductionHistory(recipe_id=rc.id, produced_quantity=1, domain="supplement")
+    db_session.add(ph); db_session.commit()
+    authed_client.cookies.set("active_domain", "supplement")
+    # föy kurulabilir (200) ya da reçete satırsız olduğu için 409 — ama 404 DEĞİL
+    assert authed_client.get(f"/api/production/{ph.id}").status_code in (200, 409)
+    assert authed_client.get(f"/api/production/{ph.id}/export").status_code != 404
+
+
+def test_by_item_hides_other_domain_lots(authed_client: TestClient, db_session: Session):
+    it = Item(name="Karışık lot kartı", sku="MIX-1", category="Hammadde", unit="g",
+              current_stock=5, domain="cosmetics", is_active=True)
+    db_session.add(it); db_session.commit()
+    db_session.add_all([Inventory(item_id=it.id, lot_number="K1", quantity=3, domain="cosmetics"),
+                        Inventory(item_id=it.id, lot_number="S1", quantity=2, domain="supplement")])
+    db_session.commit()
+    lots = authed_client.get(f"/api/inventory/by-item/{it.id}").json()["lots"]
+    assert [l["lot_number"] for l in lots] == ["K1"]

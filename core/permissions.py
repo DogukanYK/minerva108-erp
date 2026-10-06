@@ -280,17 +280,23 @@ def require_any_permission(*pairs):
     return _dep
 
 
-def require_internal_user():
-    """Yalnız iç kullanıcı: aktif ve Distributor DEĞİL.  Yalnız girişe bakan
-    (`get_current_user`) okuma uçları dış bayi hesabına da açıktı (reçete
-    formülleri, Drive, izlenebilirlik) ve pasifleştirilmiş kullanıcının hâlâ
-    geçerli token'ı — kiosk token'ı 10 yıl — engellenmiyordu.  Rol JWT'den
-    değil DB'den CANLI okunur."""
+def require_internal_user(*pairs):
+    """Yalnız iç kullanıcı: aktif ve Distributor DEĞİL; `pairs` verilirse ayrıca
+    bunlardan en az biri.  Yalnız girişe bakan (`get_current_user`) okuma uçları
+    dış bayi hesabına, kiosk tabletine (yalnız pdks.kiosk yetkili, 10 yıllık
+    token) ve pasifleştirilmiş kullanıcının hâlâ geçerli token'ına açıktı
+    (reçete formülleri, Drive, izlenebilirlik).  Rol JWT'den değil DB'den CANLI
+    okunur ve dönen payload'a o yazılır — `_can_see_finance(payload)` bayat
+    token rolüyle karar vermesin."""
+    label = " | ".join(f"{c}.{a}" for c, a in pairs)
+
     def _dep(payload: dict = Depends(get_current_user), db: Session = Depends(get_db)):
         user = db.query(User).filter(User.id == int(payload.get("sub", 0))).first()
         if not user or not user.is_active:
             raise HTTPException(status_code=401, detail="Yetkisiz.")
         if (user.role or "") == "Distributor":
             raise HTTPException(status_code=403, detail="Bu bölüm bayi hesaplarına kapalı.")
-        return payload
+        if pairs and not any(_has_permission(user, c, a) for c, a in pairs):
+            raise HTTPException(status_code=403, detail=f"Yetersiz yetki: {label}")
+        return {**payload, "role": user.role}
     return _dep
