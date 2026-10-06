@@ -260,3 +260,37 @@ def require_permission(category: str, action: str):
             )
         return payload
     return _dep
+
+
+def require_any_permission(*pairs):
+    """`require_permission`'ın "en az biri" hâli — birden fazla sayfanın
+    çağırdığı ortak okuma uçları için (ör. /api/suppliers hem Ürünler hem Mal
+    Kabul hem Raporlar sayfasından çağrılır; her sayfanın kendi kapısı var).
+        Depends(require_any_permission(("items", "view"), ("inventory", "view")))
+    Kullanıcı DB'den canlı okunur; pasif kullanıcı 401, hiçbiri yoksa 403."""
+    label = " | ".join(f"{c}.{a}" for c, a in pairs)
+
+    def _dep(payload: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+        user = db.query(User).filter(User.id == int(payload.get("sub", 0))).first()
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail="Yetkisiz.")
+        if not any(_has_permission(user, c, a) for c, a in pairs):
+            raise HTTPException(status_code=403, detail=f"Yetersiz yetki: {label}")
+        return payload
+    return _dep
+
+
+def require_internal_user():
+    """Yalnız iç kullanıcı: aktif ve Distributor DEĞİL.  Yalnız girişe bakan
+    (`get_current_user`) okuma uçları dış bayi hesabına da açıktı (reçete
+    formülleri, Drive, izlenebilirlik) ve pasifleştirilmiş kullanıcının hâlâ
+    geçerli token'ı — kiosk token'ı 10 yıl — engellenmiyordu.  Rol JWT'den
+    değil DB'den CANLI okunur."""
+    def _dep(payload: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+        user = db.query(User).filter(User.id == int(payload.get("sub", 0))).first()
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail="Yetkisiz.")
+        if (user.role or "") == "Distributor":
+            raise HTTPException(status_code=403, detail="Bu bölüm bayi hesaplarına kapalı.")
+        return payload
+    return _dep

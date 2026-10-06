@@ -24,7 +24,7 @@ from database import (
 from core import lots
 from core.auth import get_current_user
 from core.brands import cabinet_location, cabinet_of
-from core.permissions import require_permission
+from core.permissions import require_internal_user, require_permission
 from core.notifications import notify_low_stock
 from core.domain import active_domain
 from core.retention import (CFG_EXTRA, CFG_SHELF_LIFE, DEFAULT_EXTRA_MONTHS,
@@ -87,7 +87,8 @@ class QCFormRequest(BaseModel):
 # ─── Production Endpoints ────────────────────────────────────────────────────
 
 @router.get("/production")
-def list_production_history(db: Session = Depends(get_db), domain: str = Depends(active_domain)):
+def list_production_history(db: Session = Depends(get_db), domain: str = Depends(active_domain),
+                            _: dict = Depends(require_permission("production", "view"))):
     rows = (db.query(ProductionHistory)
             .filter(ProductionHistory.domain == domain)
             .order_by(ProductionHistory.id.desc()).limit(100).all())
@@ -241,10 +242,12 @@ def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[di
 def production_detail(
     prod_id: int,
     db: Session = Depends(get_db),
-    _: dict = Depends(get_current_user),
+    _: dict = Depends(require_internal_user()),
+    domain: str = Depends(active_domain),
 ):
     """Tek üretim kaydının föyü — canlı önizleme tarzı brüt/fireli döküm."""
-    prod = db.query(ProductionHistory).filter(ProductionHistory.id == prod_id).first()
+    prod = db.query(ProductionHistory).filter(ProductionHistory.id == prod_id,
+                                              ProductionHistory.domain == domain).first()
     if not prod:
         return JSONResponse(status_code=404, content={"detail": "Üretim kaydı bulunamadı."})
     sheet = _build_production_sheet(prod, db)
@@ -259,10 +262,12 @@ def production_detail(
 def production_export(
     prod_id: int,
     db: Session = Depends(get_db),
-    _: dict = Depends(get_current_user),
+    _: dict = Depends(require_internal_user()),
+    domain: str = Depends(active_domain),
 ):
     """Üretim föyünü .xlsx olarak indir — lab Excel formatının birebir aynısı."""
-    prod = db.query(ProductionHistory).filter(ProductionHistory.id == prod_id).first()
+    prod = db.query(ProductionHistory).filter(ProductionHistory.id == prod_id,
+                                              ProductionHistory.domain == domain).first()
     if not prod:
         return JSONResponse(status_code=404, content={"detail": "Üretim kaydı bulunamadı."})
     sheet = _build_production_sheet(prod, db)
@@ -750,7 +755,8 @@ def start_production(
 # ─── QC Endpoints ────────────────────────────────────────────────────────────
 
 @router.get("/qc/quarantine")
-def list_quarantine(db: Session = Depends(get_db), domain: str = Depends(active_domain)):
+def list_quarantine(db: Session = Depends(get_db), domain: str = Depends(active_domain),
+                    _: dict = Depends(require_permission("qc", "view"))):
     """
     QC sayfasının beslediği endpoint.  İki kaynaktan gelir:
       • status='QUARANTINE' — geleneksel mal kabul karantinası

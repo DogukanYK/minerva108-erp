@@ -15,7 +15,7 @@ from typing import Optional, List
 
 from database import get_db, Item, Recipe, RecipeIngredient, to_tr
 from core.auth import get_current_user
-from core.permissions import _can_see_finance, require_permission
+from core.permissions import _can_see_finance, require_internal_user, require_permission
 from core.domain import active_domain
 
 router = APIRouter(prefix="/api", tags=["recipes"])
@@ -94,7 +94,7 @@ def _calc_recipe_costs(recipe: Recipe, db: Session) -> dict:
 def list_recipes(
     include_ingredients: bool = False,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_internal_user()),
     domain: str = Depends(active_domain),
 ):
     rows = (db.query(Recipe)
@@ -302,9 +302,10 @@ def ingredients_report_export(
 def get_recipe_detail(
     recipe_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_internal_user()),
+    domain: str = Depends(active_domain),
 ):
-    recipe = db.query(Recipe).filter(Recipe.id == recipe_id).first()
+    recipe = db.query(Recipe).filter(Recipe.id == recipe_id, Recipe.domain == domain).first()
     if not recipe:
         return JSONResponse(status_code=404, content={"detail": "Reçete bulunamadı."})
     target = db.query(Item).filter(Item.id == recipe.target_item_id).first() if recipe.target_item_id else None

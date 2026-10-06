@@ -44,7 +44,8 @@ from database import (
     Recipe, RecipeIngredient, RetentionSample,
 )
 from core.auth import get_current_user
-from core.permissions import _can_see_finance, require_permission
+from core.permissions import (_can_see_finance, require_any_permission, require_internal_user,
+                              require_permission)
 from core.notifications import notify_low_stock
 from core.undo import record as record_undoable
 from core.domain import active_domain
@@ -837,7 +838,7 @@ def update_item(
 def get_item_by_barcode(
     barcode: str,
     db: Session = Depends(get_db),
-    _: dict = Depends(get_current_user),
+    _: dict = Depends(require_internal_user()),
     domain: str = Depends(active_domain),
 ):
     """
@@ -925,7 +926,9 @@ def bulk_delete_items(data: BulkDeleteRequest, db: Session = Depends(get_db), _:
 # ─── Suppliers Endpoints ─────────────────────────────────────────────────────
 
 @router.get("/suppliers")
-def list_suppliers(db: Session = Depends(get_db), domain: str = Depends(active_domain)):
+def list_suppliers(db: Session = Depends(get_db), domain: str = Depends(active_domain),
+                   _: dict = Depends(require_any_permission(("items", "view"), ("inventory", "view"),
+                                                            ("reports", "view")))):
     rows = (db.query(Supplier)
             .filter(Supplier.is_active == True, Supplier.domain == domain)
             .order_by(Supplier.id.desc()).all())
@@ -1007,7 +1010,8 @@ def bulk_delete_suppliers(data: SupplierBulkDeleteRequest, db: Session = Depends
 # ─── Inventory / Receiving Endpoints ────────────────────────────────────────
 
 @router.get("/inventory")
-def list_inventory(db: Session = Depends(get_db), domain: str = Depends(active_domain)):
+def list_inventory(db: Session = Depends(get_db), domain: str = Depends(active_domain),
+                   _: dict = Depends(require_permission("inventory", "view"))):
     # joinedload — item + supplier ilişkileri tek query'de gelir (N+1 önler)
     rows = (
         db.query(Inventory)
@@ -1299,7 +1303,8 @@ def adjust_stock(
 # ─── Inventory summary + transactions feed ──────────────────────────────────
 
 @router.get("/inventory/summary")
-def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(active_domain)):
+def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(active_domain),
+                      _: dict = Depends(require_any_permission(("inventory", "view"), ("reports", "view")))):
     """
     Mevcut stok özeti — `Item.current_stock` source-of-truth olarak
     kullanılır. Önceden APPROVED Inventory satırlarının quantity'lerini
@@ -1337,7 +1342,8 @@ def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(activ
 def inventory_by_item(
     item_id: int,
     db: Session = Depends(get_db),
-    _: dict = Depends(get_current_user),
+    _: dict = Depends(require_internal_user()),
+    domain: str = Depends(active_domain),
 ):
     """
     Tek bir ürünün lot bazlı envanter dökümü — Stoklar sayfasında satıra
@@ -1348,14 +1354,14 @@ def inventory_by_item(
     numune ayrımı yapılan ürünlerde "kaçı showroom, kaçı şahit" tek bakışta
     görülür.
     """
-    item = db.query(Item).filter(Item.id == item_id).first()
+    item = db.query(Item).filter(Item.id == item_id, Item.domain == domain).first()
     if not item:
         return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
 
     rows = (
         db.query(Inventory)
         .options(joinedload(Inventory.supplier))
-        .filter(Inventory.item_id == item_id)
+        .filter(Inventory.item_id == item_id, Inventory.domain == domain)
         .order_by(Inventory.id.desc())
         .all()
     )
@@ -1404,7 +1410,7 @@ def inventory_by_item(
 
 
 @router.get("/inventory/samples")
-def list_samples(db: Session = Depends(get_db), _: dict = Depends(get_current_user),
+def list_samples(db: Session = Depends(get_db), _: dict = Depends(require_internal_user()),
                  domain: str = Depends(active_domain)):
     """
     Numune lotları — Ürünler sayfası "Numune" sekmesini besler.  Var olan
@@ -1521,7 +1527,7 @@ class _AvailableLotsRequest(BaseModel):
 def available_lots(
     data: _AvailableLotsRequest,
     db: Session = Depends(get_db),
-    _: dict = Depends(get_current_user),
+    _: dict = Depends(require_internal_user()),
     domain: str = Depends(active_domain),
 ):
     """
@@ -1564,7 +1570,8 @@ def available_lots(
 
 
 @router.get("/transactions")
-def list_transactions(db: Session = Depends(get_db), domain: str = Depends(active_domain)):
+def list_transactions(db: Session = Depends(get_db), domain: str = Depends(active_domain),
+                      _: dict = Depends(require_any_permission(("inventory", "view"), ("reports", "view")))):
     # 500 satır × N+1 ürün lookup'ı yerine joinedload ile tek query.
     # Transaction'da domain kolonu yok → Item join'iyle aktif panele süzülür.
     rows = (
@@ -1599,7 +1606,7 @@ def _import_dt():
 
 
 @router.get("/traceability/lot/{lot_number}")
-def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(require_internal_user())):
     """
     Full genealogy tree for a lot. Resolves:
       • Lot identity (Inventory record + supplier)
@@ -1739,7 +1746,7 @@ def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(
 
 
 @router.get("/traceability/expiring")
-def list_expiring(db: Session = Depends(get_db), _: dict = Depends(get_current_user),
+def list_expiring(db: Session = Depends(get_db), _: dict = Depends(require_internal_user()),
                   domain: str = Depends(active_domain)):
     """All APPROVED inventory lots expiring within the next 60 days, sorted most-urgent first."""
     from datetime import datetime as _dt, timedelta

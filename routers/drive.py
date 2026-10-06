@@ -23,7 +23,7 @@ from typing import Optional, List
 
 from database import (get_db, DriveFile, DriveFolder, DriveCollection,
                       DriveCollectionFile, DriveCollectionFolder)
-from core.auth import get_current_user
+from core.permissions import require_internal_user
 from core import drive as D
 
 router = APIRouter(prefix="/api/drive", tags=["drive"])
@@ -80,7 +80,7 @@ async def upload_file(
     rel_path: Optional[str] = Form(None),
     folder_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_internal_user()),
 ):
     actor = current_user.get("full_name") or current_user.get("username") or "—"
     try:
@@ -109,7 +109,7 @@ async def upload_file(
 
 
 @router.get("/files")
-def list_files(db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+def list_files(db: Session = Depends(get_db), _: dict = Depends(require_internal_user())):
     rows = db.query(DriveFile).order_by(DriveFile.id.desc()).all()
     # her dosya kaç koleksiyonda?
     from sqlalchemy import func
@@ -129,7 +129,7 @@ def list_files(db: Session = Depends(get_db), _: dict = Depends(get_current_user
 
 
 @router.delete("/files/{file_id}")
-def delete_file(file_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+def delete_file(file_id: int, db: Session = Depends(get_db), _: dict = Depends(require_internal_user())):
     f = db.query(DriveFile).filter(DriveFile.id == file_id).first()
     if not f:
         return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
@@ -160,7 +160,7 @@ def _serialize_collection(db: Session, c: DriveCollection) -> dict:
 
 
 @router.get("/collections")
-def list_collections(db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+def list_collections(db: Session = Depends(get_db), _: dict = Depends(require_internal_user())):
     rows = db.query(DriveCollection).order_by(DriveCollection.id.desc()).all()
     return [_serialize_collection(db, c) for c in rows]
 
@@ -169,7 +169,7 @@ def list_collections(db: Session = Depends(get_db), _: dict = Depends(get_curren
 def create_collection(
     data: CollectionCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_internal_user()),
 ):
     actor = current_user.get("full_name") or current_user.get("username") or "—"
     # token: özel link (slug) verilmişse onu, yoksa tahmin edilemez rastgele
@@ -208,7 +208,7 @@ def create_collection(
 def update_collection(
     cid: int, data: CollectionUpdate,
     db: Session = Depends(get_db),
-    _: dict = Depends(get_current_user),
+    _: dict = Depends(require_internal_user()),
 ):
     c = db.query(DriveCollection).filter(DriveCollection.id == cid).first()
     if not c:
@@ -247,7 +247,7 @@ def update_collection(
 
 
 @router.delete("/collections/{cid}")
-def delete_collection(cid: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+def delete_collection(cid: int, db: Session = Depends(get_db), _: dict = Depends(require_internal_user())):
     c = db.query(DriveCollection).filter(DriveCollection.id == cid).first()
     if not c:
         return JSONResponse(status_code=404, content={"detail": "Link bulunamadı."})
@@ -272,7 +272,7 @@ def _file_dict(r, counts, to_tr) -> dict:
 
 @router.get("/list")
 def list_folder(folder_id: Optional[int] = Query(None),
-                db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+                db: Session = Depends(get_db), _: dict = Depends(require_internal_user())):
     """Bir klasörün içeriği — breadcrumb + alt klasörler + dosyalar (Drive ana görünümü)."""
     from sqlalchemy import func
     from database import to_tr
@@ -308,7 +308,7 @@ def list_folder(folder_id: Optional[int] = Query(None),
 
 
 @router.get("/tree")
-def folder_tree(db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+def folder_tree(db: Session = Depends(get_db), _: dict = Depends(require_internal_user())):
     """Tüm klasör ağacı — sol panel + 'Taşı' klasör seçici için."""
     rows = db.query(DriveFolder).order_by(DriveFolder.name).all()
     return {"folders": [{"id": f.id, "name": f.name, "parent_id": f.parent_id} for f in rows]}
@@ -316,7 +316,7 @@ def folder_tree(db: Session = Depends(get_db), _: dict = Depends(get_current_use
 
 @router.post("/folders", status_code=201)
 def create_folder(data: FolderCreate, db: Session = Depends(get_db),
-                  current_user: dict = Depends(get_current_user)):
+                  current_user: dict = Depends(require_internal_user())):
     actor = current_user.get("full_name") or current_user.get("username") or "—"
     if data.parent_id is not None and not db.query(DriveFolder.id).filter(DriveFolder.id == data.parent_id).first():
         return JSONResponse(status_code=404, content={"detail": "Üst klasör bulunamadı."})
@@ -330,7 +330,7 @@ def create_folder(data: FolderCreate, db: Session = Depends(get_db),
 
 @router.put("/folders/{fid}")
 def rename_folder(fid: int, data: FolderRename, db: Session = Depends(get_db),
-                  _: dict = Depends(get_current_user)):
+                  _: dict = Depends(require_internal_user())):
     f = db.query(DriveFolder).filter(DriveFolder.id == fid).first()
     if not f:
         return JSONResponse(status_code=404, content={"detail": "Klasör bulunamadı."})
@@ -343,7 +343,7 @@ def rename_folder(fid: int, data: FolderRename, db: Session = Depends(get_db),
 
 
 @router.delete("/folders/{fid}")
-def delete_folder(fid: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+def delete_folder(fid: int, db: Session = Depends(get_db), _: dict = Depends(require_internal_user())):
     """Klasörü ÖZYİNELEMELİ sil — alt klasörler + dosyalar (disk dahil) + link bağları."""
     f = db.query(DriveFolder).filter(DriveFolder.id == fid).first()
     if not f:
@@ -360,7 +360,7 @@ def delete_folder(fid: int, db: Session = Depends(get_db), _: dict = Depends(get
 
 @router.put("/files/{file_id}")
 def rename_file(file_id: int, data: FileRename, db: Session = Depends(get_db),
-                _: dict = Depends(get_current_user)):
+                _: dict = Depends(require_internal_user())):
     f = db.query(DriveFile).filter(DriveFile.id == file_id).first()
     if not f:
         return JSONResponse(status_code=404, content={"detail": "Dosya bulunamadı."})
@@ -373,7 +373,7 @@ def rename_file(file_id: int, data: FileRename, db: Session = Depends(get_db),
 
 @router.get("/dl/{file_id}")
 def download_own_file(file_id: int, db: Session = Depends(get_db),
-                      _: dict = Depends(get_current_user)):
+                      _: dict = Depends(require_internal_user())):
     """Oturum açmış kullanıcı bir Drive dosyasını indirir (yönetim görünümü)."""
     f = db.query(DriveFile).filter(DriveFile.id == file_id).first()
     if not f:
@@ -464,7 +464,7 @@ def _read_csv_rows(path):
 
 @router.get("/files/{file_id}/preview/meta")
 def preview_meta(file_id: int, db: Session = Depends(get_db),
-                 _: dict = Depends(get_current_user)):
+                 _: dict = Depends(require_internal_user())):
     """Önizleme meta verisi: kip + (metin/tablo için) içerik gömülü."""
     f = db.query(DriveFile).filter(DriveFile.id == file_id).first()
     if not f:
@@ -507,7 +507,7 @@ def preview_meta(file_id: int, db: Session = Depends(get_db),
 
 @router.get("/files/{file_id}/preview/raw")
 def preview_raw(file_id: int, db: Session = Depends(get_db),
-                _: dict = Depends(get_current_user)):
+                _: dict = Depends(require_internal_user())):
     """Foto/PDF için GÜVENLİ inline bayt akışı (beyaz liste).  Diğer türler 415."""
     f = db.query(DriveFile).filter(DriveFile.id == file_id).first()
     if not f:
@@ -537,7 +537,7 @@ def preview_raw(file_id: int, db: Session = Depends(get_db),
 
 @router.post("/move")
 def move_items(data: MoveRequest, db: Session = Depends(get_db),
-               _: dict = Depends(get_current_user)):
+               _: dict = Depends(require_internal_user())):
     """Dosya ve/veya klasörleri hedef klasöre taşı (target_folder_id None = kök)."""
     target = data.target_folder_id
     if target is not None and not db.query(DriveFolder.id).filter(DriveFolder.id == target).first():
@@ -562,7 +562,7 @@ def move_items(data: MoveRequest, db: Session = Depends(get_db),
 
 @router.get("/search")
 def search_drive(q: str = Query("", max_length=120),
-                 db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
+                 db: Session = Depends(get_db), _: dict = Depends(require_internal_user())):
     """Ağaç genelinde dosya + klasör arama — sonuçlar yol bilgisiyle."""
     term = (q or "").strip()
     if len(term) < 2:
