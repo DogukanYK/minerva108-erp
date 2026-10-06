@@ -237,10 +237,11 @@ def build_report(db: Session, req: PlanRequest, domain: str) -> dict:
         raise pp.PlanInputError(
             "Seçilen ürünlerin hiçbirinin reçetesi yok; hesaplanacak malzeme bulunamadı. "
             "Reçetesiz ürüne ⚙ ayarlarından başka bir ürünün reçetesini seçebilirsiniz.")
-    ids = set()
+    ids, alt_ids = set(), set()
     for m in (res.get("materials") or []) + (res.get("held") or []):
         ids.update(i for i in (m.get("member_ids") or []) if i is not None)
-    pin = pricing.load_price_inputs(db, ids, domain)
+        alt_ids.update(a["item_id"] for a in ((m.get("material_group") or {}).get("alts") or []))
+    pin = pricing.load_price_inputs(db, ids, domain, extra_item_ids=alt_ids - ids)
     cur = req.options.currency
     pricing.attach(res, pin, _rates_if_needed(pin, cur), currency=cur,
                    round_to_package=req.options.round_to_package)
@@ -252,7 +253,7 @@ def _sup_lines(m: dict, cur: str) -> List[dict]:
     [{t: metin, s: 'b' kalın | 'g' gri | 'r' kırmızı}]."""
     from core.purchase_plan import _amount_near
     from core.purchase_plan_pdf import PKG_SUFFIX, _qty
-    from core.purchase_pricing import (CURRENCY_SYMBOL, UNIT_TEXT, money, price_text,
+    from core.purchase_pricing import (CURRENCY_SYMBOL, UNIT_TEXT, money, price_text, relation_texts,
                                        unpriced_offer_text)
     sym = CURRENCY_SYMBOL.get(cur, cur)
     out: List[dict] = []
@@ -275,21 +276,8 @@ def _sup_lines(m: dict, cur: str) -> List[dict]:
     for o in offers:
         if o.get("price") is None:
             out.append({"t": unpriced_offer_text(o), "s": "g"})
-    rel = m.get("relations") or {}
-    extra: List[str] = []
-    cards = rel.get("card") or []
-    if cards:
-        extra.append("Stok kartında yazan: " + " / ".join(x["name"] for x in cards))
-    last = rel.get("last")
-    if last:
-        if any(x.get("key") == last.get("key") for x in cards):
-            extra[0] += f" (son alım {last['date']})" if last.get("date") else ""
-        else:
-            extra.append(f"Son alım: {last['name']}" + (f" ({last['date']})" if last.get("date") else ""))
-    for s in rel.get("samples") or []:
-        extra.append(f"Numune gönderdi: {s['name']}" + (f" ({s['date']})" if s.get("date") else ""))
-    if extra:
-        out.append({"t": " · ".join(extra), "s": "g"})
+    # İlişkiler (stok kartı / son alım / numune · Sipariş: · Aynı malzeme:) — PDF ile tek kaynak
+    out += [{"t": t, "s": "g"} for t in relation_texts(m)]
     if m.get("pkg_buy") is not None:
         out.append({"t": f"Ambalaj katına yuvarlanırsa: {_amount_near(m['pkg_buy'], m['price_unit'])}"
                          f" · {money(m.get('pkg_amount'), cur)}", "s": "g"})
@@ -300,12 +288,14 @@ def _preview_view(res: dict) -> dict:
     """Önizleme yanıtı: rapor + `sections` (malzeme bölümlerinde `row_keys`)
     + malzeme başına sunucuda biçimlenmiş `ui` (tedarikçi hücresi, tutar) —
     TR sayı biçimi tek kaynakta (Python) kalsın, JS yeniden yazmasın."""
-    from core.purchase_pricing import money, sections
+    from core.purchase_pricing import firms_view, money, sections
     cur = (res.get("pricing") or {}).get("currency") or "USD"
     for m in (res.get("materials") or []) + (res.get("held") or []):
         m["ui"] = {"sup": _sup_lines(m, cur),
                    "amount": money(m["amount"], cur) if m.get("amount") is not None else None,
-                   "name_notes": [c["text"] for c in m.get("cautions") or [] if c["code"] in _NAME_CAUTIONS]}
+                   "name_notes": [c["text"] for c in m.get("cautions") or [] if c["code"] in _NAME_CAUTIONS],
+                   # "Tedarikçiler (N)" açılır listesi: firma dökümü + aynı malzemenin diğer kartları
+                   "firms": firms_view(m, cur)}
     secs = []
     for s in sections(res):
         d = {k: v for k, v in s.items() if k != "rows"}

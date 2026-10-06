@@ -1239,6 +1239,25 @@
     }).join('') + '</div>';
   }
 
+  // "Tedarikçiler (N)" — bizim kayıtlarımızdaki firmalar (stok kartı, alım,
+  // numune, sipariş, fiyat listesi) + aynı malzeme grubundaki diğer kartlar.
+  // Metinler sunucuda biçimlenir (m.ui.firms — core/purchase_pricing.firms_view).
+  function firmsHtml(m) {
+    var f = m.ui && m.ui.firms;
+    if (!f) return '';
+    var li = function (x) {
+      return '<li' + (x.w ? ' class="w"' : '') + '><b>' + esc(x.t) + '</b>' +
+        ((x.d || []).length ? ' — ' + (x.d || []).map(esc).join(' · ') : '') + '</li>';
+    };
+    var html = '<details class="sap-firms"><summary>' + esc(f.title) + '</summary>';
+    if ((f.firms || []).length) html += '<ul>' + f.firms.map(li).join('') + '</ul>';
+    if ((f.alts || []).length) {
+      html += '<div class="sap-firms-h">' + esc(f.alts_title || 'Aynı malzeme — diğer kartlar') + '</div>' +
+        '<ul>' + f.alts.map(li).join('') + '</ul>';
+    }
+    return html + '</details>';
+  }
+
   function perProductHtml(m) {
     var pp = m.per_product || [];
     if (!pp.length) return '';
@@ -1260,7 +1279,7 @@
         '<td class="num">' + esc(d.need_text) + '</td><td class="num">' + esc(d.stock_text) + '</td>' +
         (openOn ? '<td class="num">' + esc(d.open_text) + '</td>' : '') +
         '<td class="num"><b>' + esc(d.buy_text) + '</b></td>' +
-        (opts.noSup ? '' : '<td>' + supHtml(m) + '</td><td class="num">' + (m.ui && m.ui.amount ? '<b>' + esc(m.ui.amount) + '</b>' : '—') + '</td>') + '</tr>';
+        (opts.noSup ? '' : '<td>' + supHtml(m) + firmsHtml(m) + '</td><td class="num">' + (m.ui && m.ui.amount ? '<b>' + esc(m.ui.amount) + '</b>' : '—') + '</td>') + '</tr>';
     }).join('');
     var total = (opts.total_text && !opts.noSup)
       ? '<tr class="sap-total"><td colspan="' + (openOn ? 6 : 5) + '">Toplam</td><td class="num">' + esc(opts.total_text) + '</td></tr>' : '';

@@ -16,8 +16,10 @@ Satın Alma Planı — Excel çıktısı.
         G (Alınacak) = MAX(0, ROUND(D−E−F, 3))      (brüt modda = D)
         K (Tutar)    = IF(J="", "", ROUND(G*J, 0))   (Excel ROUND = round_half_up)
     + bölüm ara toplamları ve GENEL TOPLAM (SUM).  Lab Excel'de fiyatı ya da
-    elimizdekini değiştirince tutar kendiliğinden güncellenir.
-  • "Tedarikçiler" — seçilen + aday firmalar, iletişim, kart adları.
+    elimizdekini değiştirince tutar kendiliğinden güncellenir.  "Not" (X)
+    sonrasında Y "Aynı malzeme (diğer kartlar)" ve Z "Sipariş geçmişi".
+  • "Tedarikçiler" — seçilen + aday firmalar, iletişim, kart adları, K
+    "İlişki türleri" (stok kartı / alım / numune / sipariş / eşdeğer kart …).
   • "Ürünler"      — hedef adet, bitmiş stok, kapasite, kısıtlayan malzeme.
   • "Ürün detayı"  — ürün × malzeme ihtiyaç matrisi (kalem biriminde).
   • "Özet"         — kapsam, toplamlar, bölüm listesi, notlar.
@@ -45,8 +47,8 @@ from io import BytesIO
 from typing import Dict, List, Optional
 
 from core.purchase_plan import _amount_near
-from core.purchase_pricing import (CURRENCY_SYMBOL, contact_line, money, notes_lines, round_half_up, sections,
-                                   unpriced_offer_text)
+from core.purchase_pricing import (CURRENCY_SYMBOL, REL_TYPE_TEXT, alt_texts, contact_line, money, notes_lines,
+                                   order_texts, round_half_up, sections, unpriced_offer_text)
 from core.xlsx_cache import inject_cached_values
 
 SHEET_LIST = "Alım listesi"
@@ -61,9 +63,11 @@ GROUP_TEXT = {"list": "Fiyat listesinde var", "none": "Fiyat yok — teklif alı
 MANUAL_SECTION_TEXT = {"label": "Etiket", "shipping": "Koli / palet", "other": "Diğer"}
 MATERIAL_SECTIONS = ("raw_priced", "raw_unpriced", "pkg_priced", "pkg_unpriced", "labels")
 
-# Alım listesi sütunları (spec C4 tablosu)
-COLS = "ABCDEFGHIJKLMNOPQRSTUVWX"
-WIDTHS = (10, 22, 34, 12, 12, 10, 12, 7, 20, 11, 11, 24, 18, 9, 10, 18, 9, 18, 9, 22, 24, 24, 40, 60)
+# Alım listesi sütunları (spec C4 tablosu).  "Not" X'te (24) sabit; "Aynı
+# malzeme (diğer kartlar)" Y ve "Sipariş geçmişi" Z onun SONRASINA eklendi —
+# formüller D–K, eski sütunlar kaymaz.
+COLS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+WIDTHS = (10, 22, 34, 12, 12, 10, 12, 7, 20, 11, 11, 24, 18, 9, 10, 18, 9, 18, 9, 22, 24, 24, 40, 60, 50, 40)
 
 
 def _excel_round(x: float, digits: int) -> float:
@@ -166,7 +170,7 @@ def _sheet_list(wb, report: dict, secs: List[dict], cache: Dict[str, object]) ->
                "Alınacak", "Birim", "Seçilen tedarikçi", f"Birim fiyat ({sym})", f"Tutar ({sym})",
                "Fiyat kaynağı", "T1", f"Fiyat 1 ({sym})", "Ambalaj 1", "T2", f"Fiyat 2 ({sym})",
                "T3", f"Fiyat 3 ({sym})", "Stok kartında yazan", "Son alım", "Numune",
-               "Kullanıldığı ürünler", "Not"])
+               "Kullanıldığı ürünler", "Not", "Aynı malzeme (diğer kartlar)", "Sipariş geçmişi"])
     _style_header(ws)
 
     subtotal_cells: List[str] = []
@@ -193,7 +197,8 @@ def _sheet_list(wb, report: dict, secs: List[dict], cache: Dict[str, object]) ->
                     o[0]["package"] if o[0] else None,
                     o[1]["name"] if o[1] else "", o[1]["price"] if o[1] else None,
                     o[2]["name"] if o[2] else "", o[2]["price"] if o[2] else None,
-                    card, last_t, samples, _products_text(m), _note_text(m, cur)]
+                    card, last_t, samples, _products_text(m), _note_text(m, cur),
+                    "; ".join(alt_texts(m)), "; ".join(order_texts(m))]
             r = _append_as_text(ws, vals)
             first = first or r
             # G — Alınacak
@@ -276,7 +281,8 @@ def _sheet_suppliers(wb, report: dict, cur: str) -> None:
     ws = wb.create_sheet(SHEET_SUP)
     sym = CURRENCY_SYMBOL.get(cur, cur)
     ws.append(["Firma", "Kalem (en ucuz olduğu)", f"Tutar ({sym})", "Yetkili", "Telefon", "E-posta",
-               "Adres / şehir", "Bilgi kaynağı", "Sistemdeki kart adı", "Fiyatı olmayan kalemlerde aday"])
+               "Adres / şehir", "Bilgi kaynağı", "Sistemdeki kart adı", "Fiyatı olmayan kalemlerde aday",
+               "İlişki türleri"])
     _style_header(ws)
     sup = report.get("suppliers") or {}
     chosen = {b["key"]: b for b in sup.get("chosen") or []}
@@ -298,13 +304,14 @@ def _sheet_suppliers(wb, report: dict, cur: str) -> None:
             c.get("person") or "", c.get("phone") or "", c.get("email") or "", c.get("address") or "",
             src, " / ".join(c.get("cards") or []),
             ", ".join(f"{it['name']} ({', '.join(it.get('reasons') or [])})" if it.get("reasons") else it["name"]
-                      for it in cand_items)])
+                      for it in cand_items),
+            ", ".join(REL_TYPE_TEXT.get(t, t) for t in (b.get("types") or []))])
         ws.cell(r, 3).number_format = "#,##0"
     unrelated = sup.get("unrelated") or []
     if unrelated:
         _append_as_text(ws, ["Sistemde hiçbir firmayla ilişkisi yok", 0, None, "", "", "", "",
-                             "Yeni tedarikçi bulunmalı", "", ", ".join(u["name"] for u in unrelated)])
-    for col, w in zip("ABCDEFGHIJ", (26, 12, 12, 20, 16, 28, 28, 26, 34, 90)):
+                             "Yeni tedarikçi bulunmalı", "", ", ".join(u["name"] for u in unrelated), ""])
+    for col, w in zip("ABCDEFGHIJK", (26, 12, 12, 20, 16, 28, 28, 26, 34, 90, 40)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "B2"
 

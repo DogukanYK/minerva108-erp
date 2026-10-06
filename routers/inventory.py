@@ -82,6 +82,10 @@ class ItemCreateRequest(BaseModel):
     # Ad-çakışması uyarısı görüldükten sonra kullanıcı yine de yeni kart
     # açmak isterse True gönderilir (bkz. _find_name_conflict).
     force:          bool = False
+    # Numune giriş penceresinin "bu tedarikçi için yeni kart aç" akışı: yeni
+    # kart bu kartın "aynı malzeme" grubuna katılır (grubu yoksa ikisi için
+    # açılır — core.material_groups.join).  Aynı panel, aktif, aynı tür.
+    join_group_of_item_id: Optional[int] = None
 
 
 class BulkDeleteRequest(BaseModel):
@@ -406,11 +410,32 @@ def _conflict_payload(it: Item) -> dict:
 
 
 @router.post("/items", status_code=201)
-def create_item(data: ItemCreateRequest, db: Session = Depends(get_db),
-                _: dict = Depends(require_permission("items", "create")),
+def create_item(data: ItemCreateRequest, request: Request, db: Session = Depends(get_db),
+                current_user: dict = Depends(require_permission("items", "create")),
                 domain: str = Depends(active_domain)):
     err = _validate_variation(db, data.parent_id, data.variation_name)
     if err: return err
+
+    # `join_group_of_item_id` BİLİNÇLİ İSTİSNA: grup yazma kuralı items.edit'tir
+    # (/api/material-groups) ama bu yol items.create ile açılır — numune giriş
+    # penceresinin "bu tedarikçi için yeni kart aç" akışı.  Numuneyi giren
+    # LabTech'tir (items.create var, items.edit yok); P1'in çevirme penceresindeki
+    # new_item yolu da (inventory.receive) yeni kartı aynı şekilde gruba katar.
+    # Yalnız YENİ açılan kart gruba girer; var olan kartlar taşınamaz,
+    # çıkarılamaz, grup adı değişmez — onlar items.edit ister.
+    group_source = None
+    if data.join_group_of_item_id is not None:
+        group_source = (db.query(Item)
+                        .filter(Item.id == data.join_group_of_item_id, Item.domain == domain,
+                                Item.is_active == True).first())               # noqa: E712
+        if group_source is None:
+            return JSONResponse(status_code=400, content={
+                "detail": "Grubuna katılınacak kart bulunamadı ya da pasif."})
+        kind = stock_lots.lot_kind(data.category)
+        if kind == "finished" or kind != stock_lots.lot_kind(group_source.category):
+            return JSONResponse(status_code=400, content={
+                "detail": f"Yeni kart «{group_source.name}» ile aynı malzeme grubuna giremez — "
+                          f"tür farklı (hammadde / ambalaj) ya da bitmiş ürün."})
 
     if not data.force:
         conflict = _find_name_conflict(db, domain, data.name, data.name_tr)
@@ -443,9 +468,22 @@ def create_item(data: ItemCreateRequest, db: Session = Depends(get_db),
         domain=domain,                     # Faz 3 — aktif panele damgala
     )
     db.add(item)
+    grp = None
+    if group_source is not None:
+        db.flush()
+        actor = (current_user or {}).get("full_name") or (current_user or {}).get("username") or ""
+        grp = material_groups.join(db, group_source, item, actor=actor)
     db.commit()
     db.refresh(item)
-    return {"id": item.id, "message": "Ürün başarıyla eklendi."}
+    out = {"id": item.id, "message": "Ürün başarıyla eklendi.", "material_group": None}
+    if grp is not None:
+        out["material_group"] = {"id": grp.id, "name": grp.name}
+        out["warning"] = material_groups.unit_warning([group_source.unit, item.unit])
+        log_admin_event(db, request, actor=current_user, action="material_group.add",
+                        target_type="material_group", target_id=grp.id, target_name=grp.name,
+                        details={"item_id": item.id, "item": item.name,
+                                 "kaynak_kart": group_source.id, "yol": "yeni kart"})
+    return out
 
 
 # ─── Kopya kartı kararları — lab popup'ı ────────────────────────────────────
@@ -495,11 +533,21 @@ def decide_duplicate(
         row.decided_by = actor
         row.decided_at = datetime.utcnow()
         row.result_note = "Lab kararı: farklı ürünler, kartlar ayrı kalacak."
+        # "Ayrı kalsın" = aynı malzemenin farklı tedarikçi kartları → "aynı
+        # malzeme" grubu (satın alma alternatifleri + numune çevirme hedefi).
+        groups = material_groups.group_decision(db, row, actor=actor)
         db.commit()
+        grp_info = [{"id": g.id, "name": g.name} for g in groups]
         log_admin_event(db, request, actor=current_user, action="items.dup_keep",
                         target_type="dup_decision", target_id=row.id,
-                        target_name=row.title, details={"karar": "ayrı kalsın"})
-        return {"message": f"«{row.title}» — kartlar ayrı bırakıldı."}
+                        target_name=row.title,
+                        details={"karar": "ayrı kalsın",
+                                 "ayni_malzeme_grubu": [g["id"] for g in grp_info]})
+        msg = f"«{row.title}» — kartlar ayrı bırakıldı."
+        if grp_info:
+            msg += f" «{grp_info[0]['name']}» aynı malzeme grubunda bağlandı."
+        return {"message": msg,
+                "material_group": grp_info[0] if grp_info else None}
 
     if data.action != "merge":
         return JSONResponse(status_code=400, content={"detail": "Geçersiz karar."})
@@ -535,13 +583,23 @@ def decide_duplicate(
         return JSONResponse(status_code=500,
                             content={"detail": "Birleştirme sırasında hata — hiçbir şey değişmedi."})
 
+    dissolved = [dict(g, loser_id=s["loser_id"]) for s in summaries
+                 for g in s.get("dissolved_groups") or []]
     log_admin_event(db, request, actor=current_user, action="items.dup_merge",
                     target_type="dup_decision", target_id=row.id,
                     target_name=row.title,
                     details={"hedef": data.target_item_id,
                              "birlesen": [s["loser_id"] for s in summaries],
                              "tasinan_stok": [f'{s["moved_stock"]:g} {s["unit"]}'
-                                              for s in summaries]})
+                                              for s in summaries],
+                             "dagilan_gruplar": [g["id"] for g in dissolved]})
+    # Kaybeden kartın "aynı malzeme" grubu tek aktif karta inip dağıldıysa —
+    # /api/material-groups'un remove ucuyla aynı iz.
+    for g in dissolved:
+        log_admin_event(db, request, actor=current_user, action="material_group.dissolve",
+                        target_type="material_group", target_id=g["id"], target_name=g["name"],
+                        details={"sebep": "kart birleştirme", "karar": row.id,
+                                 "kaybeden": g["loser_id"], "kazanan": data.target_item_id})
     moved = sum(s["moved_stock"] for s in summaries)
     unit = summaries[0]["unit"] if summaries else ""
     return {"message": f"«{row.title}» birleştirildi — {len(summaries)} kart kapandı, "
@@ -732,8 +790,32 @@ def _item_has_audit(db: Session, item_id: int) -> bool:
     return False
 
 
+def _prune_material_groups(db: Session, group_ids) -> list:
+    """Kart arşivlendi / silindi / gruptan düştü → etkilenen "aynı malzeme"
+    grupları budanır: aktif üyesi 2'nin altına düşen grup dağılır
+    (core.material_groups.prune — /api/material-groups uçlarıyla aynı kural;
+    yoksa tek kartlık grup çipte durur, adı rezerve kalırdı).  Commit
+    ÇAĞIRANA aittir.  Dönüş: dağılan grupların [{id, name}]'i."""
+    out = []
+    for gid in sorted({g for g in group_ids if g}):
+        if material_groups.prune(db, gid):
+            grp = db.query(MaterialGroup).filter(MaterialGroup.id == gid).first()
+            out.append({"id": gid, "name": grp.name if grp else ""})
+    return out
+
+
+def _log_dissolved(db: Session, request: Request, actor: dict, dissolved: list,
+                   reason: str, item_ids: list) -> None:
+    """`_prune_material_groups`'un dağıttığı gruplar için audit (commit SONRASI)."""
+    for g in dissolved:
+        log_admin_event(db, request, actor=actor, action="material_group.dissolve",
+                        target_type="material_group", target_id=g["id"], target_name=g["name"],
+                        details={"sebep": reason, "item_ids": item_ids})
+
+
 @router.delete("/items/{item_id}")
-def delete_item(item_id: int, db: Session = Depends(get_db), _: dict = Depends(require_permission("items", "delete"))):
+def delete_item(item_id: int, request: Request, db: Session = Depends(get_db),
+                current_user: dict = Depends(require_permission("items", "delete"))):
     """
     Ürün silme — iki davranış birden:
 
@@ -750,6 +832,9 @@ def delete_item(item_id: int, db: Session = Depends(get_db), _: dict = Depends(r
 
     Soft-delete kullanıcıya "Ürün arşivlendi" mesajı ile bildirilir; toast
     aynı yeşil tonda, lab fark etmez ama biz audit'i koruruz.
+
+    Kart bir "aynı malzeme" grubundaysa ve grupta tek aktif kart kalırsa grup
+    dağılır (`_prune_material_groups`).
     """
     item = db.query(Item).filter(Item.id == item_id).first()
     if not item:
@@ -760,10 +845,13 @@ def delete_item(item_id: int, db: Session = Depends(get_db), _: dict = Depends(r
         msg = "Bu ürün silinemez — " + "; ".join(blockers) + "."
         return JSONResponse(status_code=400, content={"detail": msg})
 
+    gid = item.material_group_id
     if _item_has_audit(db, item_id):
         # Soft-delete: kayıtlar korunsun
         item.is_active = False
+        dissolved = _prune_material_groups(db, [gid])
         db.commit()
+        _log_dissolved(db, request, current_user, dissolved, "kart arşivlendi", [item_id])
         return {
             "message": f"'{item.name}' arşivlendi (geçmiş kayıtlar korundu).",
             "soft_deleted": True,
@@ -771,7 +859,9 @@ def delete_item(item_id: int, db: Session = Depends(get_db), _: dict = Depends(r
 
     # Hard-delete: hiç bağ yok
     db.delete(item)
+    dissolved = _prune_material_groups(db, [gid])
     db.commit()
+    _log_dissolved(db, request, current_user, dissolved, "kart silindi", [item_id])
     return {"message": "Ürün silindi.", "soft_deleted": False}
 
 
@@ -809,6 +899,20 @@ def update_item(
 
     err = _validate_variation(db, data.parent_id, data.variation_name, self_id=item_id)
     if err: return err
+
+    # "Aynı malzeme" grubu tek türdür (hammadde | ambalaj; bitmiş ürün hiç) —
+    # gruplu kartın türü değişirse grup karışır ve /members her eklemede 400
+    # verirdi.  Önce gruptan çıkarılmalı (düzenleme penceresindeki bölüm).
+    if item.material_group_id and \
+            stock_lots.lot_kind(data.category) != stock_lots.lot_kind(item.category):
+        grp = (db.query(MaterialGroup)
+               .filter(MaterialGroup.id == item.material_group_id,
+                       MaterialGroup.is_active == True).first())             # noqa: E712
+        if grp is not None:
+            return JSONResponse(status_code=400, content={
+                "detail": f"«{item.name}» «{grp.name}» aynı malzeme grubunda — kart türü "
+                          f"(hammadde / ambalaj / bitmiş ürün) grupta değiştirilemez. Önce "
+                          f"kartı gruptan çıkarın."})
 
     # ── Undo için BEFORE snapshot (mutation öncesi mevcut değerleri yakala) ──
     before_snapshot = {
@@ -907,7 +1011,8 @@ def get_item_by_barcode(
 
 
 @router.post("/items/bulk-delete")
-def bulk_delete_items(data: BulkDeleteRequest, db: Session = Depends(get_db), _: dict = Depends(require_permission("items", "delete"))):
+def bulk_delete_items(data: BulkDeleteRequest, request: Request, db: Session = Depends(get_db),
+                      current_user: dict = Depends(require_permission("items", "delete"))):
     """
     Toplu silme — single-delete'le aynı 3 davranış:
       • Reçete/varyasyon bağı → block, batch iptal
@@ -916,16 +1021,20 @@ def bulk_delete_items(data: BulkDeleteRequest, db: Session = Depends(get_db), _:
 
     Hard-blok'lar mevcutsa hiçbir şey silinmez (yarım iş kalmasın).
     Aksi halde her ürün uygun yola gönderilir; kullanıcıya kaç hard +
-    kaç soft yapıldığı raporlanır.
+    kaç soft yapıldığı raporlanır.  Etkilenen "aynı malzeme" grupları
+    budanır (tek aktif kart kalan grup dağılır).
     """
     blocked:  list[str] = []   # "ürün adı (gerekçe)"
     soft_ids: list[int] = []
     hard_ids: list[int] = []
+    group_ids: set = set()
 
     for iid in data.item_ids:
         it = db.query(Item).filter(Item.id == iid).first()
         if not it:
             continue
+        if it.material_group_id:
+            group_ids.add(it.material_group_id)
         reasons = _item_delete_blockers(db, iid)
         if reasons:
             blocked.append(f"{it.name} — {'; '.join(reasons)}")
@@ -952,7 +1061,13 @@ def bulk_delete_items(data: BulkDeleteRequest, db: Session = Depends(get_db), _:
             db.query(Item).filter(Item.id.in_(soft_ids))
             .update({Item.is_active: False}, synchronize_session=False)
         )
+    # Toplu UPDATE/DELETE oturumdaki nesneleri tazelemez (synchronize_session=False)
+    # — budama sorguları DB'den okur ama oturumdaki eski nesneler karışmasın.
+    db.expire_all()
+    dissolved = _prune_material_groups(db, group_ids)
     db.commit()
+    _log_dissolved(db, request, current_user, dissolved, "toplu silme",
+                   sorted(set(soft_ids) | set(hard_ids)))
 
     parts = []
     if hard_count: parts.append(f"{hard_count} ürün silindi")
@@ -1662,7 +1777,9 @@ def _name_tokens(name) -> set:
 
 def _names_similar(a: Item, b: Item) -> bool:
     """Basit benzer ad: birinin sözcükleri diğerinde tamamen geçiyor (name ya
-    da name_tr).  Tek sözcükte en az 5 harf aranır — "YAĞ" her yağa uymasın."""
+    da name_tr).  Tek sözcükte en az 5 harf aranır — "YAĞ" her yağa uymasın.
+    Ayrıca malzeme anahtarı (`material_groups.material_key`, TR/EN eşanlamlı)
+    aynıysa benzer: SETİL STEARİL ALKOL ↔ CETYL STEARYL ALCOHOL."""
     for x in (_name_tokens(a.name), _name_tokens(a.name_tr)):
         for y in (_name_tokens(b.name), _name_tokens(b.name_tr)):
             small, big = (x, y) if len(x) <= len(y) else (y, x)
@@ -1670,7 +1787,9 @@ def _names_similar(a: Item, b: Item) -> bool:
                 continue
             if len(small) >= 2 or len(next(iter(small))) >= 5:
                 return True
-    return False
+    ka = {material_groups.material_key(n) for n in (a.name, a.name_tr) if n} - {()}
+    kb = {material_groups.material_key(n) for n in (b.name, b.name_tr) if n} - {()}
+    return bool(ka & kb)
 
 
 @router.get("/inventory/samples/{inventory_id}/convert-options")

@@ -19,7 +19,8 @@ birebir uyarlaması: yatay A4, antet yok, sayfa altında "Minerva 108 · başlı
 stoklar tarih" + "Sayfa N"; başta kapsam metni, turuncu uyarı kutusu, yeşil
 özet kutusu; malzeme tablolarında en ucuz teklif kalın, diğerleri gri
 "(daha pahalı)", fiyatsızda kırmızı "Fiyat yok — teklif alınacak", altında
-stok kartı / son alım / numune ilişkileri ve uyarı notları; elle işaretlemek
+stok kartı / son alım / numune ilişkileri, "Sipariş:" ve "Aynı malzeme:"
+(eşdeğer tedarikçi kartları) satırları ve uyarı notları; elle işaretlemek
 için boş "Alındı" sütunu.
 
 Bütün dinamik metin (malzeme/tedarikçi adı, not, iletişim) reportlab
@@ -32,7 +33,8 @@ from typing import List, Optional
 from xml.sax.saxutils import escape
 
 from core.purchase_plan import _amount_near, tr_num
-from core.purchase_pricing import CURRENCY_SYMBOL, UNIT_TEXT, money, price_text, sections, unpriced_offer_text
+from core.purchase_pricing import (CURRENCY_SYMBOL, UNIT_TEXT, money, price_text, relation_texts, sections,
+                                   unpriced_offer_text)
 
 CURRENCY_NAME = {"USD": "ABD doları", "EUR": "avro", "TRY": "Türk lirası"}
 KIND_HEADER = {"raw": "Hammadde", "packaging": "Ambalaj", "label": "Etiket"}
@@ -155,7 +157,8 @@ class _Ctx:
 def _sup_cell(c: _Ctx, m: dict) -> str:
     """Tedarikçi ve birim fiyat hücresi — fiyatli_liste.sup_cell sırası:
     en ucuz kalın · diğerleri gri (daha pahalı) · fiyatsızsa kırmızı ·
-    ilişkiler (stok kartı / son alım / numune) · notlar."""
+    ilişkiler (stok kartı / son alım / numune; "Sipariş:" ve "Aynı malzeme:"
+    satırları en çok 3 + "+N" — `relation_texts`, önizlemeyle aynı) · notlar."""
     out: List[str] = []
     offers = m.get("offers") or []
     priced = [o for o in offers if o.get("price") is not None]
@@ -176,21 +179,7 @@ def _sup_cell(c: _Ctx, m: dict) -> str:
     for o in offers:
         if o.get("price") is None:
             out.append(c.grey(_e(unpriced_offer_text(o))))
-    rel = m.get("relations") or {}
-    extra: List[str] = []
-    cards = rel.get("card") or []
-    if cards:
-        extra.append("Stok kartında yazan: " + " / ".join(_e(x["name"]) for x in cards))
-    last = rel.get("last")
-    if last:
-        if any(x.get("key") == last.get("key") for x in cards):
-            extra[0] += f" (son alım {_e(last['date'])})" if last.get("date") else ""
-        else:
-            extra.append(f"Son alım: {_e(last['name'])}" + (f" ({_e(last['date'])})" if last.get("date") else ""))
-    for s in rel.get("samples") or []:
-        extra.append(f"Numune gönderdi: {_e(s['name'])}" + (f" ({_e(s['date'])})" if s.get("date") else ""))
-    if extra:
-        out.append(c.grey(" · ".join(extra)))
+    out += [c.grey(_e(t)) for t in relation_texts(m)]
     if m.get("pkg_buy") is not None:
         out.append(c.grey(f"Ambalaj katına yuvarlanırsa: {_e(_amount_near(m['pkg_buy'], m['price_unit']))}"
                           f" · {c.money(m.get('pkg_amount'))}"))

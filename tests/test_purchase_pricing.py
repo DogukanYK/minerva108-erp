@@ -10,7 +10,13 @@ Kapsam: en ucuz önce / fiyatsız sonda · birim temeli (g→kg, ml→l, adet) �
 kur çevirisi (enjekte Rates) · round_half_up .5 · ambalaj katı · birleşik
 kartların teklif birleşimi · ilişkiler (son alım numuneyi hariç tutar,
 numuneler listelenir, atlanacak tedarikçiler) · supplier_key katlama ·
-rehber + kontrol listesi · sections() numaralandırması ve notlar.
+rehber + kontrol listesi · sections() numaralandırması ve notlar ·
+firma dökümü (classify_input, lot sınıflaması: çevirmeyle birleşen alım
+ALIM kalır, link_only çevrilmiş numune, taşınmış lotun alımı ilk kartın
+Input'undan, aktarım), to_tr tarihleri (23:30 UTC = ertesi gün), sipariş
+satırları ("+N"), analiz sonucu, "aynı malzeme" alternatifleri + aday
+sebepleri, relation_texts / firms_view, DB yükleyicide girişler/siparişler/
+analizler (domain kapsamı, eşdeğer kartın teklifi yüklenmez).
 """
 from datetime import date, datetime
 
@@ -20,8 +26,10 @@ from core.consumption import IngredientRec, ItemRec, RecipeRec
 from core.fx import Rates
 from core.purchase_plan import LotRec, PlanInputs, compute
 from core.purchase_plan_models import PlanRequest
-from core.purchase_pricing import (OfferRec, PriceInputs, SupplierIndex, SupplierRec, attach,
-                                   load_price_inputs, money, round_half_up, sections, supplier_key)
+from core.purchase_pricing import (AnalysisRec, LotMetaRec, OfferRec, OrderRec, PriceInputs, ReceiptRec,
+                                   SupplierIndex, SupplierRec, alt_texts, attach, classify_input, firms_view,
+                                   load_price_inputs, money, order_texts, relation_texts, round_half_up,
+                                   sections, supplier_key)
 
 NOW = datetime(2026, 10, 5, 9, 0)
 
@@ -321,3 +329,375 @@ def test_load_price_inputs_domain_scoped(db_session):
 def test_load_price_inputs_default_skip_and_empty_ids(db_session):
     pin = load_price_inputs(db_session, [], "cosmetics")
     assert pin.offers == {} and pin.skip_suppliers == ("BİLİNMEYEN", "MİNERVA", "NUMUNE GÖNDERİM")
+
+
+# ─── Firma dökümü + lot sınıflaması ─────────────────────────────────────────
+
+def test_classify_input_kinds():
+    assert classify_input("Mal kabul — Lot: A, Konum: Raf 3", "A") == "purchase"
+    assert classify_input("Numune stoğa çevrildi — Lot: N | Tedarikçi: X | Kart: A → B", "N") == "converted"
+    assert classify_input("Excel içe aktarım — SKU: 12", "IMP-20260101-000000-5") == "import"
+    assert classify_input("Excel Bulk Import — Sheet: HAMMADDE · Raw: '5'", "XLS-20260101-5") == "import"
+    assert classify_input("Bulk Import — stok.xlsx", None) == "import"
+    assert classify_input("Stok girişi", "IMP-1") == "import"
+    assert classify_input("İade (IR-2026-1) ← Mağaza | Sağlam", None) == "return"
+    assert classify_input("Üretim çıktısı — Reçete: Krem | Dil: TR | Lot: MNR1", "MNR1") == "production"
+    assert classify_input("Lot taşındı ← «JOJOBA» (id 185) | Lot: MİNERVA", "MİNERVA") == "move"
+    assert classify_input(None, None) == "other" and classify_input("Elle giriş", "L") == "other"
+
+
+JOJ_SUP = {1: SupplierRec(id=1, name="KRK GIDA"), 2: SupplierRec(id=2, name="NATURALYA"),
+           3: SupplierRec(id=3, name="DOĞASA"), 4: SupplierRec(id=4, name="ESKİ FİRMA"),
+           5: SupplierRec(id=5, name="AKTARIM AŞ"), 6: SupplierRec(id=6, name="BİLİNMEYEN")}
+
+
+def _jojoba_pin(**kw):
+    lots = {1: [
+        # gerçek alım; 05.10'da aynı lot no'lu numune çevrilip BİRLEŞTİ (converted Input da var)
+        LotRec(item_id=1, lot_number="MİNERVA", supplier_id=1, created_at=datetime(2026, 8, 1, 7), quantity=5710,
+               inventory_id=10),
+        LotRec(item_id=1, lot_number="NUM-1", supplier_id=2, created_at=datetime(2026, 8, 24, 9), quantity=50,
+               inventory_id=11),                                   # çevirme Input'u
+        LotRec(item_id=1, lot_number="NUM-2", supplier_id=3, created_at=datetime(2026, 9, 10, 9), quantity=20,
+               inventory_id=12),                                   # link_only: yalnız sample_converted_at
+        LotRec(item_id=1, lot_number="OLD", supplier_id=4, created_at=datetime(2026, 3, 3, 9), quantity=1,
+               inventory_id=13),                                   # Input'u yok → eski alım
+        LotRec(item_id=1, lot_number="IMP-20260101-1", supplier_id=5, created_at=datetime(2026, 1, 1, 9),
+               inventory_id=14),
+        LotRec(item_id=1, lot_number="X", supplier_id=6, created_at=datetime(2026, 9, 30, 9), inventory_id=15),
+    ]}
+    rc = {1: [ReceiptRec(1, "MİNERVA", 5000, datetime(2026, 8, 1, 8), "purchase"),
+              ReceiptRec(1, "MİNERVA", 710, datetime(2026, 9, 2, 8), "purchase"),
+              ReceiptRec(1, "MİNERVA", 50, datetime(2026, 10, 5, 5, 40), "converted"),
+              ReceiptRec(1, "NUM-1", 50, datetime(2026, 10, 5, 5, 41), "converted"),
+              ReceiptRec(1, "IMP-20260101-1", 100, datetime(2026, 1, 1, 9), "import")]}
+    kw.setdefault("lot_meta", {12: LotMetaRec(sample_converted_at=datetime(2026, 10, 5, 9))})
+    return PriceInputs(suppliers=JOJ_SUP, card_supplier={1: 1}, lots=lots, receipts=rc,
+                       converted_lots={(1, "MİNERVA"), (1, "NUM-1")}, **kw)
+
+
+def test_lot_classification_and_firm_types():
+    res = plan([it(1, "JOJOBA YAĞI", unit="g")], [(1, 1)])
+    attach(res, _jojoba_pin(analyses={1: [AnalysisRec(item_id=1, inventory_id=11, lot="NUM-1", result="uygun",
+                                                       document_no="NA-2026-00012",
+                                                       at=datetime(2026, 9, 1))]}), None)
+    rel = mat(res, 1)["relations"]
+    # eski şekil korunur; çevirmeyle birleşen gerçek alım NUMUNE sayılmaz
+    assert rel["card"] == [{"name": "KRK GIDA", "key": "KRKGIDA", "supplier_id": 1}]
+    assert rel["last"] == {"name": "KRK GIDA", "key": "KRKGIDA", "date": "02.09.2026"}
+    assert [(x["name"], x["date"]) for x in rel["samples"]] == [("DOĞASA", "10.09.2026"),
+                                                                ("NATURALYA", "24.08.2026")]
+    firms = {f["name"]: f for f in rel["firms"]}
+    assert [f["name"] for f in rel["firms"]] == ["KRK GIDA", "ESKİ FİRMA", "DOĞASA", "NATURALYA", "AKTARIM AŞ"]
+    krk = firms["KRK GIDA"]
+    assert krk["types"] == ["card", "purchase", "sample"]
+    assert krk["purchases"] == {"count": 1, "last_date": "02.09.2026", "last_qty_text": "5,7 kg"}
+    assert krk["samples"] == [{"lot": "MİNERVA", "date": "05.10.2026", "qty_text": "50 gram", "converted": True,
+                               "analysis": None}]
+    nat = firms["NATURALYA"]["samples"][0]
+    assert nat["converted"] is True and nat["qty_text"] == "50 gram"
+    assert nat["analysis"] == {"result": "uygun", "result_text": "uygun", "doc_no": "NA-2026-00012"}
+    assert firms["DOĞASA"]["samples"][0]["converted"] is True             # link_only → çevrilmiş numune
+    assert firms["ESKİ FİRMA"]["purchases"] == {"count": 1, "last_date": "03.03.2026", "last_qty_text": ""}
+    assert firms["AKTARIM AŞ"]["types"] == ["import"]
+    assert firms["AKTARIM AŞ"]["imports"] == {"count": 1, "last_date": "01.01.2026"}
+    assert "BİLİNMEYEN" not in firms                                      # skip listesi korunur
+    # aday sebepleri: son alım + önceki alım firması + aktarım
+    reasons = {b["name"]: it_["reasons"] for b in res["suppliers"]["candidates"] for it_ in b["items"]}
+    assert reasons["KRK GIDA"] == ["stok kartında yazan", "son alım 02.09.2026"]
+    assert reasons["ESKİ FİRMA"] == ["alım 03.03.2026"]
+    assert reasons["AKTARIM AŞ"] == ["stok aktarımı 01.01.2026"]
+    assert reasons["NATURALYA"] == ["numune 24.08.2026"]
+    assert relation_texts(mat(res, 1))[0] == (
+        "Stok kartında yazan: KRK GIDA (son alım 02.09.2026) · Numune gönderdi: DOĞASA (10.09.2026) · "
+        "Numune gönderdi: NATURALYA (24.08.2026, analiz uygun)")
+
+
+def test_dates_are_tr_local_and_sample_analysis_by_lot_snapshot():
+    res = plan([it(1, "Yağ", unit="ml")], [(1, 1)])
+    lots = {1: [LotRec(item_id=1, lot_number="S1", supplier_id=2, is_sample=True, quantity=30,
+                       created_at=datetime(2026, 10, 5, 23, 30), inventory_id=5)]}
+    an = {1: [AnalysisRec(item_id=1, inventory_id=None, lot="S1", result=None, document_no="NA-2026-00020")]}
+    attach(res, PriceInputs(suppliers=JOJ_SUP, lots=lots, analyses=an), None)
+    rel = mat(res, 1)["relations"]
+    assert rel["samples"] == [{"name": "NATURALYA", "key": "NATURALYA", "date": "06.10.2026"}]   # 23:30 UTC
+    s = rel["firms"][0]["samples"][0]
+    assert s == {"lot": "S1", "date": "06.10.2026", "qty_text": "30 ml", "converted": False,
+                 "analysis": {"result": None, "result_text": "beklemede", "doc_no": "NA-2026-00020"}}
+
+
+def test_moved_lot_purchase_found_on_origin_card():
+    res = plan([it(2, "JOJOBA YAĞI — NATURALYA", unit="g")], [(2, 1)])
+    lots = {2: [LotRec(item_id=2, lot_number="L9", supplier_id=2, created_at=datetime(2026, 8, 24, 9),
+                       quantity=400, inventory_id=20)]}
+    rc = {1: [ReceiptRec(1, "L9", 1000, datetime(2026, 8, 24, 10), "purchase")]}
+    meta = {20: LotMetaRec(moved_from_item_id=1)}
+    attach(res, PriceInputs(suppliers=JOJ_SUP, lots=lots, receipts=rc, lot_meta=meta), None)
+    f = mat(res, 2)["relations"]["firms"][0]
+    assert f["types"] == ["purchase"] and f["purchases"]["last_qty_text"] == "1,0 kg"
+    # iz yoksa Input'u bilinmeyen eski alım (created_at tarihli)
+    attach(res, PriceInputs(suppliers=JOJ_SUP, lots=lots, receipts=rc), None)
+    f = mat(res, 2)["relations"]["firms"][0]
+    assert f["purchases"] == {"count": 1, "last_date": "24.08.2026", "last_qty_text": ""}
+
+
+def test_own_card_conversion_beats_unrelated_origin_purchase():
+    """185'te KRK'nın 'MİNERVA' alım lotu var; Naturalya numunesi de 'MİNERVA'
+    lot no'suyla 185'e girilip hedef 920 seçilerek çevrildi (moved_from=185,
+    çevirme Input'u 920'de).  Kendi karttaki çevirme kanıtı ilk karttaki
+    ilgisiz alımdan önce gelir → NUMUNE; "Son alım: NATURALYA" yazılmaz."""
+    res = plan([it(920, "JOJOBA YAĞI (NUMUNE)", unit="g")], [(920, 1)])
+    conv_at = datetime(2026, 10, 5, 5, 40)
+    lots = {920: [LotRec(item_id=920, lot_number="MİNERVA", supplier_id=2, created_at=datetime(2026, 8, 24, 9),
+                         quantity=50, inventory_id=30)]}
+    rc = {185: [ReceiptRec(185, "MİNERVA", 5000, datetime(2026, 6, 1, 8), "purchase")],
+          920: [ReceiptRec(920, "MİNERVA", 50, conv_at, "converted")]}
+    meta = {30: LotMetaRec(moved_from_item_id=185, sample_converted_at=conv_at)}
+    attach(res, PriceInputs(suppliers=JOJ_SUP, lots=lots, receipts=rc, lot_meta=meta), None)
+    rel = mat(res, 920)["relations"]
+    assert rel["last"] is None
+    assert [f["name"] for f in rel["firms"]] == ["NATURALYA"]
+    nat = rel["firms"][0]
+    assert nat["types"] == ["sample"] and nat["purchases"]["count"] == 0
+    assert nat["samples"] == [{"lot": "MİNERVA", "date": "24.08.2026", "qty_text": "50 gram",
+                               "converted": True, "analysis": None}]
+    # Tam taşınmış birleşik lot (ilk kartta alım + çevirme, kendi kartta Input yok) yine ALIM
+    lots2 = {920: [LotRec(item_id=920, lot_number="MİNERVA", supplier_id=1, created_at=datetime(2026, 6, 1, 8),
+                          quantity=5050, inventory_id=31)]}
+    rc2 = {185: [ReceiptRec(185, "MİNERVA", 5000, datetime(2026, 6, 1, 8), "purchase"),
+                 ReceiptRec(185, "MİNERVA", 50, conv_at, "converted")]}
+    meta2 = {31: LotMetaRec(moved_from_item_id=185, sample_converted_at=conv_at)}
+    attach(res, PriceInputs(suppliers=JOJ_SUP, lots=lots2, receipts=rc2, lot_meta=meta2), None)
+    rel = mat(res, 920)["relations"]
+    assert rel["last"] == {"name": "KRK GIDA", "key": "KRKGIDA", "date": "01.06.2026"}
+    krk = rel["firms"][0]
+    assert krk["types"] == ["purchase", "sample"] and krk["purchases"]["last_qty_text"] == "5,0 kg"
+    # Taşımada lot no değişti (MİNERVA → MİNERVA-2): (kart, lot) Input'u bulunmaz,
+    # iz `sample_converted_at`'te → yine çevrilmiş numune, "eski alım" değil
+    lots3 = {920: [LotRec(item_id=920, lot_number="MİNERVA-2", supplier_id=2,
+                          created_at=datetime(2026, 8, 24, 9), quantity=10, inventory_id=32)]}
+    rc3 = {221: [ReceiptRec(221, "MİNERVA", 10, conv_at, "converted")]}
+    meta3 = {32: LotMetaRec(moved_from_item_id=221, sample_converted_at=conv_at)}
+    attach(res, PriceInputs(suppliers=JOJ_SUP, lots=lots3, receipts=rc3, lot_meta=meta3), None)
+    rel = mat(res, 920)["relations"]
+    assert rel["last"] is None and rel["firms"][0]["types"] == ["sample"]
+    assert rel["firms"][0]["samples"][0]["converted"] is True
+
+
+def test_orders_firms_texts_and_cap():
+    res = plan([it(1, "SETİL STEARİL ALKOL", unit="g")], [(1, 1)])
+    orders = {1: [
+        OrderRec(1, supplier_id=1, supplier_name="KRK GIDA", quantity=25000, unit="g",
+                 ordered_at=datetime(2026, 10, 1, 7), expected_date=date(2026, 10, 10)),
+        OrderRec(1, supplier_id=1, supplier_name="KRK GIDA", quantity=10000, unit="g",
+                 ordered_at=datetime(2026, 8, 1, 7), closed_at=datetime(2026, 8, 5), closed_reason="received"),
+        OrderRec(1, supplier_id=3, supplier_name="DOĞASA", ordered_at=datetime(2026, 7, 1, 7),
+                 closed_at=datetime(2026, 7, 2), closed_reason="manual"),
+        OrderRec(1, ordered_at=datetime(2026, 6, 1, 7), closed_at=datetime(2026, 6, 2), closed_reason="manual"),
+        OrderRec(1, supplier_id=6, supplier_name="BİLİNMEYEN", ordered_at=datetime(2026, 5, 1, 7),
+                 closed_at=datetime(2026, 5, 2), closed_reason="received")]}
+    attach(res, PriceInputs(suppliers=JOJ_SUP, orders=orders), None)
+    m = mat(res, 1)
+    rel = m["relations"]
+    assert [o["status"] for o in rel["orders"]] == ["open", "received", "manual", "manual", "received"]
+    assert order_texts(m)[:4] == ["KRK GIDA 01.10.2026 · 25,0 kg · açık · beklenen 10.10.2026",
+                                  "KRK GIDA 01.08.2026 · 10,0 kg · teslim alındı",
+                                  "DOĞASA 01.07.2026 · kapatıldı",
+                                  "firma yazılmamış 01.06.2026 · kapatıldı"]
+    assert relation_texts(m) == ["Sipariş: " + t for t in order_texts(m)[:3]] + ["+2 sipariş daha"]
+    assert len(relation_texts(m, cap=None)) == 5
+    firms = {f["name"]: f for f in rel["firms"]}
+    assert set(firms) == {"KRK GIDA", "DOĞASA"}                       # firmasız + BİLİNMEYEN firma olmaz
+    assert firms["KRK GIDA"]["types"] == ["order"] and len(firms["KRK GIDA"]["orders"]) == 2
+    reasons = {b["name"]: it_["reasons"] for b in res["suppliers"]["candidates"] for it_ in b["items"]}
+    assert reasons == {"KRK GIDA": ["sipariş 01.10.2026"], "DOĞASA": ["sipariş 01.07.2026"]}
+    assert res["suppliers"]["unrelated"] == []
+
+
+STEARYL_SUP = {1: SupplierRec(id=1, name="TATLIDİLİMLER"), 2: SupplierRec(id=2, name="YİĞİTOGLU KİMYA"),
+               3: SupplierRec(id=3, name="VESER KİMYEVİ"), 4: SupplierRec(id=4, name="BİLİNMEYEN")}
+
+
+def _stearyl(used=126, offers=None):
+    items = [it(126, "SETİL STEARİL ALKOL", unit="g", stock=3944),
+             it(599, "CETYL STEARYL ALCOHOL", unit="adet"), it(593, "CETEARYL ALCOHOL", unit="adet"),
+             it(600, "STEARİL ALKOL ESKİ", unit="g", stock=0)]
+    inp = PlanInputs(items={i.id: i for i in items}, recipes={1: rec(1, [(used, 40)])}, stock_as_of=NOW,
+                     mgroup_of={126: 7, 599: 7, 593: 7, 600: 7}, mgroup_names={7: "Setil stearil alkol"})
+    res = compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}]))
+    lots = {126: [LotRec(item_id=126, lot_number="TD-1", supplier_id=1, created_at=datetime(2026, 8, 12, 7),
+                         quantity=3944, inventory_id=1)],
+            599: [LotRec(item_id=599, lot_number="YK-1", supplier_id=2, created_at=datetime(2026, 7, 20, 7),
+                         inventory_id=2)],
+            593: [LotRec(item_id=593, lot_number="VS-N", supplier_id=3, is_sample=True, quantity=1,
+                         created_at=datetime(2026, 9, 15, 7), inventory_id=3)]}
+    rc = {126: [ReceiptRec(126, "TD-1", 25000, datetime(2026, 8, 12, 7), "purchase")],
+          599: [ReceiptRec(599, "YK-1", 10, datetime(2026, 7, 20, 7), "purchase")]}
+    pin = PriceInputs(suppliers=STEARYL_SUP, card_supplier={126: 1, 599: 2, 593: 3, 600: 4}, lots=lots,
+                      receipts=rc, offers=offers or {})
+    return attach(res, pin, None)
+
+
+def test_alternatives_from_material_group_and_candidate_reasons():
+    res = _stearyl()
+    m = mat(res, 126)
+    assert m["need"] == pytest.approx(40000) and m["display"]["buy_text"] == "36,1 kg"   # ihtiyaç değişmez
+    rel = m["relations"]
+    assert rel["group"] == {"id": 7, "name": "Setil stearil alkol"}
+    alts = {a["item_id"]: a for a in rel["alternatives"]}
+    assert [a["item_id"] for a in rel["alternatives"]] == [593, 599, 600]
+    assert alts[599]["supplier"] == "YİĞİTOGLU KİMYA" and alts[599]["unit_mismatch"] is True
+    assert alts[599]["stock_text"] == "yok" and alts[599]["last"]["date"] == "20.07.2026"
+    assert alts[593]["sample_text"] == "1 adet numune"
+    assert alts[593]["samples"] == [{"name": "VESER KİMYEVİ", "key": "VESER", "date": "15.09.2026"}]
+    assert alts[600]["supplier"] is None and alts[600]["unit_mismatch"] is False   # BİLİNMEYEN ilişki değil
+    assert alt_texts(m) == [
+        "«CETEARYL ALCOHOL» (VESER KİMYEVİ, stok yok, birimi adet, numune 15.09.2026, elde 1 adet numune)",
+        "«CETYL STEARYL ALCOHOL» (YİĞİTOGLU KİMYA, stok yok, birimi adet, son alım 20.07.2026)",
+        "«STEARİL ALKOL ESKİ» (tedarikçi yazılmamış, stok yok)"]
+    assert relation_texts(m) == ["Stok kartında yazan: TATLIDİLİMLER (son alım 12.08.2026)"] + [
+        "Aynı malzeme: " + t for t in alt_texts(m)]
+    reasons = {b["name"]: it_["reasons"] for b in res["suppliers"]["candidates"] for it_ in b["items"]}
+    assert reasons == {"TATLIDİLİMLER": ["stok kartında yazan", "son alım 12.08.2026"],
+                       "YİĞİTOGLU KİMYA": ["eşdeğer kart «CETYL STEARYL ALCOHOL»",
+                                           "eşdeğer kartta son alım 20.07.2026"],
+                       "VESER KİMYEVİ": ["eşdeğer kart «CETEARYL ALCOHOL»", "eşdeğer kartta numune 15.09.2026"]}
+    types = {b["name"]: b["types"] for b in res["suppliers"]["candidates"]}
+    assert types == {"TATLIDİLİMLER": ["card", "purchase"], "YİĞİTOGLU KİMYA": ["equivalent"],
+                     "VESER KİMYEVİ": ["equivalent"]}
+    secs = {s["key"]: s for s in sections(res)}
+    assert "eşdeğer kart" in secs["candidates"]["subtitle"]
+    assert any(n.startswith("“Aynı malzeme” grubundaki diğer tedarikçi kartları") for n in secs["notes"]["rows"])
+
+
+def test_material_with_only_group_alternative_is_not_unrelated():
+    res = attach(plan([it(1, "Kil", unit="g")], [(1, 1)]), PriceInputs(suppliers=STEARYL_SUP), None)
+    assert [u["name"] for u in res["suppliers"]["unrelated"]] == ["Kil"]
+    items = [it(1, "Kil", unit="g"), it(2, "KAOLİN KİLİ", unit="g", stock=500)]
+    inp = PlanInputs(items={i.id: i for i in items}, recipes={1: rec(1, [(1, 1)])}, stock_as_of=NOW,
+                     mgroup_of={1: 3, 2: 3}, mgroup_names={3: "Kil"})
+    res = attach(compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}])),
+                 PriceInputs(suppliers=STEARYL_SUP, card_supplier={2: 3}), None)
+    assert res["suppliers"]["unrelated"] == []
+    assert [b["name"] for b in res["suppliers"]["candidates"]] == ["VESER KİMYEVİ"]
+    m = mat(res, 1)
+    assert any(c["code"] == "group_alt_stock" for c in m["cautions"])
+    assert m["display"]["buy_text"] == "1,0 kg"                      # eşdeğer kartın 500 g'ı düşülmedi
+
+
+def test_firms_view_for_preview():
+    res = _stearyl(offers={126: [offer(126, "TATLIDİLİMLER", 3.2, sid=1)]})
+    v = firms_view(mat(res, 126))
+    assert v["title"] == "Tedarikçiler (3): TATLIDİLİMLER · VESER KİMYEVİ · YİĞİTOGLU KİMYA"
+    assert v["count"] == 3
+    assert v["firms"] == [{"t": "TATLIDİLİMLER", "d": ["stok kartında yazan", "alım 12.08.2026 (25,0 kg)",
+                                                       "fiyat listesi: 3,20 $/kg"]}]
+    assert v["alts_title"] == "Aynı malzeme — diğer kartlar («Setil stearil alkol» grubu)"
+    a = {x["t"]: x for x in v["alts"]}
+    assert a["«CETYL STEARYL ALCOHOL» — YİĞİTOGLU KİMYA"]["w"] is True
+    assert a["«CETYL STEARYL ALCOHOL» — YİĞİTOGLU KİMYA"]["d"] == [
+        "stok yok", "birimi adet, bu satır g — miktarlar doğrudan karşılaştırılamaz",
+        "son alım 20.07.2026"]
+    bare = attach(plan([it(1, "Kil", unit="g")], [(1, 1)]), PriceInputs(), None)
+    assert firms_view(bare["materials"][0]) is None
+
+
+def test_firms_view_counts_equivalent_card_lot_firms():
+    """Eşdeğer kartın kart tedarikçisi yoksa (canlıda yaygın) ya da lotları
+    başka firmadansa: alt satırdaki son alım / numune firmaları başlıktaki
+    "Tedarikçiler (N)" sayısına ve ad listesine de girer."""
+    items = [it(126, "SETİL STEARİL ALKOL", unit="g", stock=3944), it(599, "CETYL STEARYL ALCOHOL", unit="adet")]
+    inp = PlanInputs(items={i.id: i for i in items}, recipes={1: rec(1, [(126, 40)])}, stock_as_of=NOW,
+                     mgroup_of={126: 7, 599: 7}, mgroup_names={7: "Setil stearil alkol"})
+    res = compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}]))
+    sup = {**STEARYL_SUP, 5: SupplierRec(id=5, name="UMAYCHEM")}
+    lots = {599: [LotRec(item_id=599, lot_number="U-1", supplier_id=5, created_at=datetime(2026, 7, 20, 7),
+                         inventory_id=2),
+                  LotRec(item_id=599, lot_number="V-N", supplier_id=3, is_sample=True, quantity=1,
+                         created_at=datetime(2026, 9, 1, 7), inventory_id=3)]}
+    rc = {599: [ReceiptRec(599, "U-1", 10, datetime(2026, 7, 20, 7), "purchase")]}
+    attach(res, PriceInputs(suppliers=sup, card_supplier={126: 1}, lots=lots, receipts=rc), None)
+    v = firms_view(mat(res, 126))
+    assert v["title"] == "Tedarikçiler (3): TATLIDİLİMLER · UMAYCHEM · VESER KİMYEVİ"
+    assert v["count"] == 3
+    assert v["alts"][0]["t"] == "«CETYL STEARYL ALCOHOL»"                 # kartında tedarikçi yok
+    assert "son alım UMAYCHEM 20.07.2026" in v["alts"][0]["d"]
+    assert "numune VESER KİMYEVİ 01.09.2026" in v["alts"][0]["d"]
+    # Yalnız eşdeğer kart varsa ve onda da kart tedarikçisi yoksa başlık 0 değil
+    attach(res, PriceInputs(suppliers=sup, lots=lots, receipts=rc), None)
+    assert firms_view(mat(res, 126))["count"] == 2
+
+
+def test_load_price_inputs_receipts_orders_analyses(db_session):
+    from database import (Inventory, Item, SampleAnalysis, SampleAnalysisIngredient, StockOrderFlag, Supplier,
+                          SupplierPrice, Transaction)
+    krk = Supplier(name="KRK GIDA", domain="cosmetics")
+    nat = Supplier(name="NATURALYA", domain="cosmetics")
+    db_session.add_all([krk, nat])
+    db_session.flush()
+    a = Item(name="JOJOBA YAĞI", category="Hammadde", unit="g", supplier_id=krk.id, domain="cosmetics")
+    b = Item(name="JOJOBA YAĞI — NATURALYA", category="Hammadde", unit="g", supplier_id=nat.id,
+             domain="cosmetics")
+    origin = Item(name="JOJOBA ESKİ KART", category="Hammadde", unit="g", domain="cosmetics")
+    sup_item = Item(name="Kapsül", category="Hammadde", unit="adet", domain="supplement")
+    db_session.add_all([a, b, origin, sup_item])
+    db_session.flush()
+    moved = Inventory(item_id=a.id, supplier_id=krk.id, lot_number="L9", quantity=400, domain="cosmetics",
+                      moved_from_item_id=origin.id)
+    smp = Inventory(item_id=b.id, supplier_id=nat.id, lot_number="MİNERVA", quantity=50, is_sample=True,
+                    domain="cosmetics")
+    linked = Inventory(item_id=a.id, supplier_id=nat.id, lot_number="NUMUNE", quantity=20, domain="cosmetics",
+                       sample_converted_at=datetime(2026, 10, 5, 9))
+    db_session.add_all([moved, smp, linked])
+    db_session.flush()
+    db_session.add_all([
+        Transaction(item_id=origin.id, lot_number="L9", transaction_type="Input", quantity=1000,
+                    notes="Mal kabul — Lot: L9", timestamp=datetime(2026, 8, 24, 10)),
+        Transaction(item_id=a.id, lot_number="L9", transaction_type="Adjustment", quantity=400,
+                    notes="Lot taşındı ← «JOJOBA ESKİ KART» (id 1) | Lot: L9"),
+        Transaction(item_id=a.id, lot_number="NUMUNE", transaction_type="Input", quantity=20,
+                    notes="Numune stoğa çevrildi — Lot: NUMUNE | Tedarikçi: NATURALYA"),
+        Transaction(item_id=sup_item.id, lot_number="K1", transaction_type="Input", quantity=5,
+                    notes="Mal kabul — Lot: K1"),
+        StockOrderFlag(item_id=a.id, supplier_id=krk.id, quantity=1000, unit="g", domain="cosmetics"),
+        StockOrderFlag(item_id=a.id, supplier_id=krk.id, quantity=500, unit="g", domain="cosmetics",
+                       closed_at=datetime(2026, 9, 1), closed_reason="received"),
+        StockOrderFlag(item_id=sup_item.id, quantity=1, domain="supplement"),
+        SupplierPrice(item_id=b.id, supplier_name="NATURALYA", unit_price=9.0, price_unit="kg",
+                      currency="EUR", domain="cosmetics"),
+    ])
+    ok = SampleAnalysis(document_no="NA-2026-00031", bulk_name="Deneme", result="uygun", domain="cosmetics")
+    gone = SampleAnalysis(document_no="NA-2026-00032", bulk_name="Silinmiş", domain="cosmetics", is_active=False)
+    other = SampleAnalysis(document_no="NA-2026-00033", bulk_name="Takviye", domain="supplement")
+    db_session.add_all([ok, gone, other])
+    db_session.flush()
+    for an in (ok, gone, other):
+        db_session.add(SampleAnalysisIngredient(analysis_id=an.id, item_id=b.id, item_name=b.name, source="sample",
+                                                inventory_id=smp.id, lot_number="MİNERVA"))
+    db_session.commit()
+
+    pin = load_price_inputs(db_session, [a.id], "cosmetics", extra_item_ids=[b.id])
+    assert pin.offers == {}                                        # eşdeğer kartın teklifi yüklenmez (kur da çekilmez)
+    assert pin.card_supplier == {a.id: krk.id, b.id: nat.id}
+    assert {l.lot_number for l in pin.lots[a.id]} == {"L9", "NUMUNE"} and pin.lots[b.id][0].is_sample
+    assert pin.lot_meta[moved.id].moved_from_item_id == origin.id
+    assert pin.lot_meta[linked.id].sample_converted_at == datetime(2026, 10, 5, 9)
+    kinds = {(r.item_id, r.lot): r.kind for lst in pin.receipts.values() for r in lst}
+    assert kinds == {(origin.id, "L9"): "purchase", (a.id, "NUMUNE"): "converted"}   # Adjustment / öbür panel yok
+    assert pin.converted_lots == {(a.id, "NUMUNE")}
+    assert sorted((o.quantity, o.closed_reason) for o in pin.orders[a.id]) == [(500, "received"), (1000, None)]
+    assert set(pin.orders) == {a.id}
+    assert [x.document_no for x in pin.analyses[b.id]] == ["NA-2026-00031"]
+
+    # uçtan uca: taşınmış lot ilk kartın Mal kabul'üyle ALIM, link_only lot çevrilmiş numune
+    items = {a.id: it(a.id, a.name, unit="g"), b.id: it(b.id, b.name, unit="g")}
+    inp = PlanInputs(items=items, recipes={1: rec(1, [(a.id, 1)])}, stock_as_of=NOW,
+                     mgroup_of={a.id: 1, b.id: 1}, mgroup_names={1: "Jojoba"})
+    res = attach(compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 10}])), pin, None)
+    rel = mat(res, a.id)["relations"]
+    assert rel["last"] == {"name": "KRK GIDA", "key": "KRKGIDA", "date": "24.08.2026"}
+    firms = {f["name"]: f for f in rel["firms"]}
+    assert firms["KRK GIDA"]["types"] == ["card", "purchase", "order"]
+    assert firms["NATURALYA"]["samples"][0]["converted"] is True
+    alt = rel["alternatives"][0]
+    assert alt["supplier"] == "NATURALYA" and alt["sample_text"] == "50 gram numune"

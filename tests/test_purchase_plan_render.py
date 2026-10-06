@@ -12,7 +12,9 @@ brüt modda G=D, serbest metin formül kalkanı ("=HYPERLINK…" adı / notu /
 serbest satırı formül olarak yazılmaz); birim uyuşmazlığındaki teklifin
 nedeni ("fiyat yazılmamış" değil) PDF + Excel'de, ambalaj katı Excel "Not"
 sütununda, ondalıklı serbest miktar biçimi, kontrol karakterli ad Excel'i
-düşürmez; xlsx_cache hata ve tür durumları.
+düşürmez; xlsx_cache hata ve tür durumları; "aynı malzeme" + sipariş
+satırları (PDF'te en çok 3 + "+N", Excel'de "Not"tan sonra Y/Z sütunları,
+Tedarikçiler K "İlişki türleri").
 Sondaki test `RUSYA_FIXTURE_DIR` varsa Rusya kabul senaryosunu iki çıktıya da
 basar (toplamlar PDF ↔ Excel ↔ rapor aynı).
 """
@@ -29,11 +31,12 @@ import pytest
 from pypdf import PdfReader
 
 from core.consumption import IngredientRec, ItemRec, RecipeRec
-from core.purchase_plan import OpenOrderRec, PlanInputs, compute
+from core.purchase_plan import LotRec, OpenOrderRec, PlanInputs, compute
 from core.purchase_plan_models import PlanRequest
 from core.purchase_plan_pdf import render_pdf
-from core.purchase_plan_xlsx import SHEET_DETAIL, SHEET_LIST, build_workbook
-from core.purchase_pricing import OfferRec, PriceInputs, SupplierRec, attach, money
+from core.purchase_plan_xlsx import SHEET_DETAIL, SHEET_LIST, SHEET_SUP, build_workbook
+from core.purchase_pricing import (OfferRec, OrderRec, PriceInputs, ReceiptRec, SupplierRec, alt_texts, attach,
+                                   money, order_texts)
 from core.xlsx_cache import inject_cached_values
 
 NOW = datetime(2026, 10, 5, 9, 0)
@@ -300,6 +303,64 @@ def test_xlsx_cache_rejects_unknown_sheet_or_missing_formula_cell():
     with pytest.raises(ValueError):
         inject_cached_values(raw, {"Sayfa & 1": {"Z9": 1}})
     assert inject_cached_values(raw, {}) == raw
+
+
+# ─── "Aynı malzeme" + sipariş geçmişi ───────────────────────────────────────
+
+def _stearyl_report():
+    """Prod'daki stearil alkol: 126 Tatlıdilimler (g, stok) reçetede; 599
+    Yiğitoğlu ve 593 Veser (adet) aynı malzeme grubunda; 4 sipariş işareti."""
+    items = [_it(126, "SETİL STEARİL ALKOL", stock=3944), _it(599, "CETYL STEARYL ALCOHOL", unit="adet"),
+             _it(593, "CETEARYL ALCOHOL", unit="adet")]
+    recipe = RecipeRec(id=1, name="Krem", ingredients=(IngredientRec(item_id=126, quantity=40),))
+    inp = PlanInputs(items={i.id: i for i in items}, recipes={1: recipe}, stock_as_of=NOW,
+                     mgroup_of={126: 7, 599: 7, 593: 7}, mgroup_names={7: "Setil stearil alkol"})
+    res = compute(inp, PlanRequest(title="Stearil", lines=[{"recipe_id": 1, "qty": 1000}]))
+    sup = {1: SupplierRec(id=1, name="TATLIDİLİMLER"), 2: SupplierRec(id=2, name="YİĞİTOGLU KİMYA"),
+           3: SupplierRec(id=3, name="VESER KİMYEVİ")}
+    orders = {126: [OrderRec(126, supplier_id=1, supplier_name="TATLIDİLİMLER", quantity=25000, unit="g",
+                             ordered_at=datetime(2026, 10, 1, 7), expected_date=datetime(2026, 10, 10).date())]
+              + [OrderRec(126, supplier_id=1, supplier_name="TATLIDİLİMLER", quantity=10000, unit="g",
+                          ordered_at=datetime(2026, m, 1, 7), closed_at=datetime(2026, m, 3),
+                          closed_reason="received") for m in (8, 6, 4)]}
+    pin = PriceInputs(suppliers=sup, card_supplier={126: 1, 599: 2, 593: 3},
+                      lots={126: [LotRec(item_id=126, lot_number="TD-1", supplier_id=1, quantity=3944,
+                                         created_at=datetime(2026, 8, 12, 7), inventory_id=1)]},
+                      receipts={126: [ReceiptRec(126, "TD-1", 25000, datetime(2026, 8, 12, 7), "purchase")]},
+                      orders=orders)
+    return attach(res, pin, None, currency="USD")
+
+
+def test_pdf_same_material_and_order_lines_capped():
+    res = _stearyl_report()
+    _, text = _pdf_text(render_pdf(res))
+    assert "Stok kartında yazan: TATLIDİLİMLER (son alım 12.08.2026)" in text
+    assert "Sipariş: TATLIDİLİMLER 01.10.2026 · 25,0 kg · açık · beklenen 10.10.2026" in text
+    assert "Sipariş: TATLIDİLİMLER 01.06.2026 · 10,0 kg · teslim alındı" in text
+    assert "01.04.2026" not in text and "+1 sipariş daha" in text            # en çok 3 + "+N"
+    assert "Aynı malzeme: «CETEARYL ALCOHOL» (VESER KİMYEVİ, stok yok, birimi adet)" in text
+    assert "Aynı malzeme: «CETYL STEARYL ALCOHOL» (YİĞİTOGLU KİMYA, stok yok, birimi adet)" in text
+    # eşdeğer kartların tedarikçileri fiyatsız kalem için aday firma
+    assert "eşdeğer kart «CETYL STEARYL ALCOHOL»" in text
+
+
+def test_xlsx_same_material_and_order_history_after_note():
+    res = _stearyl_report()
+    m = res["materials"][0]
+    wb = openpyxl.load_workbook(io.BytesIO(build_workbook(res)))
+    ws = wb[SHEET_LIST]
+    assert (ws.cell(1, 24).value, ws.cell(1, 25).value, ws.cell(1, 26).value) == (
+        "Not", "Aynı malzeme (diğer kartlar)", "Sipariş geçmişi")
+    r = _row_of(ws, "SETİL STEARİL ALKOL")
+    assert ws.cell(r, 25).value == "; ".join(alt_texts(m)) and "«CETYL STEARYL ALCOHOL»" in ws.cell(r, 25).value
+    assert ws.cell(r, 26).value == "; ".join(order_texts(m))                  # Excel'de sınır yok (4 sipariş)
+    assert ws.cell(r, 26).value.count("TATLIDİLİMLER") == 4
+    assert ws[f"K{r}"].value == f'=IF(J{r}="","",ROUND(G{r}*J{r},0))'         # formüller kaymadı
+    sp = wb[SHEET_SUP]
+    assert sp.cell(1, 11).value == "İlişki türleri"
+    types = {sp.cell(x, 1).value: sp.cell(x, 11).value for x in range(2, sp.max_row + 1)}
+    assert types["TATLIDİLİMLER"] == "stok kartı, alım, sipariş"
+    assert types["YİĞİTOGLU KİMYA"] == types["VESER KİMYEVİ"] == "eşdeğer kart"
 
 
 # ─── Rusya kabul senaryosu (ortam değişkeniyle kapılı) ──────────────────────

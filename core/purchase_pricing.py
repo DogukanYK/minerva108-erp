@@ -12,7 +12,8 @@ Satın Alma Planı — fiyat + tedarikçi katmanı.
 `fiyat/fiyatli_liste.py` betiğinin sistemleştirilmiş hâli; Paraşüt faturası
 fiyatları SONRAKİ AŞAMA (burada `invoice` grubu yalnız ayrılmış bir addır).
 
-  • load_price_inputs(db, item_ids, domain) → PriceInputs   (TEK DB okuyucu)
+  • load_price_inputs(db, item_ids, domain, extra_item_ids=()) → PriceInputs
+                                                             (TEK DB okuyucu)
   • attach(result, pin, rates, currency=…)  → result         (SAF, yerinde)
   • sections(result)                         → bölüm listesi (UI/PDF/Excel'in
     TEK numaralandırma kaynağı; boş bölüm atlanır)
@@ -29,6 +30,21 @@ Kurallar:
     numuneden çevrilen lotlar HARİÇ), numune gönderen.  AppSetting
     `purchase_plan.skip_suppliers` listesi (BİLİNMEYEN / MİNERVA / NUMUNE
     GÖNDERİM) ilişki sayılmaz.
+  • Firma dökümü (`relations.firms`) bizim kayıtlarımızdan: stok kartı, alım
+    (`Mal kabul` Input'u), stok aktarımı (IMP-/XLS-/Excel), numune (lot +
+    analiz sonucu), sipariş işareti (`StockOrderFlag`, açık + kapalı), fiyat
+    listesi.  Lot sınıflaması (`_RelIndex.lot_class`): numune → numune;
+    kendi kartında (kart, lot) `Mal kabul` Input'u → ALIM (aynı lot no'lu
+    çevrilmiş numune birleşse bile); kendi kartında çevirme Input'u →
+    çevrilmiş numune; ilk geldiği kartta (`moved_from_item_id`) `Mal kabul`
+    → ALIM; ilk karttaki çevirme Input'u / `sample_converted_at` → çevrilmiş
+    numune; aktarım; kalan → `created_at` tarihli eski alım.  "Lot taşındı"
+    Adjustment'ları alım sayılmaz (Input değil).
+  • "Aynı malzeme" grubu (`material_group`, motor) → `relations.
+    alternatives`: gruptaki diğer kartlar, tedarikçileri, stok/numune, son
+    alım.  Fiyatsız kalemlerin aday firmalarına "eşdeğer kart" sebebiyle
+    girer; ihtiyacı DEĞİŞTİRMEZ.  `relation_texts(m)` önizleme / PDF / Excel
+    metnini tek kaynaktan üretir.
 """
 import math
 import re
@@ -37,7 +53,7 @@ from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict, List, Optional, Set, Tuple
 
-from core.purchase_plan import LotRec, SAMPLE_CONVERTED_MARK, alnum_fold, clean_text, tr_num
+from core.purchase_plan import LotRec, SAMPLE_CONVERTED_MARK, _amount_near, alnum_fold, clean_text, tr_num
 from core.supplier_prices import LITRE_KG_NOTE, price_per_purchase_unit
 
 CFG_SKIP_SUPPLIERS = "purchase_plan.skip_suppliers"
@@ -102,6 +118,48 @@ class SupplierRec:
     is_active: bool = True
 
 
+@dataclass(frozen=True)
+class ReceiptRec:
+    """Stok girişi (Input Transaction) — `classify_input` türüyle."""
+    item_id: int
+    lot: str = ""
+    qty: float = 0.0
+    at: Optional[datetime] = None
+    kind: str = "other"           # purchase | converted | import | return | production | move | other
+
+
+@dataclass(frozen=True)
+class OrderRec:
+    """`StockOrderFlag` — "sipariş verildi" işareti (açık ve kapalı)."""
+    item_id: int
+    supplier_id: Optional[int] = None
+    supplier_name: Optional[str] = None
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    ordered_at: Optional[datetime] = None
+    expected_date: Optional[date] = None
+    closed_at: Optional[datetime] = None
+    closed_reason: Optional[str] = None        # received | manual
+
+
+@dataclass(frozen=True)
+class AnalysisRec:
+    """Numune Analiz Formu (FR.KK.01) bileşen satırı ⨝ aktif analiz."""
+    item_id: int
+    inventory_id: Optional[int] = None
+    lot: str = ""
+    result: Optional[str] = None               # uygun | uygun_degil | None = beklemede
+    document_no: Optional[str] = None
+    at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class LotMetaRec:
+    """Lotun izi: ilk geldiği kart (taşındıysa) + numuneden çevrildiği an."""
+    moved_from_item_id: Optional[int] = None
+    sample_converted_at: Optional[datetime] = None
+
+
 @dataclass
 class PriceInputs:
     offers: Dict[int, List[OfferRec]] = field(default_factory=dict)
@@ -110,6 +168,10 @@ class PriceInputs:
     lots: Dict[int, List[LotRec]] = field(default_factory=dict)
     converted_lots: Set[Tuple[int, str]] = field(default_factory=set)
     skip_suppliers: Tuple[str, ...] = DEFAULT_SKIP_SUPPLIERS
+    receipts: Dict[int, List[ReceiptRec]] = field(default_factory=dict)    # item_id → Input'lar
+    orders: Dict[int, List[OrderRec]] = field(default_factory=dict)        # item_id → işaretler
+    analyses: Dict[int, List[AnalysisRec]] = field(default_factory=dict)   # item_id → analiz satırları
+    lot_meta: Dict[int, LotMetaRec] = field(default_factory=dict)          # inventory id → iz
 
 
 # ─── Yardımcılar ────────────────────────────────────────────────────────────
@@ -238,30 +300,63 @@ def _phone(p) -> str:
     return (p or "").strip()
 
 
-def _d(v) -> Optional[date]:
-    if v is None:
-        return None
-    if isinstance(v, datetime):
-        return v.date()
-    return v
-
-
 def _dmy(v) -> str:
-    v = _d(v)
-    return v.strftime("%d.%m.%Y") if v else ""
+    """dd.mm.yyyy — datetime UTC saklanır, TR gününe çevrilir (23:30 UTC
+    ertesi gündür); düz `date` değerleri (teklif/beklenen tarih) kaydırılmaz."""
+    if v is None:
+        return ""
+    if isinstance(v, datetime):
+        from database import to_tr
+        v = to_tr(v).date()
+    return v.strftime("%d.%m.%Y")
+
+
+def _dated(label: str, d) -> str:
+    return f"{label} {d}" if d else label
+
+
+def classify_input(note, lot=None) -> str:
+    """Input Transaction'ının türü — not ve lot no'sundan:
+    "Mal kabul" → purchase, "Numune stoğa çevrildi" → converted, IMP-/XLS- lot
+    ya da Excel/Import notu → import, "İade" → return, "Üretim çıktısı" →
+    production, "Lot taşındı" → move (alım SAYILMAZ), diğer → other."""
+    from core.stock_lots import LOT_MOVE_MARK
+    n = " ".join(str(note or "").split())
+    lt = str(lot or "").strip().upper()
+    if n.startswith("Mal kabul"):
+        return "purchase"
+    if SAMPLE_CONVERTED_MARK in n:
+        return "converted"
+    if LOT_MOVE_MARK in n:
+        return "move"
+    if lt.startswith(("IMP-", "XLS-")) or re.search(r"excel|import|içe aktar", n, re.I):
+        return "import"
+    if n.startswith("İade"):
+        return "return"
+    if n.startswith("Üretim çıktısı"):
+        return "production"
+    return "other"
 
 
 # ─── DB yükleyici ───────────────────────────────────────────────────────────
 
-def load_price_inputs(db, item_ids_incl_members, domain: str) -> PriceInputs:
+def load_price_inputs(db, item_ids_incl_members, domain: str, extra_item_ids=()) -> PriceInputs:
     """Fiyat + ilişki girdileri — hepsi aktif panele kapsanır.
 
     `item_ids_incl_members`: plandaki malzemelerin BÜTÜN üye kartları
-    (`member_ids`), teklifler bunların birleşimidir.
+    (`member_ids`), teklifler bunların birleşimidir.  `extra_item_ids`:
+    "aynı malzeme" grubundaki diğer kartlar — yalnız ilişki için (kart
+    tedarikçisi, lotlar, girişler, siparişler, analizler); teklifleri
+    YÜKLENMEZ (fiyat/kur hesabına karışmasın).  Taşınmış lotların ilk geldiği
+    kartların (`moved_from_item_id`) Input'ları da okunur: alım geçmişi orada.
     """
-    from database import AppSetting, Inventory, Item, Supplier, SupplierPrice, Transaction
+    from sqlalchemy import or_
+
+    from database import (AppSetting, Inventory, Item, SampleAnalysis, SampleAnalysisIngredient,
+                          StockOrderFlag, Supplier, SupplierPrice, Transaction)
 
     ids = sorted({int(i) for i in (item_ids_incl_members or []) if i is not None})
+    rel_ids = sorted(set(ids) | {int(i) for i in (extra_item_ids or []) if i is not None})
     suppliers = {s.id: SupplierRec(id=s.id, name=s.name or "", contact_person=s.contact_person,
                                    phone=s.phone, email=s.email, address=s.address,
                                    is_active=bool(s.is_active) if s.is_active is not None else True)
@@ -270,33 +365,70 @@ def load_price_inputs(db, item_ids_incl_members, domain: str) -> PriceInputs:
     row = db.query(AppSetting).filter(AppSetting.key == CFG_SKIP_SUPPLIERS).first()
     if row and row.value is not None:
         pin.skip_suppliers = tuple(x.strip() for x in row.value.split(",") if x.strip())
-    if not ids:
+    if not rel_ids:
         return pin
-    for sp in (db.query(SupplierPrice)
-               .filter(SupplierPrice.item_id.in_(ids), SupplierPrice.domain == domain)
-               .order_by(SupplierPrice.id.asc()).all()):
-        name = sp.supplier_name or (suppliers[sp.supplier_id].name if sp.supplier_id in suppliers else None)
-        pin.offers.setdefault(sp.item_id, []).append(OfferRec(
-            item_id=sp.item_id, supplier_name=name, supplier_id=sp.supplier_id,
-            unit_price=sp.unit_price, package_size=sp.package_size,
-            currency=(sp.currency or "USD"), price_unit=sp.price_unit, source=sp.source,
-            source_label=sp.source_label, quoted_at=sp.quoted_at))
+    if ids:
+        for sp in (db.query(SupplierPrice)
+                   .filter(SupplierPrice.item_id.in_(ids), SupplierPrice.domain == domain)
+                   .order_by(SupplierPrice.id.asc()).all()):
+            name = sp.supplier_name or (suppliers[sp.supplier_id].name if sp.supplier_id in suppliers else None)
+            pin.offers.setdefault(sp.item_id, []).append(OfferRec(
+                item_id=sp.item_id, supplier_name=name, supplier_id=sp.supplier_id,
+                unit_price=sp.unit_price, package_size=sp.package_size,
+                currency=(sp.currency or "USD"), price_unit=sp.price_unit, source=sp.source,
+                source_label=sp.source_label, quoted_at=sp.quoted_at))
     for iid, sid in (db.query(Item.id, Item.supplier_id)
-                     .filter(Item.id.in_(ids), Item.domain == domain,
+                     .filter(Item.id.in_(rel_ids), Item.domain == domain,
                              Item.supplier_id.isnot(None)).all()):
         pin.card_supplier[iid] = sid
-    for (iid, lot_no, sid, is_s, cat, qty) in (
-            db.query(Inventory.item_id, Inventory.lot_number, Inventory.supplier_id,
-                     Inventory.is_sample, Inventory.created_at, Inventory.quantity)
-            .filter(Inventory.item_id.in_(ids), Inventory.domain == domain).all()):
+    moved_from: Set[int] = set()
+    for (inv_id, iid, lot_no, sid, is_s, cat, qty, mfrom, conv_at) in (
+            db.query(Inventory.id, Inventory.item_id, Inventory.lot_number, Inventory.supplier_id,
+                     Inventory.is_sample, Inventory.created_at, Inventory.quantity,
+                     Inventory.moved_from_item_id, Inventory.sample_converted_at)
+            .filter(Inventory.item_id.in_(rel_ids), Inventory.domain == domain).all()):
         pin.lots.setdefault(iid, []).append(LotRec(
             item_id=iid, lot_number=lot_no or "", supplier_id=sid,
             supplier_name=suppliers[sid].name if sid in suppliers else None,
-            is_sample=bool(is_s), created_at=cat, quantity=float(qty or 0.0)))
-    pin.converted_lots = {(iid, lot or "") for (iid, lot) in
-                          db.query(Transaction.item_id, Transaction.lot_number)
-                          .filter(Transaction.item_id.in_(ids),
-                                  Transaction.notes.like(f"%{SAMPLE_CONVERTED_MARK}%")).all()}
+            is_sample=bool(is_s), created_at=cat, quantity=float(qty or 0.0), inventory_id=inv_id))
+        if mfrom or conv_at:
+            pin.lot_meta[inv_id] = LotMetaRec(moved_from_item_id=mfrom, sample_converted_at=conv_at)
+        if mfrom:
+            moved_from.add(mfrom)
+    rx_ids = sorted(set(rel_ids) | moved_from)
+    for (iid, lot_no, qty, ts, note) in (
+            db.query(Transaction.item_id, Transaction.lot_number, Transaction.quantity,
+                     Transaction.timestamp, Transaction.notes)
+            .join(Item, Item.id == Transaction.item_id)
+            .filter(Transaction.item_id.in_(rx_ids), Item.domain == domain,
+                    Transaction.transaction_type == "Input").all()):
+        pin.receipts.setdefault(iid, []).append(ReceiptRec(
+            item_id=iid, lot=lot_no or "", qty=float(qty or 0.0), at=ts,
+            kind=classify_input(note, lot_no)))
+    pin.converted_lots = {(r.item_id, r.lot) for lst in pin.receipts.values() for r in lst
+                          if r.kind == "converted"}
+    for f, sname in (db.query(StockOrderFlag, Supplier.name)
+                     .outerjoin(Supplier, Supplier.id == StockOrderFlag.supplier_id)
+                     .filter(StockOrderFlag.item_id.in_(rel_ids), StockOrderFlag.domain == domain)
+                     .order_by(StockOrderFlag.ordered_at.desc(), StockOrderFlag.id.desc()).all()):
+        pin.orders.setdefault(f.item_id, []).append(OrderRec(
+            item_id=f.item_id, supplier_id=f.supplier_id,
+            supplier_name=suppliers[f.supplier_id].name if f.supplier_id in suppliers else sname,
+            quantity=f.quantity, unit=f.unit, ordered_at=f.ordered_at, expected_date=f.expected_date,
+            closed_at=f.closed_at, closed_reason=f.closed_reason))
+    inv_ids = [l.inventory_id for lst in pin.lots.values() for l in lst if l.inventory_id is not None]
+    cond = SampleAnalysisIngredient.item_id.in_(rx_ids)
+    if inv_ids:
+        cond = or_(cond, SampleAnalysisIngredient.inventory_id.in_(inv_ids))
+    for (iid, inv_id, lot_no, res, doc, at) in (
+            db.query(SampleAnalysisIngredient.item_id, SampleAnalysisIngredient.inventory_id,
+                     SampleAnalysisIngredient.lot_number, SampleAnalysis.result,
+                     SampleAnalysis.document_no, SampleAnalysis.created_at)
+            .join(SampleAnalysis, SampleAnalysis.id == SampleAnalysisIngredient.analysis_id)
+            .filter(cond, SampleAnalysis.is_active == True,                   # noqa: E712
+                    SampleAnalysis.domain == domain).all()):
+        pin.analyses.setdefault(iid, []).append(AnalysisRec(
+            item_id=iid, inventory_id=inv_id, lot=lot_no or "", result=res, document_no=doc, at=at))
     return pin
 
 
@@ -316,44 +448,280 @@ def _lot_name(l: LotRec, pin: PriceInputs) -> Optional[str]:
     return clean_text(l.supplier_name)
 
 
-def _relations(member_ids: List[int], pin: PriceInputs, skip: Set[str], ix: "SupplierIndex") -> dict:
-    """Malzemenin tedarikçi ilişkileri (bütün üye kartlar üzerinden)."""
-    card, seen = [], set()
-    for i in member_ids:
-        sid = pin.card_supplier.get(i)
-        if sid is None or sid not in pin.suppliers:
-            continue
-        nm = clean_text(pin.suppliers[sid].name)
-        k = ix.key(nm)
-        if not k or k in skip or k in seen:
-            continue
-        seen.add(k)
-        card.append({"name": nm, "key": k, "supplier_id": sid})
-    last, samples, sseen = None, [], set()
-    for i in member_ids:
-        for l in pin.lots.get(i, []):
-            nm = _lot_name(l, pin)
-            k = ix.key(nm)
-            if not k or k in skip:
+# İlişki türleri — firma dökümünde bu sırayla
+REL_TYPES = ("card", "purchase", "import", "sample", "order", "offer")
+REL_TYPE_TEXT = {"card": "stok kartı", "purchase": "alım", "import": "stok aktarımı", "sample": "numune",
+                 "order": "sipariş", "offer": "fiyat listesi", "equivalent": "eşdeğer kart"}
+_FIRM_RANK = {"card": 0, "purchase": 1, "order": 2, "offer": 3, "sample": 4, "import": 5}
+ORDER_STATUS_TEXT = {"open": "açık", "received": "teslim alındı", "manual": "kapatıldı"}
+ANALYSIS_TEXT = {"uygun": "uygun", "uygun_degil": "uygun değil"}
+REL_LINES_MAX = 3            # PDF/önizleme: sipariş ve eşdeğer kart satırı en çok 3 + "+N"
+
+
+def _qty_text(q, unit) -> str:
+    return _amount_near(q, unit) if q is not None and q > 1e-9 else ""
+
+
+def _new_firm(k: str, name, supplier_id) -> dict:
+    return {"key": k, "name": name, "supplier_id": supplier_id, "types": set(),
+            "purchases": {"count": 0, "last_date": "", "last_qty_text": ""},
+            "imports": {"count": 0, "last_date": ""}, "samples": [], "orders": [], "offers": [],
+            "_p_at": None, "_i_at": None, "_seen": set()}
+
+
+def _firm(firms: Dict[str, dict], k: str, name, supplier_id) -> dict:
+    f = firms.get(k)
+    if f is None:
+        f = firms[k] = _new_firm(k, name, supplier_id)
+    elif f["supplier_id"] is None and supplier_id is not None:
+        f["supplier_id"] = supplier_id
+    return f
+
+
+class _RelIndex:
+    """attach() başına bir kez kurulan arama tabloları: (kart, lot) → Input'lar,
+    lot → analiz satırları."""
+
+    def __init__(self, pin: PriceInputs, skip: Set[str], ix: SupplierIndex):
+        self.pin, self.skip, self.ix = pin, skip, ix
+        self.rx: Dict[Tuple[int, str], List[ReceiptRec]] = {}
+        for lst in pin.receipts.values():
+            for r in lst:
+                self.rx.setdefault((r.item_id, r.lot or ""), []).append(r)
+        self.an_inv: Dict[int, List[AnalysisRec]] = {}
+        self.an_lot: Dict[Tuple[int, str], List[AnalysisRec]] = {}
+        for lst in pin.analyses.values():
+            for a in lst:
+                if a.inventory_id is not None:
+                    self.an_inv.setdefault(a.inventory_id, []).append(a)
+                if a.lot:
+                    self.an_lot.setdefault((a.item_id, a.lot), []).append(a)
+
+    def key(self, name) -> str:
+        k = self.ix.key(name) if name else ""
+        return "" if (not k or k in self.skip) else k
+
+    def lot_class(self, l: LotRec) -> dict:
+        """Lotun türü + tarihi + miktarı (modül docstring'indeki sınıflama).
+
+        Kanıt sırası — lotun KENDİ kartı, ilk geldiği karttan
+        (`moved_from_item_id`) önce gelir:
+          1. kendi kartta "Mal kabul" → ALIM (aynı lot no'ya numune çevrilip
+             birleşmiş olsa da);
+          2. kendi kartta çevirme Input'u → ÇEVRİLMİŞ NUMUNE;
+          3. ilk kartta "Mal kabul" → ALIM (tam taşınmış birleşik lot);
+          4. ilk kartta çevirme Input'u ya da `sample_converted_at` → ÇEVRİLMİŞ NUMUNE.
+        İlk kart (kart, lot no) üzerinden eşleşir; lab "MİNERVA"/"NUMUNE" gibi
+        genel lot no'ları kullandığı için oradaki İLGİSİZ bir alım, hedef karta
+        çevrilmiş numuneyi alıma çevirmesin diye 2 → 3'ten önce."""
+        meta = self.pin.lot_meta.get(l.inventory_id) if l.inventory_id is not None else None
+        lot = l.lot_number or ""
+        origin = (meta.moved_from_item_id if meta and meta.moved_from_item_id else None) or l.item_id
+        own = list(self.rx.get((l.item_id, lot), ()))
+        orig = list(self.rx.get((origin, lot), ())) if origin != l.item_id else []
+        recs = own + orig
+        conv = [r for r in recs if r.kind == "converted"]
+        out = {"origin": origin, "lot": lot, "conv": conv}
+        if l.is_sample:
+            return dict(out, kind="sample", at=l.created_at, qty=l.quantity)
+
+        def purchase(ps):
+            at = max((r.at for r in ps if r.at), default=None) or l.created_at
+            return dict(out, kind="purchase", at=at, qty=sum(r.qty for r in ps))
+
+        def converted(cs):
+            return dict(out, conv=cs, kind="converted", at=l.created_at,
+                        qty=sum(r.qty for r in cs) if cs else l.quantity)
+
+        own_p = [r for r in own if r.kind == "purchase"]
+        orig_p = [r for r in orig if r.kind == "purchase"]
+        if own_p:
+            return purchase(own_p + orig_p)
+        own_c = [r for r in own if r.kind == "converted"]
+        if own_c:
+            return converted(own_c)
+        if orig_p:
+            return purchase(orig_p)
+        if conv or (meta and meta.sample_converted_at) or (l.item_id, lot) in self.pin.converted_lots:
+            return converted(conv)
+        imp = [r for r in recs if r.kind == "import"]
+        if imp or lot.upper().startswith(("IMP-", "XLS-")):
+            at = max((r.at for r in imp if r.at), default=None) or l.created_at
+            return dict(out, kind="import", at=at, qty=sum(r.qty for r in imp) or None)
+        if any(r.kind == "production" for r in recs):
+            return dict(out, kind="production", at=l.created_at, qty=None)
+        other = [r for r in recs if r.kind == "other"]
+        return dict(out, kind="old", at=l.created_at, qty=sum(r.qty for r in other) if other else None)
+
+    def analysis(self, l: LotRec) -> Optional[dict]:
+        cands = list(self.an_inv.get(l.inventory_id, ())) if l.inventory_id is not None else []
+        if not cands and l.lot_number:
+            cands = [a for a in self.an_lot.get((l.item_id, l.lot_number), ())
+                     if a.inventory_id is None or a.inventory_id == l.inventory_id]
+        if not cands:
+            return None
+        a = max(cands, key=lambda x: (x.at or datetime.min, x.document_no or ""))
+        return {"result": a.result, "result_text": ANALYSIS_TEXT.get(a.result or "", "beklemede"),
+                "doc_no": a.document_no}
+
+    def lot_name(self, l: LotRec) -> Optional[str]:
+        return _lot_name(l, self.pin)
+
+    def summary(self, item_ids: List[int], unit) -> dict:
+        """Kart(lar)ın tedarikçi özeti: firms {key: firma}, eski `last`/`samples`."""
+        pin = self.pin
+        firms: Dict[str, dict] = {}
+
+        def firm(k, nm, sid):
+            return _firm(firms, k, nm, sid)
+
+        card = []
+        for i in item_ids:
+            sid = pin.card_supplier.get(i)
+            if sid is None or sid not in pin.suppliers:
                 continue
-            if l.is_sample or (l.item_id, l.lot_number or "") in pin.converted_lots:
-                sk = (k, _d(l.created_at))
-                if sk not in sseen:
-                    sseen.add(sk)
-                    samples.append({"name": nm, "key": k, "date": _dmy(l.created_at)})
+            nm = clean_text(pin.suppliers[sid].name)
+            k = self.key(nm)
+            if not k:
                 continue
-            at = l.created_at or datetime.min
-            if last is None or at > last["_at"]:
-                last = {"name": nm, "key": k, "date": _dmy(l.created_at), "_at": at}
-    if last:
-        last.pop("_at")
-    samples.sort(key=lambda s: (s["name"], s["date"]))
-    return {"card": card, "last": last, "samples": samples}
+            firm(k, nm, sid)["types"].add("card")
+            if all(c["key"] != k for c in card):
+                card.append({"name": nm, "key": k, "supplier_id": sid})
+        last, samples, sseen = None, [], set()
+        for i in item_ids:
+            for l in pin.lots.get(i, []):
+                nm = self.lot_name(l)
+                k = self.key(nm)
+                if not k:
+                    continue
+                c = self.lot_class(l)
+                f = firm(k, nm, l.supplier_id)
+                if c["kind"] in ("sample", "converted"):
+                    f["types"].add("sample")
+                    f["samples"].append({"lot": c["lot"], "date": _dmy(l.created_at),
+                                         "qty_text": _qty_text(c["qty"], unit),
+                                         "converted": c["kind"] == "converted", "analysis": self.analysis(l),
+                                         "_at": l.created_at or datetime.min})
+                    sk = (k, _dmy(l.created_at))
+                    if sk not in sseen:
+                        sseen.add(sk)
+                        samples.append({"name": nm, "key": k, "date": _dmy(l.created_at)})
+                    continue
+                if c["kind"] == "import":
+                    f["types"].add("import")
+                    f["imports"]["count"] += 1
+                    if f["_i_at"] is None or (c["at"] or datetime.min) > f["_i_at"]:
+                        f["_i_at"] = c["at"] or datetime.min
+                        f["imports"]["last_date"] = _dmy(c["at"])
+                    continue
+                if c["kind"] == "production":
+                    continue
+                # alım (Mal kabul) ya da Input'u bilinmeyen eski alım
+                pkey = (c["origin"], c["lot"])
+                if c["kind"] == "purchase" and pkey in f["_seen"]:
+                    continue                      # kısmi taşımanın iki parçası tek alımdır
+                f["_seen"].add(pkey)
+                f["types"].add("purchase")
+                f["purchases"]["count"] += 1
+                at = c["at"] or datetime.min
+                if f["_p_at"] is None or at > f["_p_at"]:
+                    f["_p_at"] = at
+                    f["purchases"]["last_date"] = _dmy(c["at"])
+                    f["purchases"]["last_qty_text"] = _qty_text(c["qty"], unit)
+                if last is None or at > last["_at"]:
+                    last = {"name": nm, "key": k, "date": _dmy(c["at"]), "_at": at}
+                # Alım lotuna aynı lot no'lu numune çevrilip birleşmişse numune izi de kalsın
+                for r in c["conv"]:
+                    f["types"].add("sample")
+                    f["samples"].append({"lot": c["lot"], "date": _dmy(r.at), "qty_text": _qty_text(r.qty, unit),
+                                         "converted": True, "analysis": self.analysis(l),
+                                         "_at": r.at or datetime.min})
+        if last:
+            last.pop("_at")
+        samples.sort(key=lambda s: (s["name"], s["date"]))
+        for f in firms.values():
+            f["samples"].sort(key=lambda x: x["_at"], reverse=True)       # en yeni önce
+            for x in f["samples"]:
+                x.pop("_at")
+        return {"firms": firms, "card": card, "last": last, "samples": samples}
+
+
+def _order_view(o: OrderRec, unit, ri: _RelIndex) -> dict:
+    nm = clean_text(o.supplier_name)
+    status = "open" if o.closed_at is None else ("received" if o.closed_reason == "received" else "manual")
+    return {"name": nm, "key": ri.key(nm) or None, "supplier_id": o.supplier_id,
+            "date": _dmy(o.ordered_at), "qty_text": _qty_text(o.quantity, o.unit or unit),
+            "status": status, "expected": _dmy(o.expected_date)}
+
+
+def _relations(m: dict, ri: _RelIndex) -> dict:
+    """Malzemenin tedarikçi ilişkileri (bütün üye kartlar üzerinden).
+
+    Eski anahtarlar (`card`, `last`, `samples`) aynı şekilde kalır; ek olarak
+    `firms[]` (firma başına tür dökümü), `orders[]` (sipariş işaretleri,
+    firmasızlar dahil), `alternatives[]` ("aynı malzeme" grubundaki diğer
+    kartlar) ve `group`."""
+    pin = ri.pin
+    member_ids = m.get("member_ids") or []
+    unit = m.get("unit")
+    sm = ri.summary(member_ids, unit)
+    firms = sm["firms"]
+    orders = []
+    for i in member_ids:
+        for o in pin.orders.get(i, []):
+            ov = _order_view(o, unit, ri)
+            orders.append(dict(ov, _at=o.ordered_at or datetime.min))
+            if ov["key"]:
+                f = _firm(firms, ov["key"], ov["name"], o.supplier_id)
+                f["types"].add("order")
+                f["orders"].append({k: ov[k] for k in ("date", "qty_text", "status", "expected")})
+    orders.sort(key=lambda x: x["_at"], reverse=True)                     # en yeni önce
+    for o in orders:
+        o.pop("_at")
+    for o in m.get("offers") or []:
+        k = o.get("supplier_key") or ""
+        if not k or k in ri.skip:
+            continue
+        f = _firm(firms, k, o["name"], o.get("supplier_id"))
+        f["types"].add("offer")
+        f["offers"].append({"price": o.get("price"), "price_unit": o.get("price_unit"),
+                            "currency": o.get("currency"), "package": o.get("package"),
+                            "note": o.get("note"), "quoted_at": o.get("quoted_at"),
+                            "source_label": o.get("source_label")})
+    firm_list = []
+    for f in firms.values():
+        for tmp in ("_p_at", "_i_at", "_seen"):
+            f.pop(tmp, None)
+        f["types"] = [t for t in REL_TYPES if t in f["types"]]
+        firm_list.append(f)
+    firm_list.sort(key=lambda f: (min(_FIRM_RANK[t] for t in f["types"]) if f["types"] else 9,
+                                  alnum_fold(f["name"])))
+
+    mg = m.get("material_group") or None
+    alternatives = []
+    for a in (mg or {}).get("alts") or []:
+        aid = a["item_id"]
+        sid = pin.card_supplier.get(aid)
+        snm = clean_text(pin.suppliers[sid].name) if sid in pin.suppliers else None
+        sk = ri.key(snm)
+        asm = ri.summary([aid], a.get("unit"))
+        sq = sum(l.quantity for l in pin.lots.get(aid, []) if l.is_sample and l.quantity > 0)
+        stock = float(a.get("stock") or 0.0)
+        alternatives.append({
+            "item_id": aid, "name": a.get("name") or "—", "unit": a.get("unit") or "",
+            "unit_mismatch": bool(a.get("unit_mismatch")),
+            "supplier": snm if sk else None, "supplier_key": sk or None, "supplier_id": sid if sk else None,
+            "stock": stock, "stock_text": _amount_near(stock, a.get("unit")) if stock > 0 else "yok",
+            "sample_text": f"{_amount_near(sq, a.get('unit'))} numune" if sq > 0 else "",
+            "last": asm["last"], "samples": asm["samples"], "in_plan": bool(a.get("in_plan"))})
+    return {"card": sm["card"], "last": sm["last"], "samples": sm["samples"],
+            "firms": firm_list, "orders": orders, "alternatives": alternatives,
+            "group": {"id": mg["id"], "name": mg["name"]} if mg else None}
 
 
 def _price_row(m: dict, pin: PriceInputs, rates, currency: str, round_to_package: bool,
                fx_used: Set[str], sources: dict, flags: dict, skip: Set[str],
-               ix: "SupplierIndex") -> None:
+               ix: "SupplierIndex", ri: Optional[_RelIndex] = None) -> None:
     unit = m["unit"]
     offers, seen = [], set()
     for mid in m.get("member_ids") or []:
@@ -407,7 +775,7 @@ def _price_row(m: dict, pin: PriceInputs, rates, currency: str, round_to_package
         pkg = float(best["package"])
         m["pkg_buy"] = round(math.ceil(buy_num / pkg - 1e-9) * pkg, 6)
         m["pkg_amount"] = round_half_up(m["pkg_buy"] * best["price"])
-    m["relations"] = _relations(m.get("member_ids") or [], pin, skip, ix)
+    m["relations"] = _relations(m, ri or _RelIndex(pin, skip, ix))
 
 
 def attach(result: dict, pin: PriceInputs, rates, *, currency: str = "USD",
@@ -424,10 +792,11 @@ def attach(result: dict, pin: PriceInputs, rates, *, currency: str = "USD",
     fx_used: Set[str] = set()
     sources: dict = {}
     flags = {"litre_kg": False}
+    ri = _RelIndex(pin, skip, ix)
     for m in result.get("materials", []):
-        _price_row(m, pin, rates, currency, round_to_package, fx_used, sources, flags, skip, ix)
+        _price_row(m, pin, rates, currency, round_to_package, fx_used, sources, flags, skip, ix, ri)
     for m in result.get("held", []):
-        _price_row(m, pin, rates, currency, round_to_package, fx_used, sources, flags, skip, ix)
+        _price_row(m, pin, rates, currency, round_to_package, fx_used, sources, flags, skip, ix, ri)
 
     mats = [m for m in result.get("materials", []) if m["status"] == "to_buy"]
     totals = {k: sum(m["amount"] or 0 for m in mats if m["kind"] == k) for k in ("raw", "packaging", "label")}
@@ -540,9 +909,26 @@ def supplier_directory(result: dict, pin: PriceInputs, skip: Optional[Set[str]] 
             ks.append((rel["last"]["key"], rel["last"]["name"], f"son alım {rel['last']['date']}"))
         for s in rel["samples"]:
             ks.append((s["key"], s["name"], f"numune {s['date']}"))
+        for f in rel.get("firms") or []:
+            if "purchase" in f.get("types", ()) and f["key"] != (rel["last"] or {}).get("key"):
+                ks.append((f["key"], f["name"], _dated("alım", f["purchases"]["last_date"])))
+            if "import" in f.get("types", ()):
+                ks.append((f["key"], f["name"], _dated("stok aktarımı", f["imports"]["last_date"])))
+        okeys: Set[str] = set()
+        for o in rel.get("orders") or []:              # firma başına en yeni sipariş
+            if o.get("key") and o["key"] not in okeys:
+                okeys.add(o["key"])
+                ks.append((o["key"], o["name"], _dated("sipariş", o.get("date"))))
         for o in m.get("offers") or []:
             if o["supplier_key"] and o["supplier_key"] not in (skip or set()):
                 ks.append((o["supplier_key"], o["name"], "fiyat listesinde (fiyatsız)"))
+        for a in rel.get("alternatives") or []:
+            if a.get("supplier_key"):
+                ks.append((a["supplier_key"], a["supplier"], f"eşdeğer kart «{a['name']}»"))
+            if a.get("last"):
+                ks.append((a["last"]["key"], a["last"]["name"], _dated("eşdeğer kartta son alım", a["last"]["date"])))
+            for s in a.get("samples") or []:
+                ks.append((s["key"], s["name"], _dated("eşdeğer kartta numune", s["date"])))
         entry = {"key": m["key"], "name": m["name"], "buy_text": m["display"]["buy_text"]}
         seen: Dict[str, dict] = {}
         for k, nm, why in ks:
@@ -564,6 +950,19 @@ def supplier_directory(result: dict, pin: PriceInputs, skip: Optional[Set[str]] 
         b["contact_line"] = contact_line(c)
         b["count"] = len(b["items"])
     cand_list = sorted(cand.values(), key=lambda b: (-b["count"], b["name"]))
+    # Firma başına ilişki türleri (Excel "Tedarikçiler" K sütunu) — bütün alınacaklar üzerinden
+    rtypes: Dict[str, Set[str]] = {}
+    for m in mats:
+        rel = m.get("relations") or {}
+        for f in rel.get("firms") or []:
+            rtypes.setdefault(f["key"], set()).update(f.get("types") or ())
+        for a in rel.get("alternatives") or []:
+            for k in ([a.get("supplier_key")] + [(a.get("last") or {}).get("key")]
+                      + [s["key"] for s in a.get("samples") or []]):
+                if k:
+                    rtypes.setdefault(k, set()).add("equivalent")
+    for b in chosen_list + cand_list:
+        b["types"] = [t for t in REL_TYPES + ("equivalent",) if t in rtypes.get(b["key"], ())]
 
     used = set(chosen) | set(cand)
     missing = sorted((k for k in used if not (contacts.get(k) or {}).get("phone")
@@ -579,6 +978,183 @@ def supplier_directory(result: dict, pin: PriceInputs, skip: Optional[Set[str]] 
     }
     return {"chosen": chosen_list, "candidates": cand_list, "unrelated": unrelated,
             "checklist": checklist}
+
+
+# ─── İlişki metinleri (önizleme / PDF / Excel ortak) ─────────────────────────
+
+def _capped(lines: List[str], cap: Optional[int], noun: str) -> List[str]:
+    if cap and len(lines) > cap:
+        return lines[:cap] + [f"+{len(lines) - cap} {noun} daha"]
+    return lines
+
+
+def _sample_bits(s: dict) -> List[str]:
+    """Numune kaydının kısa ekleri: miktar · analiz sonucu (belge no)."""
+    out = [s["qty_text"]] if s.get("qty_text") else []
+    an = s.get("analysis")
+    if an:
+        out.append(f"analiz {an['result_text']}" + (f" ({an['doc_no']})" if an.get("doc_no") else ""))
+    return out
+
+
+def _order_detail(o: dict) -> str:
+    """'01.10.2026 · 25 kg · açık · beklenen 10.10.2026' (firmasız)."""
+    bits = [x for x in (o.get("date"), o.get("qty_text"), ORDER_STATUS_TEXT.get(o.get("status"), "")) if x]
+    if o.get("status") == "open" and o.get("expected"):
+        bits.append(f"beklenen {o['expected']}")
+    return " · ".join(bits)
+
+
+def order_text(o: dict) -> str:
+    """'KRK GIDA 01.10.2026 · 25 kg · açık · beklenen 10.10.2026'."""
+    d = _order_detail(o)
+    return (o.get("name") or "firma yazılmamış") + (f" {d}" if d else "")
+
+
+def alt_text(a: dict) -> str:
+    """'«CETYL STEARYL ALCOHOL» (YİĞİTOĞLU KİMYA, stok yok, birimi adet)'."""
+    parts = [a.get("supplier") or "tedarikçi yazılmamış",
+             f"stok {a['stock_text']}" if (a.get("stock") or 0) > 0 else "stok yok"]
+    if a.get("unit_mismatch"):
+        parts.append(f"birimi {a.get('unit') or '—'}")
+    parts += _alt_history(a)
+    return f"«{a.get('name') or '—'}» (" + ", ".join(parts) + ")"
+
+
+def _alt_history(a: dict) -> List[str]:
+    """Eşdeğer kartın son alımı + numuneleri (firma kartın tedarikçisiyse adı
+    tekrarlanmaz) + elde duran numune miktarı."""
+    def who(x, label):
+        return label if x.get("key") == a.get("supplier_key") else f"{label} {x['name']}"
+    out: List[str] = []
+    last = a.get("last")
+    if last:
+        out.append(_dated(who(last, "son alım"), last.get("date")))
+    for sm in a.get("samples") or []:
+        out.append(_dated(who(sm, "numune"), sm.get("date")))
+    if a.get("sample_text"):
+        out.append(f"elde {a['sample_text']}")
+    return out
+
+
+def order_texts(m: dict) -> List[str]:
+    return [order_text(o) for o in (m.get("relations") or {}).get("orders") or []]
+
+
+def alt_texts(m: dict) -> List[str]:
+    return [alt_text(a) for a in (m.get("relations") or {}).get("alternatives") or []]
+
+
+def relation_line(m: dict) -> Optional[str]:
+    """Eski ilişki satırı: 'Stok kartında yazan: X (son alım …) · Son alım: Y
+    (…) · Numune gönderdi: Z (…, analiz uygun)'."""
+    rel = m.get("relations") or {}
+    extra: List[str] = []
+    cards = rel.get("card") or []
+    if cards:
+        extra.append("Stok kartında yazan: " + " / ".join(x["name"] for x in cards))
+    last = rel.get("last")
+    if last:
+        if any(x.get("key") == last.get("key") for x in cards):
+            extra[0] += f" (son alım {last['date']})" if last.get("date") else ""
+        else:
+            extra.append(f"Son alım: {last['name']}" + (f" ({last['date']})" if last.get("date") else ""))
+    firms = {f["key"]: f for f in rel.get("firms") or []}
+    for s in rel.get("samples") or []:
+        bits = [s["date"]] if s.get("date") else []
+        an = next((x["analysis"] for x in (firms.get(s.get("key")) or {}).get("samples") or []
+                   if x.get("analysis") and x.get("date") == s.get("date")), None)
+        if an:
+            bits.append(f"analiz {an['result_text']}")
+        extra.append(f"Numune gönderdi: {s['name']}" + (f" ({', '.join(bits)})" if bits else ""))
+    return " · ".join(extra) if extra else None
+
+
+def relation_texts(m: dict, cap: Optional[int] = REL_LINES_MAX) -> List[str]:
+    """Tedarikçi hücresinin ilişki satırları — önizleme (`_sup_lines`), PDF
+    (`_sup_cell`) aynı listeyi basar: eski ilişki satırı, "Sipariş: …"
+    satırları, "Aynı malzeme: «X» (FİRMA, stok …)" satırları (her biri en
+    çok `cap` + "+N … daha")."""
+    out: List[str] = []
+    line = relation_line(m)
+    if line:
+        out.append(line)
+    out += _capped(["Sipariş: " + t for t in order_texts(m)], cap, "sipariş")
+    out += _capped(["Aynı malzeme: " + t for t in alt_texts(m)], cap, "kart")
+    return out
+
+
+def firm_lines(f: dict, currency: str = "USD") -> List[str]:
+    """Firma dökümü satırları (önizleme "Tedarikçiler" açılır listesi)."""
+    out: List[str] = []
+    if "card" in f.get("types", ()):
+        out.append("stok kartında yazan")
+    p = f.get("purchases") or {}
+    if p.get("count"):
+        t = (f"{p['count']} alım, son {p['last_date']}" if p["count"] > 1
+             else _dated("alım", p.get("last_date")))
+        out.append(t + (f" ({p['last_qty_text']})" if p.get("last_qty_text") else ""))
+    i = f.get("imports") or {}
+    if i.get("count"):
+        out.append(_dated("stok aktarımı", i.get("last_date")) + (f" ({i['count']} lot)" if i["count"] > 1 else ""))
+    for s in f.get("samples") or []:
+        t = _dated("numune (stoğa çevrildi)" if s.get("converted") else "numune", s.get("date"))
+        if s.get("lot"):
+            t += f" · lot {s['lot']}"
+        out.append(" · ".join([t] + _sample_bits(s)))
+    for o in f.get("orders") or []:
+        out.append(_dated("sipariş", _order_detail(o)))
+    sym = CURRENCY_SYMBOL.get(currency, currency)
+    for o in f.get("offers") or []:
+        if o.get("price") is not None:
+            out.append(f"fiyat listesi: {price_text(o['price'])} {sym}/"
+                       f"{UNIT_TEXT.get(o.get('price_unit'), o.get('price_unit') or '')}")
+        else:
+            out.append("fiyat listesinde (fiyatsız)")
+    return out
+
+
+def alt_lines(a: dict, row_unit=None) -> List[str]:
+    """Eşdeğer kart satırları (önizleme "Aynı malzeme — diğer kartlar")."""
+    out = [f"stok {a['stock_text']}" if (a.get("stock") or 0) > 0 else "stok yok"]
+    if a.get("in_plan"):
+        out[0] += " (bu planda kendi satırında)"
+    if a.get("unit_mismatch"):
+        out.append(f"birimi {a.get('unit') or '—'}" + (f", bu satır {row_unit}" if row_unit else "")
+                   + " — miktarlar doğrudan karşılaştırılamaz")
+    return out + _alt_history(a)
+
+
+def firms_view(m: dict, currency: str = "USD") -> Optional[dict]:
+    """Önizlemenin "Tedarikçiler (N)" açılır listesi — sunucu biçimli.
+    {title, count, firms:[{t, d:[…]}], alts_title, alts:[{t, d:[…], w}], group}
+    (firma da eşdeğer kart da yoksa None)."""
+    rel = m.get("relations") or {}
+    firms = rel.get("firms") or []
+    alts = rel.get("alternatives") or []
+    if not firms and not alts:
+        return None
+    names: Dict[str, str] = {}
+    for f in firms:
+        names.setdefault(f["key"], f["name"])
+    # Eşdeğer kartların firmaları da sayılır: kart tedarikçisi + kendi
+    # lotlarından gelen son alım ve numune firmaları (alt satırlarda yazılanlar
+    # — kartında tedarikçi yazmayan eşdeğer kart canlıda yaygın).
+    for a in alts:
+        if a.get("supplier_key"):
+            names.setdefault(a["supplier_key"], a["supplier"])
+        for x in ([a["last"]] if a.get("last") else []) + list(a.get("samples") or []):
+            if x.get("key"):
+                names.setdefault(x["key"], x["name"])
+    nm = list(names.values())
+    title = f"Tedarikçiler ({len(nm)})" + (": " + " · ".join(nm[:4]) + (" …" if len(nm) > 4 else "") if nm else "")
+    grp = rel.get("group")
+    return {"title": title, "count": len(nm),
+            "firms": [{"t": f["name"], "d": firm_lines(f, currency)} for f in firms],
+            "alts_title": ("Aynı malzeme — diğer kartlar" + (f" («{grp['name']}» grubu)" if grp else "")) if alts else None,
+            "alts": [{"t": f"«{a['name']}»" + (f" — {a['supplier']}" if a.get("supplier") else ""),
+                      "d": alt_lines(a, m.get("unit")), "w": bool(a.get("unit_mismatch"))} for a in alts],
+            "group": grp}
 
 
 # ─── Bölümler ───────────────────────────────────────────────────────────────
@@ -635,6 +1211,10 @@ def notes_lines(result: dict) -> List[str]:
     if opts.get("subtract_open_orders"):
         out.append("Açık siparişler (sipariş verildi işareti) yolda sayılıp alınacaktan düşüldü.")
     out.append("Numune lotları stoğa dahil değildir; eksi stoklu kartlar 0 sayıldı.")
+    if any((m.get("material_group") or {}).get("alts")
+           for m in (result.get("materials") or []) + (result.get("held") or [])):
+        out.append("“Aynı malzeme” grubundaki diğer tedarikçi kartları (eşdeğer kartlar) satırlarda bilgi "
+                   "olarak yazıldı; lab bunları ayrı ürün saydığı için stokları ihtiyaçtan düşülmedi.")
     for e in result.get("excluded") or []:
         out.append(f"{e['name']} {e['need_text']} listede yok ({e['reason']}).")
     for h in result.get("held") or []:
@@ -697,7 +1277,8 @@ def sections(result: dict) -> List[dict]:
         subtitle="Kalın yazılan tedarikçi en ucuz olanı; tutar onunla hesaplandı. "
                  "Gri satırlar diğer teklifler ve sistemdeki kayıtlar.")
     add("raw_unpriced", raw_u, summary=f"{len(raw_u)} kalem",
-        subtitle="Satırda, sistemde bu malzeme için kayıtlı firma (stok kartı, son alım, numune) yazıyor.")
+        subtitle="Satırda, sistemde bu malzeme için kayıtlı firma (stok kartı, son alım, numune, sipariş) "
+                 "ve aynı malzemenin diğer kartları yazıyor.")
     add("pkg_priced", pkg_p, total=tot(pkg_p),
         summary=f"{len(pkg_p)} kalem, toplam {money(tot(pkg_p), cur)}")
     add("pkg_unpriced", pkg_u, summary=f"{len(pkg_u)} kalem")
@@ -721,7 +1302,8 @@ def sections(result: dict) -> List[dict]:
                       "contact_line": "Yeni tedarikçi bulunmalı (fiyat listesindeki firmalara da sorulabilir).",
                       "none": True})
     add("candidates", cands, summary=f"{len(cands)} grup",
-        subtitle="Bu firmalar sistemde o malzemeyle ilişkili görünüyor (stok kartı, son alım, numune). "
+        subtitle="Bu firmalar sistemde o malzemeyle ilişkili görünüyor (stok kartı, son alım, numune, "
+                 "sipariş ya da aynı malzemenin başka tedarikçi kartı — eşdeğer kart). "
                  "Teklif istenmeli; bir malzeme birden fazla firmanın altında olabilir.")
 
     chk = sup.get("checklist") or {}

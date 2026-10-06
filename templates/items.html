@@ -690,6 +690,105 @@
     :root[data-theme="dark"] .smp-hint a { color: var(--gold); }
     :root[data-theme="dark"] .cv-opt input,
     :root[data-theme="dark"] .cv-cand input { accent-color: var(--gold); }
+
+    /* ── "Aynı malzeme" grupları (P2, 06.10.2026) ──────────────────────────
+       Önek mg-; btn-* adı YASAK (Bootstrap gölgeleme tuzağı). */
+    .mg-toolbtn {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.5rem 0.95rem; border: 1.5px solid var(--gold); border-radius: 8px;
+      background: var(--white); color: var(--navy); cursor: pointer;
+      font-family: 'Jost', sans-serif; font-size: 0.85rem; font-weight: 600;
+    }
+    .mg-toolbtn:hover { background: #faf8f4; }
+    .mg-chip {
+      display: flex; align-items: center; gap: 4px; width: fit-content; max-width: 100%;
+      margin-top: 3px; padding: 1px 8px; border-radius: 10px;
+      background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0;
+      font-family: 'Jost', sans-serif; font-size: 0.68rem; font-weight: 700;
+      cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .mg-chip:hover { background: #d1fae5; }
+    .mg-box {
+      margin-top: 1rem; padding: 0.8rem 0.95rem; border-radius: 10px;
+      background: #fcfaf6; border: 1px solid #f0ece4;
+    }
+    .mg-head { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; }
+    .mg-head .bi { color: var(--gold); }
+    .mg-title { font-weight: 700; color: var(--navy); font-size: 0.92rem; }
+    .mg-sub { font-size: 0.79rem; color: #6b7280; margin-top: 0.25rem; }
+    .mg-warn {
+      margin-top: 0.5rem; padding: 0.45rem 0.7rem; border-radius: 8px;
+      background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 0.8rem;
+    }
+    .mg-list {
+      margin-top: 0.5rem; border: 1px solid #e5e7eb; border-radius: 8px;
+      background: var(--white); max-height: 260px; overflow-y: auto;
+    }
+    .mg-row {
+      display: flex; align-items: center; gap: 0.55rem; margin: 0;
+      padding: 0.42rem 0.7rem; border-bottom: 1px solid #f3f0ea; font-size: 0.85rem;
+    }
+    .mg-row:last-child { border-bottom: none; }
+    .mg-row input[type=checkbox] { accent-color: var(--navy); flex-shrink: 0; }
+    label.mg-row { cursor: pointer; }
+    .mg-main { flex: 1; min-width: 0; }
+    .mg-meta { display: block; font-size: 0.74rem; color: #6b7280; }
+    .mg-meta .bi { color: var(--gold); }
+    .mg-empty { padding: 0.5rem 0.7rem; font-size: 0.8rem; color: #6b7280; }
+    .mg-tag {
+      display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 8px;
+      background: #eef2ff; color: #4338ca; font-size: 0.66rem; font-weight: 700; vertical-align: middle;
+    }
+    .mg-tag-off { background: #fef2f2; color: #b91c1c; }
+    .mg-tag-warn { background: #fff7ed; color: #9a3412; }
+    .mg-why {
+      display: inline-block; padding: 0 7px; border-radius: 8px;
+      background: #fef3c7; color: #92400e; font-size: 0.7rem; font-weight: 600;
+    }
+    .mg-link {
+      background: none; border: none; padding: 0; cursor: pointer; text-align: left;
+      color: var(--navy); font-weight: 600; font-size: 0.8rem;
+      text-decoration: underline; text-underline-offset: 2px;
+    }
+    .mg-link-name { font-size: 0.85rem; font-weight: 700; text-decoration: none; }
+    .mg-link-name:hover { text-decoration: underline; }
+    .mg-x {
+      flex-shrink: 0; width: 28px; height: 28px; border: none; border-radius: 6px;
+      background: #fff1f1; color: #dc2626; cursor: pointer; font-size: 0.85rem;
+    }
+    .mg-x:hover { background: #fee2e2; }
+    .mg-act {
+      flex-shrink: 0; padding: 0.38rem 0.85rem; border-radius: 8px; border: 1.5px solid #e5e7eb;
+      background: var(--white); color: #374151; cursor: pointer;
+      font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 600;
+    }
+    .mg-act-main { background: var(--navy); border-color: var(--navy); color: #fff; }
+    .mg-act:disabled, .mg-x:disabled, .mg-link:disabled { opacity: 0.6; cursor: wait; }
+    .mg-find { margin-top: 0.7rem; }
+    .mg-find .form-control { padding: 0.45rem 0.75rem; font-size: 0.86rem; }
+    .mg-foot { display: flex; justify-content: space-between; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.55rem; }
+    .mg-sug { border: 1px solid #e5e7eb; border-radius: 10px; padding: 0.8rem 0.95rem; margin-bottom: 0.8rem; }
+    .mg-sug-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; margin-top: 0.65rem; }
+    .mg-sug select { margin-top: 0.3rem; max-width: 100%; }
+    :root[data-theme="dark"] .mg-box,
+    :root[data-theme="dark"] .mg-toolbtn:hover { background: var(--surface-2); }
+    :root[data-theme="dark"] .mg-box,
+    :root[data-theme="dark"] .mg-list,
+    :root[data-theme="dark"] .mg-row,
+    :root[data-theme="dark"] .mg-sug { border-color: var(--border); }
+    :root[data-theme="dark"] .mg-chip { background: #0F2A22; color: #6EE7B7; border-color: #1F4D3D; }
+    :root[data-theme="dark"] .mg-tag { background: #1A1F3F; color: #C7B5F9; }
+    :root[data-theme="dark"] .mg-tag-off { background: #2E1414; color: #FCA5A5; }
+    :root[data-theme="dark"] .mg-warn,
+    :root[data-theme="dark"] .mg-why,
+    :root[data-theme="dark"] .mg-tag-warn { background: #2D2114; color: #FCD34D; border-color: #5A4520; }
+    :root[data-theme="dark"] .mg-x { background: #2E1414; color: #FCA5A5; }
+    :root[data-theme="dark"] .mg-act { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+    :root[data-theme="dark"] .mg-act-main { background: var(--navy); color: var(--text); border: 1px solid var(--gold); }
+    :root[data-theme="dark"] .mg-act-main:hover { background: var(--gold); color: #1A1208; }
+    :root[data-theme="dark"] .mg-link,
+    :root[data-theme="dark"] .mg-title { color: var(--gold); }
+    :root[data-theme="dark"] .mg-row input[type=checkbox] { accent-color: var(--gold); }
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
@@ -822,6 +921,10 @@
         <button class="btn-outline-navy" id="dupBtn" style="display:none;" onclick="dupOpen()">
           <i class="bi bi-exclamation-diamond"></i> Kopya Kararları
           <span class="tab-count" id="dupCount">0</span>
+        </button>
+        <button type="button" class="mg-toolbtn" id="mgSugBtn" style="display:none;" onclick="mgSugOpen()"
+                title="Farklı tedarikçi kartlarında duran aynı malzemeler (ör. SETİL STEARİL ALKOL / CETYL STEARYL ALCOHOL) — gruplayın ya da farklı deyin">
+          <i class="bi bi-diagram-3"></i> Aynı malzeme önerileri (<span id="mgSugCount">0</span>)
         </button>
         {% endif %}
         {% if can('items', 'import') %}
@@ -1129,6 +1232,49 @@
     </div>
   </div>
 
+  <!-- ════ MODAL: AYNI MALZEME GRUBU (tablodaki grup çipinden) ════ -->
+  <div class="modal fade" id="mgModal" tabindex="-1" aria-hidden="true" aria-labelledby="mgModalTitle">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="mgModalTitle">Aynı malzeme grubu</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body" id="mgModalBody"></div>
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" data-bs-dismiss="modal">Kapat</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: AYNI MALZEME ÖNERİLERİ ════
+       Veri: GET /api/material-groups/suggestions.  "Grupla" → grup kur / katıl /
+       taşı; "Farklı" → POST /suggestions/dismiss. -->
+  <div class="modal fade" id="mgSugModal" tabindex="-1" aria-hidden="true" aria-labelledby="mgSugTitle">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="mgSugTitle">Aynı malzeme önerileri</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body" id="mgSugBody">
+          <p class="mg-sub" style="margin:0 0 0.9rem;">
+            Aşağıdaki kartlar ada göre <b>aynı malzeme</b> olabilir — çoğu zaman aynı
+            hammaddenin farklı tedarikçi kartları. <b>Grupla</b> kartları birleştirmez,
+            stoklar ayrı kalır; satın alma planı ve numune çevirme alternatif tedarikçiyi
+            bu bağdan bulur. Gerçekten farklı malzemelerse <b>Farklı</b> deyin.
+            Yalnız işaretli kartlar işleme girer.
+          </p>
+          <div id="mgSugList"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" data-bs-dismiss="modal">Kapat</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal fade" id="addItemModal" tabindex="-1" aria-labelledby="addItemModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
@@ -1280,6 +1426,9 @@
               </div>
             </div>
           </form>
+          <!-- "Aynı malzeme" bölümü — formun DIŞINDA: işlemleri anında kaydedilir,
+               "Kaydet"e bağlı değil (form reset'i de buraya dokunmaz). -->
+          <div class="mg-box" id="mgSection" hidden></div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn-cancel" data-bs-dismiss="modal">İptal</button>
@@ -1561,7 +1710,7 @@
             <span class="variation-name-pill">${escHtml(item.variation_name || '—')}</span>
             ${escHtml(item.name)}
             ${item.parent_name ? `<div class="variation-parent-name">↳ ${escHtml(item.parent_name)}</div>` : ''}
-            ${vSupplier}
+            ${vSupplier}${mgChip(item)}
           </td>
           <td>${catBadge(item.category, item.pkg_type)}${langChip(item)}</td>
           <td>${escHtml(item.unit)}</td>
@@ -1589,7 +1738,7 @@
           <td class="td-id">#${item.id}</td>
           <td class="td-name">
             ${escHtml(item.name)}
-            ${supplierHint}
+            ${supplierHint}${mgChip(item)}
           </td>
           <td>${catBadge(item.category, item.pkg_type)}${langChip(item)}</td>
           <td>${escHtml(item.unit)}</td>
@@ -1614,6 +1763,7 @@
       const tbody   = document.getElementById('itemsBody');
       const info    = document.getElementById('tableInfo');
       const tabCfg  = TABS[activeTab];
+      _mgCounts = mgGroupCounts();   // çipteki "· N kart"
 
       if (!data.length) {
         const cspan = CAN_SEE_FINANCE ? 9 : 8;   // Dynamic — drops by 1 when Maliyet column hidden
@@ -1756,6 +1906,8 @@
           fold(i.name_tr).includes(q) ||
           fold(i.category).includes(q) ||
           fold(i.pkg_type).includes(q) ||
+          // "stearil" araması İngilizce adlı grup üyelerini de bulsun
+          fold(i.material_group_name).includes(q) ||
           (i.barcode || '').toLowerCase().includes(q)
         );
       }
@@ -2378,6 +2530,8 @@
       if (pre && pre.unit && [...unitSel.options].some(o => o.value === pre.unit)) unitSel.value = pre.unit;
       const sup = document.getElementById('itemSupplierId');
       if (sup && _sampleReturn.supplier) sup.value = _sampleReturn.supplier;
+      const src = pre && pre.join_group_of_item_id ? _sampleItemsById.get(pre.join_group_of_item_id) : null;
+      if (src) mgJoinOpen(src);
       setTimeout(() => document.getElementById(name ? 'itemNameTr' : 'itemName')?.focus(), 350);
     }
     async function resumeSampleAfterCreate(newItemId) {
@@ -2505,8 +2659,11 @@
       const supSel = document.getElementById('sampleSupplier');
       const supName = supSel.selectedOptions[0]?.textContent || '';
       if (!item) return;
+      // Yeni kart seçili kartla aynı malzeme grubuna girer (grup yoksa
+      // kurulur) — satın alma planı iki tedarikçiyi birlikte gösterir.
       openAddItemFromSample({ name: `${item.name} — ${supName}`.slice(0, 150),
-                              unit: item.unit, category: item.category });
+                              unit: item.unit, category: item.category,
+                              join_group_of_item_id: item.id });
     });
 
     async function submitSample() {
@@ -2639,6 +2796,7 @@
       document.getElementById('addItemModalLabel').textContent = 'Yeni Ürün Ekle';
       document.getElementById('addItemForm').reset();
       resetVariationFields();
+      mgSectionClose();
       // Pre-select the category that matches the current tab
       document.getElementById('itemCategory').value = TABS[activeTab]?.defaultCat || '';
       updateVariationVisibility();
@@ -2692,6 +2850,7 @@
         document.getElementById('itemVariationName').value = item.variation_name || '';
       }
 
+      mgSectionOpen(item);
       new bootstrap.Modal(document.getElementById('addItemModal')).show();
     }
 
@@ -2705,6 +2864,7 @@
       document.getElementById('addItemModalLabel').textContent = 'Yeni Ürün Ekle';
       document.getElementById('addItemForm').reset();
       resetVariationFields();
+      mgSectionClose();
     });
 
     /* ── Delete single ── */
@@ -2778,6 +2938,14 @@
         language:       (document.getElementById('itemLanguage')?.value || '').trim() || null,
         supplier_id:    parseInt(document.getElementById('itemSupplierId')?.value || '') || null,
       };
+      // Numune akışından "bu tedarikçi için yeni kart": kart, kaynak kartla
+      // aynı malzeme grubuna girer.  Tür değiştiyse (ambalaj / bitmiş ürün)
+      // sunucu 400 verirdi — bağ düşülür, kart yine açılır.
+      if (!editingItemId && _mgJoinOf) {
+        const k = mgKind(payload.category);
+        if (k !== 'finished' && k === mgKind(_mgJoinOf.category)) payload.join_group_of_item_id = _mgJoinOf.id;
+        else showToast(`Kart türü değişti — «${_mgJoinOf.name}» ile aynı malzeme grubuna bağlanmayacak.`, 'info', 6000);
+      }
 
       this.disabled = true;
       this.textContent = 'Kaydediliyor…';
@@ -2802,6 +2970,11 @@
         }
         if (!res.ok) { showToast(data.detail || 'Kayıt başarısız.'); return; }
         showToast(editingItemId ? 'Ürün güncellendi.' : 'Ürün başarıyla eklendi.', 'success');
+        if (!editingItemId && data.material_group) {
+          showToast(`«${data.material_group.name}» aynı malzeme grubuna eklendi.`, 'success', 5000);
+          if (data.warning) showToast(data.warning, 'info', 8000);
+          mgSugLoad();
+        }
         const resumeSample = !editingItemId && _sampleReturn && data.id;
         bootstrap.Modal.getInstance(document.getElementById('addItemModal')).hide();
         loadItems();
@@ -3202,10 +3375,648 @@
         showToast(d.message, 'success');
         _dupClusters.splice(_dupIdx, 1);
         dupRender();
+        // "Ayrı kalsın" kartları aynı malzeme grubuna bağlar — tablo çipleri,
+        // düzenleme penceresinin grup bilgisi (allItems) ve öneriler tazelensin;
+        // kullanıcı kalan kümelerde pencereyi kapatsa da liste eski kalmasın.
+        if (action === 'keep') mgChanged();
       } catch { showToast('Bağlantı hatası — karar kaydedilemedi.'); }
     }
 
-    loadItems();
+    /* ── "Aynı malzeme" grupları (P2, 06.10.2026) ─────────────────────────────
+       Lab'ın düzeni "her tedarikçi ayrı kart": 126 SETİL STEARİL ALKOL
+       (TATLIDİLİMLER), 599 CETYL STEARYL ALCOHOL (YİĞİTOĞLU), 593 CETEARYL
+       ALCOHOL (VESER) aynı malzeme ama sistem bunu bilmiyordu.  Grup kartları
+       BİRLEŞTİRMEDEN bağlar; satın alma planı alternatif tedarikçiyi, numune
+       çevirme hedef kartı buradan bulur.  Uçlar /api/material-groups (okuma
+       items.view, yazma items.edit).  Kurallar sunucuda: kart tek grupta
+       (409 in_other_group → taşıma onayı), aktif üyesi 2'nin altına düşen grup
+       dağılır, birim farkı engellemez ama `warning` döner.
+       Giriş noktaları: tablo satırındaki grup çipi (#mgModal), düzenleme
+       modalındaki bölüm (#mgSection) — ikisi aynı paneli (mgPanel*) kullanır —
+       ve öneriler penceresi (#mgSugModal). */
+    const MG_CAN_EDIT = window.can('items', 'edit');
+    let _mgCounts = new Map();        // grup id → listedeki aktif kart sayısı (çip)
+    let _mgSugs = null;               // öneri önbelleği; null = henüz yüklenmedi
+    let _mgSugSeq = 0;
+    let _mgSugIsOpen = false;
+    const _mgSugDraft = new Map();    // öneri id → {off: [item_id], name, target}
+    let _mgSec = null;                // düzenleme modalındaki panel
+    let _mgDlg = null;                // çip penceresindeki panel
+    let _mgJoinOf = null;             // yeni kart kaydında katılınacak kaynak kart
+
+    function mgFold(s) { return window.trFold ? window.trFold(s) : String(s || '').toLowerCase(); }
+    function mgFmt(n) { return Number(n || 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }); }
+    // core/stock_lots.lot_kind ve purchase_plan.unit_norm karşılıkları lot-move.js'te
+    function mgKind(cat) {
+      const H = window.lotMoveHelpers;
+      if (H) return H.lotKind(cat);
+      return cat === 'Bitmiş Ürün' ? 'finished' : (cat === 'Ambalaj' ? 'packaging' : 'raw');
+    }
+    function mgUnit(u) {
+      const H = window.lotMoveHelpers;
+      return H ? H.unitKey(u) : String(u || '').trim().toLowerCase();
+    }
+    function mgCard(id) { return allItems.find(i => i.id === id) || null; }
+    function mgErr(d, fb) {
+      if (d && typeof d.detail === 'string') return d.detail;
+      if (d && Array.isArray(d.detail) && d.detail.length) return 'Geçersiz giriş: ' + (d.detail[0].msg || '');
+      return fb;
+    }
+    async function mgApi(method, url, body) {
+      const opt = { method, headers: { 'Content-Type': 'application/json' } };
+      if (body !== undefined) opt.body = JSON.stringify(body);
+      try {
+        const res = await fetch(url, opt);
+        return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+      } catch {
+        return { ok: false, status: 0, data: { detail: 'Sunucuya bağlanılamadı.' } };
+      }
+    }
+    function mgGroupCounts() {
+      const m = new Map();
+      allItems.forEach(i => { if (i.material_group_id) m.set(i.material_group_id, (m.get(i.material_group_id) || 0) + 1); });
+      return m;
+    }
+    // Satırdaki grup çipi — <button> olduğu için onItemRowClick düzenlemeyi açmaz
+    function mgChip(item) {
+      if (!item.material_group_id) return '';
+      const n = _mgCounts.get(item.material_group_id) || 0;
+      return `<button type="button" class="mg-chip" data-mg-group="${item.material_group_id}"
+        title="Aynı malzeme grubu — kartları ve tedarikçileri göster"><i class="bi bi-diagram-3"></i>${escHtml(item.material_group_name || 'Aynı malzeme')}${n > 1 ? ` · ${n} kart` : ''}</button>`;
+    }
+    function mgWarnText(g) {
+      if (!g) return '';
+      if (g.warning) return g.warning;
+      return g.unit_mismatch
+        ? `Birimler farklı (${(g.units || []).join(', ')}) — stok ve miktarlar kartlar arasında doğrudan karşılaştırılamaz.`
+        : '';
+    }
+    // Grup değişti → tablo çipleri, açık panelin aday satırları (adayın
+    // grubu değişmiş olabilir) ve öneri sayısı tazelensin — sırayla, öneriler
+    // eski kart listesiyle çizilmesin.
+    function mgChanged() {
+      if (window.invalidateItemsCache) window.invalidateItemsCache();
+      return loadItems().then(() => {
+        if (_mgSec) mgPanelResults(_mgSec);
+        if (_mgDlg) mgPanelResults(_mgDlg);
+        return mgSugLoad();
+      });
+    }
+    function mgDone(res) {
+      showToast(res.message || 'Kaydedildi.', 'success');
+      if (res.warning) showToast(res.warning, 'info', 8000);
+      if ((res.dissolved_groups || []).length) showToast('Tek kartı kalan eski grup dağıtıldı.', 'info', 6000);
+    }
+
+    /* Kartı gruba ekle.  Kart başka gruptaysa sunucu 409 in_other_group der;
+       kullanıcı onaylarsa move:true ile taşınır.  Başarıda GroupPayload. */
+    async function mgAddMember(group, itemId, move) {
+      const url = `/api/material-groups/${group.id}/members`;
+      let r = await mgApi('POST', url, { item_id: itemId, move: !!move });
+      if (r.status === 409 && r.data.code === 'in_other_group') {
+        const c = mgCard(itemId);
+        if (!confirm(`«${c ? c.name : '#' + itemId}» şu an «${r.data.group.name}» grubunda — bir kart tek grupta olur.\n` +
+                     `«${group.name}» grubuna taşınsın mı?`)) return null;
+        r = await mgApi('POST', url, { item_id: itemId, move: true });
+      }
+      if (!r.ok) { showToast(mgErr(r.data, 'Kart gruba eklenemedi.')); return null; }
+      return r.data;
+    }
+
+    /* Yeni grup kur.  Ad doluysa (409 name_conflict) kartlar o gruba
+       eklenebilir; kartlardan biri başka gruptaysa (409 in_other_group)
+       taşıma onayı sorulur. */
+    async function mgCreateGroup(name, ids) {
+      name = String(name || '').trim();
+      if (!name) { showToast('Grup adı boş olamaz.'); return null; }
+      let r = await mgApi('POST', '/api/material-groups', { name, item_ids: ids });
+      if (r.status === 409 && r.data.code === 'name_conflict') {
+        const ex = r.data.existing;
+        if (!confirm(`«${ex.name}» adlı bir grup zaten var.\nKartlar o gruba eklensin mi?`)) return null;
+        let last = null;
+        for (const id of ids) {
+          last = await mgAddMember(ex, id, false);
+          if (!last) return null;
+        }
+        return last;
+      }
+      if (r.status === 409 && r.data.code === 'in_other_group') {
+        const c = mgCard(r.data.item_id);
+        if (!confirm(`«${c ? c.name : '#' + r.data.item_id}» şu an «${r.data.group.name}» grubunda — bir kart tek grupta olur.\n` +
+                     `Yeni «${name}» grubuna taşınsın mı?`)) return null;
+        r = await mgApi('POST', '/api/material-groups', { name, item_ids: ids, move: true });
+      }
+      if (!r.ok) { showToast(mgErr(r.data, 'Grup kurulamadı.')); return null; }
+      return r.data;
+    }
+
+    /* ── Grup paneli ──
+       P = {host, itemId (kart bağlamı; çip penceresinde null), groupId,
+            group (GroupPayload | null), loading, busy, q, name, token, onGone}.
+       host._mgP o an host'a bağlı panel: kapanmış bir panelin geç gelen
+       yanıtı yeni panelin üstüne çizilmesin. */
+    function mgPanelNew(host, itemId, groupId, onGone) {
+      const P = { host, itemId, groupId: groupId || null, group: null, loading: !!groupId,
+                  busy: false, q: '', name: '', token: 0, onGone: onGone || null };
+      host._mgP = P;
+      return P;
+    }
+    async function mgPanelLoad(P) {
+      const tok = ++P.token;
+      if (!P.groupId) { P.group = null; P.loading = false; mgPanelRender(P); return; }
+      P.loading = true;
+      mgPanelRender(P);
+      const r = await mgApi('GET', `/api/material-groups/${P.groupId}`);
+      if (tok !== P.token) return;
+      P.loading = false;
+      if (r.ok) P.group = r.data;
+      else {
+        P.group = null; P.groupId = null;
+        if (r.status !== 404) showToast(mgErr(r.data, 'Grup yüklenemedi.'));
+      }
+      mgPanelRender(P);
+    }
+    function mgPanelBusy(P, b) {
+      P.busy = b;
+      P.host.querySelectorAll('button[data-mg-act]').forEach(x => { x.disabled = b; });
+    }
+    function mgMemberRow(P, m, it) {
+      const isSelf = !!it && m.item_id === it.id;
+      const nm = escHtml(m.name) + (m.name_tr && m.name_tr !== m.name ? ' · ' + escHtml(m.name_tr) : '');
+      // Çip penceresinde kart adı düzenleme penceresini açar (düzenleme
+      // bölümünde açmaz — formdaki kaydedilmemiş değişiklik kaybolurdu).
+      const title = (!it && MG_CAN_EDIT && m.is_active && mgCard(m.item_id))
+        ? `<button type="button" class="mg-link mg-link-name" data-mg-act="open" data-id="${m.item_id}" title="Kartı düzenle">${nm}</button>`
+        : `<b>${nm}</b>`;
+      const unitOff = !!it && mgUnit(m.unit) !== mgUnit(it.unit);
+      return `<div class="mg-row">
+          <div class="mg-main">${title}${isSelf ? '<span class="mg-tag">bu kart</span>' : ''}${m.is_active ? '' : '<span class="mg-tag mg-tag-off">pasif</span>'}
+            <span class="mg-meta"><i class="bi bi-truck"></i> ${escHtml(m.supplier_name || 'tedarikçi yok')} · stok ${mgFmt(m.stock)} ${escHtml(m.unit)}${unitOff ? ' <span class="mg-tag mg-tag-warn">birim farklı</span>' : ''} · #${m.item_id}</span>
+          </div>
+          ${MG_CAN_EDIT ? `<button type="button" class="mg-x" data-mg-act="remove" data-id="${m.item_id}" title="Gruptan çıkar" aria-label="Gruptan çıkar"><i class="bi bi-x-lg"></i></button>` : ''}
+        </div>`;
+    }
+    function mgPanelRender(P) {
+      if (P.host._mgP !== P) return;
+      if (P.loading) { P.host.innerHTML = '<div class="mg-sub">Aynı malzeme grubu yükleniyor…</div>'; return; }
+      const it = P.itemId ? mgCard(P.itemId) : null;
+      const g = P.group;
+      let h = '<div class="mg-head"><i class="bi bi-diagram-3"></i>';
+      if (g) {
+        h += `<span class="mg-title">Aynı malzeme · «${escHtml(g.name)}»</span>`;
+        if (MG_CAN_EDIT) h += '<button type="button" class="mg-link" data-mg-act="rename">Adını değiştir</button>';
+        h += '</div>';
+        h += `<div class="mg-sub">${g.active_count} aktif kart. Kartlar birleşmez, her tedarikçi kendi kartında ve stoğunda kalır; satın alma planı alternatif tedarikçiyi bu gruptan gösterir.</div>`;
+        if (g.note) h += `<div class="mg-sub">Not: ${escHtml(g.note)}</div>`;
+        const w = mgWarnText(g);
+        if (w) h += `<div class="mg-warn"><i class="bi bi-exclamation-triangle"></i> ${escHtml(w)}</div>`;
+        h += '<div class="mg-list">' + g.members.map(m => mgMemberRow(P, m, it)).join('') + '</div>';
+      } else if (it) {
+        h += '<span class="mg-title">Aynı malzeme</span></div>';
+        h += '<div class="mg-sub">Bu kart bir gruba bağlı değil. Aynı malzemenin başka tedarikçi kartı varsa bulup gruplayın — kartlar birleşmez, stoklar ayrı kalır.</div>';
+      } else {
+        P.host.innerHTML = '<div class="mg-sub">Grup bulunamadı — dağıtılmış olabilir.</div>';
+        return;
+      }
+      if (MG_CAN_EDIT) {
+        h += '<div class="mg-find">';
+        if (!g) {
+          h += `<label class="form-label-sm">Yeni grubun adı</label>
+            <input type="text" class="form-control" data-mg-name maxlength="150" autocomplete="off" value="${escHtml(P.name || (it ? it.name : ''))}" />`;
+        }
+        h += `<label class="form-label-sm" style="margin-top:0.55rem;">${g ? 'Gruba kart ekle' : 'Aynı malzemenin diğer kartı'}</label>
+          <input type="text" class="form-control" data-mg-q autocomplete="off" value="${escHtml(P.q)}"
+                 placeholder="Kart ara — ad, Türkçe ad, tedarikçi ya da #no" />
+          <div data-mg-results></div></div>`;
+        h += '<div class="mg-foot"><span class="mg-sub" style="margin:0;">Bu bölümdeki değişiklikler hemen kaydedilir.</span>';
+        if (g) h += '<button type="button" class="mg-link" data-mg-act="dissolve" style="color:#b91c1c;">Grubu dağıt</button>';
+        h += '</div>';
+      }
+      P.host.innerHTML = h;
+      if (MG_CAN_EDIT) mgPanelResults(P);
+      mgPanelBusy(P, P.busy);
+    }
+    /* Eklenebilecek kartlar.  Arama boşken öneri motorunun (TR/EN eşanlamlı ad
+       anahtarı) bu kart için bulduğu eşler gelir — "CETYL STEARYL ALCOHOL",
+       "SETİL STEARİL ALKOL"ün eşi olarak çıkar; düz metin aramasıyla bulunmazdı. */
+    function mgPanelCands(P) {
+      const it = P.itemId ? mgCard(P.itemId) : null;
+      const g = P.group;
+      const ref = it || (g && g.members.find(m => m.is_active));
+      if (!ref || mgKind(ref.category) === 'finished') return { list: [], sug: false };
+      const kind = mgKind(ref.category);
+      const taken = new Set(g ? g.members.map(m => m.item_id) : []);
+      if (it) taken.add(it.id);
+      const q = mgFold(P.q);
+      if (!q) {
+        if (!it || !_mgSugs) return { list: [], sug: true };
+        const seen = new Map();
+        _mgSugs.forEach(s => {
+          if (!s.item_ids.includes(it.id)) return;
+          s.item_ids.forEach(id => {
+            const c = mgCard(id);
+            if (c && !taken.has(id) && !seen.has(id)) seen.set(id, { card: c, why: mgSugWhy(s) });
+          });
+        });
+        return { list: [...seen.values()].slice(0, 6), sug: true };
+      }
+      const toks = q.split(' ');
+      const hits = allItems
+        .filter(c => !taken.has(c.id) && !c.is_parent && mgKind(c.category) === kind)
+        .filter(c => {
+          const hay = mgFold(`${c.name} ${c.name_tr || ''} ${c.supplier_name || ''} #${c.id}`);
+          return toks.every(t => hay.includes(t));
+        });
+      hits.sort((a, b) => window.trCompare ? window.trCompare(a.name, b.name)
+                                           : String(a.name).localeCompare(String(b.name), 'tr'));
+      return { list: hits.slice(0, 8).map(c => ({ card: c })), sug: false, more: hits.length > 8 };
+    }
+    function mgPanelResults(P) {
+      if (P.host._mgP !== P) return;
+      const box = P.host.querySelector('[data-mg-results]');
+      if (!box) return;
+      const it = P.itemId ? mgCard(P.itemId) : null;
+      const g = P.group;
+      const ref = it || (g && g.members.find(m => m.is_active));
+      const { list, sug, more } = mgPanelCands(P);
+      if (!list.length) {
+        box.innerHTML = sug
+          ? (it && !g && _mgSugs ? '<div class="mg-sub">Ada göre önerilen eş yok — yukarıdan arayın.</div>' : '')
+          : '<div class="mg-list"><div class="mg-empty">Eşleşen kart yok (yalnız aynı türdeki aktif kartlar listelenir).</div></div>';
+        return;
+      }
+      box.innerHTML = (sug ? '<div class="mg-sub" style="margin-top:0.45rem;">Ada göre olası eşler:</div>' : '') +
+        '<div class="mg-list">' + list.map(({ card: c, why }) => {
+          const unitOff = !!ref && mgUnit(c.unit) !== mgUnit(ref.unit);
+          let act = 'create', lbl = 'Grup oluştur', main = true, tip = 'Bu iki kartla yeni aynı malzeme grubu kur';
+          if (g) { act = 'add'; lbl = 'Ekle'; tip = `«${g.name}» grubuna ekle`; }
+          else if (c.material_group_id) {
+            act = 'join'; lbl = 'Grubuna katıl'; main = false;
+            tip = `Bu kartı «${c.material_group_name || ''}» grubuna kat`;
+          }
+          return `<div class="mg-row">
+              <div class="mg-main"><b>${escHtml(c.name)}</b>${c.name_tr && c.name_tr !== c.name ? ' · ' + escHtml(c.name_tr) : ''}${why ? ` <span class="mg-why">${escHtml(why)}</span>` : ''}
+                <span class="mg-meta"><i class="bi bi-truck"></i> ${escHtml(c.supplier_name || 'tedarikçi yok')} · stok ${mgFmt(c.current_stock)} ${escHtml(c.unit)}${unitOff ? ' <span class="mg-tag mg-tag-warn">birim farklı</span>' : ''} · #${c.id}${c.material_group_name ? ` · grup «${escHtml(c.material_group_name)}»` : ''}</span>
+              </div>
+              <button type="button" class="mg-act${main ? ' mg-act-main' : ''}" data-mg-act="${act}" data-id="${c.id}" title="${escHtml(tip)}">${lbl}</button>
+            </div>`;
+        }).join('') + (more ? '<div class="mg-empty">İlk 8 sonuç — aramayı daraltın.</div>' : '') + '</div>';
+      mgPanelBusy(P, P.busy);
+    }
+    async function mgPanelAct(P, act, id) {
+      if (P.busy) return;
+      if (act === 'open') { mgOpenCard(id); return; }
+      const it = P.itemId ? mgCard(P.itemId) : null;
+      const g = P.group;
+      let res = null, gone = false, changed = false;
+      mgPanelBusy(P, true);
+      try {
+        if (act === 'rename' && g) {
+          const name = prompt('Grubun yeni adı:', g.name);
+          if (name === null || !name.trim() || name.trim() === g.name) return;
+          const r = await mgApi('PUT', `/api/material-groups/${g.id}`, { name: name.trim() });
+          if (!r.ok) { showToast(mgErr(r.data, 'Grup adı değiştirilemedi.')); return; }
+          showToast(r.data.message || 'Grup güncellendi.', 'success');
+          P.group = r.data;
+          changed = true;
+        } else if (act === 'dissolve' && g) {
+          if (!confirm(`«${g.name}» grubu dağıtılsın mı?\nKartlar ve stokları yerinde kalır, yalnız "aynı malzeme" bağı kalkar.`)) return;
+          const r = await mgApi('DELETE', `/api/material-groups/${g.id}`);
+          if (!r.ok) { showToast(mgErr(r.data, 'Grup dağıtılamadı.')); return; }
+          showToast(r.data.message || 'Grup dağıtıldı.', 'success');
+          gone = changed = true;
+        } else if (act === 'remove' && g) {
+          const m = g.members.find(x => x.item_id === id);
+          const dissolves = !!m && m.is_active && g.active_count <= 2;
+          if (!confirm(`«${m ? m.name : '#' + id}» «${g.name}» grubundan çıkarılsın mı?` +
+                       (dissolves ? '\nGrupta tek aktif kart kalacağı için grup dağılır.' : ''))) return;
+          const r = await mgApi('DELETE', `/api/material-groups/${g.id}/members/${id}`);
+          if (!r.ok) { showToast(mgErr(r.data, 'Kart gruptan çıkarılamadı.')); return; }
+          showToast(r.data.message || 'Kart gruptan çıkarıldı.', 'success');
+          if (r.data.warning) showToast(r.data.warning, 'info', 8000);
+          changed = true;
+          if (r.data.dissolved || (it && id === it.id)) gone = true;   // düzenlenen kart artık grupsuz
+          else P.group = r.data;
+        } else if (act === 'add' && g) {
+          res = await mgAddMember(g, id, false);
+        } else if (act === 'join' && it) {
+          const c = mgCard(id);
+          if (!c || !c.material_group_id) return;
+          res = await mgAddMember({ id: c.material_group_id, name: c.material_group_name || 'grup' }, it.id, false);
+        } else if (act === 'create' && it) {
+          res = await mgCreateGroup(P.name || it.name, [it.id, id]);
+        } else {
+          return;
+        }
+        if (res) { mgDone(res); P.group = res; P.groupId = res.id; changed = true; }
+        if (gone) { P.group = null; P.groupId = null; }
+        if (changed) { P.q = ''; P.name = ''; mgChanged(); }
+      } finally {
+        P.busy = false;
+        mgPanelRender(P);
+        if (gone && !P.itemId && P.onGone) P.onGone();
+      }
+    }
+    // Çip penceresinden kart düzenleme: pencere kapanınca düzenleme açılır
+    function mgOpenCard(id) {
+      if (!mgCard(id)) return;
+      const el = document.getElementById('mgModal');
+      const inst = bootstrap.Modal.getInstance(el);
+      if (inst && el.classList.contains('show')) {
+        el.addEventListener('hidden.bs.modal', () => editItem(id), { once: true });
+        inst.hide();
+      } else editItem(id);
+    }
+
+    /* Düzenleme modalındaki bölüm (bitmiş ürün gruplanmaz). */
+    function mgSectionOpen(item) {
+      const host = document.getElementById('mgSection');
+      _mgJoinOf = null;
+      if (!host || !item || item.is_parent || mgKind(item.category) === 'finished') { mgSectionClose(); return; }
+      _mgSec = mgPanelNew(host, item.id, item.material_group_id, null);
+      host.hidden = false;
+      mgPanelLoad(_mgSec);
+    }
+    function mgSectionClose() {
+      const host = document.getElementById('mgSection');
+      _mgSec = null;
+      _mgJoinOf = null;
+      if (host) { host._mgP = null; host.hidden = true; host.innerHTML = ''; }
+    }
+    /* Numune girişinden "bu tedarikçi için yeni kart": kayıt gövdesine
+       join_group_of_item_id girer; sunucu yeni kartı kaynak kartın grubuna
+       katar (grup yoksa ikisi için kurar). */
+    function mgJoinOpen(src) {
+      const host = document.getElementById('mgSection');
+      if (!host || !src) return;
+      _mgSec = null;
+      host._mgP = null;
+      _mgJoinOf = { id: src.id, name: src.name, category: src.category };
+      host.innerHTML = `<div class="mg-head"><i class="bi bi-diagram-3"></i><span class="mg-title">Aynı malzeme</span></div>
+        <div class="mg-sub">Kayıttan sonra bu kart <b>«${escHtml(src.name)}»</b>${src.supplier_name ? ` (${escHtml(src.supplier_name)})` : ''} kartıyla
+          ${src.material_group_name ? `<b>«${escHtml(src.material_group_name)}»</b> grubuna eklenir` : 'aynı malzeme grubunda bağlanır'} —
+          satın alma planı iki tedarikçiyi birlikte gösterir.</div>
+        <div class="mg-foot"><button type="button" class="mg-link" data-mg-act="nojoin">Gruba bağlama</button></div>`;
+      host.hidden = false;
+    }
+    function mgJoinCancel() {
+      _mgJoinOf = null;
+      const host = document.getElementById('mgSection');
+      if (host) { host.hidden = true; host.innerHTML = ''; }
+      showToast('Yeni kart gruba bağlanmayacak.', 'info');
+    }
+    ['mgSection', 'mgModalBody'].forEach(hid => {
+      const host = document.getElementById(hid);
+      if (!host) return;
+      host.addEventListener('click', e => {
+        const b = e.target.closest('[data-mg-act]');
+        if (!b || !host.contains(b)) return;
+        e.preventDefault();
+        if (b.dataset.mgAct === 'nojoin') { mgJoinCancel(); return; }
+        if (host._mgP) mgPanelAct(host._mgP, b.dataset.mgAct, parseInt(b.dataset.id, 10) || null);
+      });
+      host.addEventListener('input', e => {
+        const P = host._mgP;
+        if (!P) return;
+        if (e.target.matches('[data-mg-q]')) { P.q = e.target.value; mgPanelResults(P); }
+        else if (e.target.matches('[data-mg-name]')) P.name = e.target.value;
+      });
+      host.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && e.target.matches('[data-mg-q], [data-mg-name]')) e.preventDefault();
+      });
+    });
+
+    /* Tablo çipi → grup penceresi (okuma herkese; yazma düğmeleri items.edit). */
+    function mgShowGroup(groupId) {
+      const el = document.getElementById('mgModal');
+      _mgDlg = mgPanelNew(document.getElementById('mgModalBody'), null, groupId,
+                          () => bootstrap.Modal.getInstance(el)?.hide());
+      bootstrap.Modal.getOrCreateInstance(el).show();
+      mgPanelLoad(_mgDlg);
+    }
+    document.getElementById('itemsBody').addEventListener('click', e => {
+      const chip = e.target.closest('.mg-chip');
+      if (!chip) return;
+      e.stopPropagation();
+      mgShowGroup(parseInt(chip.dataset.mgGroup, 10));
+    });
+    document.getElementById('mgModal').addEventListener('hidden.bs.modal', () => {
+      document.getElementById('mgModalBody')._mgP = null;
+      _mgDlg = null;
+    });
+
+    /* ── Öneriler (GET /api/material-groups/suggestions) ──
+       Kabul için ayrı uç yok: action create → grup kur, join → gruba ekle,
+       move → seçilen gruba move:true ile ekle; "Farklı" → dismiss. */
+    function mgSugWhy(s) {
+      if (s.kind === 'same_key') return 'aynı ad (TR/EN)';
+      if (s.kind === 'similar') return `benzer ad %${Math.round((s.score || 0) * 100)}`;
+      return 'kopya kararı bekliyor';
+    }
+    function mgSugReason(s) {
+      if (s.kind === 'same_key') return `Adlar Türkçe/İngilizce eşanlamlılarla aynı malzemeye iniyor${s.key ? ` (anahtar: ${s.key})` : ''}.`;
+      if (s.kind === 'similar') return `Adlar birbirine çok benziyor${s.key ? ` (anahtar: ${s.key})` : ''} — aynı malzeme mi, siz karar verin.`;
+      return `Kopya kart kümesi: «${s.title}».`;
+    }
+    async function mgSugLoad() {
+      if (!MG_CAN_EDIT) return;
+      const seq = ++_mgSugSeq;
+      const r = await mgApi('GET', '/api/material-groups/suggestions');
+      if (seq !== _mgSugSeq) return;
+      if (!r.ok) {
+        if (_mgSugIsOpen && _mgSugs === null) {
+          document.getElementById('mgSugList').innerHTML = `<div class="mg-sub">${escHtml(mgErr(r.data, 'Öneriler yüklenemedi.'))}</div>`;
+        }
+        return;
+      }
+      _mgSugs = r.data.suggestions || [];
+      const btn = document.getElementById('mgSugBtn');
+      const cnt = document.getElementById('mgSugCount');
+      if (cnt) cnt.textContent = _mgSugs.length;
+      if (btn) btn.style.display = _mgSugs.length ? 'inline-flex' : 'none';
+      if (_mgSugIsOpen) mgSugRender();
+      if (_mgSec && !_mgSec.q) mgPanelResults(_mgSec);
+    }
+    function mgSugOpen() {
+      _mgSugIsOpen = true;
+      mgSugRender();
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('mgSugModal')).show();
+      mgSugLoad();      // her açılışta taze liste (başka biri gruplamış olabilir)
+    }
+    document.getElementById('mgSugModal').addEventListener('hidden.bs.modal', () => { _mgSugIsOpen = false; });
+    function mgSugDraftOf(sid) {
+      if (!_mgSugDraft.has(sid)) _mgSugDraft.set(sid, {});
+      return _mgSugDraft.get(sid);
+    }
+    function mgSugCard(s) {
+      const d = _mgSugDraft.get(s.id) || {};
+      const off = new Set(d.off || []);
+      let h = `<div class="mg-sug" data-sid="${escHtml(s.id)}">
+        <div class="mg-head"><span class="mg-title">${escHtml(s.title)}</span><span class="mg-why">${escHtml(mgSugWhy(s))}</span></div>
+        <div class="mg-sub">${escHtml(mgSugReason(s))}</div>`;
+      h += '<div class="mg-list">' + s.items.map(x => `
+          <label class="mg-row">
+            <input type="checkbox" data-mg-pick value="${x.item_id}" ${off.has(x.item_id) ? '' : 'checked'} />
+            <span class="mg-main"><b>${escHtml(x.name)}</b>${x.name_tr && x.name_tr !== x.name ? ' · ' + escHtml(x.name_tr) : ''}
+              <span class="mg-meta"><i class="bi bi-truck"></i> ${escHtml(x.supplier_name || 'tedarikçi yok')} · stok ${mgFmt(x.stock)} ${s.unit_mismatch ? `<b>${escHtml(x.unit)}</b>` : escHtml(x.unit)} · #${x.item_id}${x.material_group_name ? ` · grup «${escHtml(x.material_group_name)}»` : ''}</span>
+            </span>
+          </label>`).join('') + '</div>';
+      if (s.unit_mismatch) {
+        h += `<div class="mg-warn"><i class="bi bi-exclamation-triangle"></i> Birimler farklı (${escHtml((s.units || []).join(', '))}) — stoklar kartlar arasında doğrudan karşılaştırılamaz. Birim yanlış girildiyse kartı düzenleyip düzeltin; gruplamayı engellemez.</div>`;
+      }
+      if (s.action === 'join' && s.group) {
+        h += `<div class="mg-sub">İşaretli kartlar mevcut <b>«${escHtml(s.group.name)}»</b> grubuna eklenir.</div>`;
+      } else if (s.action === 'move') {
+        const tgt = d.target || (s.groups[0] && s.groups[0].id);
+        h += `<label class="mg-sub" style="display:block;margin-top:0.55rem;">Kartlar farklı gruplarda — hangi grupta toplansın? (diğer gruptaki kartlar oraya taşınır)
+            <select class="form-select" data-mg-target>${s.groups.map(g =>
+              `<option value="${g.id}"${g.id === tgt ? ' selected' : ''}>${escHtml(g.name)}</option>`).join('')}</select>
+          </label>`;
+      } else {
+        h += `<label class="form-label-sm" style="margin-top:0.6rem;">Grup adı</label>
+          <input type="text" class="form-control" data-mg-sname maxlength="150" autocomplete="off" value="${escHtml(d.name != null ? d.name : s.title)}" />`;
+      }
+      if (s.kind === 'pending_decision') {
+        h += `<div class="mg-sub">Bu kartlar <b>Kopya Kararları</b>nda da bekliyor. Hepsi işaretliyken "Grupla", kopya kararını
+            "farklı kart, ayrı kalsın" olarak kapatır. Aynı kartın kopyasıysa
+            <button type="button" class="mg-link" data-mg-act="dup" data-dec="${Number(s.decision_id) || 0}">Kopya Kararları'nda birleştirin</button>.</div>`;
+      }
+      h += `<div class="mg-sug-acts">
+          <button type="button" class="mg-act mg-act-main" data-mg-act="accept"><i class="bi bi-diagram-3"></i> Aynı malzeme — grupla</button>
+          <button type="button" class="mg-act" data-mg-act="dismiss" title="Bu kartlar bir daha birlikte önerilmez">Farklı</button>
+        </div></div>`;
+      return h;
+    }
+    function mgSugRender() {
+      const list = document.getElementById('mgSugList');
+      if (_mgSugs === null) { list.innerHTML = '<div class="mg-sub">Öneriler yükleniyor…</div>'; return; }
+      if (!_mgSugs.length) {
+        list.innerHTML = '<div class="empty-state" style="padding:2rem 1rem;"><i class="bi bi-check2-circle"></i><p>Bekleyen öneri yok.</p></div>';
+        return;
+      }
+      const body = document.getElementById('mgSugBody');
+      const top = body.scrollTop;
+      list.innerHTML = _mgSugs.map(mgSugCard).join('');
+      body.scrollTop = top;
+    }
+    function mgSugBusy(box, b) { box.querySelectorAll('button, input, select').forEach(x => { x.disabled = b; }); }
+    function mgSugPicked(box) {
+      return [...box.querySelectorAll('[data-mg-pick]:checked')].map(x => parseInt(x.value, 10));
+    }
+    async function mgSugAccept(s, box) {
+      const ids = mgSugPicked(box);
+      if (ids.length < 2) { showToast('Gruplamak için en az iki kart işaretleyin.'); return; }
+      const byId = new Map(s.items.map(x => [x.item_id, x]));
+      let res = null, changed = false;
+      mgSugBusy(box, true);
+      try {
+        // Kopya kümesi, hepsi işaretli: "grupla" = "farklı kart, ayrı kalsın"
+        // (keep) — karar kapanır, sunucu kartları gruplar; Kopya Kararları
+        // penceresi aynı kümeyi bir daha sormaz.
+        if (s.kind === 'pending_decision' && s.decision_id && s.action !== 'move' && ids.length === s.item_ids.length) {
+          const r = await mgApi('POST', `/api/items/dup-decisions/${s.decision_id}`, { action: 'keep' });
+          if (r.ok) {
+            changed = true;
+            showToast(r.data.message || 'Kaydedildi.', 'success');
+            if (!r.data.material_group) {
+              showToast('Kartlar gruplanamadı — kart düzenleme penceresinden bağlayın.', 'info', 8000);
+            }
+            loadDupDecisions(false);
+            return;
+          }
+          if (r.status !== 404) { showToast(mgErr(r.data, 'Karar kaydedilemedi.')); return; }
+          // karar başka yerden kapanmış — düz gruplamaya devam
+        }
+        if (s.action === 'create') {
+          const inp = box.querySelector('[data-mg-sname]');
+          res = await mgCreateGroup(inp ? inp.value : s.title, ids);
+          if (res) changed = true;
+        } else {
+          let target = s.group;
+          if (s.action === 'move') {
+            const sel = box.querySelector('[data-mg-target]');
+            const tid = sel ? parseInt(sel.value, 10) : (s.groups[0] || {}).id;
+            target = s.groups.find(g => g.id === tid) || null;
+          }
+          if (!target) { showToast('Hedef grup bulunamadı — listeyi yenileyin.'); return; }
+          const todo = ids.filter(id => (byId.get(id) || {}).material_group_id !== target.id);
+          if (!todo.length) { showToast('İşaretli kartlar zaten bu grupta.', 'info'); return; }
+          const moving = todo.filter(id => (byId.get(id) || {}).material_group_id);
+          if (moving.length && !confirm(
+                moving.map(id => `«${byId.get(id).name}» («${byId.get(id).material_group_name}» grubundan)`).join(', ') +
+                ` → «${target.name}» grubuna taşınacak.\nDevam edilsin mi?`)) return;
+          for (const id of todo) {
+            const r1 = await mgAddMember(target, id, moving.includes(id));
+            if (!r1) break;
+            res = r1;
+            changed = true;
+          }
+        }
+        if (res) mgDone(res);
+      } finally {
+        if (changed) { _mgSugDraft.delete(s.id); mgChanged(); }   // liste mgSugLoad'la yeniden çizilir
+        else mgSugBusy(box, false);
+      }
+    }
+    async function mgSugDismiss(s, box) {
+      const ids = mgSugPicked(box);
+      if (ids.length < 2) { showToast('"Farklı" için en az iki kart işaretleyin.'); return; }
+      const names = ids.map(id => '«' + ((s.items.find(x => x.item_id === id) || {}).name || '#' + id) + '»');
+      if (!confirm(`${names.join(', ')} farklı malzeme olarak işaretlensin mi?\n` +
+                   'Bu kartlar bir daha birlikte önerilmez; gerekirse kart düzenleme penceresinden elle gruplanabilir.')) return;
+      mgSugBusy(box, true);
+      const r = await mgApi('POST', '/api/material-groups/suggestions/dismiss', { item_ids: ids });
+      if (!r.ok) { mgSugBusy(box, false); showToast(mgErr(r.data, 'Öneri kapatılamadı.')); return; }
+      showToast(r.data.message || 'Öneri kapatıldı.', 'success');
+      _mgSugDraft.delete(s.id);
+      mgSugLoad();
+    }
+    // Bekleyen kopya kümesini Kopya Kararları penceresinde aç (birleştirme yolu)
+    function mgSugToDup(decId) {
+      const i = _dupClusters.findIndex(c => c.id === decId);
+      if (i < 0) { showToast('Bu kopya kararı artık bekleyen listede değil.', 'info'); loadDupDecisions(false); return; }
+      const el = document.getElementById('mgSugModal');
+      el.addEventListener('hidden.bs.modal', () => {
+        _dupIdx = i;
+        dupRender();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('dupModal')).show();
+      }, { once: true });
+      bootstrap.Modal.getInstance(el)?.hide();
+    }
+    (function () {
+      const list = document.getElementById('mgSugList');
+      list.addEventListener('change', e => {
+        const box = e.target.closest('.mg-sug');
+        if (!box) return;
+        const d = mgSugDraftOf(box.dataset.sid);
+        if (e.target.matches('[data-mg-pick]')) {
+          d.off = [...box.querySelectorAll('[data-mg-pick]')].filter(x => !x.checked).map(x => parseInt(x.value, 10));
+        } else if (e.target.matches('[data-mg-target]')) {
+          d.target = parseInt(e.target.value, 10);
+        }
+      });
+      list.addEventListener('input', e => {
+        if (!e.target.matches('[data-mg-sname]')) return;
+        const box = e.target.closest('.mg-sug');
+        if (box) mgSugDraftOf(box.dataset.sid).name = e.target.value;
+      });
+      list.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && e.target.matches('[data-mg-sname]')) e.preventDefault();
+      });
+      list.addEventListener('click', e => {
+        const b = e.target.closest('[data-mg-act]');
+        if (!b) return;
+        const box = b.closest('.mg-sug');
+        const s = box && (_mgSugs || []).find(x => x.id === box.dataset.sid);
+        if (!s) return;
+        e.preventDefault();
+        if (b.dataset.mgAct === 'accept') mgSugAccept(s, box);
+        else if (b.dataset.mgAct === 'dismiss') mgSugDismiss(s, box);
+        else if (b.dataset.mgAct === 'dup') mgSugToDup(parseInt(b.dataset.dec, 10));
+      });
+    })();
+
+    loadItems().then(mgSugLoad);     // öneri sayısı liste geldikten sonra (ağır uç)
     loadDupDecisions(true);
   </script>
 

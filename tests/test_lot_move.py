@@ -404,3 +404,69 @@ def test_bulk_delete_with_moved_from_card_soft_deletes(authed_client: TestClient
     assert r.status_code == 200, r.text
     assert _fresh(db_session, Item, wrong_id).is_active is False      # soft
     assert _fresh(db_session, Item, spare_id) is None                 # hard (bağsız)
+
+
+# ─── Çevrilmiş numune izi (sample_converted_at) ─────────────────────────────
+
+def test_partial_move_carries_sample_converted_at(authed_client: TestClient, db_session: Session):
+    """Çevrilmiş numunenin bir kısmı taşınınca iz yeni satıra da geçer — lot no
+    değişirse core/purchase_pricing (kart, lot) Input'unu bulamaz."""
+    nat = _sup(db_session, "NATURALYA")
+    a = _card(db_session, "JOJOBA YAĞI", stock=50, unit="g")
+    b = _card(db_session, "JOJOBA YAĞI — NATURALYA", unit="g")
+    ts = datetime(2026, 10, 5, 5, 40)
+    lot = _lot(db_session, a.id, "MİNERVA", 50, supplier_id=nat, sample_converted_at=ts)
+    db_session.commit()
+    r = _move(authed_client, lot.id, target_item_id=b.id, quantity=20, lot_number="MİNERVA-N")
+    assert r.status_code == 200, r.text
+    new = _fresh(db_session, Inventory, r.json()["inventory_id"])
+    assert (new.item_id, new.lot_number, new.sample_converted_at) == (b.id, "MİNERVA-N", ts)
+
+
+def test_backfill_sample_converted_at(authed_client: TestClient, db_session: Session):
+    """Eski kodla çevrilmiş numune lotlarına iz yazılır (bir kez): yerinde
+    çevrilmiş lot, taşınıp lot no'su değişmiş lot; gerçek alıma birleşmiş
+    numune ALIM kalır (iz yazılmaz)."""
+    from database import AppSetting, _backfill_sample_converted_at
+    sent = "backfill.sample_converted_at.v1"
+    # init_db (conftest) boş tabloda sentinel'i zaten yazdı → eski DB'yi taklit et
+    db_session.query(AppSetting).filter(AppSetting.key == sent).delete()
+    nat, krk = _sup(db_session, "NATURALYA"), _sup(db_session, "KRK GIDA")
+    conv_at = datetime(2026, 10, 5, 5, 40)
+
+    def tx(item_id, lot, qty, note, at=conv_at):
+        db_session.add(Transaction(item_id=item_id, lot_number=lot, transaction_type="Input",
+                                   quantity=qty, notes=note, timestamp=at))
+
+    # 221: yerinde çevrilmiş (normal lot + çevirme Input'u, iz yok)
+    p = _card(db_session, "PORTAKAL UÇUCU YAĞ", stock=10)
+    in_place = _lot(db_session, p.id, "MİNERVA", 10, supplier_id=nat)
+    tx(p.id, "MİNERVA", 10, "Numune stoğa çevrildi — Lot: MİNERVA")
+    # 185: gerçek alıma birleşmiş numune → alım kalır
+    j = _card(db_session, "JOJOBA YAĞI", stock=5050, unit="g")
+    merged = _lot(db_session, j.id, "L1", 5050, supplier_id=krk)
+    tx(j.id, "L1", 5000, "Mal kabul — PO-1", at=datetime(2026, 6, 1, 8))
+    tx(j.id, "L1", 50, "Numune stoğa çevrildi — Lot: L1")
+    # 217: çevrilmiş, sonra lot no'su değişerek başka karta taşındı
+    lav = _card(db_session, "MELEZ LAVANTA UÇUCU YAĞ", stock=50)
+    moved = _lot(db_session, lav.id, "MİNERVA", 50, supplier_id=nat)
+    tx(lav.id, "MİNERVA", 50, "Numune stoğa çevrildi — Lot: MİNERVA")
+    tgt = _card(db_session, "MELEZ LAVANTA UÇUCU YAĞ — NATURALYA")
+    _lot(db_session, tgt.id, "MİNERVA", 5, supplier_id=krk)            # farklı firma → 409
+    db_session.commit()
+    assert _move(authed_client, moved.id, target_item_id=tgt.id).status_code == 409
+    r = _move(authed_client, moved.id, target_item_id=tgt.id, lot_number="MİNERVA-2")
+    assert r.status_code == 200, r.text
+
+    _backfill_sample_converted_at()
+    assert _fresh(db_session, Inventory, in_place.id).sample_converted_at == conv_at
+    assert _fresh(db_session, Inventory, merged.id).sample_converted_at is None
+    row = _fresh(db_session, Inventory, moved.id)
+    assert (row.item_id, row.lot_number, row.sample_converted_at) == (tgt.id, "MİNERVA-2", conv_at)
+    assert db_session.query(AppSetting).filter(AppSetting.key == sent).first().value == "2"
+    # sentinel: ikinci çağrı hiçbir şey yapmaz
+    db_session.query(Inventory).filter(Inventory.id == in_place.id).update(
+        {Inventory.sample_converted_at: None})
+    db_session.commit()
+    _backfill_sample_converted_at()
+    assert _fresh(db_session, Inventory, in_place.id).sample_converted_at is None

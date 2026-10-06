@@ -2294,6 +2294,83 @@ def _backfill_material_groups_from_kept():
         db.close()
 
 
+def _backfill_sample_converted_at():
+    """Eski numune çevirmelerinin lotlarına `sample_converted_at` yaz.
+
+    06.10.2026 öncesi "Stoğa çevir" yalnız Input yazıyordu ("Numune stoğa
+    çevrildi — Lot: X"); lot satırında iz yoktu (05.10'daki 7 çevirme dahil).
+    core/purchase_pricing çevrilmiş numuneyi (kart, lot no) Input'undan
+    tanır — lot "Karta taşı" ile başka karta taşınırken lot no'su değişirse
+    (409 lot_collision → yeni lot no) iz kopar, numune "eski alım" görünürdü.
+
+    Normal (is_sample=False), `sample_converted_at`'i boş satır: kendi
+    kartında ya da ilk geldiği kartta (`moved_from_item_id`; taşımada lot no
+    değiştiyse "Lot taşındı ←" Adjustment notundaki eski lot no ile) çevirme
+    Input'u varsa VE bu (kart, lot)'ların hiçbirinde "Mal kabul" Input'u
+    yoksa (gerçek alıma birleşmiş numune alım kalır) → en son çevirme
+    Input'unun zamanı.
+
+    BİR KEZ çalışır — `AppSetting` sentinel'i ile korunur (kalıp:
+    `_backfill_supplier_price_units`); değer = damgalanan satır sayısı.
+    """
+    import re as _re
+    from core.purchase_plan import SAMPLE_CONVERTED_MARK
+    from core.stock_lots import LOT_MOVE_MARK
+
+    SENTINEL = "backfill.sample_converted_at.v1"
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter(AppSetting.key == SENTINEL).first():
+            return                                  # zaten koştu → O(1) no-op
+        conv = {}                                   # (kart, lot) → en son çevirme anı
+        for iid, lot, ts in (db.query(Transaction.item_id, Transaction.lot_number,
+                                      Transaction.timestamp)
+                             .filter(Transaction.transaction_type == "Input",
+                                     Transaction.notes.like(f"%{SAMPLE_CONVERTED_MARK}%")).all()):
+            k = (iid, lot or "")
+            if ts is not None and (k not in conv or ts > conv[k]):
+                conv[k] = ts
+        n = 0
+        if conv:
+            purch = {(iid, lot or "") for iid, lot in
+                     db.query(Transaction.item_id, Transaction.lot_number)
+                     .filter(Transaction.transaction_type == "Input",
+                             Transaction.notes.like("Mal kabul%")).all()}
+            # core.stock_lots.move_lot hedef notu: "Lot taşındı ← «A» (id 185) |
+            # Lot: ESKİ → YENİ | Tedarikçi: …" — (hedef kart, yeni lot) → [(kaynak, eski lot)]
+            pat = _re.compile(r"\(id (\d+)\) \| Lot: (.*?) → (.*?) \| Tedarikçi:")
+            renamed = {}
+            for iid, lot, note in (db.query(Transaction.item_id, Transaction.lot_number,
+                                            Transaction.notes)
+                                   .filter(Transaction.transaction_type == "Adjustment",
+                                           Transaction.notes.like(f"{LOT_MOVE_MARK} ←%")).all()):
+                m = pat.search(note or "")
+                if m:
+                    renamed.setdefault((iid, lot or ""), []).append((int(m.group(1)), m.group(2)))
+            for inv in (db.query(Inventory)
+                        .filter(Inventory.is_sample == False,                 # noqa: E712
+                                Inventory.sample_converted_at.is_(None)).all()):
+                lot = inv.lot_number or ""
+                cards = [inv.item_id] + ([inv.moved_from_item_id] if inv.moved_from_item_id else [])
+                keys = {(c, lot) for c in cards}
+                for src, old in renamed.get((inv.item_id, lot), ()):
+                    keys.add((src, old))
+                    keys.update((c, old) for c in cards)
+                hits = [conv[k] for k in keys if k in conv]
+                if hits and not (keys & purch):
+                    inv.sample_converted_at = max(hits)
+                    n += 1
+        db.add(AppSetting(key=SENTINEL, value=str(n)))
+        db.commit()
+        if n:
+            print(f"[init_db] sample_converted_at backfill: {n} eski çevrilmiş numune lotu işaretlendi")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _backfill_drive_folders():
     """original_name'inde '/' olan DriveFile'ları gerçek klasör ağacına yerleştir.
 
@@ -2552,6 +2629,12 @@ def init_db():
     # sentinel'li, bir kez.
     try:
         _backfill_material_groups_from_kept()
+    except Exception:
+        pass
+
+    # Eski numune çevirmelerinin lot izi (sample_converted_at) — sentinel'li, bir kez.
+    try:
+        _backfill_sample_converted_at()
     except Exception:
         pass
 

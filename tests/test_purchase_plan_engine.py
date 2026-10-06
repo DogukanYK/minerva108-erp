@@ -8,7 +8,9 @@ gerekir — izole DB ile koşun:
 
 Kapsam: net/brüt · açık sipariş · tür bazında alım firesi · etiket modları
 (TR/EN/hariç/yeni + yüz) · sanal birleştirme (+ 'kept' engeli, farklı birim →
-benzer kart) · ikinci kart uyarısı · triple5 tablo · hariç/bekletilen ·
+benzer kart) · "aynı malzeme" grubu (birleşmez, benzer-ad bastırılır,
+alternatifler + group_alt_stock, ihtiyaç değişmez) · ikinci kart uyarısı ·
+triple5 tablo · hariç/bekletilen ·
 reçetesiz / ambalajsız / boy uyuşmazlığı / çift satır · kapasite · ürün
 dökümü · bitmiş stok düşme · kapsam metni · DB yükleyici (domain kapsamı).
 """
@@ -20,7 +22,7 @@ from pydantic import ValidationError
 from core.consumption import IngredientRec, ItemRec, RecipeRec
 from core.purchase_plan import (DecisionRec, LotRec, OpenOrderRec, PlanInputError, PlanInputs,
                                 compute, default_excluded_key, face_of, label_base, load_inputs,
-                                merge_map, resolve_default_excluded, safe_triplet)
+                                material_group_members, merge_map, resolve_default_excluded, safe_triplet)
 from core.purchase_plan_models import PlanRequest
 
 NOW = datetime(2026, 10, 5, 9, 30)      # UTC → TR 12:30
@@ -721,3 +723,119 @@ def test_load_inputs_default_excluded_from_appsetting(db_session):
     db_session.commit()
     inp = load_inputs(db_session, PlanRequest(lines=[{"recipe_id": ids["new"], "qty": 1}]), "cosmetics")
     assert inp.default_excluded == (ids["water"],)
+
+
+# ─── "Aynı malzeme" grupları ────────────────────────────────────────────────
+
+# Prod'daki stearil alkol kartları: lab her tedarikçiyi ayrı kart tutuyor
+STEARYL_TD = it(126, "SETİL STEARİL ALKOL", unit="g", stock=3944)       # TATLIDİLİMLER
+STEARYL_YK = it(599, "CETYL STEARYL ALCOHOL", unit="adet", stock=0)     # YİĞİTOĞLU KİMYA
+STEARYL_VS = it(593, "CETEARYL ALCOHOL", unit="adet", stock=0)          # VESER KİMYEVİ
+STEARYL_GROUP = {126: 7, 599: 7, 593: 7}
+
+
+def test_group_same_name_cards_not_merged_need_never_drops():
+    grp = {30: 5, 31: 5}
+    plain = compute(inputs([GLY_A, GLY_B], [R_GLY]), req([{"recipe_id": 110, "qty": 100}]))
+    res = compute(inputs([GLY_A, GLY_B], [R_GLY], mgroup_of=grp, mgroup_names={5: "Gliserin"}),
+                  req([{"recipe_id": 110, "qty": 100}]))
+    a, m = mat(plain, 30), mat(res, 30)
+    assert a["member_ids"] == [30, 31]                      # grupsuz: aynı ad + birim birleşir
+    assert m["member_ids"] == [30] and m["stock"] == pytest.approx(100)   # grupta: birleşmez
+    assert m["need"] == pytest.approx(a["need"])            # ihtiyaç aynı
+    assert m["buy"] >= a["buy"]                             # gruptaki stok düşülmez → alım AZALMAZ
+    assert "duplicate_merged" not in codes(m) and "lookalike" not in codes(m)
+    assert m["material_group"] == {"id": 5, "name": "Gliserin", "alts": [
+        {"item_id": 31, "name": "GLISERIN", "unit": "g", "unit_mismatch": False, "stock": 5000.0,
+         "in_plan": False}]}
+    c = next(c for c in m["cautions"] if c["code"] == "group_alt_stock")
+    assert c["severity"] == "info"
+    assert c["text"] == ("Aynı malzeme grubundaki «GLISERIN» kartında stok var (5,0 kg); "
+                         "lab ayrı ürün saydığı için ihtiyaçtan düşülmedi.")
+    # manual_merges açık kullanıcı kararıdır — grup onu engellemez
+    mm = compute(inputs([GLY_A, GLY_B], [R_GLY], mgroup_of=grp),
+                 req([{"recipe_id": 110, "qty": 100}], manual_merges=[[30, 31]]))
+    assert mat(mm, 30)["member_ids"] == [30, 31] and mat(mm, 30)["material_group"]["alts"] == []
+
+
+def test_group_suppresses_lookalike_and_flags_unit_mismatch():
+    used = it(50, "LAURYL GLUCOSİDE", unit="g", stock=0)
+    other = it(51, "LAURYL GLUCOSIDE", unit="adet", stock=12)
+    r = rec(112, "Şampuan", [(50, 3)])
+    res = compute(inputs([used, other], [r]), req([{"recipe_id": 112, "qty": 100}]))
+    assert "lookalike" in codes(mat(res, 50))               # grupsuz: farklı birim → benzer kart uyarısı
+    assert mat(res, 50)["material_group"] is None
+    res = compute(inputs([used, other], [r], mgroup_of={50: 1, 51: 1}, mgroup_names={1: "Lauryl"}),
+                  req([{"recipe_id": 112, "qty": 100}]))
+    m = mat(res, 50)
+    assert "lookalike" not in codes(m)
+    assert m["material_group"]["alts"][0]["unit_mismatch"] is True
+    c = next(c for c in m["cautions"] if c["code"] == "group_alt_stock")
+    assert "«LAURYL GLUCOSIDE» kartında stok var (12 adet; birimi farklı)" in c["text"]
+    assert m["need"] == pytest.approx(300) and m["buy"] == pytest.approx(300)
+
+
+def test_stearyl_group_alternatives_and_need_unchanged():
+    r = rec(120, "Krem", [(126, 40)])
+    base = compute(inputs([STEARYL_TD, STEARYL_YK, STEARYL_VS], [r]), req([{"recipe_id": 120, "qty": 1000}]))
+    inp = inputs([STEARYL_TD, STEARYL_YK, STEARYL_VS], [r], mgroup_of=STEARYL_GROUP,
+                 mgroup_names={7: "Setil stearil alkol"})
+    m = mat(compute(inp, req([{"recipe_id": 120, "qty": 1000}])), 126)
+    assert m["need"] == mat(base, 126)["need"] and m["buy"] == mat(base, 126)["buy"]
+    assert m["display"]["buy_text"] == mat(base, 126)["display"]["buy_text"]
+    mg = m["material_group"]
+    assert (mg["id"], mg["name"]) == (7, "Setil stearil alkol")
+    assert [(a["item_id"], a["unit_mismatch"], a["stock"]) for a in mg["alts"]] == [(593, True, 0.0),
+                                                                                    (599, True, 0.0)]
+    assert "group_alt_stock" not in codes(m)                # alternatiflerde stok yok
+    # 'adet' kartı kullanılırsa 126'nın stoğu bilgi olarak çıkar, ihtiyaç düşmez
+    r2 = rec(121, "Krem B", [(599, 2)])
+    m2 = mat(compute(inputs([STEARYL_TD, STEARYL_YK, STEARYL_VS], [r2], mgroup_of=STEARYL_GROUP,
+                            mgroup_names={7: "Setil stearil alkol"}),
+                     req([{"recipe_id": 121, "qty": 10}])), 599)
+    assert m2["need"] == pytest.approx(20) and m2["buy"] == pytest.approx(20)
+    c = next(c for c in m2["cautions"] if c["code"] == "group_alt_stock")
+    assert "«SETİL STEARİL ALKOL» kartında stok var (3,9 kg; birimi farklı)" in c["text"]
+
+
+def test_group_members_both_in_plan_marked_in_plan_and_no_stock_caution():
+    r = rec(122, "İkili", [(126, 1), (599, 1)])
+    yk = it(599, "CETYL STEARYL ALCOHOL", unit="adet", stock=5)
+    res = compute(inputs([STEARYL_TD, yk], [r], mgroup_of={126: 7, 599: 7}),
+                  req([{"recipe_id": 122, "qty": 10}]))
+    for iid, other in ((126, 599), (599, 126)):
+        m = mat(res, iid)
+        assert [(a["item_id"], a["in_plan"]) for a in m["material_group"]["alts"]] == [(other, True)]
+        assert "group_alt_stock" not in codes(m)             # o stok kendi satırında kullanılıyor
+
+
+def test_group_alts_skip_inactive_and_foreign_domain_members():
+    gone = it(127, "STEARIL ALKOL ESKİ", unit="g", stock=999, active=False)
+    foreign = it(128, "STEARYL ALCOHOL", unit="g", stock=50, domain="supplement")
+    r = rec(123, "Krem", [(126, 1)])
+    inp = inputs([STEARYL_TD, STEARYL_VS, gone, foreign], [r],
+                 mgroup_of={126: 7, 593: 7, 127: 7, 128: 7})
+    assert material_group_members(inp) == {7: [126, 127, 593]}      # panel dışı kart yok
+    m = mat(compute(inp, req([{"recipe_id": 123, "qty": 1}])), 126)
+    assert [a["item_id"] for a in m["material_group"]["alts"]] == [593]
+    assert m["material_group"]["name"] == "Grup #7"                 # ad yoksa yer tutucu
+
+
+def test_load_inputs_material_groups_active_and_domain_scoped(db_session):
+    from database import Item, MaterialGroup
+    ids = _seed(db_session)
+    g = MaterialGroup(name="Shea", domain="cosmetics")
+    dead = MaterialGroup(name="Eski", domain="cosmetics", is_active=False)
+    sup = MaterialGroup(name="Takviye", domain="supplement")
+    db_session.add_all([g, dead, sup])
+    db_session.flush()
+    oil, oil2, water, sup_item = (db_session.get(Item, ids[k]) for k in ("oil", "oil2", "water", "sup_item"))
+    oil.material_group_id = oil2.material_group_id = g.id
+    water.material_group_id = dead.id
+    sup_item.material_group_id = sup.id
+    db_session.commit()
+    inp = load_inputs(db_session, PlanRequest(lines=[{"recipe_id": ids["new"], "qty": 1}]), "cosmetics")
+    assert inp.mgroup_of == {ids["oil"]: g.id, ids["oil2"]: g.id}     # pasif grup + öbür panel yok
+    assert inp.mgroup_names == {g.id: "Shea"}
+    m = mat(compute(inp, PlanRequest(lines=[{"recipe_id": ids["new"], "qty": 1}])), ids["oil"])
+    assert [a["item_id"] for a in m["material_group"]["alts"]] == [ids["oil2"]]

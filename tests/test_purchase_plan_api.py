@@ -12,7 +12,9 @@ dışa aktarma + audit; geçmiş üretimden doldur; senaryo CRUD (ad tekilliği
 TR-katlanmış, yumuşak silme sonrası ad yeniden kullanılabilir, sahip /
 SuperAdmin / Manager kuralı, audit satırları, missing[] işaretleme,
 last_run_at damgası updated_at'i değiştirmez); Origin'siz mutasyon 403;
-sayfa render + script dosyası.
+sayfa render + script dosyası; "aynı malzeme" grubu önizlemede (ui.sup
+"Aynı malzeme:" satırı + ui.firms "Tedarikçiler (N)" dökümü, ihtiyaç
+değişmez) ve Excel dışa aktarmada.
 """
 from datetime import datetime, timedelta
 
@@ -138,6 +140,57 @@ def test_preview_report_sections_and_ui(authed_client: TestClient, db_session: S
     assert raw["row_keys"] == [gli["key"]] and "rows" not in raw and raw["total_text"] == "13 $"
     assert d["pricing"]["currency"] == "USD" and d["meta"]["domain"] == "cosmetics"
     assert d["meta"]["title"] == "Deneme Siparişi"
+
+
+def test_preview_same_material_group_firms(authed_client: TestClient, db_session: Session):
+    from database import Inventory, MaterialGroup, StockOrderFlag, Supplier, Transaction
+    ids = _seed(db_session)
+    td = Supplier(name="TATLIDİLİMLER", domain="cosmetics")
+    yk = Supplier(name="YİĞİTOĞLU KİMYA", phone="02120000000", domain="cosmetics")
+    db_session.add_all([td, yk])
+    db_session.flush()
+    gli = db_session.get(Item, ids["gli"])
+    gli.supplier_id = td.id
+    alt = _item(db_session, "GLYCERINE", unit="adet", stock=12)
+    alt.supplier_id = yk.id
+    other = _item(db_session, "GLİSERİN takviye", unit="g", stock=99, domain="supplement")
+    g = MaterialGroup(name="Gliserin", domain="cosmetics")
+    db_session.add(g)
+    db_session.flush()
+    gli.material_group_id = alt.material_group_id = other.material_group_id = g.id
+    db_session.add_all([
+        Inventory(item_id=gli.id, supplier_id=td.id, lot_number="TD-1", quantity=500, domain="cosmetics",
+                  created_at=datetime(2026, 8, 12, 7)),
+        Transaction(item_id=gli.id, lot_number="TD-1", transaction_type="Input", quantity=500,
+                    notes="Mal kabul — Lot: TD-1", timestamp=datetime(2026, 8, 12, 7)),
+        Inventory(item_id=alt.id, supplier_id=yk.id, lot_number="YK-1", quantity=12, domain="cosmetics",
+                  created_at=datetime(2026, 7, 20, 7)),
+        Transaction(item_id=alt.id, lot_number="YK-1", transaction_type="Input", quantity=12,
+                    notes="Mal kabul — Lot: YK-1", timestamp=datetime(2026, 7, 20, 7)),
+        StockOrderFlag(item_id=gli.id, supplier_id=td.id, quantity=5000, unit="g", domain="cosmetics",
+                       ordered_at=datetime(2026, 10, 1, 7)),
+    ])
+    db_session.commit()
+    r = authed_client.post("/api/purchase-plan/preview", json=_req(ids, qty=100), headers=_HDR)
+    assert r.status_code == 200, r.text
+    m = {x["item_id"]: x for x in r.json()["materials"]}[ids["gli"]]
+    assert m["need"] == pytest.approx(3300) and m["display"]["buy_num"] == pytest.approx(2.8)   # değişmedi
+    assert m["material_group"]["name"] == "Gliserin"
+    assert [(a["item_id"], a["unit_mismatch"]) for a in m["material_group"]["alts"]] == [(alt.id, True)]
+    assert any(c["code"] == "group_alt_stock" and "«GLYCERINE»" in c["text"] for c in m["cautions"])
+    sup_t = [x["t"] for x in m["ui"]["sup"]]
+    assert "Stok kartında yazan: TATLIDİLİMLER (son alım 12.08.2026)" in sup_t
+    assert "Sipariş: TATLIDİLİMLER 01.10.2026 · 5,0 kg · açık" in sup_t
+    assert "Aynı malzeme: «GLYCERINE» (YİĞİTOĞLU KİMYA, stok 12 adet, birimi adet, son alım 20.07.2026)" in sup_t
+    f = m["ui"]["firms"]
+    assert f["title"] == "Tedarikçiler (3): TATLIDİLİMLER · UMAYCHEM · YİĞİTOĞLU KİMYA"
+    assert [x["t"] for x in f["firms"]] == ["TATLIDİLİMLER", "UMAYCHEM"]
+    assert f["alts"][0]["t"] == "«GLYCERINE» — YİĞİTOĞLU KİMYA" and f["alts"][0]["w"] is True
+    rel = m["relations"]
+    assert rel["alternatives"][0]["last"] == {"name": "YİĞİTOĞLU KİMYA", "key": "YIGITOGLU", "date": "20.07.2026"}
+    # Excel dışa aktarma yeni sütunlarla üretilir
+    x = authed_client.post("/api/purchase-plan/export?format=xlsx", json=_req(ids, qty=100), headers=_HDR)
+    assert x.status_code == 200
 
 
 def test_preview_validation(authed_client: TestClient, db_session: Session):

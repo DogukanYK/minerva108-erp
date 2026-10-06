@@ -435,7 +435,10 @@ def move_lot(
                 status=lot.status, qc_notes=lot.qc_notes, qc_form_data=lot.qc_form_data,
                 received_by=lot.received_by, qc_approved_by=lot.qc_approved_by,
                 qc_required=False, is_sample=False, domain=lot.domain,
-                created_at=lot.created_at, updated_at=now, moved_from_item_id=origin)
+                created_at=lot.created_at, updated_at=now, moved_from_item_id=origin,
+                # çevrilmiş numune izi parçayla gider — lot no değişirse
+                # core/purchase_pricing (kart, lot) Input'unu bulamaz
+                sample_converted_at=lot.sample_converted_at)
             db.add(result)
     else:
         lot.supplier_id = eff_sup

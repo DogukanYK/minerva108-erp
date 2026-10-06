@@ -24,7 +24,11 @@ Tüketim kuralı `core/consumption.expand_recipe` (üretimle birebir) — burada
 yeniden yazılmaz.  Bu modülün kendi kuralları:
   • Sanal birleştirme: aynı katlanmış ad + birim → stoklar toplanır.  DB'ye
     DOKUNULMAZ; lab'ın "farklı" dediği (`DuplicateItemDecision.status='kept'`)
-    kümeler birleştirilmez.
+    kümeler ve aynı "aynı malzeme" grubundaki kartlar (`Item.
+    material_group_id`) birleştirilmez.
+  • "Aynı malzeme" grubu ihtiyacı ASLA azaltmaz: gruptaki diğer kartlar
+    satıra `material_group.alts` olarak yazılır, stoğu varsa yalnız bilgi
+    uyarısı (`group_alt_stock`) çıkar — lab onları ayrı ürün sayıyor.
   • Negatif kart stoğu 0 sayılır (build.py ham toplamı kullanıyordu).
   • `safe_triplet` = urunler.triple5'in birebir uyarlaması: gereken YUKARI,
     elimizde AŞAĞI yuvarlanır → yazılan rakamlarla alınacak = gereken −
@@ -92,6 +96,7 @@ class LotRec:
     is_sample: bool = False
     created_at: Optional[datetime] = None
     quantity: float = 0.0
+    inventory_id: Optional[int] = None    # fiyat katmanı lot_meta / analiz eşlemesi için
 
 
 @dataclass(frozen=True)
@@ -127,6 +132,10 @@ class PlanInputs:
     domain: str = "cosmetics"
     default_excluded: Tuple[int, ...] = ()
     warnings: List[str] = field(default_factory=list)
+    # "Aynı malzeme" grupları: kart id → grup id, grup id → ad (yalnız aktif
+    # gruplar, bu panel).  Boş varsayılan — Rusya fixture'ı etkilenmez.
+    mgroup_of: Dict[int, int] = field(default_factory=dict)
+    mgroup_names: Dict[int, str] = field(default_factory=dict)
 
     def recipe_item_ids(self) -> Set[int]:
         """Herhangi bir aktif reçetede geçen kalemler (birleştirme kökü seçimi)."""
@@ -343,14 +352,37 @@ def _single_short_token_diff(a, b) -> bool:
     return len(diff) == 1 and len(diff[0][0]) <= 2 and len(diff[0][1]) <= 2
 
 
+# ─── "Aynı malzeme" grupları ────────────────────────────────────────────────
+
+def material_group_members(inputs: PlanInputs) -> Dict[int, List[int]]:
+    """{grup id: [paneldeki üye kart id'leri]} (pasif kartlar dahil; alternatif
+    listesi aktifleri ayrıca süzer)."""
+    out: Dict[int, List[int]] = {}
+    for iid, gid in inputs.mgroup_of.items():
+        it = inputs.items.get(iid)
+        if it is None or it.domain != inputs.domain:
+            continue
+        out.setdefault(gid, []).append(iid)
+    return {g: sorted(v) for g, v in out.items()}
+
+
+def _kept_sets(inputs: PlanInputs) -> List[frozenset]:
+    """Birleştirilmeyecek / benzer-ad uyarısı bastırılacak kümeler: lab'ın
+    'kept' kararları + "aynı malzeme" grupları (lab ayrı kart tutuyor)."""
+    kept = [d.item_ids for d in inputs.decisions if d.status == "kept"]
+    kept += [frozenset(ids) for ids in material_group_members(inputs).values() if len(ids) >= 2]
+    return kept
+
+
 # ─── Birleştirme haritası ───────────────────────────────────────────────────
 
 def merge_map(inputs: PlanInputs, opts: PlanOptionsIn) -> Tuple[Dict[int, int], Dict[int, List[int]]]:
     """Sanal birleştirme → (root_of {item_id: kök}, members {kök: [üyeler]}).
 
     Otomatik grup: aktif Hammadde/Ambalaj kartları (etiket hariç) katlanmış ad
-    + birimle.  Lab'ın 'kept' kararı grubun ≥2 üyesini kapsıyorsa grup
-    birleştirilmez.  `manual_merges` çiftleri (açık kullanıcı kararı) daima
+    + birimle.  Lab'ın 'kept' kararı ya da bir "aynı malzeme" grubu otomatik
+    grubun ≥2 üyesini kapsıyorsa grup birleştirilmez.  `manual_merges`
+    çiftleri (açık kullanıcı kararı) daima
     uygulanır.  Kök: grubun reçetelerde kullanılan en küçük id'li üyesi, yoksa
     en küçük id.  Yalnız bu hesap içindir; DB değişmez.
     """
@@ -371,7 +403,7 @@ def merge_map(inputs: PlanInputs, opts: PlanOptionsIn) -> Tuple[Dict[int, int], 
             parent[max(ra, rb)] = min(ra, rb)
 
     if opts.merge_duplicates:
-        kept = [d.item_ids for d in inputs.decisions if d.status == "kept"]
+        kept = _kept_sets(inputs)
         groups: Dict[tuple, List[int]] = {}
         for it in items.values():
             if not it.is_active or it.domain != inputs.domain:
@@ -432,7 +464,7 @@ def load_inputs(db, req: PlanRequest, domain: str) -> PlanInputs:
     reçete-kalem id'si `PlanInputError("Bu panelde değil: …")` atar; pasif
     reçete de hata (senaryo silinmiş reçeteye bakıyorsa sessizce düşmesin).
     """
-    from database import (AppSetting, DuplicateItemDecision, Inventory, Item, Recipe,
+    from database import (AppSetting, DuplicateItemDecision, Inventory, Item, MaterialGroup, Recipe,
                           StockOrderFlag, Supplier, Transaction)
 
     # Paneldeki BÜTÜN kalemler (pasifler dahil; birleştirme/benzer kart aktif
@@ -530,6 +562,17 @@ def load_inputs(db, req: PlanRequest, domain: str) -> PlanInputs:
                  .filter(Item.domain == domain,
                          Transaction.notes.like(f"%{SAMPLE_CONVERTED_MARK}%")).all()}
 
+    # ── "Aynı malzeme" grupları (aktif, bu panel) — tek sorgu ───────────────
+    mgroup_of: Dict[int, int] = {}
+    mgroup_names: Dict[int, str] = {}
+    for iid, gid, gname in (db.query(Item.id, MaterialGroup.id, MaterialGroup.name)
+                            .join(MaterialGroup, MaterialGroup.id == Item.material_group_id)
+                            .filter(Item.domain == domain, MaterialGroup.domain == domain,
+                                    MaterialGroup.is_active == True)          # noqa: E712
+                            .all()):
+        mgroup_of[iid] = gid
+        mgroup_names[gid] = clean_text(gname) or f"Grup #{gid}"
+
     # ── Varsayılan hariçler ─────────────────────────────────────────────────
     cfg = {r.key: r.value for r in db.query(AppSetting).filter(
         AppSetting.key.in_((default_excluded_key(domain), CFG_DEFAULT_EXCLUDED))).all()}
@@ -541,6 +584,7 @@ def load_inputs(db, req: PlanRequest, domain: str) -> PlanInputs:
         recipe_by_target=recipe_by_target, open_orders=open_orders, decisions=decisions,
         lots=lots, converted_lots=converted, stock_as_of=datetime.utcnow(), domain=domain,
         default_excluded=tuple(default_excluded), warnings=warnings,
+        mgroup_of=mgroup_of, mgroup_names=mgroup_names,
     )
 
 
@@ -879,9 +923,10 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
     excluded_ids = set(opts.excluded_item_ids if opts.excluded_item_ids is not None
                        else inputs.default_excluded)
     held_reason = {h.item_id: (h.reason or "").strip() for h in opts.held_items}
-    kept = [d.item_ids for d in inputs.decisions if d.status == "kept"]
+    kept = _kept_sets(inputs)
     pending = [d for d in inputs.decisions if d.status == "pending"]
     lookalike_pool = _lookalike_pool(inputs) if opts.lookalike_check else []
+    mg_members = material_group_members(inputs)
 
     def stock_of(i):
         it = items.get(i)
@@ -988,6 +1033,20 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
                     "Sistemde adı benzeyen başka kart(lar) var: "
                     + ", ".join(f"“{clean_text(c.name)}” {_amount_near(c.current_stock, c.unit)}" for c in alts)
                     + ". Aynı malzemeyse alım azalır ya da gerekmez; laboratuvar teyit etmeli."))
+        mgroup = None if m["is_new_item"] else _material_group_row(
+            members, unit, inputs, mg_members, lambda i: f"i:{root(i)}" in mats)
+        if mgroup:
+            stocked = [a for a in mgroup["alts"] if a["stock"] > 0 and not a["in_plan"]]
+            if stocked:
+                parts = [(a["name"], _amount_near(a["stock"], a["unit"])
+                          + ("; birimi farklı" if a["unit_mismatch"] else "")) for a in stocked]
+                if len(parts) == 1:
+                    txt = f"Aynı malzeme grubundaki «{parts[0][0]}» kartında stok var ({parts[0][1]})"
+                else:
+                    txt = ("Aynı malzeme grubundaki " + ", ".join(f"«{n}» ({a})" for n, a in parts)
+                           + " kartlarında stok var")
+                caut.append(_caution("group_alt_stock",
+                                     txt + "; lab ayrı ürün saydığı için ihtiyaçtan düşülmedi.", "info"))
         if m["est_products"]:
             caut.append(_caution("estimated", "Tahmini." if m["est_products"] >= m["products"]
                                  else "Kısmen tahmini.", "info"))
@@ -1006,6 +1065,8 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
             "available": _r6(available), "buy": _r6(buy), "display": display, "status": status,
             "per_product": per_product, "products": sorted(m["products"]),
             "cautions": caut, "is_new_item": m["is_new_item"], "estimated": bool(m["est_products"]),
+            # "Aynı malzeme" grubu — `group` (fiyat listesi bayrağı, attach) ile KARIŞMASIN
+            "material_group": mgroup,
             "_held": is_held, "_excluded": any(i in excluded_ids for i in members),
         })
 
@@ -1103,6 +1164,33 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
     }
     meta["scope_text"] = scope_text(result, opts)
     return result
+
+
+def _material_group_row(members: List[int], unit, inputs: PlanInputs,
+                        mg_members: Dict[int, List[int]], in_plan) -> Optional[dict]:
+    """Satırın "aynı malzeme" grubu + gruptaki diğer AKTİF kartlar (satırda
+    olmayanlar).  Üyeler birden fazla gruba dağılmışsa (elle birleştirme)
+    alternatifler hepsinden toplanır; `id`/`name` ilk grubun.  Grup yoksa None.
+    `in_plan(item_id)` → kart bu planda kendi satırında mı (stoğu o satırda
+    kullanılıyor; "stok var" uyarısına girmez)."""
+    gids = list(dict.fromkeys(inputs.mgroup_of[i] for i in members if i in inputs.mgroup_of))
+    if not gids:
+        return None
+    mset = set(members)
+    alts: List[dict] = []
+    seen: Set[int] = set()
+    for g in gids:
+        for i in mg_members.get(g, []):
+            a = inputs.items.get(i)
+            if i in mset or i in seen or a is None or not a.is_active:
+                continue
+            seen.add(i)
+            alts.append({"item_id": i, "name": clean_text(a.name) or "—", "unit": a.unit or "",
+                         "unit_mismatch": unit_norm(a.unit) != unit_norm(unit),
+                         "stock": _r6(max(0.0, float(a.current_stock or 0.0))),
+                         "in_plan": bool(in_plan(i))})
+    alts.sort(key=lambda x: (alnum_fold(x["name"]), x["item_id"]))
+    return {"id": gids[0], "name": inputs.mgroup_names.get(gids[0]) or f"Grup #{gids[0]}", "alts": alts}
 
 
 def _tr_stamp(dt_utc: datetime) -> str:
