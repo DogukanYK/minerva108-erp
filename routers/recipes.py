@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 
 from database import get_db, Item, Recipe, RecipeIngredient, to_tr
-from core.auth import get_current_user
 from core.permissions import _can_see_finance, require_internal_user, require_permission
 from core.domain import active_domain
 
@@ -94,7 +93,7 @@ def _calc_recipe_costs(recipe: Recipe, db: Session) -> dict:
 def list_recipes(
     include_ingredients: bool = False,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_internal_user()),
+    current_user: dict = Depends(require_internal_user(("recipes", "view"), ("production", "view"), ("qc", "view"))),
     domain: str = Depends(active_domain),
 ):
     rows = (db.query(Recipe)
@@ -302,7 +301,7 @@ def ingredients_report_export(
 def get_recipe_detail(
     recipe_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_internal_user()),
+    current_user: dict = Depends(require_internal_user(("recipes", "view"), ("production", "view"), ("qc", "view"))),
     domain: str = Depends(active_domain),
 ):
     recipe = db.query(Recipe).filter(Recipe.id == recipe_id, Recipe.domain == domain).first()

@@ -838,7 +838,7 @@ def update_item(
 def get_item_by_barcode(
     barcode: str,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_internal_user()),
+    _: dict = Depends(require_internal_user(("items", "view"), ("inventory", "view"))),
     domain: str = Depends(active_domain),
 ):
     """
@@ -1342,7 +1342,7 @@ def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(activ
 def inventory_by_item(
     item_id: int,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_internal_user()),
+    _: dict = Depends(require_internal_user(("inventory", "view"), ("reports", "view"))),
     domain: str = Depends(active_domain),
 ):
     """
@@ -1410,7 +1410,7 @@ def inventory_by_item(
 
 
 @router.get("/inventory/samples")
-def list_samples(db: Session = Depends(get_db), _: dict = Depends(require_internal_user()),
+def list_samples(db: Session = Depends(get_db), _: dict = Depends(require_internal_user(("items", "view"), ("qc", "view"))),
                  domain: str = Depends(active_domain)):
     """
     Numune lotları — Ürünler sayfası "Numune" sekmesini besler.  Var olan
@@ -1527,7 +1527,7 @@ class _AvailableLotsRequest(BaseModel):
 def available_lots(
     data: _AvailableLotsRequest,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_internal_user()),
+    _: dict = Depends(require_internal_user(("production", "view"))),
     domain: str = Depends(active_domain),
 ):
     """
@@ -1606,7 +1606,7 @@ def _import_dt():
 
 
 @router.get("/traceability/lot/{lot_number}")
-def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(require_internal_user())):
+def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(require_internal_user(("inventory", "view")))):
     """
     Full genealogy tree for a lot. Resolves:
       • Lot identity (Inventory record + supplier)
@@ -1746,7 +1746,7 @@ def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(
 
 
 @router.get("/traceability/expiring")
-def list_expiring(db: Session = Depends(get_db), _: dict = Depends(require_internal_user()),
+def list_expiring(db: Session = Depends(get_db), _: dict = Depends(require_internal_user(("inventory", "view"))),
                   domain: str = Depends(active_domain)):
     """All APPROVED inventory lots expiring within the next 60 days, sorted most-urgent first."""
     from datetime import datetime as _dt, timedelta
