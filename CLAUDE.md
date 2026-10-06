@@ -454,6 +454,32 @@ alış faturası fiyatları SONRAKİ AŞAMA. Testler `tests/test_purchase_plan_a
 (+ `_engine`, `_render`, `_acceptance` — sonuncusu `RUSYA_FIXTURE_DIR` ile
 açılır) ve `tests/test_purchase_pricing.py`.
 
+**"Aynı malzeme" grupları + hedefli numune çevirme + lot taşıma** (2026-10-06).
+Lab'ın düzeni: aynı malzemenin her TEDARİKÇİSİ AYRI KART (kopya-kart popup'ında
+"ayrı kalsın" kararları; ör. SETİL STEARİL ALKOL / CETYL STEARYL ALCOHOL /
+CETEARYL ALCOHOL üç firma). Bu kartlar `material_groups` + `items.material_group_id`
+ile bağlanır (`core/material_groups.py`, `routers/material_groups.py`
+`/api/material-groups`: okuma items.view, yazma items.edit; kart tek grupta,
+<2 aktif üyede grup dağılır). `material_key()` TR/EN eşanlamlılarla (alkol↔alcohol,
+setil↔cetyl, uçucu yağ↔essential oil …) öneri üretir; lab Ürünler → "Aynı malzeme
+önerileri"nden onaylar — SİSTEM KENDİLİĞİNDEN GRUPLAMAZ (tohum: lab'ın "kept"
+kopya kararları, sentinel `backfill.material_groups_from_kept.v1`). Satın Alma
+Planı grubu YALNIZ alternatif tedarikçi olarak gösterir (`relations.firms[]` /
+`alternatives[]`, önizlemede "Tedarikçiler (N)"); gruptaki başka kartın stoğu
+ihtiyaçtan DÜŞÜLMEZ (lab ayrı ürün sayıyor) — yalnız `group_alt_stock` bilgi uyarısı.
+"Stoğa çevir" hedef sorar (bu kart / başka kart / yeni kart → `convert-options`);
+hedef kartta numune geldikten sonra numune miktarını karşılayan elle "Stok
+düzeltme…" varsa 409 `maybe_already_counted` → "yalnız lotu bağla" (`link_only`:
+Transaction YOK, stok değişmez, `sample_converted_at` iz tutar). `POST
+/api/inventory/lots/{id}/move` lotu karta taşır — Output/Input DEĞİL **Adjustment
+çifti** ("Lot taşındı", aylık raporda sahte tüketim/alım olmasın), normal lot için
+`inventory.adjust` şart, `moved_from_item_id` iz tutar. Not önekleri sözleşmedir:
+"Numune stoğa çevrildi" (purchase_pricing çevrilmiş numuneyi buradan tanır), "Lot
+taşındı", "Stok düzeltme" (guard yalnız bunu elle düzeltme sayar). 05.10.2026
+vakası: Naturalya numuneleri KRK/İpeda ana kartlarında durduğu için çevirme stoğu
+oraya yazdı; 758 kartı elle +20 + çevirme +20 ile çift sayıldı
+(`scripts/fix_numune_double_count_20261006.py`).
+
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +
 low-stock alerts + CRM task reminders), `scheduler.py` (APScheduler — daily 08:00 CRM
