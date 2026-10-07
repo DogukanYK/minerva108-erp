@@ -692,9 +692,11 @@ def list_supplier_prices(
 ):
     """Malzemeye göre gruplu tedarikçi fiyat listesi (görüntüleme paneli).
     Satır şekli `core.supplier_prices.serialize_price` (+ kaynak, kim, not,
-    firma durumu)."""
-    from core.supplier_prices import serialize_price
+    firma durumu).  Pasif firmanın satırı (`inactive_firm_check`) grubun
+    sonunda, `supplier_inactive: true` — panel "en ucuz" saymaz, gri rozet."""
+    from core.supplier_prices import inactive_firm_check, serialize_price
     rows = db.query(SupplierPrice).filter(SupplierPrice.domain == domain).all()
+    is_inactive = inactive_firm_check(db, domain, rows)
     item_ids = {r.item_id for r in rows}
     meta = {}
     if item_ids:
@@ -710,10 +712,12 @@ def list_supplier_prices(
             "category": meta.get(r.item_id, {}).get("category", ""),
             "suppliers": [],
         })
-        g["suppliers"].append(serialize_price(r, supplier_status=status.get(r.supplier_id)))
+        g["suppliers"].append(serialize_price(r, supplier_status=status.get(r.supplier_id),
+                                              supplier_inactive=is_inactive(r)))
     out = sorted(groups.values(), key=lambda g: (g["material"] or "").lower())
     for g in out:
-        g["suppliers"].sort(key=lambda s: (s["unit_price"] is None, s["unit_price"] or 0.0))
+        g["suppliers"].sort(key=lambda s: (s["supplier_inactive"], s["unit_price"] is None,
+                                           s["unit_price"] or 0.0))
     return {"items": out, "total_items": len(out), "total_prices": len(rows)}
 
 
@@ -877,7 +881,8 @@ def update_supplier_price(
 ):
     """Fiyat satırını kısmen düzenle (yalnız gönderilen alanlar).  Excel'den
     gelen satır düzenlenince `source='manual'` olur — sonraki içe aktarma onu
-    silmesin; `updated_by` yazılır.  Audit: değişen alanlar eski → yeni."""
+    silmesin — ve eski liste etiketi (`source_label`) düşer; `updated_by`
+    yazılır.  Audit: değişen alanlar eski → yeni."""
     from core.supplier_prices import SOURCE_MANUAL, serialize_price
     sp = (db.query(SupplierPrice)
           .filter(SupplierPrice.id == price_id, SupplierPrice.domain == domain).first())
@@ -916,6 +921,11 @@ def update_supplier_price(
     before = _sp_audit_view(sp)
     for k, v in vals.items():
         setattr(sp, k, v)
+    # Excel satırı elle düzenlenince artık o listenin fiyatı değil: eski dosya
+    # etiketi kalırsa satın alma planı elle fiyatı "<liste adı>" kaynağıyla
+    # yazardı.  Etiket gönderildiyse o yazılır; eski değer audit'te kalır.
+    if sp.source != SOURCE_MANUAL and "source_label" not in vals:
+        sp.source_label = None
     sp.source = SOURCE_MANUAL
     sp.updated_by = _sp_actor(current_user)
     db.commit()

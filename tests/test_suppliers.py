@@ -295,8 +295,11 @@ def test_supplier_ref_validated_on_receive_and_item_save(authed_client: TestClie
 def test_supplier_permission_defaults():
     from core.permissions import _DEFAULT_PERMISSIONS, PERMISSION_CATEGORIES
     assert PERMISSION_CATEGORIES["suppliers"] == ["status", "prices", "merge"]
-    for role in ("Manager", "LabLead"):
-        assert all(_DEFAULT_PERMISSIONS[role]["suppliers"].values())
+    assert all(_DEFAULT_PERMISSIONS["LabLead"]["suppliers"].values())
+    # Manager: durum + elle fiyat açık, birleştirme KAPALI (items.delete gibi —
+    # kaybeden kartı pasife alır; backfill kuralıyla aynı sonuç)
+    assert _DEFAULT_PERMISSIONS["Manager"]["suppliers"] == {"status": True, "prices": True, "merge": False}
+    assert _DEFAULT_PERMISSIONS["Manager"]["items"]["delete"] is False
     for role in ("LabTech", "Staff", "Distributor"):
         assert not any(_DEFAULT_PERMISSIONS[role]["suppliers"].values())
 
@@ -313,8 +316,13 @@ def test_supplier_permission_backfill_for_override_users(db_session):
         db_session.add(u)
         return u
 
+    # Değer = rol varsayılanı VE override'daki ilgili izin (production.cancel
+    # kalıbı): status/prices ← items.edit, merge ← items.edit + items.delete.
     mgr = _u("isik2", "Manager", {"items": {"view": True, "edit": False}})
-    lt = _u("tech2", "LabTech", {"items": {"view": True}})
+    full = _u("isik3", "Manager", {"items": {"view": True, "edit": True, "delete": True}})
+    nodel = _u("lead2", "LabLead", {"items": {"view": True, "edit": True, "delete": False}})
+    lead = _u("lead3", "LabLead", {"items": {"view": True, "edit": True, "delete": True}})
+    lt = _u("tech2", "LabTech", {"items": {"view": True, "edit": True, "delete": True}})
     keep = _u("mgr_keep", "Manager", {"suppliers": {"prices": False}})
     db_session.query(AppSetting).filter(AppSetting.key == "backfill.perm.suppliers.v1").delete()
     db_session.commit()
@@ -322,23 +330,38 @@ def test_supplier_permission_backfill_for_override_users(db_session):
     _backfill_perm_suppliers()
     db_session.expire_all()
     perms = lambda u: json.loads(db_session.get(User, u.id).permissions)  # noqa: E731
-    assert perms(mgr)["suppliers"] == {"status": True, "prices": True, "merge": True}
+    assert perms(mgr)["suppliers"] == {"status": False, "prices": False, "merge": False}
     assert perms(mgr)["items"] == {"view": True, "edit": False}       # başka kategoriye dokunmaz
+    # Manager rol varsayılanında merge kapalı → items.delete açık olsa da False
+    # (override'sız Manager ile aynı sonuç)
+    assert perms(full)["suppliers"] == {"status": True, "prices": True, "merge": False}
+    assert perms(lead)["suppliers"] == {"status": True, "prices": True, "merge": True}
+    assert perms(nodel)["suppliers"] == {"status": True, "prices": True, "merge": False}
+    # Rol varsayılanı False ise izin ne olursa olsun False
     assert perms(lt)["suppliers"] == {"status": False, "prices": False, "merge": False}
-    assert perms(keep)["suppliers"] == {"prices": False, "status": True, "merge": True}
-    audits = (db_session.query(AdminAuditLog)
-              .filter(AdminAuditLog.action == "permissions.backfill").all())
-    names = {a.target_name for a in audits
-             if "suppliers." in (a.details or "")}
-    assert names == {"isik2", "tech2", "mgr_keep"}
+    # items anahtarı yok → kart düzenleme kapalı sayılır; var olan anahtara dokunulmaz
+    assert perms(keep)["suppliers"] == {"prices": False, "status": False, "merge": False}
+    audits = {a.target_name: json.loads(a.details) for a in
+              db_session.query(AdminAuditLog)
+              .filter(AdminAuditLog.action == "permissions.backfill").all()
+              if "suppliers." in (a.details or "")}
+    assert set(audits) == {"isik2", "isik3", "lead2", "lead3", "tech2", "mgr_keep"}
+    # Koşul yüzünden False yazılanlar audit'te: hangi izin eksikti (rol
+    # varsayılanı zaten False olan merge "gated" sayılmaz)
+    assert audits["isik2"]["gated"] == {"suppliers.status": "items.edit",
+                                        "suppliers.prices": "items.edit"}
+    assert audits["lead3"]["gated"] == {}
+    assert audits["lead2"]["gated"] == {"suppliers.merge": "items.edit+items.delete"}
+    assert audits["isik3"]["gated"] == {}
+    assert audits["tech2"]["gated"] == {}                            # rol zaten False
 
     # Sentinel — ikinci koşu no-op (yönetici sonradan kapatsa da ezilmez)
-    u = db_session.get(User, mgr.id)
+    u = db_session.get(User, full.id)
     p = json.loads(u.permissions); p["suppliers"]["status"] = False
     u.permissions = json.dumps(p); db_session.commit()
     _backfill_perm_suppliers()
     db_session.expire_all()
-    assert perms(mgr)["suppliers"]["status"] is False
+    assert perms(full)["suppliers"]["status"] is False
 
 
 # ─── Tedarikçi birleştirme (P1b — 07.10.2026) ───────────────────────────────
@@ -451,6 +474,70 @@ def test_merge_moves_every_fk_and_deactivates_loser(authed_client: TestClient, d
     db_session.commit()
     r = authed_client.put(f"/api/supplier-prices/{other.id}", json={"price_unit": "l"}, headers=ORIGIN)
     assert r.status_code == 409 and r.json()["code"] == "price_exists"
+
+
+def test_merged_name_is_alias_moved_and_reimported_prices_stay_active(authed_client: TestClient, db_session):
+    """KRK GIDA(HAYAT) → KRK GIDA (iki adın firma anahtarı FARKLI).  Taşınan
+    fiyat (eski ad metinde) Raporlar panelinde / Excel'de ve planda aktif ve
+    en ucuz; liste eski yazımla yeniden içe aktarılınca satır kazanana
+    bağlanır (serbest metin kalıp "pasif tedarikçi" olmaz).  Kaybeden
+    yeniden açılınca takma ad bağı düşer."""
+    from datetime import datetime
+
+    from core.consumption import IngredientRec, ItemRec, RecipeRec
+    from core.purchase_plan import PlanInputs, compute
+    from core.purchase_plan_models import PlanRequest
+    from core.purchase_pricing import attach, load_price_inputs
+    from core.supplier_prices import import_prices, prices_for_items
+    loser = Supplier(name="KRK GIDA(HAYAT)", domain="cosmetics")
+    survivor = Supplier(name="KRK GIDA", domain="cosmetics")
+    other = Supplier(name="BEFCHEM", domain="cosmetics")
+    item = Item(name="SETİL STEARİL ALKOL", category="Hammadde", unit="g", domain="cosmetics")
+    db_session.add_all([loser, survivor, other, item])
+    db_session.flush()
+    lid, sid, iid = loser.id, survivor.id, item.id
+    db_session.add_all([
+        SupplierPrice(item_id=iid, supplier_id=lid, supplier_name="KRK GIDA(HAYAT)", unit_price=4.0,
+                      price_unit="kg", currency="USD", domain="cosmetics"),
+        SupplierPrice(item_id=iid, supplier_id=other.id, supplier_name="BEFCHEM", unit_price=8.0,
+                      price_unit="kg", currency="USD", domain="cosmetics")])
+    db_session.commit()
+    assert authed_client.post(f"/api/suppliers/{lid}/merge-into/{sid}", headers=ORIGIN).status_code == 200
+    db_session.expire_all()
+    assert db_session.get(Supplier, lid).merged_into_id == sid
+
+    def panel():
+        return [(p["supplier_name"], p["inactive"]) for p in prices_for_items(db_session, [iid], "cosmetics")[iid]]
+
+    def chosen():
+        inp = PlanInputs(items={iid: ItemRec(id=iid, name="SETİL STEARİL ALKOL", category="Hammadde", unit="g",
+                                             pkg_type=None, current_stock=0.0)},
+                         recipes={1: RecipeRec(id=1, name="Krem",
+                                               ingredients=(IngredientRec(item_id=iid, quantity=10),))},
+                         stock_as_of=datetime(2026, 10, 8, 9, 0))
+        res = attach(compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}])),
+                     load_price_inputs(db_session, [iid], "cosmetics"), None)
+        return next(m for m in res["materials"] if iid in m["member_ids"])["supplier"]
+
+    assert panel() == [("KRK GIDA(HAYAT)", False), ("BEFCHEM", False)]
+    r = authed_client.get("/api/supplier-prices")
+    g = next(x for x in r.json()["items"] if x["item_id"] == iid)
+    assert [(s["supplier_name"], s["supplier_inactive"]) for s in g["suppliers"]] == panel()
+    assert chosen() == "KRK GIDA(HAYAT)"
+    # Işık Hanım'ın listesi eski yazımla yeniden geldi → kazanana bağlanır
+    summ = import_prices(db_session, [{"material": "SETİL STEARİL ALKOL", "suppliers": [
+        {"name": "KRK GIDA(HAYAT)", "package": 25, "price": 3.5},
+        {"name": "BEFCHEM", "package": 25, "price": 8.0}]}], "cosmetics")
+    db_session.commit()
+    assert summ["unmatched_suppliers"] == []
+    krk = db_session.query(SupplierPrice).filter(SupplierPrice.item_id == iid,
+                                                 SupplierPrice.supplier_name == "KRK GIDA(HAYAT)").one()
+    assert krk.supplier_id == sid
+    assert panel() == [("KRK GIDA(HAYAT)", False), ("BEFCHEM", False)] and chosen() == "KRK GIDA(HAYAT)"
+    # Kaybeden yeniden açıldı → kendi firması; takma ad bağı temizlenir
+    assert authed_client.post(f"/api/suppliers/{lid}/activate", headers=ORIGIN).status_code == 200
+    db_session.expire_all()
+    assert db_session.get(Supplier, lid).merged_into_id is None
 
 
 @pytest.mark.parametrize("call", ["receive", "pref", "price"])

@@ -539,6 +539,13 @@
         // Sadece supplier seçili değilse (kullanıcı zaten elle seçmemişse) atama yap
         if (!suppSel.value) {
           suppSel.value = defSupplier;
+          // Liste yalnız AKTİF tedarikçiler — kartın tedarikçisi pasifse seçim
+          // boş kalır; lot sessizce tedarikçisiz kaydedilmesin, söylensin.
+          if (suppSel.value !== String(defSupplier)) {
+            const it = allItems.find(i => String(i.id) === String(opt.value));
+            showToast(`Kartın tedarikçisi «${(it && it.supplier_name) || ('#' + defSupplier)}» pasif — ` +
+                      `başka tedarikçi seçin ya da Tedarikçiler'den etkinleştirin.`, 'info', 7000);
+          }
         }
       }
     });

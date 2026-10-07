@@ -587,3 +587,90 @@ def test_price_unit_ok_rules():
     assert price_unit_ok("kutu", "adet")
     assert price_unit_ok("g", "kg") and price_unit_ok("g", "l") and not price_unit_ok("g", "adet")
     assert price_unit_ok("ml", "l") and price_unit_ok("lt", "kg")
+
+
+# ─── Pasif tedarikçi + düzenlenen Excel satırının etiketi (08.10.2026) ──────
+# Yumuşak silme (P1a) sonrası pasif firmanın fiyatı en ucuz seçilmeye devam
+# ediyordu: Excel'lerde Tedarikçi-1, panelde yeşil "en ucuz".
+
+def _inactive_case(db):
+    """Jojoba: Eski Firma (pasif) 5 $, Yeni Firma 9 $, TATLİDİLİMLER kopyası
+    pasif ama TATLIDİLİMLER aktif (aynı firma) 7 $, kartsız serbest metin
+    "Kapanan kimya" 4 $ (adı yalnız pasif KAPANAN KİMYA kartında)."""
+    it = Item(name="JOJOBA", category="Hammadde", unit="g", domain="cosmetics")
+    old = Supplier(name="ESKİ FİRMA", domain="cosmetics", is_active=False)
+    new = Supplier(name="YENİ FİRMA", domain="cosmetics")
+    dup = Supplier(name="TATLİDİLİMLER", domain="cosmetics", is_active=False)
+    twin = Supplier(name="TATLIDİLİMLER", domain="cosmetics")
+    gone = Supplier(name="KAPANAN KİMYA", domain="cosmetics", is_active=False)
+    db.add_all([it, old, new, dup, twin, gone])
+    db.flush()
+    db.add_all([
+        SupplierPrice(item_id=it.id, supplier_id=old.id, supplier_name="ESKİ FİRMA", unit_price=5.0,
+                      currency="USD", price_unit="kg", source="manual", domain="cosmetics"),
+        SupplierPrice(item_id=it.id, supplier_id=new.id, supplier_name="YENİ FİRMA", unit_price=9.0,
+                      currency="USD", price_unit="kg", source="manual", domain="cosmetics"),
+        SupplierPrice(item_id=it.id, supplier_id=dup.id, supplier_name="TATLİDİLİMLER", unit_price=7.0,
+                      currency="USD", price_unit="kg", source="stok_son_durum", domain="cosmetics"),
+        SupplierPrice(item_id=it.id, supplier_id=None, supplier_name="Kapanan kimya", unit_price=4.0,
+                      currency="USD", price_unit="kg", source="stok_son_durum", domain="cosmetics"),
+    ])
+    db.commit()
+    return it.id
+
+
+def test_prices_for_items_inactive_firm_last_and_flagged(db_session):
+    from core.supplier_prices import prices_for_items
+    iid = _inactive_case(db_session)
+    out = prices_for_items(db_session, [iid], "cosmetics", limit=5)
+    assert [(s["supplier_name"], s["unit_price"], s["inactive"]) for s in out[iid]] == [
+        ("TATLİDİLİMLER", 7.0, False),          # pasif kopya kart, aktif ikiz → geçerli
+        ("YENİ FİRMA", 9.0, False),
+        ("Kapanan kimya", 4.0, True),           # serbest metin, adı yalnız pasif kartta
+        ("ESKİ FİRMA", 5.0, True)]
+    assert [s["supplier_name"] for s in prices_for_items(db_session, [iid], "cosmetics")[iid]][:2] == \
+        ["TATLİDİLİMLER", "YENİ FİRMA"]
+
+
+def test_supplier_price_panel_marks_inactive_firm(authed_client: TestClient, db_session):
+    iid = _inactive_case(db_session)
+    r = authed_client.get("/api/supplier-prices")
+    assert r.status_code == 200
+    g = next(x for x in r.json()["items"] if x["item_id"] == iid)
+    assert [(s["supplier_name"], s["supplier_inactive"]) for s in g["suppliers"]] == [
+        ("TATLİDİLİMLER", False), ("YENİ FİRMA", False), ("Kapanan kimya", True), ("ESKİ FİRMA", True)]
+
+
+def test_excel_inactive_supplier_grey_and_labelled():
+    import openpyxl
+    from core.production_sim import build_workbook
+    rep = {"summary": {"products": 1, "quantity": 1, "total_units": 1, "language": "TR",
+                       "materials": 1, "short_count": 1, "ok_count": 0, "total_raw": 1.0},
+           "materials": [], "producible": [],
+           "purchase": [{"item_id": 7, "name": "JOJOBA", "category": "Hammadde",
+                         "unit": "g", "used": 100, "current": 10, "shortfall": 90}],
+           "skipped_labels": []}
+    prices = {7: [{"supplier_name": "ESKİ FİRMA", "package_size": 25, "unit_price": 5.0, "inactive": True}]}
+    ws = openpyxl.load_workbook(io.BytesIO(build_workbook(rep, "x", prices=prices)))["Satın Alma Listesi"]
+    c = ws.cell(2, 7)
+    assert c.value == "ESKİ FİRMA (pasif tedarikçi)"
+    assert not c.font.bold and c.font.color.rgb.endswith("9CA3AF")
+
+
+def test_edited_import_row_drops_stale_list_label(authed_client: TestClient, db_session):
+    """Excel satırı elle düzenlenince eski liste etiketi düşer — satın alma
+    planı elle fiyatı "<dosya adı>" kaynağıyla yazmasın; etiket gönderilirse o."""
+    _seed_items_suppliers(db_session)
+    xls = _make_xlsx([("ARGAN YAĞI", "Hammadde", "g", [("NATURALYA", 25, 25.8)])])
+    authed_client.post("/api/supplier-prices/import", files={"file": ("liste.xlsx", xls, _MIME)}, headers=_H)
+    db_session.expire_all()
+    sp = db_session.query(SupplierPrice).one()
+    assert sp.source_label == "liste.xlsx"
+    r = authed_client.put(f"/api/supplier-prices/{sp.id}", headers=_H, json={"unit_price": 21.0})
+    assert r.status_code == 200
+    assert (r.json()["source"], r.json()["source_label"]) == ("manual", None)
+    r = authed_client.put(f"/api/supplier-prices/{sp.id}", headers=_H,
+                          json={"unit_price": 22.0, "source_label": "Telefon teklifi"})
+    assert r.json()["source_label"] == "Telefon teklifi"
+    r = authed_client.put(f"/api/supplier-prices/{sp.id}", headers=_H, json={"unit_price": 23.0})
+    assert r.json()["source_label"] == "Telefon teklifi"          # zaten elle: etiketine dokunulmaz

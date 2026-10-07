@@ -17,6 +17,9 @@ Input'undan, aktarım), to_tr tarihleri (23:30 UTC = ertesi gün), sipariş
 satırları ("+N"), analiz sonucu, "aynı malzeme" alternatifleri + aday
 sebepleri, relation_texts / firms_view, DB yükleyicide girişler/siparişler/
 analizler (domain kapsamı, eşdeğer kartın teklifi yüklenmez).
+P1a inceleme (08.10.2026): pasif firma seçilmez (firma ölçütü — mükerrer
+kartın pasif ikizi sayılmaz), elle fiyat aynı firmanın Excel teklifini
+bastırır, fiyat kaynağı metni, pasif kopya kart iletişim/kopya uyarısı dışı.
 P1b (07.10.2026): bitirilecek firmanın ucuz teklifi seçilmez (gri etiketli
 kalır) · malzeme tercihi (rank) > tercih edilen firma > normal · atlanacaklar
 listesi en iyi seçime uygulanır · eşdeğer kart teklifi yarışır + etiketlenir
@@ -979,3 +982,154 @@ def test_load_price_inputs_status_prefs_and_alt_offers(db_session):
     assert c.id not in pin.prefs
     pin = load_price_inputs(db_session, [a.id], "cosmetics", extra_item_ids=[b.id])
     assert b.id not in pin.offers                                       # yalnız ilişki: teklif yok
+
+
+# ─── P1a inceleme düzeltmeleri (08.10.2026) ─────────────────────────────────
+# Pasif (yumuşak silinmiş) firma · elle fiyatın Excel teklifini bastırması ·
+# fiyat kaynağı metni · pasif mükerrer kartın iletişim/kopya-kart dışı kalması.
+
+def _inactive(id, name, **kw):
+    return SupplierRec(id=id, name=name, is_active=False, **kw)
+
+
+def test_inactive_firm_offer_not_chosen_listed_grey_even_without_status_rule():
+    """Lab "Eski Firma"yı sildi (pasif): ucuz teklifi seçilmez, gri kalır."""
+    sups = {1: _inactive(1, "ESKİ FİRMA"), 2: _sup(2, "YENİ FİRMA")}
+    offers = {1: [offer(1, "ESKİ FİRMA", 5.0, sid=1), offer(1, "YENİ FİRMA", 9.0, sid=2)]}
+    for opts in ({}, {"respect_supplier_status": False}):
+        res = attach(plan([it(1, "JOJOBA", unit="g")], [(1, 100)], **opts),
+                     PriceInputs(suppliers=sups, offers=offers), None)
+        m = mat(res, 1)
+        assert (m["supplier"], m["price"], m["amount"]) == ("YENİ FİRMA", 9.0, 900)
+        assert _kim(res) == [("YENİ FİRMA", "normal", True), ("ESKİ FİRMA", "inactive", False)]
+        assert offer_lines(m, "USD") == [("YENİ FİRMA — 9,00 $/kg", "b"),
+                                         ("ESKİ FİRMA — 5,00 $/kg — pasif tedarikçi", "g")]
+        assert res["pricing"]["inactive_listed"] is True and res["pricing"]["status_used"] is False
+        notes = next(s for s in sections(res) if s["key"] == "notes")["rows"]
+        assert any("Pasife alınmış" in n for n in notes)
+    # yalnız pasif firmanın fiyatı: "teklif alınacak", pasif firma aday da olmaz
+    res = attach(plan([it(1, "JOJOBA", unit="g")], [(1, 100)]),
+                 PriceInputs(suppliers=sups, card_supplier={1: 1},
+                             offers={1: [offer(1, "ESKİ FİRMA", 5.0, sid=1)]}), None)
+    assert mat(res, 1)["group"] == "none" and res["suppliers"]["candidates"] == []
+
+
+def test_inactive_duplicate_card_price_stays_valid_via_active_twin():
+    """Ölçüt firma: TATLİDİLİMLER kartı pasif ama TATLIDİLİMLER aktif → aynı
+    firma, pasif karta bağlı (ucuz) fiyat geçerli kalır; serbest metin satır da."""
+    sups = {3: _inactive(3, "TATLİDİLİMLER"), 9: _sup(9, "TATLIDİLİMLER"), 5: _sup(5, "BEFCHEM")}
+    offers = {1: [offer(1, "TATLİDİLİMLER", 4.0, sid=3), offer(1, "BEFCHEM", 8.0, sid=5)]}
+    res = attach(plan([it(1, "SETİL", unit="g")], [(1, 10)]), PriceInputs(suppliers=sups, offers=offers), None)
+    m = mat(res, 1)
+    assert m["supplier"] == "TATLİDİLİMLER" and m["price"] == 4.0
+    assert res["pricing"]["inactive_listed"] is False
+    # kartsız serbest metin teklif, adı yalnız pasif bir kartla eşleşirse pasif
+    sups = {3: _inactive(3, "ESKİ FİRMA"), 5: _sup(5, "BEFCHEM")}
+    offers = {1: [offer(1, "ESKI FIRMA", 4.0), offer(1, "BEFCHEM", 8.0, sid=5)]}
+    res = attach(plan([it(1, "SETİL", unit="g")], [(1, 10)]), PriceInputs(suppliers=sups, offers=offers), None)
+    assert mat(res, 1)["supplier"] == "BEFCHEM"
+    assert ("ESKI FIRMA", "inactive", False) in _kim(res)
+
+
+def test_offer_bound_to_active_card_is_never_inactive_even_if_name_key_differs():
+    """Birleştirmede kazanana taşınan fiyat: `supplier_name` kaybedenin adı
+    (KRK GIDA(HAYAT) → anahtar KRKGIDAHAYAT), bağlı kart KRK GIDA (KRKGIDA)
+    aktif.  Anahtarlar farklı olsa da teklif seçilir; Raporlar paneli kuralı
+    (aynı `FirmActivity`) aynı satıra aynı sonucu verir; fiyatsız teklifte
+    firma aday listesinden düşmez."""
+    from core.purchase_pricing import firm_activity, supplier_index
+    assert supplier_key("KRK GIDA(HAYAT)") != supplier_key("KRK GIDA")       # ön koşul
+    sups = {1: _inactive(1, "KRK GIDA(HAYAT)"), 2: _sup(2, "KRK GIDA"), 5: _sup(5, "BEFCHEM")}
+    pin = PriceInputs(suppliers=sups, offers={1: [offer(1, "KRK GIDA(HAYAT)", 4.0, sid=2),
+                                                  offer(1, "BEFCHEM", 8.0, sid=5)]})
+    for opts in ({}, {"respect_supplier_status": False}):
+        res = attach(plan([it(1, "SETİL", unit="g")], [(1, 10)], **opts), pin, None)
+        m = mat(res, 1)
+        assert (m["supplier"], m["price"]) == ("KRK GIDA(HAYAT)", 4.0)
+        assert _kim(res) == [("KRK GIDA(HAYAT)", "normal", True), ("BEFCHEM", "normal", True)]
+        assert res["pricing"]["inactive_listed"] is False
+    firms = firm_activity(pin, supplier_index(pin))
+    assert firms.is_inactive(2, "KRK GIDA(HAYAT)") is False
+    assert firms.is_inactive(None, "KRK GIDA(HAYAT)") is True               # kartsız: yalnız pasif kart
+    pin = PriceInputs(suppliers=sups, offers={1: [offer(1, "KRK GIDA(HAYAT)", None, sid=2)]})
+    res = attach(plan([it(1, "SETİL", unit="g")], [(1, 10)]), pin, None)
+    assert mat(res, 1)["group"] == "none"
+    assert [b["key"] for b in res["suppliers"]["candidates"]] == [supplier_key("KRK GIDA(HAYAT)")]
+
+
+def test_merged_card_name_is_alias_of_live_survivor():
+    """Birleştirmeden sonra liste eski yazımla gelip satır kartsız kalsa da
+    (`merged_into_id` = kazanan) kaybedenin adı takma addır: firma pasif
+    DEĞİL.  Kazanan da sonradan pasife alındıysa zincir ölü → pasif;
+    birleştirilmemiş pasif kartın adı eskisi gibi pasif."""
+    def run(sups):
+        offers = {1: [offer(1, "KRK GIDA(HAYAT)", 4.0), offer(1, "BEFCHEM", 8.0, sid=5)]}
+        return attach(plan([it(1, "SETİL", unit="g")], [(1, 10)]), PriceInputs(suppliers=sups, offers=offers),
+                      None)
+    sups = {1: _inactive(1, "KRK GIDA(HAYAT)", merged_into_id=2), 2: _sup(2, "KRK GIDA"),
+            5: _sup(5, "BEFCHEM")}
+    assert mat(run(sups), 1)["supplier"] == "KRK GIDA(HAYAT)"
+    sups[2] = _inactive(2, "KRK GIDA")
+    res = run(sups)
+    assert mat(res, 1)["supplier"] == "BEFCHEM" and ("KRK GIDA(HAYAT)", "inactive", False) in _kim(res)
+    sups = {1: _inactive(1, "KRK GIDA(HAYAT)"), 2: _sup(2, "KRK GIDA"), 5: _sup(5, "BEFCHEM")}
+    assert mat(run(sups), 1)["supplier"] == "BEFCHEM"
+
+
+def test_contacts_skip_inactive_duplicate_card_but_keep_inactive_only_firm():
+    """Pasife alınan kopya kart (id 3, eski telefon) firmanın adını/telefonunu
+    vermez, kopya-kart uyarısına girmez; yalnız pasif kartı olan firma
+    "kartı yok" alarmına düşmez."""
+    sups = {3: _inactive(3, "TATLİDİLİMLER", phone="02121111111"),
+            9: SupplierRec(id=9, name="TATLIDİLİMLER", phone="05321112233"),
+            7: _inactive(7, "KAPANAN KİMYA", phone="02122222222")}
+    pin = PriceInputs(suppliers=sups, card_supplier={2: 7},
+                      offers={1: [offer(1, "TATLIDİLİMLER", 3.0, sid=9)]})
+    res = attach(plan([it(1, "SETİL", unit="g"), it(2, "KİL", unit="g")], [(1, 10), (2, 1)]), pin, None)
+    d = res["suppliers"]
+    b = next(x for x in d["chosen"] if x["key"] == "TATLIDILIMLER")
+    assert b["name"] == "TATLIDİLİMLER" and b["contact_line"] == "0532 111 22 33"
+    assert b["contact"]["cards"] == ["TATLIDİLİMLER"]
+    assert d["checklist"]["duplicate_cards"] == []
+    assert all(x["name"] != "KAPANAN KİMYA" for x in d["checklist"]["no_card"])
+    assert d["candidates"] == []                         # pasif firma (kart ilişkisi) aday değil
+
+
+def test_manual_price_supersedes_same_firm_excel_offer_in_plan():
+    """prices_for_items kuralı planda da: aynı kartta firmanın elle fiyatı
+    varsa (birimi farklı olsa da) o firmanın Excel teklifi sayılmaz."""
+    def manual(item_id, sup, price, *, unit="kg", sid=None):
+        return OfferRec(item_id=item_id, supplier_name=sup, supplier_id=sid, unit_price=price,
+                        currency="USD", price_unit=unit, source="manual")
+    # (a) aynı kart id'si: Excel 10 $/kg, elle 12 $/l
+    pin = PriceInputs(suppliers={5: _sup(5, "FOO KİMYA")},
+                      offers={1: [offer(1, "FOO KİMYA", 10.0, sid=5), manual(1, "FOO KİMYA", 12.0, unit="l", sid=5)]})
+    res = attach(plan([it(1, "SHEA", unit="g")], [(1, 100)]), pin, None)
+    m = mat(res, 1)
+    assert [(o["name"], o["price"]) for o in m["offers"]] == [("FOO KİMYA", 12.0)]
+    assert (m["price"], m["amount"]) == (12.0, 1200)
+    assert m["price_source"] == "Elle girilen fiyat"                 # "Fiyat listesi" DEĞİL
+    # (b) Excel satırı karta bağlanamamış (supplier_id NULL), aynı ad
+    pin = PriceInputs(suppliers={5: _sup(5, "FOO KİMYA")},
+                      offers={1: [offer(1, "Foo Kimya", 10.0), manual(1, "FOO KİMYA", 12.0, sid=5)]})
+    m = mat(attach(plan([it(1, "SHEA", unit="g")], [(1, 100)]), pin, None), 1)
+    assert [(o["name"], o["price"]) for o in m["offers"]] == [("FOO KİMYA", 12.0)]
+    # başka kartın elle fiyatı bu kartın Excel teklifini bastırmaz (kart başına)
+    pin = PriceInputs(offers={1: [offer(1, "FOO KİMYA", 10.0, sid=5)], 2: [manual(2, "FOO KİMYA", 12.0, sid=5)]})
+    res = attach(plan([it(1, "SHEA", unit="g"), it(2, "KİL", unit="g")], [(1, 1), (2, 1)]), pin, None)
+    assert mat(res, 1)["price"] == 10.0
+
+
+def test_price_source_text_matches_footnote():
+    """Excel "Fiyat kaynağı" sütunu ile Notlar dipnotu aynı metni kullanır."""
+    from core.purchase_pricing import notes_lines
+    o = OfferRec(item_id=1, supplier_name="X", unit_price=5.0, currency="USD", price_unit="kg", source="manual")
+    res = attach(plan([it(1, "SHEA", unit="g")], [(1, 1)]), PriceInputs(offers={1: [o]}), None)
+    assert mat(res, 1)["price_source"] == "Elle girilen fiyat"
+    assert any(n.startswith("Fiyat kaynağı: Elle girilen fiyat;") for n in notes_lines(res))
+    o = offer(1, "X", 5.0, label=None)                              # Excel, etiketsiz
+    res = attach(plan([it(1, "SHEA", unit="g")], [(1, 1)]), PriceInputs(offers={1: [o]}), None)
+    assert mat(res, 1)["price_source"] == "Stok Son Durum fiyat listesi"
+    assert any(n.startswith("Fiyat kaynağı: Stok Son Durum fiyat listesi (") for n in notes_lines(res))
+    res = attach(plan([it(1, "SHEA", unit="g")], [(1, 1)]), PriceInputs(offers={1: [offer(1, "X", 5.0)]}), None)
+    assert mat(res, 1)["price_source"] == "Stok Son Durum — Eylül"   # etiket varsa o

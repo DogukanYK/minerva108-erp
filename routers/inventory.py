@@ -1303,7 +1303,9 @@ def activate_supplier(supplier_id: int, request: Request, db: Session = Depends(
                       current_user: dict = Depends(require_permission("items", "delete")),
                       domain: str = Depends(active_domain)):
     """Yanlışlıkla pasife alınan tedarikçiyi geri aç (pasife almanın tersi,
-    aynı yetki).  Audit `supplier.activate`."""
+    aynı yetki).  Birleştirilmiş kart açılırsa yeniden kendi firmasıdır —
+    `merged_into_id` (takma ad bağı) temizlenir; taşınmış kayıtlar kazananda
+    kalır.  Audit `supplier.activate`."""
     supplier = (db.query(Supplier)
                 .filter(Supplier.id == supplier_id, Supplier.domain == domain).first())
     if not supplier:
@@ -1311,6 +1313,7 @@ def activate_supplier(supplier_id: int, request: Request, db: Session = Depends(
     if supplier.is_active is not False:
         return {"message": "Tedarikçi zaten aktif."}
     supplier.is_active = True
+    supplier.merged_into_id = None
     db.commit()
     log_admin_event(db, request, actor=current_user, action="supplier.activate",
                     target_type="supplier", target_id=supplier.id, target_name=supplier.name,
@@ -3081,11 +3084,31 @@ async def import_items_from_excel(
     created, updated = 0, 0
     errors = []
 
+    # Maliyet YALNIZ finans rolünden yazılır (update_item/create_item ile aynı
+    # kural, "API ile bile"): items.import LabLead'de de açık; eskiden boş
+    # Cost_Price hücresi NaN olarak karta yazılıp finans kullanıcısının
+    # /api/items yanıtını 500'e düşürüyor, 0 yazılırsa maliyeti sessizce 0'lıyordu.
+    finance_ok = _can_see_finance(current_user)
+
+    def _num(val):
+        """Hücreyi sonlu sayıya çevirir; boş/NaN/metin → None (alan yazılmaz)."""
+        try:
+            f = float(str(val).replace(",", "."))
+        except (TypeError, ValueError):
+            return None
+        return f if math.isfinite(f) else None
+
+    def _text(val) -> str:
+        """Hücre metni; pandas boş hücreyi NaN (float) okur — "nan" yazılmasın."""
+        if val is None or (isinstance(val, float) and math.isnan(val)):
+            return ""
+        return str(val).strip()
+
     for idx, row in df.iterrows():
         row_num = int(idx) + 2  # Excel satır no (header = 1)
         try:
-            item_name = str(row.get("Item_Name", "") or "").strip()
-            sku       = str(row.get("SKU",       "") or "").strip()
+            item_name = _text(row.get("Item_Name"))
+            sku       = _text(row.get("SKU"))
 
             if not item_name:
                 errors.append(f"Satır {row_num}: 'Item_Name' boş bırakılamaz — satır atlandı.")
@@ -3094,35 +3117,47 @@ async def import_items_from_excel(
                 errors.append(f"Satır {row_num}: 'SKU' boş bırakılamaz — satır atlandı.")
                 continue
 
-            def _float(val, default=0.0):
-                try:    return float(str(val).replace(",", "."))
-                except: return default
+            category   = _text(row.get("Category")) or None
+            unit       = _text(row.get("Unit")) or None
+            stock      = _num(row.get("Stock"))
+            min_stock  = _num(row.get("Min_Stock_Level"))
+            cost_in    = _num(row.get("Cost_Price")) if finance_ok else None
 
-            category   = str(row.get("Category",        "") or "").strip() or None
-            unit       = str(row.get("Unit",            "") or "adet").strip() or "adet"
-            stock      = _float(row.get("Stock"),       0.0)
-            cost_price = _float(row.get("Cost_Price"),  0.0)
-            min_stock  = _float(row.get("Min_Stock_Level"), 0.0)
-
+            # SKU global tekil (DB kısıtı) → arama paneli ayırmaz; ama başka
+            # panelin kartı bu panelden GÜNCELLENMEZ (domain sızıntısı).
             existing = db.query(Item).filter(Item.sku == sku).first()
+            if existing and (existing.domain or "cosmetics") != domain:
+                errors.append(f"Satır {row_num}: SKU '{sku}' başka panelin kartında — satır atlandı.")
+                continue
 
             if existing:
                 # ── GÜNCELLE ────────────────────────────────────────────
+                # Boş/geçersiz hücre mevcut değeri KORUR — metinde de: boş
+                # Unit kartı sessizce "adet" yapıp birim ailesini (g/kg → adet)
+                # değiştirirdi (fiyatlar "uyuşmuyor", plan çevrimleri bozulur);
+                # boş Category kartı Mal Kabul Hammadde/Ambalaj listesinden ve
+                # plandan düşürürdü.
                 existing.name           = item_name
-                existing.category       = category
-                existing.unit           = unit
-                existing.cost_price     = cost_price
-                existing.min_stock_level = min_stock
-                if stock >= 0:
+                if category:
+                    existing.category = category
+                if unit:
+                    existing.unit = unit
+                if cost_in is not None:
+                    existing.cost_price = cost_in
+                if min_stock is not None:
+                    existing.min_stock_level = min_stock
+                if stock is not None and stock >= 0:
                     existing.current_stock = round(stock, 6)
                 updated += 1
 
             else:
                 # ── OLUŞTUR ─────────────────────────────────────────────
+                stock = stock or 0.0
                 new_item = Item(
                     name=item_name, sku=sku, category=category,
-                    unit=unit, current_stock=round(stock, 6),
-                    cost_price=cost_price, min_stock_level=min_stock,
+                    unit=unit or "adet", current_stock=round(stock, 6),
+                    cost_price=cost_in if cost_in is not None else 0.0,
+                    min_stock_level=min_stock or 0.0,
                     domain=domain,                      # Faz 3 — aktif panel
                 )
                 db.add(new_item)

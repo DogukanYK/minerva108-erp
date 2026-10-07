@@ -9,6 +9,9 @@ Akış:
                                   girilen `manual` satır korunur)
   • price_unit_ok / serialize_price → elle fiyat uçları (routers/reports.py)
   • prices_for_items(db, …)     → rapor için malzeme başına (ucuzdan) tedarikçi listesi
+                                  (pasif firmanın teklifi sonda, `inactive` işaretli)
+  • firm_keys / inactive_firm_check → "aynı firma" ve "pasif firma" kuralları
+                                  (satın alma planı `core.purchase_pricing` de kullanır)
   • price_per_purchase_unit(…)  → fiyatı malzemenin alım birimine (kg / l / adet) çevirir
 
 Fiyat temeli (2026-10): Stok Son Durum listesi **USD / kg**. Eskiden para birimi
@@ -165,6 +168,37 @@ def default_price_unit(item_unit, list_unit: str = "kg") -> str:
     return "adet" if _unit_family(item_unit) == "count" else list_unit
 
 
+def firm_keys(supplier_id, supplier_name) -> set:
+    """Fiyat satırının firma anahtarları: {("id", supplier_id), ("name", normalize(ad))}.
+
+    "Elle girilen fiyat, aynı firmanın Excel teklifinin yerine geçer" kuralının
+    TEK tanımı — `import_prices` (Excel satırını yazmaz), `prices_for_items`
+    (listeye almaz) ve satın alma planı `_price_row` (teklif saymaz) aynı
+    anahtarı kullanır; iki rapor aynı malzeme için farklı fiyat göstermesin."""
+    keys = set()
+    if supplier_id is not None:
+        keys.add(("id", supplier_id))
+    if normalize(supplier_name):
+        keys.add(("name", normalize(supplier_name)))
+    return keys
+
+
+def inactive_firm_check(db: Session, domain: str, rows=()):
+    """Fiyat satırı → firması PASİF mi (yumuşak silinmiş) — `check(sp) -> bool`.
+
+    Kural satın alma planıyla TEK: `core.purchase_pricing.FirmActivity`
+    (ölçüt kart değil firma; mükerrer kartın pasif ikizi ve birleştirilmiş
+    kartın adı firmayı pasif yapmaz; aktif karta bağlı satır asla pasif
+    değildir).  `rows`: kontrol edilecek SupplierPrice satırları (ad anahtar
+    uzayına girer)."""
+    from core.purchase_pricing import FirmActivity, SupplierIndex   # döngüsel import: geç yükle
+    sups = (db.query(Supplier.id, Supplier.name, Supplier.is_active, Supplier.merged_into_id)
+            .filter(Supplier.domain == domain).all())
+    ix = SupplierIndex([n for _, n, _, _ in sups] + [r.supplier_name for r in rows if r.supplier_name])
+    firms = FirmActivity({sid: (n or "", a is not False, m) for sid, n, a, m in sups}, ix)
+    return lambda sp: firms.is_inactive(sp.supplier_id, sp.supplier_name)
+
+
 def import_prices(db: Session, rows: List[dict], domain: str, *,
                   currency: str = "USD", price_unit: str = "kg",
                   source_label: Optional[str] = None,
@@ -173,7 +207,9 @@ def import_prices(db: Session, rows: List[dict], domain: str, *,
 
     Malzeme `Item.name` ile, tedarikçi AKTİF `Supplier.name` ile (Türkçe-
     katlanmış; aynı anahtarda en eski kart) eşlenir — pasife alınmış mükerrer
-    kart (TATLİDİLİMLER / TATLIDİLİMLER) fiyatı üstüne çekmesin. Eşleşmeyen
+    kart (TATLİDİLİMLER / TATLIDİLİMLER) fiyatı üstüne çekmesin.  İstisna:
+    BİRLEŞTİRİLMİŞ pasif kartın adı (`merged_into_id`) kazananın takma adıdır
+    → satır kazanana bağlanır (aktif kart adı önce gelir).  Eşleşmeyen
     tedarikçi serbest metin olarak saklanır (supplier_id NULL).
     Silme YALNIZ `source` stok_son_durum ya da boş (eski) satırlarda; lab'ın
     elle girdiği `manual` satır korunur (`kept_manual`) ve aynı firmanın Excel
@@ -198,11 +234,23 @@ def import_prices(db: Session, rows: List[dict], domain: str, *,
     item_by_norm = {}
     for it in db.query(Item).filter(Item.domain == domain, Item.is_active == True).all():
         item_by_norm.setdefault(normalize(it.name), it)
+    from core.suppliers import live_card_id
+    sups = db.query(Supplier).filter(Supplier.domain == domain).order_by(Supplier.id).all()
     sup_by_norm = {}
-    for sp in (db.query(Supplier)
-               .filter(Supplier.domain == domain, Supplier.is_active == True)  # noqa: E712
-               .order_by(Supplier.id).all()):
-        sup_by_norm.setdefault(normalize(sp.name), sp)
+    for sp in sups:
+        if sp.is_active is not False:
+            sup_by_norm.setdefault(normalize(sp.name), sp)
+    # Birleştirilmiş (pasif) kartın adı kazananın takma adı: listede eski
+    # yazım kalsa da satır kazanana bağlanır (yoksa serbest metin kalıp
+    # yalnız pasif kaybedenle eşleşir → "pasif tedarikçi" sayılırdı).
+    # Aktif kartın adı her zaman önce gelir.
+    by_id = {sp.id: sp for sp in sups}
+    cards = {sp.id: (sp.is_active is not False, sp.merged_into_id) for sp in sups}
+    for sp in sups:
+        if sp.is_active is False and sp.merged_into_id is not None:
+            live = live_card_id(cards, sp.id)
+            if live is not None:
+                sup_by_norm.setdefault(normalize(sp.name), by_id[live])
 
     items_updated = 0
     prices_inserted = 0
@@ -226,14 +274,10 @@ def import_prices(db: Session, rows: List[dict], domain: str, *,
         for m in (db.query(SupplierPrice)
                   .filter(SupplierPrice.item_id == it.id, SupplierPrice.domain == domain).all()):
             kept_manual += 1
-            if m.supplier_id is not None:
-                manual_keys.add(("id", m.supplier_id))
-            if normalize(m.supplier_name):
-                manual_keys.add(("name", normalize(m.supplier_name)))
+            manual_keys |= firm_keys(m.supplier_id, m.supplier_name)
         for s in row["suppliers"]:
             sup = sup_by_norm.get(normalize(s["name"]))
-            if (sup is not None and ("id", sup.id) in manual_keys) or \
-                    ("name", normalize(s["name"])) in manual_keys:
+            if firm_keys(sup.id if sup is not None else None, s["name"]) & manual_keys:
                 skipped_manual += 1
                 continue
             if not sup:
@@ -277,7 +321,10 @@ def prices_for_items(db: Session, item_ids: List[int], domain: str, limit: int =
     Her malzeme için fiyatı OLAN tedarikçiler ucuzdan pahalıya; fiyatı olmayanlar
     (None) sona. En çok `limit` tedarikçi.  Bir firmanın elle girilmiş
     (`manual`) satırı varsa aynı firmanın Excel satırı listeye girmez —
-    yoksa aynı firma iki sütun kaplar ve 3. tedarikçi kesilirdi.
+    yoksa aynı firma iki sütun kaplar ve 3. tedarikçi kesilirdi (`firm_keys`).
+    PASİF firmanın teklifi (`inactive_firm_check`) en uygun sayılmaz: aktif
+    tekliflerden SONRA gelir ve `inactive: True` taşır (Excel'de gri
+    "pasif tedarikçi") — lab'ın sildiği firma Tedarikçi-1 olarak önerilmesin.
     """
     if not item_ids:
         return {}
@@ -285,21 +332,15 @@ def prices_for_items(db: Session, item_ids: List[int], domain: str, limit: int =
     q = (db.query(SupplierPrice)
          .filter(SupplierPrice.item_id.in_(item_ids), SupplierPrice.domain == domain)
          .all())
-
-    def _firm_keys(sp):
-        keys = set()
-        if sp.supplier_id is not None:
-            keys.add(("id", sp.supplier_id))
-        if normalize(sp.supplier_name):
-            keys.add(("name", normalize(sp.supplier_name)))
-        return keys
+    is_inactive = inactive_firm_check(db, domain, q)
 
     manual_firms: dict = {}
     for sp in q:
         if sp.source == SOURCE_MANUAL:
-            manual_firms.setdefault(sp.item_id, set()).update(_firm_keys(sp))
+            manual_firms.setdefault(sp.item_id, set()).update(firm_keys(sp.supplier_id, sp.supplier_name))
     for sp in q:
-        if sp.source != SOURCE_MANUAL and _firm_keys(sp) & manual_firms.get(sp.item_id, set()):
+        if (sp.source != SOURCE_MANUAL
+                and firm_keys(sp.supplier_id, sp.supplier_name) & manual_firms.get(sp.item_id, set())):
             continue
         out.setdefault(sp.item_id, []).append({
             "supplier_name": sp.supplier_name or (sp.supplier.name if sp.supplier else "—"),
@@ -309,9 +350,11 @@ def prices_for_items(db: Session, item_ids: List[int], domain: str, limit: int =
             "price_unit": sp.price_unit,
             "source_label": sp.source_label,
             "quoted_at": sp.quoted_at,
+            "inactive": is_inactive(sp),
         })
     for iid, lst in out.items():
-        lst.sort(key=lambda x: (x["unit_price"] is None, x["unit_price"] if x["unit_price"] is not None else 0.0))
+        lst.sort(key=lambda x: (x["inactive"], x["unit_price"] is None,
+                                x["unit_price"] if x["unit_price"] is not None else 0.0))
         out[iid] = lst[:limit]
     return out
 
@@ -350,11 +393,13 @@ def price_per_purchase_unit(offer, item_unit) -> Tuple[Optional[float], str, Opt
         f"uyuşmuyor — fiyat kullanılmadı")
 
 
-def serialize_price(sp, item=None, supplier_status: Optional[str] = None) -> dict:
+def serialize_price(sp, item=None, supplier_status: Optional[str] = None,
+                    supplier_inactive: bool = False) -> dict:
     """Fiyat satırının uç yanıtı — GET /api/supplier-prices (grup içi satır),
     GET /api/suppliers/{id}/prices ve POST/PUT yanıtı aynı şekli paylaşır.
     `item` verilirse malzeme adı/birimi eklenir; tarih alanları ISO (quoted_at)
-    ve TR saati (updated_at)."""
+    ve TR saati (updated_at).  `supplier_inactive`: firma pasif
+    (`inactive_firm_check`) — panelde gri "pasif" rozeti, "en ucuz" sayılmaz."""
     from database import to_tr
     out = {
         "id": sp.id,
@@ -374,6 +419,7 @@ def serialize_price(sp, item=None, supplier_status: Optional[str] = None) -> dic
         "updated_at": to_tr(sp.updated_at).strftime("%d.%m.%Y %H:%M") if sp.updated_at else "",
         "matched": sp.supplier_id is not None,
         "supplier_status": supplier_status,
+        "supplier_inactive": bool(supplier_inactive),
     }
     if item is not None:
         out["material"] = item.name

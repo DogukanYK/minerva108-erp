@@ -345,7 +345,7 @@ def build_workbook(report: dict, prices: Optional[dict] = None) -> bytes:
     prices = prices or {}
     wb = Workbook()
     NAVY = PatternFill("solid", fgColor="232E6E"); HF = Font(bold=True, color="FFFFFF")
-    RED = Font(color="B91C1C", bold=True)
+    RED = Font(color="B91C1C", bold=True); GRAY = Font(color="9CA3AF")
     TITLE = Font(bold=True, size=13, color="232E6E"); BLD = Font(bold=True)
     thin = Border(*([Side(style="thin", color="DDDDDD")] * 4))
 
@@ -416,16 +416,23 @@ def build_workbook(report: dict, prices: Optional[dict] = None) -> bytes:
                 o = r["order"]
                 vals = [r["name"], o["quantity"] or "", o["unit"], o["expected_date"] or "",
                         o["note"] or "", o["ordered_by"] or ""]
+                gray_cols = set()
                 if show_sup:
                     plist = prices.get(r["item_id"], [])
                     for n in range(SUP_SLOTS):
                         if n < len(plist):
                             p = plist[n]
-                            vals += [p["supplier_name"], p["package_size"] or "", p["unit_price"] or ""]
+                            name = p["supplier_name"]
+                            if p.get("inactive"):        # pasif firma: sonda, gri, etiketli
+                                name = f"{name} (pasif tedarikçi)"
+                                gray_cols.update(range(len(vals) + 1, len(vals) + 4))
+                            vals += [name, p["package_size"] or "", p["unit_price"] or ""]
                         else:
                             vals += ["", "", ""]
                 for ci, v in enumerate(vals, 1):
-                    ws.cell(ri, ci, v).border = thin
+                    c = ws.cell(ri, ci, v); c.border = thin
+                    if ci in gray_cols:
+                        c.font = GRAY
                 ri += 1
             ri += 1
     widths(ws, [30, 10, 8, 12, 30, 16] + ([16, 16, 12] * SUP_SLOTS if show_sup else []))

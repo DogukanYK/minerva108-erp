@@ -522,7 +522,7 @@
                   <th style="padding:0.4rem 0.5rem;">Birim</th>
                   <th style="padding:0.4rem 0.5rem;">Tedarikçi</th>
                   <th style="padding:0.4rem 0.5rem;">Miktar</th>
-                  <th style="padding:0.4rem 0.5rem;">Birim fiyat (ucuzdan)</th>
+                  <th style="padding:0.4rem 0.5rem;">Birim fiyat</th>
                   <th style="padding:0.4rem 0.5rem;">Kaynak</th>
                   <th style="padding:0.4rem 0.5rem;"></th>
                 </tr>
@@ -718,7 +718,7 @@
   <div id="toast-container"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="/static/supplier-price-form.js?v=2"></script>
+  <script src="/static/supplier-price-form.js?v=3"></script>
   <script>
     /* ── helpers ── */
     function escHtml(s) {
@@ -999,7 +999,14 @@
         if (!_sgSuppliers.length) _sgSuppliers = await fetch('/api/suppliers').then(r => r.json());
         const sorted = window.trSortBy ? window.trSortBy(_sgSuppliers, 'name') : _sgSuppliers;
         sorted.forEach(s => { const o = document.createElement('option'); o.value = s.id; o.textContent = s.name; sel.appendChild(o); });
-        if (row && row.supplier_id) sel.value = row.supplier_id;
+        if (row && row.supplier_id) {
+          sel.value = row.supplier_id;
+          // Liste yalnız aktif tedarikçiler: pasif firma ön-seçilemez — söyle
+          if (sel.value !== String(row.supplier_id)) {
+            showToast(`Kartın tedarikçisi «${row.supplier_name || ('#' + row.supplier_id)}» pasif — ` +
+                      `sipariş için başka tedarikçi seçin.`, 'info', 7000);
+          }
+        }
       } catch {}
       new bootstrap.Modal(document.getElementById('sgOrderModal')).show();
     }
@@ -1451,6 +1458,7 @@
     const _SP_SYM={USD:'$',EUR:'€',TRY:'₺'};
     const _SP_STATUS={phase_out:'<span title="Firma “bitirilecek — alma” işaretli" style="display:inline-block;margin-left:4px;padding:0 6px;border-radius:8px;background:#ffedd5;color:#9a3412;font-size:0.68rem;font-weight:700;">bitirilecek</span>',
                       preferred:'<span title="Tercih edilen firma" style="display:inline-block;margin-left:4px;padding:0 6px;border-radius:8px;background:#dcfce7;color:#166534;font-size:0.68rem;font-weight:700;">tercih</span>'};
+    const _SP_INACTIVE='<span title="Firma pasife alınmış (silinmiş) — teklifi satın almada seçilmez" style="display:inline-block;margin-left:4px;padding:0 6px;border-radius:8px;background:#f3f4f6;color:#6b7280;font-size:0.68rem;font-weight:700;">pasif tedarikçi</span>';
     async function spLoad(){
       const body=document.getElementById('spBody');
       try{
@@ -1475,10 +1483,17 @@
       body.innerHTML=rows.map(it=>{
         const sups=it.suppliers||[];
         if(!sups.length) return '';
+        // Sunucu ham unit_price ile sıralar (kur/birim yok) — para birimi ya da
+        // fiyat birimi karışık grupta "en ucuz" yeşili YANLIŞ satırı gösterirdi
+        // (9,75 $/kg ↔ 300 ₺/kg ≈ 7 $).  Karışıksa vurgu yok, gri not var.
+        // Pasif firmanın satırı (supplier_inactive) sonda gelir, hiç vurgulanmaz.
+        const live=sups.filter(s=>s.unit_price!=null&&!s.supplier_inactive);
+        const mixed=new Set(live.map(s=>(s.currency||'').toUpperCase()+'/'+(s.price_unit||''))).size>1;
         return sups.map((s,i)=>{
           const first=i===0, last=i===sups.length-1;
           const priced=s.unit_price!=null;
-          const cheapest=first&&priced;
+          const cheapest=first&&priced&&!mixed&&!s.supplier_inactive;
+          const mixNote=mixed&&s===live[0]?'<div style="font-size:0.7rem;color:#9ca3af;">farklı para birimi/birim — karşılaştırılamaz</div>':'';
           const warn=s.matched?'':' <span title="tedarikçi sistemde eşleşmedi — serbest metin" style="color:#b45309;">⚠</span>';
           const pkg=s.package_size!=null?`${Number(s.package_size).toLocaleString('tr-TR',{maximumFractionDigits:4})} ${_spEsc(it.unit||'')}`:'—';
           const src=SPF.sourceText(s), ttl=SPF.sourceTitle(s);
@@ -1488,9 +1503,9 @@
           return `<tr style="${border}">
             <td style="${td}font-weight:600;">${first?_spEsc(it.material):''}</td>
             <td style="${td}color:#6b7280;">${first?_spEsc(it.unit||''):''}</td>
-            <td style="${td}">${_spEsc(s.supplier_name)}${warn}${_SP_STATUS[s.supplier_status]||''}</td>
+            <td style="${td}">${_spEsc(s.supplier_name)}${warn}${s.supplier_inactive?_SP_INACTIVE:(_SP_STATUS[s.supplier_status]||'')}</td>
             <td style="${td}color:#6b7280;">${pkg}</td>
-            <td style="${td}">${priced?`<b${cheapest?' style="color:#15803d;"':''}>${SPF.priceText(s)}</b>`:'<span style="color:#9ca3af;">—</span>'}</td>
+            <td style="${td}">${priced?(s.supplier_inactive?`<span style="color:#9ca3af;">${SPF.priceText(s)}</span>`:`<b${cheapest?' style="color:#15803d;"':''}>${SPF.priceText(s)}</b>`):'<span style="color:#9ca3af;">—</span>'}${mixNote}</td>
             <td style="${td}font-size:0.78rem;color:${s.source==='manual'?'#4338ca':'#6b7280'};"${ttl?` title="${_spEsc(ttl)}"`:''}>${_spEsc(src)}${note}</td>
             <td style="${td}text-align:right;">${act}</td>
           </tr>`;

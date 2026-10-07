@@ -152,7 +152,10 @@ _DEFAULT_PERMISSIONS = {
         "retention":          {"view": True,  "edit": True,  "checkout": True,  "destroy": True},
         "reviews":       {"view": True,  "invite": True,  "moderate": True,  "delete": True},
         "influencer":    {"view": True,  "edit": True,  "approve": True,  "ship": True,  "links": True,  "payout": True,  "settings": True},
-        "suppliers":     {"status": True,  "prices": True,  "merge": True},
+        # merge KAPALI: birleştirme kaybeden kartı pasife alır (silme işi) —
+        # Manager'da items.delete de kapalı (DELETE /api/suppliers onu ister).
+        # Gerekirse yetki matrisinden kişiye açılır.
+        "suppliers":     {"status": True,  "prices": True,  "merge": False},
     },
     "LabLead": {
         "items":      {"view": True,  "create": True,  "edit": True,  "delete": True,  "import": True},

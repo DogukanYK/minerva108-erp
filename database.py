@@ -112,6 +112,12 @@ class Supplier(Base):
     status_reason = Column(Text, nullable=True)
     status_by = Column(String(100), nullable=True)
     status_at = Column(DateTime, nullable=True)
+    # Birleştirmede kaybeden kartın kazananı (core/suppliers.merge_suppliers).
+    # Kaybedenin adı kazananın TAKMA ADIDIR: fiyat listesinde eski yazım
+    # kazanana eşlenir (supplier_prices.import_prices) ve firma "pasif"
+    # sayılmaz (purchase_pricing.FirmActivity).  Kart yeniden
+    # etkinleştirilince temizlenir.
+    merged_into_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
 
     items = relationship("Item", back_populates="supplier")
 
@@ -2553,10 +2559,18 @@ def _backfill_perm_suppliers():
     varsayılanının YERİNE geçtiği için yeni kategori override'lı kullanıcıya
     hiç ulaşmaz (prod'da Işık Hanım: Manager + override; Meltem LabTech ve
     Staff'lar da override'lı).  `suppliers` kategorisinde EKSİK olan her
-    aksiyona rol varsayılanı yazılır (Manager/LabLead True, diğerleri False);
-    var olan anahtara (yönetici bilerek açmış/kapatmış) dokunulmaz.  SuperAdmin
-    her zaman geçer, atlanır.  Değişen her kullanıcı için `permissions.backfill`
-    audit satırı yazılır.
+    aksiyona rol varsayılanı VE ilgili mevcut izin yazılır (kalıp:
+    production.cancel ← production.create): `status`/`prices` için override'da
+    `items.edit`, `merge` için `items.edit` VE `items.delete` açık olmalı —
+    birleştirme kartların/lotların tedarikçi bağını toplu değiştirip firmayı
+    pasife alır (normalde items.edit + items.delete işi); kart düzenleme/silme
+    kapalı birine bu yetkiler kendiliğinden verilmez.  Rol varsayılanı aynı
+    kurala uyar: Manager'da items.delete kapalı olduğu için suppliers.merge de
+    kapalıdır — override'lı ve override'sız Manager aynı sonucu alır (merge
+    yalnız LabLead varsayılanında; gerekirse yetki matrisinden açılır).  Var olan
+    anahtara (yönetici bilerek açmış/kapatmış) dokunulmaz.  SuperAdmin her
+    zaman geçer, atlanır.  Değişen her kullanıcı için `permissions.backfill`
+    audit satırı yazılır (`gated`: koşul yüzünden False yazılan aksiyonlar).
 
     BİR KEZ çalışır — `AppSetting` sentinel'i; değer = güncellenen kullanıcı
     sayısı.
@@ -2584,10 +2598,23 @@ def _backfill_perm_suppliers():
                 cat = {}
             role_def = ((_DEFAULT_PERMISSIONS.get(u.role) or _DEFAULT_PERMISSIONS["Staff"])
                         .get("suppliers") or {})
-            added = {}
+            items = perms.get("items") if isinstance(perms.get("items"), dict) else {}
+            # aksiyon → (koşul metni, override'daki mevcut izin sağlıyor mu)
+            gate = {
+                "status": ("items.edit", bool(items.get("edit", False))),
+                "prices": ("items.edit", bool(items.get("edit", False))),
+                "merge":  ("items.edit+items.delete",
+                           bool(items.get("edit", False) and items.get("delete", False))),
+            }
+            added, gated = {}, {}
             for act in PERMISSION_CATEGORIES["suppliers"]:
-                if act not in cat:
-                    cat[act] = added[act] = bool(role_def.get(act, False))
+                if act in cat:
+                    continue
+                default = bool(role_def.get(act, False))
+                cond, ok = gate.get(act, ("", True))
+                if default and not ok:
+                    gated[f"suppliers.{act}"] = cond
+                cat[act] = added[act] = default and ok
             if not added:
                 continue
             perms["suppliers"] = cat
@@ -2596,6 +2623,7 @@ def _backfill_perm_suppliers():
                 actor_name="sistem", action="permissions.backfill",
                 target_type="user", target_id=u.id, target_name=u.username,
                 details=_json.dumps({"keys": {f"suppliers.{k}": v for k, v in added.items()},
+                                     "gated": gated,
                                      "role": u.role, "sentinel": SENTINEL},
                                     ensure_ascii=False)))
             n += 1
@@ -2860,6 +2888,8 @@ def init_db():
             "ALTER TABLE suppliers ADD COLUMN status_at TIMESTAMP",
             "ALTER TABLE supplier_prices ADD COLUMN created_by VARCHAR(100)",
             "ALTER TABLE supplier_prices ADD COLUMN updated_by VARCHAR(100)",
+            # Birleştirilen kartın kazananı (takma ad) — migration c4e6a8b0d2f5.
+            "ALTER TABLE suppliers ADD COLUMN merged_into_id INTEGER REFERENCES suppliers(id)",
         ):
             alter_safe(stmt)
 

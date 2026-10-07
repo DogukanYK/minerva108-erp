@@ -34,7 +34,8 @@ Durumlar (`Supplier.purchase_status`):
   • Tedarikçi birleştirme (`merge_preview` / `merge_suppliers`) — mükerrer
     firma kartları (TATLİDİLİMLER / TATLIDİLİMLER …): bütün bağlar
     kazanana taşınır, kaybeden PASİF kalır (iz), hiçbir kayıt silinmez
-    (çakışan tercih hariç — kazananınki esas).
+    (çakışan tercih hariç — kazananınki esas).  Kaybedenin adı kazananın
+    takma adıdır (`merged_into_id`, `live_card_id`).
 Uçlar: routers/inventory.py (liste/ekle/düzenle/pasife al) ve
 routers/suppliers.py (durum + fiyatlar + tercihler + birleştirme).
 """
@@ -274,6 +275,22 @@ def _pref_target(p) -> tuple:
     return ("g", p.material_group_id) if p.material_group_id else ("i", p.item_id)
 
 
+def live_card_id(cards: dict, sid) -> Optional[int]:
+    """Kartın YAŞAYAN karşılığı: aktifse kendisi; birleştirilmişse
+    (`merged_into_id`) zincirin sonundaki aktif kazanan; yoksa None (firma
+    gerçekten pasif).  `cards`: {id: (is_active, merged_into_id)}.  Döngüye
+    karşı korumalı.  Ortak kural: `supplier_prices.import_prices` (eski
+    yazım → kazanan) ve `purchase_pricing.FirmActivity` (pasif firma)."""
+    seen = set()
+    while sid in cards and sid not in seen:
+        seen.add(sid)
+        active, into = cards[sid]
+        if active:
+            return sid
+        sid = into
+    return None
+
+
 def _merge_pair(db, loser_id: int, survivor_id: int, domain: str, *, lock: bool = False):
     """Birleştirme ön koşulları: farklı, ikisi de bu panelde ve AKTİF.  Kilit
     id sırasıyla (iki eşzamanlı ters birleştirme kilitlenmesin)."""
@@ -354,9 +371,11 @@ def merge_suppliers(db, loser_id: int, survivor_id: int, domain: str, actor: str
     düşer).  Numune Analizi bileşen satırlarının ANLIK adları DOKUNULMAZ.
     Kazananın boş iletişim alanları kaybedenden doldurulur.  Kaybeden
     `is_active=False` + not satırı ("… kartına birleştirildi"); kazanan kendi
-    satın alma durumunu korur (farklıysa `warnings`)."""
+    satın alma durumunu korur (farklıysa `warnings`).  Kaybedene
+    `merged_into_id` = kazanan yazılır: adı kazananın takma adı olur
+    (fiyat listesinin eski yazımı kazanana eşlenir, firma "pasif" sayılmaz)."""
     from database import (Inventory, Item, MaterialSupplierPref as P, ProductionConsumption,
-                          StockOrderFlag, SupplierPrice)
+                          StockOrderFlag, Supplier, SupplierPrice)
     loser, survivor = _merge_pair(db, loser_id, survivor_id, domain, lock=True)
     counts = _merge_counts(db, loser, survivor)
     lid, sid = loser.id, survivor.id
@@ -380,6 +399,11 @@ def merge_suppliers(db, loser_id: int, survivor_id: int, domain: str, actor: str
     line = f"«{survivor.name}» (#{survivor.id}) kartına birleştirildi — {stamp}, {actor or '—'}"
     loser.notes = (f"{loser.notes.rstrip()}\n{line}" if (loser.notes or "").strip() else line)
     loser.is_active = False
+    # Kaybedenin adı kazananın takma adı (`live_card_id`); daha önce
+    # kaybedene birleştirilmiş kartlar da artık doğrudan kazanana bağlanır.
+    loser.merged_into_id = sid
+    (db.query(Supplier).filter(Supplier.merged_into_id == lid)
+     .update({Supplier.merged_into_id: sid}, synchronize_session=False))
     db.flush()
     return {"loser_id": lid, "loser_name": loser.name, "survivor_id": sid,
             "survivor_name": survivor.name, "counts": counts, "copied_fields": sorted(copied),

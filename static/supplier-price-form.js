@@ -20,7 +20,8 @@
  *     price_unit, package_size?, quoted_at?, note?}  → 201 satır
  *     409 {code:'price_exists', id} → "zaten var, güncellensin mi?" → PUT
  *   PUT  /api/supplier-prices/{id}  (kısmi) — Excel satırı düzenlenince
- *     'elle' olur, sonraki içe aktarma onu silmez.
+ *     'elle' olur, sonraki içe aktarma onu silmez.  Düzenlemedeki 409
+ *     (birim/firma başka satırla çakışıyor) köprüye GİRMEZ — mesaj gösterilir.
  * Kurallar SUNUCUDADIR; burada birim seçenekleri malzemenin birim ailesine
  * göre süzülür (core/supplier_prices.price_unit_ok): adetli → adet,
  * kütle/hacim → kg | l.
@@ -243,7 +244,12 @@
             (i.supplier_name ? ' — ' + i.supplier_name : '') + ' (' + (i.unit || '?') + ')';
           return '<option value="' + i.id + '">' + esc(lbl) + '</option>';
         }).join('') : '<option value="" disabled>Eşleşen malzeme yok</option>';
-        if (state.item) itemSel.value = String(state.item.id);
+        if (state.item) {
+          itemSel.value = String(state.item.id);
+          // Seçili kart süzülmüş listede yoksa seçim düşer: ekranda görünmeyen
+          // karta fiyat yazılmasın (görünen seçim = kaydedilen kart).
+          if (itemSel.value !== String(state.item.id)) { state.item = null; fillUnits(); }
+        }
       };
       search.addEventListener('input', renderItems);
       itemSel.addEventListener('change', function () {
@@ -297,7 +303,9 @@
       if (edit) {
         url = '/api/supplier-prices/' + row.id; method = 'PUT';
       } else {
-        if (!state.item) { toast('Malzeme seçin.'); return; }
+        if (!state.item || (!fixedItem && f('item').value !== String(state.item.id))) {
+          toast('Malzeme seçin.'); return;
+        }
         var sid = lockedSup ? lockedSup.id : parseInt((f('supplier') || {}).value, 10);
         if (!sid) { toast('Tedarikçi seçin.'); return; }
         body.item_id = state.item.id;
@@ -312,7 +320,10 @@
           .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { r: r, d: d }; }); });
       };
       send(url, method, body).then(function (res) {
-        if (res.r.status === 409 && res.d && res.d.code === 'price_exists' && res.d.id) {
+        // "O satır güncellensin mi?" köprüsü YALNIZ yeni fiyatta: düzenlemede
+        // diğer satırı güncellemek, düzenlenen satırı bayat bırakırdı — orada
+        // sunucunun 409 mesajı gösterilir, form açık kalır.
+        if (!edit && res.r.status === 409 && res.d && res.d.code === 'price_exists' && res.d.id) {
           var msg = (res.d.detail || 'Bu malzeme + tedarikçi + birim için fiyat zaten kayıtlı.') +
             '\n\nGirdiğiniz değerlerle o satır güncellensin mi?';
           if (!window.confirm(msg)) return null;

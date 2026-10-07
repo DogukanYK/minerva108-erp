@@ -24,6 +24,43 @@ from database import (
 
 ORIGIN = {"Origin": "http://testserver"}
 
+
+# ─── Günün saati sabit: 14:00 TR (gece yarısı kırmızısı) ────────────────────
+# API testleri "bugün"ü / "dün"ü `datetime.utcnow()`'a göre kurar; sunucu da
+# "şimdi"yi `routers.pdks` modül global'i `datetime.utcnow()`'dan okur (ayrı bir
+# _now()/tr_now() kancası YOK).  Sonuç saate bağlıydı:
+#   • 00:00–05:00 TR: "dün 17:00'de açık kalan giriş" 12 saati doldurmadığı için
+#     hâlâ geçerli → test_forgotten_checkout_lets_next_day_checkin kırmızı;
+#   • 23:55–23:59 TR: "bugün 23:59" artık "şimdi + 5 dk"dan ileri değil →
+#     test_request_reject_and_validation kırmızı.
+# Üretim koduna DOKUNMADAN: router'ın ve bu modülün `datetime` global'ı, gerçek
+# saatin bugünün (TR) 14:00'ına kaydırılmış hâliyle değiştirilir.  Saat İŞLER
+# (sıra/aralık korunur), tarih gerçek kalır — yalnız günün saati sabitlenir.
+# Taban, router'ın o anki saati: doğrulama eklentisi (saat kaydırma) onu
+# değiştirirse sabitleme onun üstüne kurulur.  `time.time()` (QR/kod) etkilenmez.
+DAY_CLOCK_TR = (14, 0)
+
+
+@pytest.fixture(autouse=True)
+def _pdks_day_clock(monkeypatch):
+    import datetime as _dt
+    import sys
+
+    import routers.pdks as pdks_router
+    base = pdks_router.datetime
+    now = base.utcnow()
+    today = tr_date_of(now)
+    target = _dt.datetime(today.year, today.month, today.day, *DAY_CLOCK_TR) - timedelta(hours=3)
+    shift = target - now
+
+    class DayClock(_dt.datetime):
+        @classmethod
+        def utcnow(cls):
+            return base.utcnow() + shift
+
+    monkeypatch.setattr(pdks_router, "datetime", DayClock)
+    monkeypatch.setattr(sys.modules[__name__], "datetime", DayClock)
+
 # Pzt–Cum 09:00–18:00 — testlerin standart programı.  Molalar programa DEĞİL
 # şirket geneli, tarihe bağlı şemaya bağlı (BREAK_REGIMES).  23.09.2026 öncesi
 # günlerde (testlerin çoğu Temmuz 2026) şema 09:30/15 · 12:45/45 · 16:00/15 →
