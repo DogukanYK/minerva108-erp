@@ -37,7 +37,9 @@
     extra_waste_pct: { raw: 0, packaging: 0, label: 0 },
     label_mode: 'TR', new_label_title: 'Yeni etiket',
     merge_duplicates: true, safe_rounding: true, round_to_package: false,
-    currency: 'USD', lookalike_check: true, checklist_owner: ''
+    currency: 'USD', lookalike_check: true, checklist_owner: '',
+    // Tedarikçi tercihleri (07.10.2026) — sunucu varsayılanı da açık
+    count_phase_out_stock: true, respect_supplier_status: true
   };
 
   // ─── Yardımcılar ───────────────────────────────────────────────────────────
@@ -227,6 +229,8 @@
           .map(function (h) { return { item_id: h.id, reason: (h.reason || '').trim() }; }),
         safe_rounding: !!o.safe_rounding, round_to_package: !!o.round_to_package,
         currency: o.currency, lookalike_check: !!o.lookalike_check,
+        count_phase_out_stock: o.count_phase_out_stock !== false,
+        respect_supplier_status: o.respect_supplier_status !== false,
         item_notes: itemNotes, notes: notes,
         checklist_owner: (o.checklist_owner || '').trim() || null
       }
@@ -283,7 +287,8 @@
     var nameOf = function (id) { return itemName(id) || missName[id] || ('Kalem #' + id); };
     S.options = clone(DEFAULT_OPTIONS);
     ['stock_mode', 'subtract_open_orders', 'subtract_finished_stock', 'label_mode', 'new_label_title',
-      'merge_duplicates', 'safe_rounding', 'round_to_package', 'currency', 'lookalike_check'].forEach(function (k) {
+      'merge_duplicates', 'safe_rounding', 'round_to_package', 'currency', 'lookalike_check',
+      'count_phase_out_stock', 'respect_supplier_status'].forEach(function (k) {
       if (o[k] !== undefined && o[k] !== null) S.options[k] = o[k];
     });
     S.options.checklist_owner = o.checklist_owner || '';
@@ -788,6 +793,8 @@
     $('sapSafe').checked = !!o.safe_rounding;
     $('sapPkgRound').checked = !!o.round_to_package;
     $('sapLookalike').checked = !!o.lookalike_check;
+    if ($('sapPhaseOut')) $('sapPhaseOut').checked = o.count_phase_out_stock !== false;
+    if ($('sapRespect')) $('sapRespect').checked = o.respect_supplier_status !== false;
     $('sapCurrency').value = o.currency || 'USD';
     $('sapTitle').value = S.title || '';
     $('sapOwner').value = o.checklist_owner || '';
@@ -803,8 +810,10 @@
     });
     var flags = { sapOpenOrders: 'subtract_open_orders', sapFinished: 'subtract_finished_stock',
       sapMerge: 'merge_duplicates', sapSafe: 'safe_rounding', sapPkgRound: 'round_to_package',
-      sapLookalike: 'lookalike_check' };
+      sapLookalike: 'lookalike_check', sapPhaseOut: 'count_phase_out_stock',
+      sapRespect: 'respect_supplier_status' };
     Object.keys(flags).forEach(function (id) {
+      if (!$(id)) return;
       $(id).addEventListener('change', function (e) { S.options[flags[id]] = e.target.checked; touch(); });
     });
     document.querySelectorAll('input[name="sapLabel"]').forEach(function (el) {
@@ -1428,7 +1437,7 @@
           '</td><td><b>' + esc(x[1]) + '</b></td><td>' + esc(x[2]) + '</td></tr>';
       }).join('') + '</tbody></table></div>' : '<div class="sap-empty">Uyarı yok.</div>';
     if ((rep.held || []).length) {
-      warnHtml += '<div class="sap-sec" style="margin-top:1rem;"><h4>Bekletilen kalemler</h4><p class="sap-sub">Listeye ve toplama girmedi; “alınırsa” en ucuz teklifle tutar.</p>' +
+      warnHtml += '<div class="sap-sec" style="margin-top:1rem;"><h4>Bekletilen kalemler</h4><p class="sap-sub">Listeye ve toplama girmedi; “alınırsa” seçilen teklifle tutar.</p>' +
         matTable(rep.held, rep, {}) + '</div>';
     }
     if ((rep.excluded || []).length) {

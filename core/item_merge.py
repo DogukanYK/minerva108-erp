@@ -23,7 +23,9 @@ oluşursa birimler eşitse toplanır) · supplier_prices · distributor_prices
 (UNIQUE çakışmasında kaybedenin satırı düşer) · delivery_items ·
 product_return_items · quotation_items · retention_samples (item_name
 snapshot'ı da güncellenir).  Taşınmayanlar: transactions (defter kuralı),
-stock_snapshot (donmuş tarih — ASLA).  "Aynı malzeme" grubu: kazananın grubu
+stock_snapshot (donmuş tarih — ASLA).  Kart kapsamlı tedarikçi tercihleri
+(`material_supplier_prefs`) kazanana geçer — aynı tedarikçide kazananınki esas
+(core.suppliers.move_item_prefs).  "Aynı malzeme" grubu: kazananın grubu
 yoksa kaybedeninki devredilir, kaybeden pasif üye olarak kalır
 (core.material_groups.transfer_on_merge); tek aktif kartı kalan grup dağılır
 ve özetin `dissolved_groups`'una girer (çağıran audit'e yazar).
@@ -40,6 +42,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from core.material_groups import transfer_on_merge
+from core.suppliers import move_item_prefs
 from database import (DeliveryItem, DistributorPrice, DuplicateItemDecision,
                       Inventory, Item, ProductionHistory, ProductReturnItem,
                       QuotationItem, Recipe, RecipeIngredient, RetentionSample,
@@ -192,6 +195,11 @@ def merge_items(db: Session, loser_id: int, survivor_id: int, actor: str) -> dic
         survivor.cost_price = loser.cost_price
 
     loser.is_active = False
+
+    # ── Malzeme bazlı tedarikçi tercihi (kart kapsamlı) — kazananınki esas ──
+    db.flush()
+    summary["material_prefs_moved"], summary["material_prefs_dropped"] = \
+        move_item_prefs(db, loser.id, survivor.id)
 
     # ── "Aynı malzeme" grubu — kazananın grubu yoksa kaybedeninki devredilir ──
     db.flush()

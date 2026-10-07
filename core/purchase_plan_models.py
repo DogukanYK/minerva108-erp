@@ -110,6 +110,15 @@ class PlanOptionsIn(BaseModel):
     round_to_package: bool = False
     currency: Literal["USD", "EUR", "TRY"] = "USD"
     lookalike_check: bool = True
+    # Tedarikçi tercihleri (07.10.2026) — eski senaryolarda alan yok → açık.
+    # count_phase_out_stock: aynı "aynı malzeme" grubunda "bitirilecek" (ya da
+    # bu malzemede "alma") tedarikçinin kartındaki stok önce kullanılır,
+    # ihtiyaçtan düşülür (net mod).  respect_supplier_status: en iyi teklif
+    # seçiminde bitirilecek / alma / atlanacak firmalar seçilmez, malzeme
+    # tercihi + "tercih edilen" firma en ucuzdan önce gelir; False → yalnız
+    # en ucuz (eski davranış).
+    count_phase_out_stock: bool = True
+    respect_supplier_status: bool = True
     item_notes: Dict[int, str] = Field(default_factory=dict)
     notes: List[str] = Field(default_factory=list, max_length=50)
     checklist_owner: Optional[str] = Field(None, max_length=120)

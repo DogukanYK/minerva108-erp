@@ -33,7 +33,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from database import (
-    UndoLog, Item, Inventory, Transaction,
+    UndoLog, Item, Inventory, Supplier, Transaction,
 )
 
 
@@ -186,6 +186,13 @@ def _undo_item_edit(db: Session, entry: UndoLog) -> str:
     Çakışma: bilinçli olarak gevşek — son N saniyede ardarda 2 edit varsa
     son undo eski 'before'u uygular (kabul edilebilir trade-off, kullanıcı
     göstermek istediği state'i geri istiyor).
+
+    İstisna — tedarikçi bağı: eski tedarikçi artık PASİFSE (pasife alındı ya
+    da başka karta birleştirildi) ya da kart düzenlemeden sonra başka
+    tedarikçiye bağlandıysa (`after_supplier_id` ≠ şimdiki — örn. tedarikçi
+    birleştirmesi taşıdı) bağ geri yazılmaz; kalan alanlar geri alınır.
+    Yoksa birleştirmeden önceki bir düzenlemenin geri alınması kartı
+    birleştirilmiş kaybedene geri bağlardı.
     """
     p = entry.payload or {}
     item_id = p.get("item_id")
@@ -204,10 +211,18 @@ def _undo_item_edit(db: Session, entry: UndoLog) -> str:
             setattr(item, col, float(before[col]))
     if "parent_id" in before:
         item.parent_id = before["parent_id"]
-    if "supplier_id" in before:
-        item.supplier_id = before["supplier_id"]
+    msg = f"Ürün düzenlemesi geri alındı: {item.name}"
+    want = before.get("supplier_id")
+    if "supplier_id" in before and want != item.supplier_id:
+        moved = "after_supplier_id" in p and p["after_supplier_id"] != item.supplier_id
+        old_sup = db.query(Supplier).filter(Supplier.id == want).first() if want is not None else None
+        if moved or (want is not None and (old_sup is None or old_sup.is_active is False)):
+            msg += (". Tedarikçi bağı değiştirilmedi (eski tedarikçi pasif ya da kart sonradan "
+                    "başka tedarikçiye bağlandı).")
+        else:
+            item.supplier_id = want
 
-    return f"Ürün düzenlemesi geri alındı: {item.name}"
+    return msg
 
 
 def _undo_inventory_receive(db: Session, entry: UndoLog) -> str:

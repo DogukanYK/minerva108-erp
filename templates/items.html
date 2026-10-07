@@ -789,6 +789,44 @@
     :root[data-theme="dark"] .mg-link,
     :root[data-theme="dark"] .mg-title { color: var(--gold); }
     :root[data-theme="dark"] .mg-row input[type=checkbox] { accent-color: var(--gold); }
+
+    /* ── Tedarikçi tercihi (P1b, 07.10.2026) ──────────────────────────────
+       Önek stp-; kutu/satır/etiket mg-* sınıflarını paylaşır.  btn-* adı
+       YASAK (Bootstrap gölgeleme tuzağı). */
+    .stp-h {
+      margin-top: 0.75rem; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em;
+      text-transform: uppercase; color: #6b7280;
+    }
+    .stp-rank {
+      flex-shrink: 0; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 12px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--navy); color: #fff; font-size: 0.74rem; font-weight: 700;
+    }
+    .stp-rank-off { background: #fee2e2; color: #b91c1c; }
+    .stp-acts { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+    .stp-mv {
+      width: 26px; height: 26px; border: 1px solid #e5e7eb; border-radius: 6px;
+      background: var(--white); color: #374151; cursor: pointer; font-size: 0.78rem;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .stp-mv:hover { background: #faf8f4; }
+    .stp-mv:disabled { opacity: 0.35; cursor: default; }
+    .stp-tag-pref { background: #dcfce7; color: #166534; }
+    .stp-shadow { opacity: 0.7; }
+    .stp-add { margin-top: 0.75rem; display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; }
+    .stp-add .stp-wide { grid-column: 1 / -1; }
+    .stp-add .form-control, .stp-add .form-select { padding: 0.45rem 0.75rem; font-size: 0.86rem; }
+    #stpSection .mg-list { max-height: none; }      /* kısa liste — iç kaydırma yok */
+    @media (max-width: 576px) {
+      .stp-add { grid-template-columns: 1fr; }
+      #stpSection .mg-row { flex-wrap: wrap; }
+      #stpSection .stp-acts { width: 100%; justify-content: flex-end; }
+    }
+    :root[data-theme="dark"] .stp-mv { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+    :root[data-theme="dark"] .stp-rank { background: var(--gold); color: #1A1208; }
+    :root[data-theme="dark"] .stp-rank-off { background: #2E1414; color: #FCA5A5; }
+    :root[data-theme="dark"] .stp-tag-pref { background: #0F2A22; color: #6EE7B7; }
+    :root[data-theme="dark"] .stp-h { color: var(--text-muted); }
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
@@ -1429,6 +1467,9 @@
           <!-- "Aynı malzeme" bölümü — formun DIŞINDA: işlemleri anında kaydedilir,
                "Kaydet"e bağlı değil (form reset'i de buraya dokunmaz). -->
           <div class="mg-box" id="mgSection" hidden></div>
+          <!-- "Tedarikçi tercihi" bölümü — aynı kural: formun DIŞINDA, anında
+               kaydedilir (/api/material-prefs). -->
+          <div class="mg-box" id="stpSection" hidden></div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn-cancel" data-bs-dismiss="modal">İptal</button>
@@ -1545,6 +1586,7 @@
   {% endif %}
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/static/supplier-price-form.js?v=2"></script>
   <script>
     /* ── Globals ── */
     const CAN_SEE_FINANCE = window.can('finance', 'view');   // Cost / margin visibility — sourced from server-resolved permissions
@@ -2818,6 +2860,7 @@
       document.getElementById('addItemForm').reset();
       resetVariationFields();
       mgSectionClose();
+      stpClose();
       // Pre-select the category that matches the current tab
       document.getElementById('itemCategory').value = TABS[activeTab]?.defaultCat || '';
       updateVariationVisibility();
@@ -2874,6 +2917,7 @@
       }
 
       mgSectionOpen(item);
+      stpOpen(item);
       new bootstrap.Modal(document.getElementById('addItemModal')).show();
     }
 
@@ -2889,6 +2933,7 @@
       document.getElementById('addItemForm').reset();
       resetVariationFields();
       mgSectionClose();
+      stpClose();
     });
 
     /* ── Delete single ── */
@@ -3483,6 +3528,7 @@
       return loadItems().then(() => {
         if (_mgSec) mgPanelResults(_mgSec);
         if (_mgDlg) mgPanelResults(_mgDlg);
+        if (_stp) stpLoad(_stp);          // grup değiştiyse tercihin kapsamı da değişir
         return mgSugLoad();
       });
     }
@@ -4037,6 +4083,346 @@
         if (b.dataset.mgAct === 'accept') mgSugAccept(s, box);
         else if (b.dataset.mgAct === 'dismiss') mgSugDismiss(s, box);
         else if (b.dataset.mgAct === 'dup') mgSugToDup(parseInt(b.dataset.dec, 10));
+      });
+    })();
+
+    /* ── Tedarikçi tercihi (P1b, 07.10.2026) ─────────────────────────────────
+       Lab (Songül Hanım): küçük miktar satan firmadaki stoğu bitir, yerine
+       alınacak firmayı öne al.  Malzeme başına SIRALI "tercih edilen"
+       tedarikçiler + "bu malzemede alma" listesi + not; satın alma planı
+       teklifi bu sırayla seçer (core/purchase_pricing — rank → firmanın
+       "tercih edilen" durumu → normal; aynı kademede ucuz olan).  Kart bir
+       "aynı malzeme" grubundaysa tercih GRUBA yazılır (gruptaki bütün
+       kartlarda geçerli, `scope: auto`), değilse karta.  Kartı olmayan firma
+       da seçilebilir — yeni tedarikçiyi önce kart açmadan tercih etmek
+       akışın kendisi.  Uçlar /api/material-prefs (okuma items.view, yazma
+       suppliers.status); "Fiyat ekle" kısayolu POST /api/supplier-prices
+       (suppliers.prices) — ortak form static/supplier-price-form.js.
+       Firmanın genel durumu ("Bitirilecek — alma") Tedarikçiler sayfasında. */
+    const STP_CAN_EDIT = window.can('suppliers', 'status');
+    const STP_CAN_PRICE = window.can('suppliers', 'prices');
+    const STP_CAN_NEW_SUP = window.can('items', 'create');
+    let _stp = null;   // {host, itemId, data, loading, busy, token, sup, pref, note, err}
+
+    function stpBody(P) { return P.host.querySelector('[data-stp-body]'); }
+    function stpPriceBox(P) { return P.host.querySelector('[data-stp-price]'); }
+    // Firma adı katlaması — mükerrer kart uyarısı için kaba eşleşme
+    // (core/purchase_pricing.SupplierIndex'in sade hâli: tam katlama ya da
+    // ≥6 harfli ilk kelime).  Karar her zaman kullanıcınındır.
+    function stpSupKey(n) {
+      const toks = mgFold(n).split(/[^a-z0-9]+/).filter(Boolean);
+      return { full: toks.join(''), first: toks[0] && toks[0].length >= 6 ? toks[0] : '' };
+    }
+    function stpSameFirm(a, b) {
+      const x = stpSupKey(a), y = stpSupKey(b);
+      return !!x.full && (x.full === y.full || (!!x.first && x.first === y.first));
+    }
+    // Bu firmanın bu malzemedeki kartları: düzenlenen kart + grubun kartları
+    function stpSupCards(P, supplierId) {
+      const g = P.data && P.data.item ? P.data.item.group : null;
+      return allItems.filter(c => c.supplier_id === supplierId &&
+        (c.id === P.itemId || (g && c.material_group_id === g.id)));
+    }
+
+    function stpOpen(item) {
+      const host = document.getElementById('stpSection');
+      if (!host || !item || item.is_parent || mgKind(item.category) === 'finished') { stpClose(); return; }
+      if (window.SupplierPriceForm) window.SupplierPriceForm.unmount(host.querySelector('[data-stp-price]'));
+      host.innerHTML = '<div data-stp-body></div><div data-stp-price hidden></div>';
+      _stp = { host, itemId: item.id, data: null, loading: true, busy: false, token: 0,
+               sup: '', pref: 'preferred', note: '', err: '' };
+      host._stpP = _stp;
+      host.hidden = false;
+      stpLoad(_stp);
+    }
+    function stpClose() {
+      const host = document.getElementById('stpSection');
+      _stp = null;
+      if (!host) return;
+      host._stpP = null;
+      host.hidden = true;
+      host.innerHTML = '';
+    }
+    async function stpLoad(P) {
+      const tok = ++P.token;
+      if (!P.data) { P.loading = true; stpRender(P); }
+      const r = await mgApi('GET', `/api/material-prefs?item_id=${P.itemId}`);
+      if (tok !== P.token || P.host._stpP !== P) return;
+      P.loading = false;
+      if (r.ok) { P.data = r.data; P.err = ''; }
+      else { P.data = null; P.err = mgErr(r.data, 'Tedarikçi tercihi yüklenemedi.'); }
+      stpRender(P);
+    }
+    function stpBusy(P, b) {
+      P.busy = b;
+      const body = stpBody(P);
+      if (!body) return;
+      body.querySelectorAll('button, select, input').forEach(x => { x.disabled = b || x.dataset.stpOff === '1'; });
+    }
+    function stpTags(P, p) {
+      const t = [];
+      if (p.scope === 'item' && P.data.target.kind === 'group') {
+        t.push('<span class="mg-tag" title="Bu kartın kendi kararı — grubun aynı firma kaydını ezer">yalnız bu kart</span>');
+      }
+      if (!p.supplier_active) t.push('<span class="mg-tag mg-tag-off">pasif firma</span>');
+      else if (p.supplier_status === 'phase_out') {
+        t.push(`<span class="mg-tag mg-tag-off" title="Firma Tedarikçiler sayfasında «Bitirilecek — alma» işaretli">bitirilecek${p.preference === 'preferred' ? ' — plan seçmez' : ''}</span>`);
+      } else if (p.supplier_status === 'preferred') {
+        t.push('<span class="mg-tag stp-tag-pref">tercih edilen firma</span>');
+      }
+      return t.join('');
+    }
+    function stpMeta(P, p) {
+      const cards = stpSupCards(P, p.supplier_id);
+      const cardTxt = cards.length
+        ? 'kartı: ' + cards.map(c => `«${escHtml(c.name)}»${c.id === P.itemId ? ' (bu kart)' : ''}`).join(', ')
+        : 'bu malzemede kartı yok';
+      return `<span class="mg-meta"><i class="bi bi-truck"></i> ${cardTxt}${p.note ? ` · <i class="bi bi-chat-left-text"></i> ${escHtml(p.note)}` : ''}</span>`;
+    }
+    function stpWho(p) {
+      const who = [p.created_by ? `Ekleyen: ${p.created_by}` : '', p.created_at,
+                   p.updated_at ? `son değişiklik ${p.updated_at}` : ''].filter(Boolean).join(' · ');
+      return who ? ` title="${escHtml(who)}"` : '';
+    }
+    function stpRow(P, p, i, n) {
+      const pref = p.preference === 'preferred';
+      const lead = pref
+        ? `<span class="stp-rank" title="Sıra değeri — aynı sıradakilerde ucuz olan seçilir">${p.rank}</span>`
+        : '<span class="stp-rank stp-rank-off" title="Bu malzemede alma"><i class="bi bi-slash-circle"></i></span>';
+      let acts = '';
+      if (pref && STP_CAN_PRICE && p.supplier_active && p.supplier_status !== 'phase_out') {
+        acts += `<button type="button" class="mg-link" data-stp-act="price" data-id="${p.id}" title="Bu firmanın bu malzemedeki fiyatını gir">Fiyat ekle</button>`;
+      }
+      if (STP_CAN_EDIT) {
+        if (pref) {
+          acts += `<button type="button" class="stp-mv" data-stp-act="up" data-id="${p.id}"${i === 0 ? ' disabled data-stp-off="1"' : ''} title="Yukarı al" aria-label="Yukarı al"><i class="bi bi-arrow-up"></i></button>` +
+                  `<button type="button" class="stp-mv" data-stp-act="down" data-id="${p.id}"${i === n - 1 ? ' disabled data-stp-off="1"' : ''} title="Aşağı al" aria-label="Aşağı al"><i class="bi bi-arrow-down"></i></button>`;
+        }
+        acts += `<button type="button" class="stp-mv" data-stp-act="note" data-id="${p.id}" title="Notu düzenle" aria-label="Notu düzenle"><i class="bi bi-pencil"></i></button>` +
+                `<button type="button" class="mg-x" data-stp-act="remove" data-id="${p.id}" title="Listeden çıkar" aria-label="Listeden çıkar"><i class="bi bi-x-lg"></i></button>`;
+      }
+      return `<div class="mg-row">${lead}
+          <div class="mg-main"><b${stpWho(p)}>${escHtml(p.supplier_name || ('#' + p.supplier_id))}</b>${stpTags(P, p)}${stpMeta(P, p)}</div>
+          ${acts ? `<div class="stp-acts">${acts}</div>` : ''}
+        </div>`;
+    }
+    function stpSupOptions(P) {
+      const eff = P.data.effective;
+      const taken = new Set([...eff.preferred, ...eff.avoid].map(p => p.supplier_id));
+      const list = window.trSortBy ? window.trSortBy(allSuppliers, 'name') : allSuppliers.slice();
+      const opt = s => {
+        const tag = s.purchase_status === 'phase_out' ? ' — bitirilecek'
+                  : s.purchase_status === 'preferred' ? ' — tercih edilen firma' : '';
+        return `<option value="${s.id}"${String(s.id) === P.sup ? ' selected' : ''}>${escHtml(s.name + tag)}</option>`;
+      };
+      const free = list.filter(s => s.is_active !== false && !taken.has(s.id));
+      const withCard = free.filter(s => stpSupCards(P, s.id).length);
+      const rest = free.filter(s => !stpSupCards(P, s.id).length);
+      let h = `<option value=""${P.sup ? '' : ' selected'}>— Tedarikçi seçin —</option>`;
+      if (withCard.length) h += `<optgroup label="Bu malzemenin kartı olan firmalar">${withCard.map(opt).join('')}</optgroup>`;
+      if (rest.length) h += `<optgroup label="Diğer firmalar (bu malzemede kartı yok)">${rest.map(opt).join('')}</optgroup>`;
+      if (STP_CAN_NEW_SUP) h += '<option value="__new">＋ Listede yok — yeni tedarikçi ekle…</option>';
+      return h;
+    }
+    function stpRender(P) {
+      if (P.host._stpP !== P) return;
+      const body = stpBody(P);
+      if (!body) return;
+      if (P.loading) { body.innerHTML = '<div class="mg-sub">Tedarikçi tercihi yükleniyor…</div>'; return; }
+      let h = '<div class="mg-head"><i class="bi bi-star"></i><span class="mg-title">Tedarikçi tercihi</span>';
+      if (!P.data) {
+        body.innerHTML = h + `</div><div class="mg-sub">${escHtml(P.err || 'Tedarikçi tercihi yüklenemedi.')}</div>`;
+        return;
+      }
+      const d = P.data;
+      const grp = d.target.kind === 'group' && d.item.group ? d.item.group : null;
+      h += grp ? `<span class="mg-tag" title="Gruptaki bütün kartlar için geçerli">grup geneli · «${escHtml(grp.name)}»</span>`
+               : '<span class="mg-tag">bu kart</span>';
+      h += '</div>';
+      h += '<div class="mg-sub">Satın alma planı teklifi bu sırayla seçer: önce 1. tercih, sonra 2. …; tercih yoksa «tercih edilen» firma, sonra en ucuz. ' +
+           '«Bu malzemede alma» listesindeki firmadan teklif seçilmez. Firmanın genel durumu (ör. «Bitirilecek — alma») Tedarikçiler sayfasındadır.</div>';
+      const pref = d.effective.preferred || [];
+      const avoid = d.effective.avoid || [];
+      const live = new Set([...pref, ...avoid].map(p => p.id));
+      const shadow = (d.prefs || []).filter(p => !live.has(p.id));
+      if (!pref.length && !avoid.length && !STP_CAN_EDIT) {
+        body.innerHTML = h + '<div class="mg-sub" style="margin-top:0.5rem;">Bu malzeme için tedarikçi tercihi yok — plan en ucuz uygun teklifi seçer.</div>';
+        return;
+      }
+      h += '<div class="stp-h">Tercih edilen tedarikçiler</div>';
+      h += '<div class="mg-list">' + (pref.length
+        ? pref.map((p, i) => stpRow(P, p, i, pref.length)).join('')
+        : '<div class="mg-empty">Tercih yok — plan en ucuz uygun teklifi seçer.</div>') + '</div>';
+      if (avoid.length || STP_CAN_EDIT) {
+        h += '<div class="stp-h">Bu malzemede alma</div>';
+        h += '<div class="mg-list">' + (avoid.length
+          ? avoid.map((p, i) => stpRow(P, p, i, avoid.length)).join('')
+          : '<div class="mg-empty">Yok.</div>') + '</div>';
+      }
+      if (shadow.length) {
+        h += '<div class="stp-h">Bu kartta geçersiz grup kayıtları</div>';
+        h += '<div class="mg-sub" style="margin:0;">Aynı firma için bu kartın kendi kararı var; grubun kaydı bu kartta uygulanmaz (gruptaki diğer kartlarda geçerli).</div>';
+        h += '<div class="mg-list stp-shadow">' + shadow.map(p => `<div class="mg-row">
+            <span class="stp-rank${p.preference === 'preferred' ? '' : ' stp-rank-off'}">${p.preference === 'preferred' ? p.rank : '<i class="bi bi-slash-circle"></i>'}</span>
+            <div class="mg-main"><b${stpWho(p)}>${escHtml(p.supplier_name || ('#' + p.supplier_id))}</b> <span class="mg-tag">grup · ${escHtml(p.preference_label || p.preference)}</span>${p.note ? `<span class="mg-meta">${escHtml(p.note)}</span>` : ''}</div>
+            ${STP_CAN_EDIT ? `<button type="button" class="mg-x" data-stp-act="remove" data-id="${p.id}" title="Grup kaydını kaldır" aria-label="Grup kaydını kaldır"><i class="bi bi-x-lg"></i></button>` : ''}
+          </div>`).join('') + '</div>';
+      }
+      if (STP_CAN_EDIT) {
+        h += `<div class="stp-add">
+            <select class="form-select" data-stp-sup aria-label="Tedarikçi">${stpSupOptions(P)}</select>
+            <select class="form-select" data-stp-pref aria-label="Tercih türü">
+              <option value="preferred"${P.pref === 'avoid' ? '' : ' selected'}>Tercih edilen — sıranın sonuna</option>
+              <option value="avoid"${P.pref === 'avoid' ? ' selected' : ''}>Bu malzemede alma</option>
+            </select>
+            <input type="text" class="form-control stp-wide" data-stp-note maxlength="1000" autocomplete="off"
+                   value="${escHtml(P.note)}" placeholder="Not (isteğe bağlı) — ör. 25 kg bidon, 1 hafta termin" />
+          </div>
+          <div class="mg-foot"><span class="mg-sub" style="margin:0;">${grp ? `Grup «${escHtml(grp.name)}» için yazılır.` : 'Bu kart için yazılır.'} Değişiklikler hemen kaydedilir.</span>
+            <button type="button" class="mg-act mg-act-main" data-stp-act="add"><i class="bi bi-plus-lg"></i> Ekle</button></div>`;
+      }
+      body.innerHTML = h;
+      stpBusy(P, P.busy);
+    }
+
+    async function stpNewSupplier(P) {
+      const name = (prompt('Yeni tedarikçinin (firmanın) adı:') || '').trim();
+      if (!name) return;
+      const twin = allSuppliers.find(s => s.is_active !== false && stpSameFirm(s.name, name));
+      if (twin && !confirm(`«${twin.name}» zaten kayıtlı — aynı firma olabilir.\n` +
+                           `Tamam: yine de «${name}» yeni tedarikçi olarak eklensin.\nİptal: «${twin.name}» seçilsin.`)) {
+        P.sup = String(twin.id);
+        return;
+      }
+      const r = await mgApi('POST', '/api/suppliers', { name });
+      if (!r.ok) { showToast(mgErr(r.data, 'Tedarikçi eklenemedi.')); return; }
+      const r2 = await mgApi('GET', '/api/suppliers');
+      if (r2.ok && Array.isArray(r2.data)) { allSuppliers = r2.data; populateSupplierDropdown(); }
+      if (window.SupplierPriceForm) window.SupplierPriceForm.reset();
+      P.sup = String(r.data.id);
+      showToast(`«${name}» tedarikçi olarak eklendi — tercih türünü seçip «Ekle»ye basın.`, 'success', 6000);
+    }
+    function stpFind(P, id) {
+      return (P.data && (P.data.prefs || []).find(p => p.id === id)) || null;
+    }
+    async function stpAct(P, act, id) {
+      if (P.busy || !P.data) return;
+      const p = id ? stpFind(P, id) : null;
+      if (act === 'price') { stpPrice(P, p); return; }
+      let reload = false;
+      stpBusy(P, true);
+      try {
+        if (act === 'add') {
+          const sid = parseInt(P.sup, 10);
+          if (!sid) { showToast('Tedarikçi seçin.'); return; }
+          const kind = P.pref === 'avoid' ? 'avoid' : 'preferred';
+          const s = allSuppliers.find(x => x.id === sid);
+          const sname = s ? s.name : '#' + sid;
+          if (kind === 'preferred' && s && s.purchase_status === 'phase_out' &&
+              !confirm(`«${sname}» firma genelinde «Bitirilecek — alma» işaretli; satın alma planı onu tercih listesinde olsa da seçmez.\nYine de eklensin mi?`)) return;
+          const top = Math.max(0, ...(P.data.effective.preferred || []).map(x => x.rank || 0));
+          const rank = kind === 'preferred' ? Math.min(99, top + 1) : 1;
+          const r = await mgApi('POST', '/api/material-prefs', {
+            item_id: P.itemId, scope: 'auto', supplier_id: sid, preference: kind, rank,
+            note: P.note.trim() || null,
+          });
+          if (!r.ok) {
+            showToast(mgErr(r.data, 'Tercih eklenemedi.'));
+            if (r.status === 409) reload = true;          // pref_exists — liste eskimiş olabilir
+            return;
+          }
+          showToast(kind === 'avoid' ? `«${sname}» bu malzemede alınmayacak.` : `«${sname}» ${rank}. sıraya eklendi.`, 'success');
+          P.sup = ''; P.note = ''; P.pref = 'preferred';
+          reload = true;
+        } else if ((act === 'up' || act === 'down') && p) {
+          // Komşuyla sıra değerleri takas edilir — listede görünmeyen kayıtlar
+          // (bu kartta geçersiz grup satırları) yerinde kalır.  Eşit sırada
+          // takas sırayı değiştirmez: o zaman görünen liste 1..n numaralanır.
+          const list = (P.data.effective.preferred || []).slice();
+          const i = list.findIndex(x => x.id === p.id);
+          const j = act === 'up' ? i - 1 : i + 1;
+          if (i < 0 || j < 0 || j >= list.length) return;
+          const a = list[i], b = list[j];
+          let todo;
+          if (a.rank !== b.rank) todo = [[a, b.rank], [b, a.rank]];
+          else {
+            [list[i], list[j]] = [list[j], list[i]];
+            todo = list.map((x, k) => [x, Math.min(99, k + 1)]).filter(([x, want]) => x.rank !== want);
+          }
+          reload = true;
+          for (const [x, want] of todo) {
+            const r = await mgApi('PUT', `/api/material-prefs/${x.id}`, { rank: want });
+            if (!r.ok) { showToast(mgErr(r.data, 'Sıra kaydedilemedi.')); break; }
+          }
+        } else if (act === 'note' && p) {
+          const v = prompt(`«${p.supplier_name || ''}» — not:`, p.note || '');
+          if (v === null || v.trim() === (p.note || '')) return;
+          const r = await mgApi('PUT', `/api/material-prefs/${p.id}`, { note: v.trim() || null });
+          if (!r.ok) { showToast(mgErr(r.data, 'Not kaydedilemedi.')); return; }
+          showToast('Not kaydedildi.', 'success');
+          reload = true;
+        } else if (act === 'remove' && p) {
+          const what = p.preference === 'avoid' ? '«bu malzemede alma» listesinden' : 'tercih listesinden';
+          const grpNote = p.scope === 'group'
+            ? `\nGrup kaydı — «${p.group_name || 'grup'}» grubundaki bütün kartlardan kalkar.` : '';
+          if (!confirm(`«${p.supplier_name || '#' + p.supplier_id}» ${what} çıkarılsın mı?${grpNote}`)) return;
+          const r = await mgApi('DELETE', `/api/material-prefs/${p.id}`);
+          if (!r.ok) { showToast(mgErr(r.data, 'Tercih kaldırılamadı.')); return; }
+          showToast(r.data.message || 'Tercih kaldırıldı.', 'success');
+          reload = true;
+        }
+      } finally {
+        stpBusy(P, false);
+        if (reload) await stpLoad(P);
+      }
+    }
+    /* "Fiyat ekle" — firmanın bu gruptaki kendi kartı (birim ailesi aynıysa)
+       lab'ın "her tedarikçi ayrı kart" düzenine uyar; kartı yoksa düzenlenen
+       kart.  Satın alma planı grubun bütün kartlarının tekliflerini yarıştırır. */
+    function stpPrice(P, p) {
+      const SPF = window.SupplierPriceForm;
+      const box = stpPriceBox(P);
+      const it = mgCard(P.itemId);
+      if (!SPF || !box || !p || !it) return;
+      const fam = SPF.unitFamily(it.unit);
+      const own = stpSupCards(P, p.supplier_id).filter(c => SPF.unitFamily(c.unit) === fam);
+      const card = own.find(c => c.id === it.id) || own[0] || it;
+      SPF.mount(box, {
+        mode: 'create', item: { id: card.id, name: card.name, unit: card.unit },
+        supplierId: p.supplier_id, supplierName: p.supplier_name || '',
+      });
+      box.scrollIntoView({ block: 'nearest' });
+    }
+    (function () {
+      const host = document.getElementById('stpSection');
+      if (!host) return;
+      host.addEventListener('click', e => {
+        const b = e.target.closest('[data-stp-act]');
+        const P = host._stpP;
+        if (!b || !P || !host.contains(b)) return;
+        e.preventDefault();
+        stpAct(P, b.dataset.stpAct, parseInt(b.dataset.id, 10) || null);
+      });
+      host.addEventListener('change', async e => {
+        const P = host._stpP;
+        if (!P) return;
+        if (e.target.matches('[data-stp-sup]')) {
+          if (e.target.value !== '__new') { P.sup = e.target.value; return; }
+          e.target.value = P.sup;                 // seçici yeni firma gelene kadar eski değerde
+          stpBusy(P, true);
+          try { await stpNewSupplier(P); } finally { stpBusy(P, false); stpRender(P); }
+        } else if (e.target.matches('[data-stp-pref]')) {
+          P.pref = e.target.value;
+        }
+      });
+      host.addEventListener('input', e => {
+        const P = host._stpP;
+        if (P && e.target.matches('[data-stp-note]')) P.note = e.target.value;
+      });
+      host.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' || !e.target.matches('[data-stp-note]')) return;
+        e.preventDefault();
+        if (host._stpP) stpAct(host._stpP, 'add', null);
       });
     })();
 

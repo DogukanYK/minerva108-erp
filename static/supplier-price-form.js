@@ -11,7 +11,9 @@
  *   • Raporlar → Tedarikçi Fiyatları paneli → "Fiyat ekle" / satır kalemi
  *
  *   SupplierPriceForm.mount(container, {mode: 'create'|'edit', row?,
- *     supplierId?, supplierName?, onSaved(row), onCancel()})
+ *     supplierId?, supplierName?, item?: {id, name, unit}, onSaved(row), onCancel()})
+ *   `item` verilirse malzeme sabittir (Ürünler → kart → "Tedarikçi tercihi"
+ *   satırındaki "fiyat ekle" kısayolu: kart + tedarikçi baştan belli).
  *
  * API (routers/reports.py):
  *   POST /api/supplier-prices {item_id, supplier_id, unit_price, currency,
@@ -171,7 +173,9 @@
     var row = edit ? opts.row : {};
     var lockedSup = edit ? { id: row.supplier_id, name: row.supplier_name }
       : (opts.supplierId ? { id: opts.supplierId, name: opts.supplierName || '' } : null);
-    var state = { item: edit ? { id: row.item_id, name: row.material, unit: row.unit } : null };
+    var lockedItem = !edit && opts.item && opts.item.id ? opts.item : null;
+    var state = { item: edit ? { id: row.item_id, name: row.material, unit: row.unit } : lockedItem };
+    var fixedItem = state.item;
 
     container.hidden = false;
     container.innerHTML =
@@ -182,8 +186,8 @@
           : '') +
         '<div class="spf-grid">' +
           '<div class="spf-wide"><span class="spf-label">Malzeme</span>' +
-            (edit
-              ? '<div class="spf-fixed">' + esc(row.material || '—') + (row.unit ? ' <span style="color:#9ca3af;font-weight:400;">(' + esc(row.unit) + ')</span>' : '') + '</div>'
+            (fixedItem
+              ? '<div class="spf-fixed">' + esc(fixedItem.name || '—') + (fixedItem.unit ? ' <span style="color:#9ca3af;font-weight:400;">(' + esc(fixedItem.unit) + ')</span>' : '') + '</div>'
               : '<input type="text" class="spf-input" data-f="search" placeholder="Malzeme ara… (TR/EN ad)" autocomplete="off">' +
                 '<select class="spf-list" data-f="item" size="6"><option value="" disabled>Yükleniyor…</option></select>') +
           '</div>' +
@@ -227,7 +231,7 @@
     f('note').value = edit ? (row.note || '') : '';
     fillUnits();
 
-    if (!edit) {
+    if (!fixedItem) {
       var itemSel = f('item'), search = f('search');
       var renderItems = function () {
         var q = fold(search.value);

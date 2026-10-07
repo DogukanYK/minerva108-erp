@@ -240,6 +240,7 @@
     .toast-msg { min-width: 260px; max-width: 360px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
     .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
     .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+    .toast-info    { background: #eff6ff; color: #1d4ed8; border-left: 4px solid #3b82f6; }
     @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
 
     /* ══ SATIN ALMA DURUMU + FİYATLAR (07.10.2026) — `btn-*` adı YASAK ══ */
@@ -282,6 +283,30 @@
     :root[data-theme="dark"] .sup-st-opt:hover { background: var(--surface-2); }
     :root[data-theme="dark"] .sup-st-opt b { color: var(--text); }
     :root[data-theme="dark"] .sup-filter, :root[data-theme="dark"] .sup-pr-tools input { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+
+    /* ══ BİRLEŞTİR (P1b, 07.10.2026) — mükerrer firma kartları; `btn-*` adı YASAK ══ */
+    .sup-ic-merge { background: #f5f3ff; color: #6d28d9; }
+    .sup-ic-merge:hover { background: #ede9fe; }
+    .sup-mg-lead { font-size: 0.86rem; color: #6b7280; margin: 0 0 0.9rem; }
+    .sup-mg-side { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.55rem; }
+    .sup-mg-side .form-select { flex: 1; min-width: 220px; }
+    .sup-mg-fixed { font-weight: 700; color: #1f2937; }
+    .sup-mg-role { flex-shrink: 0; min-width: 118px; text-align: center; padding: 2px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; border: 1px solid transparent; }
+    .sup-mg-keep { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+    .sup-mg-drop { background: #ffedd5; color: #9a3412; border-color: #fed7aa; }
+    .sup-mg-swap { background: none; border: none; padding: 0; color: var(--navy); font-weight: 600; font-size: 0.82rem; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+    .sup-mg-prev { margin-top: 0.9rem; border: 1px solid #f0ece4; border-radius: 10px; padding: 0.8rem 0.95rem; background: #fcfaf6; font-size: 0.86rem; }
+    .sup-mg-prev ul { margin: 0.45rem 0 0; padding-left: 1.1rem; }
+    .sup-mg-prev li { margin-bottom: 0.2rem; }
+    .sup-mg-prev li.sup-mg-zero { color: #9ca3af; }
+    .sup-mg-note { margin-top: 0.6rem; font-size: 0.8rem; color: #6b7280; }
+    #supMgSave:disabled { opacity: 0.55; cursor: not-allowed; }
+    .sup-mg-warn { margin-top: 0.6rem; padding: 0.45rem 0.7rem; border-radius: 8px; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 0.82rem; }
+    :root[data-theme="dark"] .sup-ic-merge { background: #1E1A33; color: #C4B5FD; }
+    :root[data-theme="dark"] .sup-mg-fixed { color: var(--text); }
+    :root[data-theme="dark"] .sup-mg-prev { background: var(--surface-2); border-color: var(--border); }
+    :root[data-theme="dark"] .sup-mg-warn { background: #2D2114; color: #FCD34D; border-color: #5A4520; }
+    :root[data-theme="dark"] .sup-mg-swap { color: var(--gold); }
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
@@ -566,8 +591,41 @@
     </div>
   </div>
 
+  <!-- ════ MODAL: TEDARİKÇİ BİRLEŞTİR (suppliers.merge) ════ -->
+  <div class="modal fade" id="supMergeModal" tabindex="-1" aria-labelledby="supMergeTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="supMergeTitle">Tedarikçi birleştir</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body">
+          <p class="sup-mg-lead">
+            Aynı firmanın iki kartını tek kartta toplar (ör. TATLİDİLİMLER / TATLIDİLİMLER).
+            Pasife alınacak kartın ürün kartları, stok lotları, fiyatları, sipariş işaretleri, üretim
+            dökümü ve malzeme tercihleri <b>kalacak</b> karta taşınır; hiçbir hareket silinmez.
+          </p>
+          <div class="sup-mg-side">
+            <span class="sup-mg-role" id="supMgRoleA"></span>
+            <span class="sup-mg-fixed" id="supMgFixed"></span>
+          </div>
+          <div class="sup-mg-side">
+            <span class="sup-mg-role" id="supMgRoleB"></span>
+            <select class="form-select" id="supMgOther" aria-label="Diğer tedarikçi kartı"></select>
+          </div>
+          <button type="button" class="sup-mg-swap" id="supMgSwap"><i class="bi bi-arrow-down-up"></i> Yönü değiştir</button>
+          <div id="supMgPreview"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" data-bs-dismiss="modal">İptal</button>
+          <button type="button" class="btn-save" id="supMgSave" disabled>Birleştir</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="/static/supplier-price-form.js?v=1"></script>
+  <script src="/static/supplier-price-form.js?v=2"></script>
   <script>
     let allSuppliers = [];
     let sortCol = null, sortDir = 'asc';
@@ -625,6 +683,10 @@
             ${!off && window.can('suppliers', 'status') ? `
             <button class="sup-ic sup-ic-status" onclick="openSupplierStatus(${s.id})" title="Satın alma durumu">
               <i class="bi bi-flag"></i>
+            </button>` : ''}
+            ${!off && window.can('suppliers', 'merge') ? `
+            <button class="sup-ic sup-ic-merge" onclick="openSupplierMerge(${s.id})" title="Birleştir… (aynı firmanın mükerrer kartı)">
+              <i class="bi bi-union"></i>
             </button>` : ''}
             ${!off && window.can('items', 'edit') ? `
             <button class="btn-icon btn-icon-edit" onclick="openEditSupplier(${s.id})" title="Düzenle">
@@ -936,6 +998,155 @@
     }
     document.getElementById('supPricesModal').addEventListener('hidden.bs.modal', function () {
       SPF.unmount(document.getElementById('supPrForm'));
+    });
+
+    /* ── Tedarikçi birleştir (P1b, 07.10.2026; yetki suppliers.merge) ──
+       Prod'da aynı firmanın mükerrer kartları var (TATLİDİLİMLER /
+       TATLIDİLİMLER, HAMMADDESEPETİ / HAMMADDE SEPETİ, ULUDAĞ HERBAL /
+       ULUDAG HERBAL …).  Önizleme GET /api/suppliers/{kaybeden}/merge-preview/
+       {kazanan} (veri değişmez) → onay → POST …/merge-into/….  Kaybeden PASİF
+       kalır, notuna birleştirme satırı yazılır; kazanan kendi satın alma
+       durumunu korur (farklıysa uyarı).  Geri alma yok — onay bunu söyler. */
+    let _mg = { fixedId: null, otherId: null, fixedLoses: true, seq: 0, preview: null, busy: false };
+    function _firmKey(n) {
+      const toks = _fold(n).split(/[^a-z0-9]+/).filter(Boolean);
+      return { full: toks.join(''), first: toks[0] && toks[0].length >= 6 ? toks[0] : '' };
+    }
+    // Olası mükerrer: tam katlama aynı, ≥6 harfli ilk kelime aynı ya da biri
+    // diğerinin başı (KRK GIDA / KRK GIDA(HAYAT)).  Yalnız seçicide öne alır;
+    // karar kullanıcının.
+    function _likelySame(a, b) {
+      const x = _firmKey(a), y = _firmKey(b);
+      if (!x.full || !y.full) return false;
+      if (x.full === y.full || (x.first && x.first === y.first)) return true;
+      const [sh, lg] = x.full.length <= y.full.length ? [x.full, y.full] : [y.full, x.full];
+      return sh.length >= 5 && lg.startsWith(sh);
+    }
+    function _mgPair() {
+      if (!_mg.fixedId || !_mg.otherId) return null;
+      return _mg.fixedLoses ? { loser: _mg.fixedId, survivor: _mg.otherId }
+                            : { loser: _mg.otherId, survivor: _mg.fixedId };
+    }
+    function _mgRoles() {
+      const set = (el, keep) => {
+        el.className = 'sup-mg-role ' + (keep ? 'sup-mg-keep' : 'sup-mg-drop');
+        el.textContent = keep ? 'Kalacak' : 'Pasife alınacak';
+      };
+      set(document.getElementById('supMgRoleA'), !_mg.fixedLoses);
+      set(document.getElementById('supMgRoleB'), _mg.fixedLoses);
+    }
+    function openSupplierMerge(id) {
+      const s = allSuppliers.find(x => x.id === id);
+      if (!s || s.is_active === false) return;
+      const others = allSuppliers.filter(x => x.id !== id && x.is_active !== false);
+      const near = others.filter(x => _likelySame(x.name, s.name));
+      const far = others.filter(x => !near.includes(x));
+      const sorted = arr => (window.trSortBy ? window.trSortBy(arr, 'name') : arr);
+      const opt = x => {
+        const st = x.purchase_status && x.purchase_status !== 'normal' ? ` — ${(_ST[x.purchase_status] || {}).label || ''}` : '';
+        return `<option value="${x.id}">${escHtml(x.name + st)} (#${x.id})</option>`;
+      };
+      document.getElementById('supMgOther').innerHTML = '<option value="">— Diğer kartı seçin —</option>' +
+        (near.length ? `<optgroup label="Olası mükerrer (benzer ad)">${sorted(near).map(opt).join('')}</optgroup>` : '') +
+        (far.length ? `<optgroup label="${near.length ? 'Diğer tedarikçiler' : 'Tedarikçiler'}">${sorted(far).map(opt).join('')}</optgroup>` : '');
+      _mg = { fixedId: id, otherId: near.length === 1 ? near[0].id : null, fixedLoses: true,
+              seq: _mg.seq + 1, preview: null, busy: false };
+      document.getElementById('supMgOther').value = _mg.otherId ? String(_mg.otherId) : '';
+      document.getElementById('supMgFixed').textContent = `${s.name} (#${s.id})`;
+      document.getElementById('supMergeTitle').textContent = `Birleştir — ${s.name}`;
+      _mgRoles();
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('supMergeModal')).show();
+      _mgPreview();
+    }
+    function _mgPreviewHtml(d) {
+      const c = d.counts || {};
+      // Mükerrer kartların adları çoğu zaman tek harfle ayrışır (İ / I) — no da yazılır
+      const L = `${escHtml(d.loser.name)} (#${Number(d.loser.id) || ''})`;
+      const S = `${escHtml(d.survivor.name)} (#${Number(d.survivor.id) || ''})`;
+      const li = (n, html) => `<li${n ? '' : ' class="sup-mg-zero"'}><b>${Number(n) || 0}</b> ${html}</li>`;
+      let h = `<div class="sup-mg-prev"><div><b>«${L}»</b> → <b>«${S}»</b> — taşınacaklar:</div><ul>`;
+      h += li(c.items, 'ürün kartı' + (c.items ? ` (${Number(c.items_active) || 0} aktif) — varsayılan tedarikçisi «${S}» olur` : ''));
+      h += li(c.lots, 'stok lotu (mal kabul kayıtları)');
+      h += li(c.prices, 'fiyat satırı' + (c.price_overlaps
+        ? ` — ${Number(c.price_overlaps)} tanesinin «${S}» kartında da aynı malzeme + birim için fiyatı var; ikisi de kalır, gerekirse eskisini silin` : ''));
+      h += li(c.order_flags, 'sipariş işareti');
+      h += li(c.consumptions, 'üretim tüketim satırı (kayıttaki firma adı metni değişmez)');
+      h += li(c.prefs, 'malzeme tercihi' + (c.prefs_dropped
+        ? ` — ${Number(c.prefs_dropped)} tanesi düşer («${S}» için aynı malzemede zaten tercih var)` : ''));
+      h += '</ul>';
+      if ((d.copy_fields_text || []).length) {
+        h += `<div class="sup-mg-note">«${S}» kartında boş olan bilgiler «${L}» kartından kopyalanır: ${escHtml(d.copy_fields_text.join(', '))}.</div>`;
+      }
+      if (d.status_warning) h += `<div class="sup-mg-warn"><i class="bi bi-exclamation-triangle"></i> ${escHtml(d.status_warning)}</div>`;
+      h += `<div class="sup-mg-note">«${L}» pasife alınır, notuna birleştirme satırı yazılır. Geri alma yok;
+              Numune Analizi formlarındaki eski firma adları değişmez.</div></div>`;
+      return h;
+    }
+    async function _mgPreview() {
+      const box = document.getElementById('supMgPreview');
+      const save = document.getElementById('supMgSave');
+      const seq = ++_mg.seq;
+      _mg.preview = null;
+      save.disabled = true;
+      const pair = _mgPair();
+      if (!pair) { box.innerHTML = ''; return; }
+      box.innerHTML = '<div class="sup-mg-prev">Önizleme hazırlanıyor…</div>';
+      try {
+        const r = await fetch(`/api/suppliers/${pair.loser}/merge-preview/${pair.survivor}`);
+        const d = await r.json().catch(() => ({}));
+        if (seq !== _mg.seq) return;
+        if (!r.ok) {
+          box.innerHTML = `<div class="sup-mg-warn">${escHtml(typeof d.detail === 'string' ? d.detail : 'Önizleme alınamadı.')}</div>`;
+          return;
+        }
+        _mg.preview = d;
+        box.innerHTML = _mgPreviewHtml(d);
+        save.disabled = _mg.busy;
+      } catch {
+        if (seq === _mg.seq) box.innerHTML = '<div class="sup-mg-warn">Önizleme alınamadı.</div>';
+      }
+    }
+    document.getElementById('supMgOther').addEventListener('change', function () {
+      _mg.otherId = parseInt(this.value, 10) || null;
+      _mgPreview();
+    });
+    document.getElementById('supMgSwap').addEventListener('click', function () {
+      _mg.fixedLoses = !_mg.fixedLoses;
+      _mgRoles();
+      _mgPreview();
+    });
+    document.getElementById('supMergeModal').addEventListener('hidden.bs.modal', function () {
+      _mg.seq++;
+      _mg.preview = null;
+      document.getElementById('supMgPreview').innerHTML = '';
+    });
+    document.getElementById('supMgSave').addEventListener('click', async function () {
+      const d = _mg.preview, pair = _mgPair();
+      if (!d || !pair || _mg.busy) return;
+      const ln = `«${d.loser.name}» (#${d.loser.id})`, sn = `«${d.survivor.name}» (#${d.survivor.id})`;
+      if (!confirm(`${ln} kartı ${sn} kartına birleştirilsin mi?\n\n${ln} pasife alınır; bu işlem geri alınamaz.`)) return;
+      _mg.busy = true;
+      this.disabled = true;
+      this.textContent = 'Birleştiriliyor…';
+      let ok = false;
+      try {
+        const r = await fetch(`/api/suppliers/${pair.loser}/merge-into/${pair.survivor}`, { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(typeof data.detail === 'string' ? data.detail : 'Birleştirme başarısız.'); return; }
+        ok = true;
+        showToast(data.message || 'Tedarikçiler birleştirildi.', 'success', 7000);
+        (data.warnings || []).forEach(w => showToast(w, 'info', 9000));
+        selectedIds.delete(pair.loser);
+        updateBulkBtn();
+        if (SPF && SPF.reset) SPF.reset();
+        bootstrap.Modal.getInstance(document.getElementById('supMergeModal'))?.hide();
+        loadSuppliers();
+      } catch { showToast('Birleştirme sırasında hata oluştu.');
+      } finally {
+        _mg.busy = false;
+        this.textContent = 'Birleştir';
+        if (!ok) _mgPreview();          // durum değişmiş olabilir (ör. başka biri birleştirdi)
+      }
     });
 
     document.getElementById('logoutBtn').addEventListener('click', async function () {

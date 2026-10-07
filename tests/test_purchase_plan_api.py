@@ -193,6 +193,74 @@ def test_preview_same_material_group_firms(authed_client: TestClient, db_session
     assert x.status_code == 200
 
 
+def test_preview_supplier_status_prefs_and_phase_out_stock(authed_client: TestClient, db_session: Session):
+    """P1b uçtan uca: bitirilecek firmanın grup kartındaki stok ihtiyaçtan
+    düşülür, onun ucuz teklifi seçilmez; malzeme tercihi (gruba yazılmış)
+    eşdeğer kartın teklifini en ucuzun önüne geçirir."""
+    from database import MaterialGroup, MaterialSupplierPref, Supplier
+    ids = _seed(db_session)
+    sepet = Supplier(name="HAMMADDE SEPETİ", domain="cosmetics", purchase_status="phase_out",
+                     status_reason="1 kg satıyor")
+    nat = Supplier(name="NATURALYA", domain="cosmetics")
+    db_session.add_all([sepet, nat])
+    g = MaterialGroup(name="Gliserin", domain="cosmetics")
+    db_session.add(g)
+    db_session.flush()
+    gli = db_session.get(Item, ids["gli"])
+    po = _item(db_session, "GLİSERİN — HAMMADDE SEPETİ", unit="g", stock=1000)
+    alt = _item(db_session, "GLYCERINE NAT", unit="g", stock=0)
+    po.supplier_id, alt.supplier_id = sepet.id, nat.id
+    gli.material_group_id = po.material_group_id = alt.material_group_id = g.id
+    db_session.add_all([
+        SupplierPrice(item_id=po.id, supplier_id=sepet.id, supplier_name="HAMMADDE SEPETİ", unit_price=2.0,
+                      currency="USD", price_unit="kg", domain="cosmetics"),
+        SupplierPrice(item_id=alt.id, supplier_id=nat.id, supplier_name="NATURALYA", unit_price=5.0,
+                      currency="USD", price_unit="kg", domain="cosmetics"),
+        MaterialSupplierPref(domain="cosmetics", material_group_id=g.id, supplier_id=nat.id,
+                             preference="preferred", rank=1)])
+    db_session.commit()
+    r = authed_client.post("/api/purchase-plan/preview", json=_req(ids, qty=100), headers=_HDR)
+    assert r.status_code == 200, r.text
+    rep = r.json()
+    m = {x["item_id"]: x for x in rep["materials"]}[ids["gli"]]
+    assert m["need"] == pytest.approx(3300) and m["stock_phase_out"] == pytest.approx(1000)
+    assert m["display"]["buy_num"] == pytest.approx(1.8)               # 3,3 − 0,5 − 1,0 kg
+    assert any(c["code"] == "phase_out_stock" and "1,0 kg önce kullanılacak" in c["text"] for c in m["cautions"])
+    assert (m["supplier"], m["price"], m["amount"]) == ("NATURALYA", 5.0, 9)
+    sup = m["ui"]["sup"]
+    assert sup[0] == {"t": "NATURALYA — 5,00 $/kg (tercih, eşdeğer kart «GLYCERINE NAT»)", "s": "b"}
+    assert {"t": "UMAYCHEM — 4,52 $/kg · 25 kg'lık ambalaj (daha ucuz)", "s": "g"} in sup
+    assert {"t": "HAMMADDE SEPETİ — 2,00 $/kg (eşdeğer kart «GLİSERİN — HAMMADDE SEPETİ») — bitirilecek, alma",
+            "s": "g"} in sup
+    chk = next(s for s in rep["sections"] if s["key"] == "checklist")
+    assert any(row["code"] == "phase_out_firms" and "HAMMADDE SEPETİ (1 kg satıyor)" in row["text"]
+               for row in chk["rows"])
+    for fmt in ("pdf", "xlsx"):
+        assert authed_client.post(f"/api/purchase-plan/export?format={fmt}", json=_req(ids, qty=100),
+                                  headers=_HDR).status_code == 200
+    # Seçenekler kapalı → eski davranış: yalnız kartın kendi teklifleri, en ucuzu
+    # (eşdeğer kartların teklifleri — bitirilecek dahil — hiç yüklenmez), stok düşülmez
+    r = authed_client.post("/api/purchase-plan/preview", headers=_HDR,
+                           json=_req(ids, qty=100, respect_supplier_status=False, count_phase_out_stock=False))
+    m = {x["item_id"]: x for x in r.json()["materials"]}[ids["gli"]]
+    assert m["stock_phase_out"] == 0 and m["display"]["buy_num"] == pytest.approx(2.8)
+    assert (m["supplier"], m["price"]) == ("UMAYCHEM", 4.52)
+    assert m["ui"]["sup"][0] == {"t": "UMAYCHEM — 4,52 $/kg · 25 kg'lık ambalaj", "s": "b"}
+    assert not any("eşdeğer kart «" in x["t"] for x in m["ui"]["sup"])
+    # Durum yok + tercih yok → seçim bugünküyle aynı; eşdeğer kartın daha ucuz
+    # teklifi yalnız gri bilgi ("daha ucuz"), seçilmez.
+    sepet.purchase_status, sepet.status_reason = "normal", None
+    db_session.query(MaterialSupplierPref).delete()
+    db_session.commit()
+    r = authed_client.post("/api/purchase-plan/preview", json=_req(ids, qty=100), headers=_HDR)
+    m = {x["item_id"]: x for x in r.json()["materials"]}[ids["gli"]]
+    assert (m["supplier"], m["price"]) == ("UMAYCHEM", 4.52)
+    assert m["ui"]["sup"][0] == {"t": "UMAYCHEM — 4,52 $/kg · 25 kg'lık ambalaj", "s": "b"}
+    assert {"t": "HAMMADDE SEPETİ — 2,00 $/kg (eşdeğer kart «GLİSERİN — HAMMADDE SEPETİ», daha ucuz)",
+            "s": "g"} in m["ui"]["sup"]
+    assert r.json()["pricing"]["status_used"] is False
+
+
 def test_preview_validation(authed_client: TestClient, db_session: Session):
     ids = _seed(db_session)
     sup = _seed(db_session, domain="supplement", brand="Takviye")

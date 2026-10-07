@@ -17,7 +17,7 @@ numaralandırma; boş bölüm basılmaz.
 Görünüm Rusya siparişi raporunun (`Rusya-Siparis/fiyat/fiyatli_liste.py`)
 birebir uyarlaması: yatay A4, antet yok, sayfa altında "Minerva 108 · başlık ·
 stoklar tarih" + "Sayfa N"; başta kapsam metni, turuncu uyarı kutusu, yeşil
-özet kutusu; malzeme tablolarında en ucuz teklif kalın, diğerleri gri
+özet kutusu; malzeme tablolarında seçilen teklif (tercih yoksa en ucuz) kalın, diğerleri gri
 "(daha pahalı)", fiyatsızda kırmızı "Fiyat yok — teklif alınacak", altında
 stok kartı / son alım / numune ilişkileri, "Sipariş:" ve "Aynı malzeme:"
 (eşdeğer tedarikçi kartları) satırları ve uyarı notları; elle işaretlemek
@@ -33,8 +33,8 @@ from typing import List, Optional
 from xml.sax.saxutils import escape
 
 from core.purchase_plan import _amount_near, tr_num
-from core.purchase_pricing import (CURRENCY_SYMBOL, UNIT_TEXT, money, price_text, relation_texts, sections,
-                                   unpriced_offer_text)
+from core.purchase_pricing import (CURRENCY_SYMBOL, UNIT_TEXT, money, offer_lines, price_text, relation_texts,
+                                   sections)
 
 CURRENCY_NAME = {"USD": "ABD doları", "EUR": "avro", "TRY": "Türk lirası"}
 KIND_HEADER = {"raw": "Hammadde", "packaging": "Ambalaj", "label": "Etiket"}
@@ -156,29 +156,13 @@ class _Ctx:
 
 def _sup_cell(c: _Ctx, m: dict) -> str:
     """Tedarikçi ve birim fiyat hücresi — fiyatli_liste.sup_cell sırası:
-    en ucuz kalın · diğerleri gri (daha pahalı) · fiyatsızsa kırmızı ·
+    seçilen teklif kalın · diğerleri gri ("daha pahalı" / "tercih" / "eşdeğer
+    kart «X»" / " — bitirilecek, alma"; `offer_lines`, önizlemeyle aynı) ·
+    fiyatsızsa kırmızı ·
     ilişkiler (stok kartı / son alım / numune; "Sipariş:" ve "Aynı malzeme:"
     satırları en çok 3 + "+N" — `relation_texts`, önizlemeyle aynı) · notlar."""
-    out: List[str] = []
-    offers = m.get("offers") or []
-    priced = [o for o in offers if o.get("price") is not None]
-    if m.get("group") == "list" and priced:
-        for i, o in enumerate(priced):
-            unit = UNIT_TEXT.get(o.get("price_unit"), o.get("price_unit") or "")
-            t = f"{_e(o['name'])} — {price_text(o['price'])} {c.sym}/{unit}"
-            if o.get("package"):
-                pu = o.get("orig_price_unit") or o.get("price_unit") or "kg"
-                t += f" · {_qty(o['package'])} {PKG_SUFFIX.get(pu, pu)} ambalaj"
-            if o.get("orig_currency") and o["orig_currency"] != c.cur and o.get("orig_price") is not None:
-                osym = CURRENCY_SYMBOL.get(o["orig_currency"], o["orig_currency"])
-                ou = UNIT_TEXT.get(o.get("orig_price_unit"), o.get("orig_price_unit") or unit)
-                t += f" ({price_text(o['orig_price'])} {osym}/{ou})"
-            out.append(c.bold(t) if i == 0 else c.grey(t + " (daha pahalı)"))
-    else:
-        out.append(c.red("Fiyat yok — teklif alınacak"))
-    for o in offers:
-        if o.get("price") is None:
-            out.append(c.grey(_e(unpriced_offer_text(o))))
+    style = {"b": c.bold, "g": c.grey, "r": c.red}
+    out: List[str] = [style[st](_e(t)) for t, st in offer_lines(m, c.cur)]
     out += [c.grey(_e(t)) for t in relation_texts(m)]
     if m.get("pkg_buy") is not None:
         out.append(c.grey(f"Ambalaj katına yuvarlanırsa: {_e(_amount_near(m['pkg_buy'], m['price_unit']))}"
@@ -274,7 +258,9 @@ def _sec_suppliers(c: _Ctx, sec: dict) -> list:
     for b in sec["rows"]:
         blk = [Paragraph(f"{_e(b['name'])} — {b['count']} kalem — {c.money(b['total'])}", S["h3"]),
                Paragraph(_e(b["contact_line"]) if b.get("contact_line") else c.no_contact(), S["note"])]
-        data = [[Paragraph(_e(it["name"]), S["cell"]), Paragraph(_e(it["buy_text"]), S["val"]),
+        data = [[Paragraph(_e(it["name"]) + (" " + c.grey("(" + _e(", ".join(it["reasons"])) + ")")
+                                             if it.get("reasons") else ""), S["cell"]),
+                 Paragraph(_e(it["buy_text"]), S["val"]),
                  Paragraph(f"{price_text(it['price'])} {c.sym}/{UNIT_TEXT.get(it['price_unit'], it['price_unit'])}"
                            if it.get("price") is not None else "—", S["val"]),
                  Paragraph(c.money(it["amount"]) if it.get("amount") is not None else "—", S["num"])]
@@ -472,7 +458,9 @@ def render_pdf(report: dict) -> bytes:
 
     sub = _e(meta.get("scope_text") or "")
     sub += (f" Fiyatlar {c.bold(CURRENCY_NAME.get(c.cur, c.cur) + f' ({c.sym})')}. "
-            "Tutar = alınacak × en ucuz birim fiyat.")
+            + ("Tutar = alınacak × seçilen teklifin birim fiyatı (önce malzeme tercihi ve “tercih edilen” "
+               "firma, sonra en ucuz)." if (report.get("pricing") or {}).get("status_used") else
+               "Tutar = alınacak × en ucuz birim fiyat."))
     story = [Paragraph(_e(title), S["h1"]), Paragraph(sub, S["sub"])]
     warn = _warning_text(c, report)
     if warn:

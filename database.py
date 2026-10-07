@@ -7,7 +7,7 @@
 import os
 from sqlalchemy import (
     create_engine, Column, Integer, BigInteger, String, Float,
-    Boolean, Text, Date, DateTime, ForeignKey, UniqueConstraint, Index, text
+    Boolean, Text, Date, DateTime, ForeignKey, UniqueConstraint, Index, CheckConstraint, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime, timedelta
@@ -1032,6 +1032,46 @@ class MaterialGroup(Base):
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MaterialSupplierPref(Base):
+    """Malzeme bazlı tedarikçi tercihi — "bu malzemeyi önce X'ten al" /
+    "bu malzemede Y'den alma".
+
+    Firma durumu (`Supplier.purchase_status`) bütün malzemeler içindir; lab
+    (Songül Hanım, 07.10.2026) ayrıca malzeme başına sıralı yedek tedarikçi ve
+    "yalnız bu malzemede alma" istiyor — tek kolonla karşılanamaz.  Kapsam
+    TAM OLARAK biri: "aynı malzeme" grubu (`material_group_id`, gruptaki bütün
+    kartlar) YA DA tek kart (`item_id`, grubu olmayan malzeme).  Kartın grubu
+    varsa arayüz gruba yazar.  Aynı kartta kart kapsamı grup kapsamını ezer.
+    preference: preferred (rank 1 = ilk tercih) | avoid.  Kartı olmayan yeni
+    tedarikçi de seçilebilir.  Satın alma planı (core/purchase_pricing) ve
+    "bitirilecek" stok hesabı (core/purchase_plan) okur.  Uçlar
+    `/api/material-prefs` (routers/suppliers.py); kart birleştirme ve grup
+    dağılması kancaları core/suppliers.py'de.
+    """
+    __tablename__ = "material_supplier_prefs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)
+    material_group_id = Column(Integer, ForeignKey("material_groups.id"), nullable=True, index=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=True, index=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
+    preference = Column(String(10), nullable=False, default="preferred")   # preferred | avoid
+    rank = Column(Integer, nullable=False, default=1)
+    note = Column(Text, nullable=True)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        CheckConstraint("(material_group_id IS NULL) <> (item_id IS NULL)",
+                        name="ck_material_supplier_prefs_scope"),
+        Index("uq_material_supplier_prefs_group", "material_group_id", "supplier_id", unique=True,
+              postgresql_where=text("item_id IS NULL")),
+        Index("uq_material_supplier_prefs_item", "item_id", "supplier_id", unique=True,
+              postgresql_where=text("material_group_id IS NULL")),
+    )
 
 
 class SystemEvent(Base):

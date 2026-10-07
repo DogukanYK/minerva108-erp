@@ -17,6 +17,12 @@ Input'undan, aktarım), to_tr tarihleri (23:30 UTC = ertesi gün), sipariş
 satırları ("+N"), analiz sonucu, "aynı malzeme" alternatifleri + aday
 sebepleri, relation_texts / firms_view, DB yükleyicide girişler/siparişler/
 analizler (domain kapsamı, eşdeğer kartın teklifi yüklenmez).
+P1b (07.10.2026): bitirilecek firmanın ucuz teklifi seçilmez (gri etiketli
+kalır) · malzeme tercihi (rank) > tercih edilen firma > normal · atlanacaklar
+listesi en iyi seçime uygulanır · eşdeğer kart teklifi yarışır + etiketlenir
+(birimi farklı kartınki alınmaz) · adaylarda bitirilecek / "alma" yok, tercih
+edilen yedek var · mükerrer kart durum çelişkisi · durum yoksa çıktı eskisiyle
+aynı · DB yükleyicide durum, tercih (kart kapsamı grubu ezer), eşdeğer teklif.
 """
 from datetime import date, datetime
 
@@ -701,3 +707,275 @@ def test_load_price_inputs_receipts_orders_analyses(db_session):
     assert firms["NATURALYA"]["samples"][0]["converted"] is True
     alt = rel["alternatives"][0]
     assert alt["supplier"] == "NATURALYA" and alt["sample_text"] == "50 gram numune"
+
+
+# ─── Tedarikçi durumu + malzeme tercihi ile teklif seçimi (P1b) ─────────────
+
+from core.purchase_pricing import offer_lines  # noqa: E402
+
+
+def _sup(id, name, status="normal", reason=None):
+    return SupplierRec(id=id, name=name, status=status, status_reason=reason)
+
+
+def _kim(res):
+    m = mat(res, 1)
+    return [(o["name"], o["status"], o["eligible"]) for o in m["offers"]]
+
+
+def test_cheap_phase_out_offer_not_chosen_but_listed_grey():
+    sups = {1: _sup(1, "UCUZ KİMYA", "phase_out", "1 kg satıyor"), 2: _sup(2, "BEFCHEM")}
+    offers = {1: [offer(1, "UCUZ KİMYA", 5.0, sid=1), offer(1, "BEFCHEM", 8.0, sid=2)]}
+    res = attach(plan([it(1, "SHEA", unit="g")], [(1, 100)]), PriceInputs(suppliers=sups, offers=offers), None)
+    m = mat(res, 1)
+    assert (m["supplier"], m["price"], m["amount"]) == ("BEFCHEM", 8.0, 800)       # 100 kg × 8
+    assert _kim(res) == [("BEFCHEM", "normal", True), ("UCUZ KİMYA", "phase_out", False)]
+    assert offer_lines(m, "USD") == [("BEFCHEM — 8,00 $/kg", "b"),
+                                     ("UCUZ KİMYA — 5,00 $/kg — bitirilecek, alma", "g")]
+    assert res["pricing"]["status_used"] is True
+    chk = res["suppliers"]["checklist"]
+    assert chk["phase_out_firms"] == [{"key": "UCUZ", "name": "UCUZ KİMYA", "reason": "1 kg satıyor"}]
+    secs = {s["key"]: s for s in sections(res)}
+    assert secs["raw_priced"]["subtitle"].startswith("Kalın yazılan tedarikçi seçilen teklif")
+    assert any(r["code"] == "phase_out_firms" and "UCUZ KİMYA (1 kg satıyor)" in r["text"]
+               for r in secs["checklist"]["rows"])
+    assert any(n.startswith("Tutar = alınacak × seçilen teklifin birim fiyatı") for n in secs["notes"]["rows"])
+    # yalnız bitirilecek firmanın fiyatı varsa: fiyat seçilmez, satır "teklif alınacak"
+    res = attach(plan([it(1, "SHEA", unit="g")], [(1, 100)]),
+                 PriceInputs(suppliers=sups, offers={1: [offer(1, "UCUZ KİMYA", 5.0, sid=1)]}), None)
+    m = mat(res, 1)
+    assert m["group"] == "none" and m["amount"] is None
+    assert offer_lines(m, "USD") == [("Fiyat yok — teklif alınacak", "r"),
+                                     ("UCUZ KİMYA — 5,00 $/kg — bitirilecek, alma", "g")]
+    assert res["suppliers"]["candidates"] == []                        # bitirilecek aday OLMAZ
+    assert [u["name"] for u in res["suppliers"]["unrelated"]] == ["SHEA"]
+    # seçenek kapalı → eski davranış: en ucuz (bitirilecek) seçilir
+    res = attach(plan([it(1, "SHEA", unit="g")], [(1, 100)], respect_supplier_status=False),
+                 PriceInputs(suppliers=sups, offers=offers), None)
+    assert mat(res, 1)["supplier"] == "UCUZ KİMYA" and res["pricing"]["status_used"] is False
+    assert "phase_out_firms" not in res["suppliers"]["checklist"]
+
+
+def test_material_pref_rank_beats_cheaper_normal_and_preferred_firm():
+    sups = {1: _sup(1, "AAA"), 2: _sup(2, "NATURALYA"), 3: _sup(3, "SURYA KİMYA", "preferred"),
+            4: _sup(4, "UMAYCHEM"), 5: _sup(5, "ZZZ")}
+    offers = {1: [offer(1, "AAA", 4.0, sid=1), offer(1, "NATURALYA DOĞAL ÜRÜNLER", 6.0),   # bağsız, anahtarla
+                  offer(1, "SURYA KİMYA", 5.0, sid=3), offer(1, "UMAYCHEM", 7.0, sid=4),
+                  offer(1, "ZZZ", 3.0, sid=5)]}
+    prefs = {1: [(4, "preferred", 1), (2, "preferred", 2), (5, "avoid", 1)]}
+    res = attach(plan([it(1, "ARGAN", unit="g")], [(1, 10)]),
+                 PriceInputs(suppliers=sups, offers=offers, prefs=prefs), None)
+    m = mat(res, 1)
+    assert m["supplier"] == "UMAYCHEM" and m["price"] == 7.0 and m["supplier_status"] == "preferred"
+    assert offer_lines(m, "USD") == [
+        ("UMAYCHEM — 7,00 $/kg (tercih)", "b"),
+        ("NATURALYA DOĞAL ÜRÜNLER — 6,00 $/kg (tercih 2. sıra, daha ucuz)", "g"),
+        ("SURYA KİMYA — 5,00 $/kg (tercih edilen firma, daha ucuz)", "g"),
+        ("AAA — 4,00 $/kg (daha ucuz)", "g"),
+        ("ZZZ — 3,00 $/kg — bu malzemede alma", "g")]
+    assert m["supplier_prefs"]["preferred"][0] == {"supplier_id": 4, "key": "UMAYCHEM", "name": "UMAYCHEM",
+                                                   "rank": 1}
+    blk = res["suppliers"]["chosen"][0]
+    assert blk["name"] == "UMAYCHEM" and blk["items"][0]["reasons"] == ["tercih"]
+    secs = {s["key"]: s for s in sections(res)}
+    assert secs["suppliers"]["subtitle"].startswith("Her malzeme seçilen teklifi")
+
+
+def test_skip_list_now_applies_to_best_offer():
+    offers = {1: [offer(1, "MİNERVA 108", 1.0), offer(1, "BEFCHEM", 8.0)]}
+    res = attach(plan([it(1, "Yağ", unit="g")], [(1, 1)]),
+                 PriceInputs(offers=offers, skip_suppliers=("MİNERVA",)), None)
+    m = mat(res, 1)
+    assert m["supplier"] == "BEFCHEM"
+    assert offer_lines(m, "USD")[1] == ("MİNERVA 108 — 1,00 $/kg — atlanacaklar listesinde", "g")
+    res = attach(plan([it(1, "Yağ", unit="g")], [(1, 1)], respect_supplier_status=False),
+                 PriceInputs(offers=offers, skip_suppliers=("MİNERVA",)), None)
+    assert mat(res, 1)["supplier"] == "MİNERVA 108"                    # eski davranış
+
+
+def test_group_alternative_card_offer_competes_and_is_labelled():
+    sups = {1: _sup(1, "TATLIDİLİMLER", "phase_out", "1 kg satıyor"), 2: _sup(2, "YİĞİTOGLU KİMYA")}
+    offers = {126: [offer(126, "TATLIDİLİMLER", 3.0, sid=1)], 599: [offer(599, "YİĞİTOGLU KİMYA", 4.0, sid=2)]}
+    # durum yok: eşdeğer kartın teklifi gri bilgi olarak yazılır (seçilmez);
+    # birimi farklı kartınki (599 "adet") hiç alınmaz
+    res = _stearyl(offers={**offers, 600: [offer(600, "BEFCHEM", 4.5)]})
+    m = mat(res, 126)
+    assert [(o["name"], o["via_item_id"], o["via_name"], o["status"]) for o in m["offers"]] == [
+        ("TATLIDİLİMLER", None, None, "normal"), ("BEFCHEM", 600, "STEARİL ALKOL ESKİ", "equivalent")]
+    assert offer_lines(m, "USD")[1] == (
+        "BEFCHEM — 4,50 $/kg (eşdeğer kart «STEARİL ALKOL ESKİ», daha pahalı)", "g")
+    # TATLIDİLİMLER bitirilecek → seçilen eşdeğer kartın teklifi
+    items = [it(126, "SETİL STEARİL ALKOL", unit="g", stock=0), it(599, "CETYL STEARYL ALCOHOL", unit="g")]
+    inp = PlanInputs(items={i.id: i for i in items}, recipes={1: rec(1, [(126, 40)])}, stock_as_of=NOW,
+                     mgroup_of={126: 7, 599: 7}, mgroup_names={7: "Setil"})
+    res = attach(compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}])),
+                 PriceInputs(suppliers=sups, offers=offers, card_supplier={126: 1, 599: 2}), None)
+    m = mat(res, 126)
+    assert (m["supplier"], m["supplier_via"], m["price"]) == ("YİĞİTOGLU KİMYA", "CETYL STEARYL ALCOHOL", 4.0)
+    assert offer_lines(m, "USD") == [
+        ("YİĞİTOGLU KİMYA — 4,00 $/kg (eşdeğer kart «CETYL STEARYL ALCOHOL»)", "b"),
+        ("TATLIDİLİMLER — 3,00 $/kg — bitirilecek, alma", "g")]
+    assert res["pricing"]["via_used"] is True
+    assert any("eşdeğer kart «…»" in n for n in sections(res)[-1]["rows"])
+    assert res["suppliers"]["chosen"][0]["items"][0]["reasons"] == ["eşdeğer kart «CETYL STEARYL ALCOHOL»"]
+
+
+def _shea_group(prefs=None, sups=None, **opts):
+    """SHEA (kart 1) + aynı gruptaki SHEA BUTTER - X (kart 2): kendi kartında
+    BEFCHEM 8 $/kg, eşdeğer kartta XKIM 3 $/kg; ihtiyaç 100 kg."""
+    items = [it(1, "SHEA", unit="g"), it(2, "SHEA BUTTER - X", unit="g")]
+    inp = PlanInputs(items={i.id: i for i in items}, recipes={1: rec(1, [(1, 100)])}, stock_as_of=NOW,
+                     mgroup_of={1: 5, 2: 5}, mgroup_names={5: "Shea"})
+    res = compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}], options=opts))
+    pin = PriceInputs(suppliers=sups or {1: _sup(1, "BEFCHEM"), 2: _sup(2, "XKIM")},
+                      offers={1: [offer(1, "BEFCHEM", 8.0, sid=1)],
+                              2: [offer(2, "XKIM", 3.0, sid=2, label="XKIM teklifi")]},
+                      card_supplier={1: 1, 2: 2}, prefs=prefs or {})
+    return attach(res, pin, None)
+
+
+def test_equivalent_offer_without_status_is_info_only_and_selection_unchanged():
+    """Durum/tercih yokken eşdeğer kartın DAHA UCUZ teklifi seçilmez: seçilen
+    firma, tutar, toplamlar, firma dökümü, adaylar, fiyat kaynakları ve
+    bölümler kural kapalıyken (eşdeğer teklif hiç yüklenmez = HEAD davranışı)
+    ile aynı; eşdeğer teklif yalnız gri bilgi + not satırı."""
+    new, old = _shea_group(), _shea_group(respect_supplier_status=False)
+    a, b = mat(new, 1), mat(old, 1)
+    assert (a["supplier"], a["price"], a["amount"]) == (b["supplier"], b["price"], b["amount"]) == ("BEFCHEM", 8.0, 800)
+    assert [o["name"] for o in b["offers"]] == ["BEFCHEM"]                 # kapalı: eşdeğer teklif YOK
+    assert offer_lines(b, "USD") == [("BEFCHEM — 8,00 $/kg", "b")]
+    assert offer_lines(a, "USD") == [("BEFCHEM — 8,00 $/kg", "b"),
+                                     ("XKIM — 3,00 $/kg (eşdeğer kart «SHEA BUTTER - X», daha ucuz)", "g")]
+    assert a["offers"][1]["status"] == "equivalent" and a["offers"][1]["eligible"] is False
+    assert a["relations"]["firms"] == b["relations"]["firms"]           # bilgi teklifi firma dökümüne girmez
+    assert new["pricing"]["sources"] == old["pricing"]["sources"]       # "XKIM teklifi" kaynak sayılmaz
+    assert new["pricing"]["totals"] == old["pricing"]["totals"] and new["pricing"]["status_used"] is False
+    assert new["suppliers"]["chosen"] == old["suppliers"]["chosen"]
+    assert new["suppliers"]["candidates"] == old["suppliers"]["candidates"]
+    strip = lambda secs: [(s["key"], s["title"], s["subtitle"], s["summary"]) for s in secs]   # noqa: E731
+    assert strip(sections(new)) == strip(sections(old))
+    assert any("öbürleri gri, yalnız bilgi" in n for n in sections(new)[-1]["rows"])
+    assert not any("eşdeğer kart «…»" in n for n in sections(old)[-1]["rows"])
+    # fiyatsız satırda da bilgi teklifi seçilmez, "fiyat listesinde (fiyatsız)" adayı olmaz
+    items = [it(1, "SHEA", unit="g"), it(2, "SHEA BUTTER - X", unit="g")]
+    inp = PlanInputs(items={i.id: i for i in items}, recipes={1: rec(1, [(1, 100)])}, stock_as_of=NOW,
+                     mgroup_of={1: 5, 2: 5}, mgroup_names={5: "Shea"})
+    res = attach(compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}])),
+                 PriceInputs(suppliers={2: _sup(2, "XKIM")}, offers={2: [offer(2, "XKIM", 3.0, sid=2)]}), None)
+    m = mat(res, 1)
+    assert m["group"] == "none" and offer_lines(m, "USD")[0] == ("Fiyat yok — teklif alınacak", "r")
+    assert not any("fiyat listesinde" in r for b_ in res["suppliers"]["candidates"]
+                   for i_ in b_["items"] for r in i_["reasons"])
+
+
+def test_equivalent_offer_competes_when_preferred_or_own_offers_blocked():
+    # malzeme tercihi (gruptan kartlara açılmış hâli) → eşdeğer kartın teklifi seçilir
+    res = _shea_group(prefs={1: [(2, "preferred", 1)], 2: [(2, "preferred", 1)]})
+    m = mat(res, 1)
+    assert (m["supplier"], m["supplier_via"], m["amount"]) == ("XKIM", "SHEA BUTTER - X", 300)
+    assert offer_lines(m, "USD")[0] == ("XKIM — 3,00 $/kg (tercih, eşdeğer kart «SHEA BUTTER - X»)", "b")
+    # "tercih edilen" firma → yarışır
+    res = _shea_group(sups={1: _sup(1, "BEFCHEM"), 2: _sup(2, "XKIM", "preferred")})
+    assert mat(res, 1)["supplier"] == "XKIM"
+    # kartın kendi teklifi "alma" → eşdeğer (normal) teklif yedek olarak seçilir
+    res = _shea_group(prefs={1: [(1, "avoid", 1)]})
+    m = mat(res, 1)
+    assert (m["supplier"], m["supplier_via"]) == ("XKIM", "SHEA BUTTER - X")
+    assert offer_lines(m, "USD") == [("XKIM — 3,00 $/kg (eşdeğer kart «SHEA BUTTER - X»)", "b"),
+                                     ("BEFCHEM — 8,00 $/kg — bu malzemede alma", "g")]
+
+
+def test_candidates_skip_phase_out_and_avoid_add_preferred_backup():
+    sups = {1: _sup(1, "HAMMADDE SEPETİ", "phase_out", "küçük"), 2: _sup(2, "NATURALYA"),
+            3: _sup(3, "KRK GIDA"), 4: _sup(4, "SURYA KİMYA")}
+    lots = {1: [LotRec(item_id=1, lot_number="L1", supplier_id=3, created_at=datetime(2026, 8, 1, 9),
+                       quantity=5, inventory_id=1)]}
+    pin = PriceInputs(suppliers=sups, card_supplier={1: 1}, lots=lots,
+                      prefs={1: [(2, "preferred", 1), (4, "preferred", 2), (3, "avoid", 1)]})
+    res = attach(plan([it(1, "Kil", unit="g")], [(1, 1)]), pin, None)
+    reasons = {b["name"]: it_["reasons"] for b in res["suppliers"]["candidates"] for it_ in b["items"]}
+    assert reasons == {"NATURALYA": ["tercih edilen yedek"],
+                       "SURYA KİMYA": ["tercih edilen yedek (2. sıra)"]}   # bitirilecek + "alma" yok
+    assert [f["name"] for f in res["suppliers"]["checklist"]["phase_out_firms"]] == ["HAMMADDE SEPETİ"]
+    # seçenek kapalı: eski aday listesi (kart + son alım), tercih yedeği yok
+    res = attach(plan([it(1, "Kil", unit="g")], [(1, 1)], respect_supplier_status=False), pin, None)
+    assert {b["name"] for b in res["suppliers"]["candidates"]} == {"HAMMADDE SEPETİ", "KRK GIDA"}
+
+
+def test_status_conflict_between_duplicate_cards_reported_and_phase_out_wins():
+    sups = {1: _sup(1, "TATLIDİLİMLER", "phase_out", "1 kg"), 2: _sup(2, "TATLİDİLİMLER", "preferred"),
+            3: _sup(3, "BEFCHEM")}
+    offers = {1: [offer(1, "TATLİDİLİMLER", 2.0, sid=2), offer(1, "BEFCHEM", 9.0, sid=3)]}
+    res = attach(plan([it(1, "Setil", unit="g")], [(1, 1)]), PriceInputs(suppliers=sups, offers=offers), None)
+    assert mat(res, 1)["supplier"] == "BEFCHEM"                         # aynı firma anahtarı → bitirilecek
+    conf = res["suppliers"]["checklist"]["status_conflicts"]
+    assert conf == [{"key": "TATLIDILIMLER", "name": "TATLIDİLİMLER",
+                     "names_by_status": {"phase_out": ["TATLIDİLİMLER"], "preferred": ["TATLİDİLİMLER"]}}]
+    row = next(r for r in next(s for s in sections(res) if s["key"] == "checklist")["rows"]
+               if r["code"] == "status_conflicts")
+    assert row["text"] == ("Aynı firmanın kartları farklı işaretlenmiş (durumu birleştirin ya da eşitleyin): "
+                           "TATLIDİLİMLER: “TATLIDİLİMLER” bitirilecek / “TATLİDİLİMLER” tercih edilen.")
+
+
+def test_without_status_output_identical_to_cheapest_first():
+    def run(**o):
+        res = plan([it(1, "SHEA BUTTER", unit="g"), it(2, "Kil", unit="g")], [(1, 107.75), (2, 1)], **o)
+        pin = PriceInputs(suppliers={1: _sup(1, "BEFCHEM"), 2: _sup(2, "SURYA")}, card_supplier={2: 2},
+                          offers={1: [offer(1, "Pahalı", 9.0), offer(1, "Fiyatsız", None),
+                                      offer(1, "BEFCHEM", 8.0, pkg=25, sid=1)]})
+        return attach(res, pin, None)
+    new, old = run(), run(respect_supplier_status=False)
+    assert new["pricing"]["status_used"] is False
+    for a, b in zip(new["materials"], old["materials"]):
+        assert a["offers"] == b["offers"] and offer_lines(a, "USD") == offer_lines(b, "USD")
+        assert (a["supplier"], a["price"], a["amount"]) == (b["supplier"], b["price"], b["amount"])
+    strip = lambda secs: [(s["key"], s["title"], s["subtitle"], s["summary"]) for s in secs]   # noqa: E731
+    assert strip(sections(new)) == strip(sections(old))
+    assert sections(new)[-1]["rows"] == sections(old)[-1]["rows"]
+    assert {k: v for k, v in new["suppliers"]["checklist"].items()
+            if k not in ("phase_out_firms", "status_conflicts")} == old["suppliers"]["checklist"]
+    assert new["suppliers"]["checklist"]["phase_out_firms"] == [] == new["suppliers"]["checklist"]["status_conflicts"]
+    m = mat(new, 1)
+    assert offer_lines(m, "USD")[:2] == [("BEFCHEM — 8,00 $/kg · 25 kg'lık ambalaj", "b"),
+                                         ("Pahalı — 9,00 $/kg (daha pahalı)", "g")]
+    assert "Kalın yazılan tedarikçi en ucuz olanı" in next(s for s in sections(new)
+                                                           if s["key"] == "raw_priced")["subtitle"]
+
+
+def test_load_price_inputs_status_prefs_and_alt_offers(db_session):
+    from database import Item, MaterialGroup, MaterialSupplierPref, Supplier, SupplierPrice
+    tat = Supplier(name="TATLIDİLİMLER", domain="cosmetics", purchase_status="phase_out", status_reason="1 kg")
+    yk = Supplier(name="YİĞİTOĞLU", domain="cosmetics", purchase_status="preferred")
+    other = Supplier(name="TAKVİYE", domain="supplement")
+    db_session.add_all([tat, yk, other])
+    g = MaterialGroup(name="Setil", domain="cosmetics")
+    dead = MaterialGroup(name="Eski", domain="cosmetics", is_active=False)
+    db_session.add_all([g, dead])
+    db_session.flush()
+    a = Item(name="SETİL", category="Hammadde", unit="g", supplier_id=tat.id, material_group_id=g.id,
+             domain="cosmetics")
+    b = Item(name="CETYL", category="Hammadde", unit="g", supplier_id=yk.id, material_group_id=g.id,
+             domain="cosmetics")
+    c = Item(name="ESKİ", category="Hammadde", unit="g", material_group_id=dead.id, domain="cosmetics")
+    db_session.add_all([a, b, c])
+    db_session.flush()
+    db_session.add_all([
+        SupplierPrice(item_id=b.id, supplier_id=yk.id, supplier_name="YİĞİTOĞLU", unit_price=4.0,
+                      price_unit="kg", currency="USD", domain="cosmetics"),
+        MaterialSupplierPref(domain="cosmetics", material_group_id=g.id, supplier_id=yk.id,
+                             preference="preferred", rank=1),
+        MaterialSupplierPref(domain="cosmetics", material_group_id=g.id, supplier_id=tat.id, preference="avoid"),
+        MaterialSupplierPref(domain="cosmetics", item_id=a.id, supplier_id=tat.id, preference="preferred",
+                             rank=3),                                       # kart kapsamı grubu ezer
+        MaterialSupplierPref(domain="cosmetics", material_group_id=dead.id, supplier_id=yk.id,
+                             preference="avoid")])                          # pasif grup okunmaz
+    db_session.commit()
+    pin = load_price_inputs(db_session, [a.id, c.id], "cosmetics", extra_item_ids=[b.id], offer_extra_ids=[b.id])
+    assert [o.supplier_name for o in pin.offers[b.id]] == ["YİĞİTOĞLU"]   # eşdeğer kartın teklifi yüklendi
+    assert pin.suppliers[tat.id].status == "phase_out" and pin.suppliers[tat.id].status_reason == "1 kg"
+    assert pin.suppliers[yk.id].status == "preferred" and other.id not in pin.suppliers
+    assert pin.prefs[a.id] == [(yk.id, "preferred", 1), (tat.id, "preferred", 3)]
+    assert pin.prefs[b.id] == [(yk.id, "preferred", 1), (tat.id, "avoid", 1)]
+    assert c.id not in pin.prefs
+    pin = load_price_inputs(db_session, [a.id], "cosmetics", extra_item_ids=[b.id])
+    assert b.id not in pin.offers                                       # yalnız ilişki: teklif yok

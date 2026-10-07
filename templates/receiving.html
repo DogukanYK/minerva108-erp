@@ -184,7 +184,48 @@
     .toast-msg { min-width: 270px; max-width: 380px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
     .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
     .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+    .toast-info    { background: #eff6ff; color: #1d4ed8; border-left: 4px solid #3b82f6; }
     @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+
+    /* ══ TEDARİKÇİ–KART İPUCU (07.10.2026) — önek rh-; `btn-*` adı YASAK ══ */
+    .rh-box {
+      margin-top: 1rem; padding: 0.8rem 1rem; border-radius: 10px;
+      background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; font-size: 0.86rem;
+    }
+    .rh-head { display: flex; align-items: flex-start; gap: 0.5rem; }
+    .rh-head .bi { color: #c2410c; margin-top: 2px; }
+    .rh-main { flex: 1; min-width: 0; }
+    .rh-x { flex-shrink: 0; background: none; border: none; color: #9a3412; cursor: pointer; font-size: 0.9rem; padding: 0 0.2rem; }
+    .rh-acts { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.65rem; }
+    .rh-act {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      padding: 0.4rem 0.85rem; border-radius: 8px; border: 1.5px solid #fed7aa;
+      background: var(--white); color: #374151; cursor: pointer;
+      font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 600;
+    }
+    .rh-act:hover { background: #fffbf5; }
+    .rh-act-main { background: var(--navy); border-color: var(--navy); color: #fff; }
+    .rh-act-main:hover { background: #23236b; }
+    .rh-act:disabled { opacity: 0.6; cursor: wait; }
+    .rh-cands { margin-top: 0.5rem; font-size: 0.8rem; color: #7c2d12; }
+    .rh-link { background: none; border: none; padding: 0; color: var(--navy); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; font-size: 0.8rem; }
+    .rh-new { margin-top: 0.65rem; padding-top: 0.65rem; border-top: 1px dashed #fed7aa; }
+    .rh-new-row { display: flex; gap: 0.45rem; flex-wrap: wrap; }
+    .rh-new-row .form-control { flex: 1; min-width: 220px; padding: 0.45rem 0.75rem; font-size: 0.86rem; }
+    .rh-sub { font-size: 0.78rem; color: #9a3412; margin-top: 0.35rem; }
+    .rh-note {
+      margin-top: 0.75rem; padding: 0.55rem 0.8rem; border-radius: 8px;
+      background: #fef9c3; border: 1px solid #fde68a; color: #854d0e; font-size: 0.85rem;
+    }
+    .rh-note .bi { color: #ca8a04; }
+    :root[data-theme="dark"] .rh-box { background: #2D2114; border-color: #5A4520; color: #FCD34D; }
+    :root[data-theme="dark"] .rh-head .bi, :root[data-theme="dark"] .rh-x,
+    :root[data-theme="dark"] .rh-cands, :root[data-theme="dark"] .rh-sub { color: #FCD34D; }
+    :root[data-theme="dark"] .rh-act { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+    :root[data-theme="dark"] .rh-act-main { background: var(--navy); color: var(--text); border: 1px solid var(--gold); }
+    :root[data-theme="dark"] .rh-link { color: var(--gold); }
+    :root[data-theme="dark"] .rh-new { border-color: #5A4520; }
+    :root[data-theme="dark"] .rh-note { background: #2D2814; border-color: #5A4F20; color: #FDE68A; }
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
@@ -337,6 +378,10 @@
               </div>
 
             </div>
+
+            <!-- Tedarikçi–kart ipucu (GET /api/inventory/receive-options) —
+                 yalnız bilgi, kabulü ASLA engellemez. -->
+            <div id="recvHint" aria-live="polite"></div>
 
             <div class="d-flex gap-2 mt-4">
               <button type="submit" class="btn-submit" id="submitBtn">
@@ -498,6 +543,202 @@
       }
     });
 
+    /* ── Tedarikçi–kart ipucu (P1b, 07.10.2026) ──────────────────────────────
+       Lab'ın düzeni her tedarikçiye AYRI kart ("aynı malzeme" grubu bağlar).
+       Seçilen tedarikçi kartın tedarikçisinden farklıysa stok başka firmanın
+       kartına yazılır (05.10 Naturalya numuneleri KRK/İpeda kartlarında
+       kalmıştı).  Kutu "bu tedarikçinin kartı «…» — oraya kabul et" ya da
+       "yeni kart aç (aynı malzeme grubuna)" önerir; tedarikçi "bitirilecek"
+       ise sarı not.  ASLA engellemez — "Kabul Et ve Kaydet" her durumda
+       çalışır.  Veri GET /api/inventory/receive-options (inventory.receive);
+       yeni kart POST /api/items + join_group_of_item_id (items.create). */
+    const RH_CAN = window.can('inventory', 'receive');
+    const RH_CAN_NEW = window.can('items', 'create');
+    const _rh = { seq: 0, key: '', data: null, closed: false, newOpen: false, busy: false, name: '' };
+
+    function rhEl() { return document.getElementById('recvHint'); }
+    function recvHintClear() {
+      _rh.seq++;
+      Object.assign(_rh, { key: '', data: null, closed: false, newOpen: false, name: '' });
+      rhEl().innerHTML = '';
+    }
+    async function recvHintLoad() {
+      const itemId = parseInt(document.getElementById('recvItem').value, 10);
+      const supId = parseInt(document.getElementById('recvSupplier').value, 10);
+      const key = itemId && supId ? `${itemId}:${supId}` : '';
+      if (key && key === _rh.key && _rh.data) return;
+      recvHintClear();
+      if (!key || !RH_CAN) return;
+      _rh.key = key;
+      const seq = _rh.seq;
+      try {
+        const r = await fetch(`/api/inventory/receive-options?item_id=${itemId}&supplier_id=${supId}`);
+        if (seq !== _rh.seq || !r.ok) return;      // ipucu yoksa sessiz — kabul akışı etkilenmez
+        const d = await r.json();
+        if (seq !== _rh.seq) return;
+        _rh.data = d;
+        _rh.name = (d.new_card && d.new_card.suggested_name) || '';
+        recvHintRender();
+      } catch { /* sessiz — yalnız ipucu */ }
+    }
+    function recvNewForm(d) {
+      const nc = d.new_card || {};
+      const grp = d.item && d.item.group;
+      let h = `<div class="rh-new"><label class="form-label-sm" for="rhNewName">Yeni kartın adı</label>
+          <div class="rh-new-row">
+            <input type="text" class="form-control" id="rhNewName" maxlength="150" autocomplete="off" value="${escHtml(_rh.name)}" />
+            <button type="button" class="rh-act rh-act-main" data-rh-act="create"><i class="bi bi-check2"></i> Kartı aç ve seç</button>
+            <button type="button" class="rh-act" data-rh-act="nonew">Vazgeç</button>
+          </div>
+          <div class="rh-sub">Birim <b>${escHtml(nc.unit || '—')}</b> · kategori ${escHtml(nc.category || '—')} · tedarikçi <b>${escHtml(nc.supplier_name || '—')}</b> ·
+            «${escHtml(d.item ? d.item.name : '')}» ile ${grp ? `«${escHtml(grp.name)}» grubuna katılır` : 'aynı malzeme grubunda bağlanır'}.</div>`;
+      if (nc.conflict) {
+        h += `<div class="rh-sub">Bu adla kart zaten var:
+            <button type="button" class="rh-link" data-rh-act="pick" data-id="${Number(nc.conflict.id) || 0}">${escHtml(nc.conflict.name)}</button> — onu seçebilirsiniz.</div>`;
+      }
+      return h + '</div>';
+    }
+    function recvHintRender() {
+      const box = rhEl();
+      const d = _rh.data;
+      if (!d) { box.innerHTML = ''; return; }
+      let h = '';
+      if (d.mismatch && !_rh.closed) {
+        const card = d.card_supplier ? d.card_supplier.name : '—';
+        const sc = d.supplier_card;
+        h += `<div class="rh-box"><div class="rh-head"><i class="bi bi-exclamation-triangle"></i>
+            <div class="rh-main">Kartın tedarikçisi <b>${escHtml(card)}</b>, seçilen tedarikçi <b>${escHtml(d.supplier.name)}</b>.
+              Her tedarikçinin ayrı kartı var — bu karta kabul edilirse stok <b>${escHtml(card)}</b> kartında görünür.</div>
+            <button type="button" class="rh-x" data-rh-act="close" title="İpucunu kapat" aria-label="İpucunu kapat"><i class="bi bi-x-lg"></i></button>
+          </div><div class="rh-acts">`;
+        if (sc) {
+          h += `<button type="button" class="rh-act rh-act-main" data-rh-act="pick" data-id="${Number(sc.item_id) || 0}"
+                  title="${escHtml(sc.reason || '')}"><i class="bi bi-box-arrow-in-down"></i> Bu tedarikçinin kartı «${escHtml(sc.name)}» — oraya kabul et</button>`;
+        }
+        if (RH_CAN_NEW && !_rh.newOpen) {
+          h += `<button type="button" class="rh-act${sc ? '' : ' rh-act-main'}" data-rh-act="new"><i class="bi bi-plus-lg"></i> Yeni kart aç (aynı malzeme grubuna)</button>`;
+        }
+        h += '</div>';
+        // Başka firmanın kartı yine yanlış kart olur — yalnız tedarikçisi boş
+        // aynı malzeme kartları ek aday (sıra sunucuda: aynı grup önce).
+        const others = (d.candidates || []).filter(c => !c.supplier_id && (!sc || c.item_id !== sc.item_id)).slice(0, 4);
+        if (others.length) {
+          h += '<div class="rh-cands">Tedarikçisi boş aynı malzeme kartı: ' + others.map(c =>
+            `<button type="button" class="rh-link" data-rh-act="pick" data-id="${Number(c.item_id) || 0}" title="${escHtml(c.reason || '')}">${escHtml(c.name)}</button>` +
+            (c.supplier_name ? ` (${escHtml(c.supplier_name)})` : '')).join(' · ') + '</div>';
+        }
+        if (_rh.newOpen && RH_CAN_NEW) h += recvNewForm(d);
+        h += '<div class="rh-sub">Yalnız ipucu — isterseniz seçili karta da kabul edebilirsiniz.</div></div>';
+      }
+      if (d.supplier && d.supplier.status === 'phase_out') {
+        h += `<div class="rh-note"><i class="bi bi-flag-fill"></i> <b>${escHtml(d.supplier.name)}</b> «${escHtml(d.supplier.status_label)}» işaretli` +
+             `${d.supplier.status_reason ? ` — ${escHtml(d.supplier.status_reason)}` : ''}. ` +
+             'Kabul yapılabilir; bu firmadan yeni alım planlanmıyor, eldeki stok önce kullanılacak.</div>';
+      }
+      box.innerHTML = h;
+      if (_rh.busy) recvHintBusy(true);
+    }
+    function recvHintBusy(b) {
+      rhEl().querySelectorAll('button, input').forEach(x => { x.disabled = b; });
+    }
+    // Aday kart mal kabul listesinde olmayabilir (liste yalnız Hammadde +
+    // Ambalaj kategorisi) — seçenek olarak eklenir.
+    function recvEnsureOption(id, fallback) {
+      const sel = document.getElementById('recvItem');
+      let o = [...sel.options].find(x => x.value === String(id));
+      if (o) return o;
+      const it = allItems.find(i => i.id === id) || fallback;
+      if (!it) return null;
+      o = document.createElement('option');
+      o.value = String(id);
+      o.textContent = it.name;
+      o.dataset.unit = it.unit || '';
+      o.dataset.barcode = it.barcode || '';
+      o.dataset.supplierId = it.supplier_id || '';
+      sel.appendChild(o);
+      return o;
+    }
+    function recvPick(id, quiet) {
+      const d = _rh.data || {};
+      const pool = [...(d.candidates || []), d.supplier_card].filter(Boolean);
+      const c = pool.find(x => x.item_id === id);
+      const cf = d.new_card && d.new_card.conflict && d.new_card.conflict.id === id ? d.new_card.conflict : null;
+      const fb = c ? { name: c.name, unit: c.unit, supplier_id: c.supplier_id }
+                   : (cf ? { name: cf.name, unit: cf.unit } : null);
+      const o = recvEnsureOption(id, fb);
+      if (!o) { showToast('Kart listede bulunamadı — sayfayı yenileyin.'); return; }
+      const sel = document.getElementById('recvItem');
+      sel.value = String(id);
+      sel.dispatchEvent(new Event('change'));   // birim + ipucu tazelenir; tedarikçi seçili kalır
+      if (!quiet) showToast(`Kart değişti: ${o.textContent}`, 'success');
+    }
+    async function recvCreateCard() {
+      const d = _rh.data;
+      if (!d || _rh.busy || !d.new_card) return;
+      const nc = d.new_card;
+      const name = (_rh.name || '').trim();
+      if (!name) { showToast('Kart adı boş olamaz.'); return; }
+      if (!nc.unit) { showToast('Kaynak kartın birimi yok — yeni kartı Ürünler sayfasından açın.'); return; }
+      const body = { name, category: nc.category || null, unit: nc.unit, min_stock: 0,
+                     supplier_id: nc.supplier_id, join_group_of_item_id: nc.join_group_of_item_id };
+      const post = b => fetch('/api/items', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                              body: JSON.stringify(b) });
+      _rh.busy = true;
+      recvHintBusy(true);
+      try {
+        let r = await post(body);
+        let data = await r.json().catch(() => ({}));
+        // Aynı (TR-katlanmış) adla kart varsa sunucu 409 der — onayla devam
+        if (r.status === 409 && data.existing) {
+          const ex = data.existing;
+          if (!confirm(`Aynı isimde ürün zaten var: "${ex.name}" (${ex.unit}, stok ${ex.current_stock}).\n` +
+                       'Yine de yeni bir kart oluşturulsun mu?')) return;
+          r = await post({ ...body, force: true });
+          data = await r.json().catch(() => ({}));
+        }
+        if (!r.ok) { showToast(typeof data.detail === 'string' ? data.detail : 'Kart açılamadı.'); return; }
+        if (window.invalidateItemsCache) window.invalidateItemsCache();
+        allItems.push({ id: data.id, name, unit: nc.unit, category: nc.category,
+                        supplier_id: nc.supplier_id, barcode: '' });
+        showToast(`«${name}» kartı açıldı ve seçildi.`, 'success');
+        if (data.material_group) showToast(`«${data.material_group.name}» aynı malzeme grubuna eklendi.`, 'success', 5000);
+        if (data.warning) showToast(data.warning, 'info', 8000);
+        _rh.busy = false;
+        recvPick(data.id, true);
+      } catch { showToast('Sunucuya bağlanılamadı.');
+      } finally {
+        _rh.busy = false;
+        recvHintBusy(false);
+      }
+    }
+    (function () {
+      const box = rhEl();
+      box.addEventListener('click', e => {
+        const b = e.target.closest('[data-rh-act]');
+        if (!b || _rh.busy) return;
+        e.preventDefault();
+        const act = b.dataset.rhAct;
+        if (act === 'close') { _rh.closed = true; recvHintRender(); }
+        else if (act === 'pick') recvPick(parseInt(b.dataset.id, 10));
+        else if (act === 'new') {
+          _rh.newOpen = true;
+          recvHintRender();
+          setTimeout(() => document.getElementById('rhNewName')?.focus(), 30);
+        }
+        else if (act === 'nonew') { _rh.newOpen = false; recvHintRender(); }
+        else if (act === 'create') recvCreateCard();
+      });
+      box.addEventListener('input', e => { if (e.target.id === 'rhNewName') _rh.name = e.target.value; });
+      // İpucu formun içinde — Enter mal kabulü göndermesin, kartı açsın
+      box.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' || e.target.id !== 'rhNewName') return;
+        e.preventDefault();
+        recvCreateCard();
+      });
+    })();
+    document.getElementById('recvItem').addEventListener('change', recvHintLoad);
+    document.getElementById('recvSupplier').addEventListener('change', recvHintLoad);
+
     /* ── Phase 9 — barkod tarayıp dropdown'da eşleşen ürünü seç ── */
     document.getElementById('scanRecvBtn')?.addEventListener('click', () => {
       if (typeof openBarcodeScanner !== 'function') {
@@ -556,6 +797,7 @@
         showToast(data.message, 'success');
         document.getElementById('receiveForm').reset();
         document.getElementById('recvUnitAddon').textContent = '—';
+        recvHintClear();
         loadInventory();
       } catch { showToast('Sunucuya bağlanılamadı.');
       } finally {
@@ -567,6 +809,7 @@
     document.getElementById('resetBtn').addEventListener('click', function () {
       document.getElementById('receiveForm').reset();
       document.getElementById('recvUnitAddon').textContent = '—';
+      recvHintClear();
     });
 
     /* ── Logout ── */

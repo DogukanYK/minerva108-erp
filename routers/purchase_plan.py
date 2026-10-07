@@ -241,7 +241,13 @@ def build_report(db: Session, req: PlanRequest, domain: str) -> dict:
     for m in (res.get("materials") or []) + (res.get("held") or []):
         ids.update(i for i in (m.get("member_ids") or []) if i is not None)
         alt_ids.update(a["item_id"] for a in ((m.get("material_group") or {}).get("alts") or []))
-    pin = pricing.load_price_inputs(db, ids, domain, extra_item_ids=alt_ids - ids)
+    # Grubun alternatif kartları ilişki İÇİN; tedarikçi kuralı açıkken
+    # teklifleri İÇİN de ("eşdeğer kart" teklifi — tercih edilen yedek firma
+    # orada olabilir).  Kural kapalıyken eşdeğer teklif yüklenmez (eski davranış).
+    alt_only = alt_ids - ids
+    pin = pricing.load_price_inputs(
+        db, ids, domain, extra_item_ids=alt_only,
+        offer_extra_ids=alt_only if req.options.respect_supplier_status else ())
     cur = req.options.currency
     pricing.attach(res, pin, _rates_if_needed(pin, cur), currency=cur,
                    round_to_package=req.options.round_to_package)
@@ -250,32 +256,12 @@ def build_report(db: Session, req: PlanRequest, domain: str) -> dict:
 
 def _sup_lines(m: dict, cur: str) -> List[dict]:
     """Tedarikçi hücresi — PDF `_sup_cell` ile aynı sıra/metin, yapısal:
-    [{t: metin, s: 'b' kalın | 'g' gri | 'r' kırmızı}]."""
+    [{t: metin, s: 'b' kalın | 'g' gri | 'r' kırmızı}].  Teklif satırları
+    (seçilen kalın; "tercih" / "eşdeğer kart «X»" / " — bitirilecek, alma"
+    etiketleri) `purchase_pricing.offer_lines`'tan — PDF ile tek kaynak."""
     from core.purchase_plan import _amount_near
-    from core.purchase_plan_pdf import PKG_SUFFIX, _qty
-    from core.purchase_pricing import (CURRENCY_SYMBOL, UNIT_TEXT, money, price_text, relation_texts,
-                                       unpriced_offer_text)
-    sym = CURRENCY_SYMBOL.get(cur, cur)
-    out: List[dict] = []
-    offers = m.get("offers") or []
-    priced = [o for o in offers if o.get("price") is not None]
-    if m.get("group") == "list" and priced:
-        for i, o in enumerate(priced):
-            unit = UNIT_TEXT.get(o.get("price_unit"), o.get("price_unit") or "")
-            t = f"{o['name']} — {price_text(o['price'])} {sym}/{unit}"
-            if o.get("package"):
-                pu = o.get("orig_price_unit") or o.get("price_unit") or "kg"
-                t += f" · {_qty(o['package'])} {PKG_SUFFIX.get(pu, pu)} ambalaj"
-            if o.get("orig_currency") and o["orig_currency"] != cur and o.get("orig_price") is not None:
-                osym = CURRENCY_SYMBOL.get(o["orig_currency"], o["orig_currency"])
-                ou = UNIT_TEXT.get(o.get("orig_price_unit"), o.get("orig_price_unit") or unit)
-                t += f" ({price_text(o['orig_price'])} {osym}/{ou})"
-            out.append({"t": t, "s": "b"} if i == 0 else {"t": t + " (daha pahalı)", "s": "g"})
-    else:
-        out.append({"t": "Fiyat yok — teklif alınacak", "s": "r"})
-    for o in offers:
-        if o.get("price") is None:
-            out.append({"t": unpriced_offer_text(o), "s": "g"})
+    from core.purchase_pricing import money, offer_lines, relation_texts
+    out: List[dict] = [{"t": t, "s": st} for t, st in offer_lines(m, cur)]
     # İlişkiler (stok kartı / son alım / numune · Sipariş: · Aynı malzeme:) — PDF ile tek kaynak
     out += [{"t": t, "s": "g"} for t in relation_texts(m)]
     if m.get("pkg_buy") is not None:

@@ -176,23 +176,30 @@ def active_member_count(db: Session, group_id: int) -> int:
                        Item.is_active == True).scalar() or 0)          # noqa: E712
 
 
-def dissolve(db: Session, grp: MaterialGroup) -> List[int]:
+def dissolve(db: Session, grp: MaterialGroup, *, heir_group_id: Optional[int] = None) -> List[int]:
     """Grubu dağıt: satır pasif kalır (iz), bütün kartların bağı çözülür.
-    Dönüş: bağı çözülen kart id'leri.  Commit ÇAĞIRANA aittir."""
+    Grubun tedarikçi tercihleri (`material_supplier_prefs`) bağı çözülen AKTİF
+    kart(lar)a kart kapsamlı tercih olarak, `heir_group_id` verildiyse (kartlar
+    "taşı" ile o gruba geçti) o gruba grup tercihi olarak da geçer
+    (core.suppliers.prefs_to_items) — lab'ın "önce X'ten al" kararı grupla
+    birlikte kaybolmasın.  Dönüş: bağı çözülen kart id'leri.  Commit
+    ÇAĞIRANA aittir."""
+    from core.suppliers import prefs_to_items
     db.flush()
-    ids = []
-    for it in db.query(Item).filter(Item.material_group_id == grp.id).all():
+    cards = db.query(Item).filter(Item.material_group_id == grp.id).all()
+    for it in cards:
         it.material_group_id = None
-        ids.append(it.id)
     grp.is_active = False
     grp.updated_at = datetime.utcnow()
     db.flush()
-    return sorted(ids)
+    prefs_to_items(db, grp.id, cards, heir_group_id=heir_group_id)
+    return sorted(it.id for it in cards)
 
 
-def prune(db: Session, group_id: Optional[int]) -> bool:
+def prune(db: Session, group_id: Optional[int], *, heir_group_id: Optional[int] = None) -> bool:
     """Aktif üyesi 2'nin altına düşen grubu dağıt — tek kartlık "aynı malzeme"
-    grubu anlamsız.  Dağıttıysa True."""
+    grubu anlamsız.  `heir_group_id`: kartları "taşı" ile alan grup — dağılan
+    grubun tedarikçi tercihleri ona geçer (`dissolve`).  Dağıttıysa True."""
     if not group_id:
         return False
     db.flush()
@@ -201,7 +208,7 @@ def prune(db: Session, group_id: Optional[int]) -> bool:
         return False
     if active_member_count(db, grp.id) >= 2:
         return False
-    dissolve(db, grp)
+    dissolve(db, grp, heir_group_id=heir_group_id)
     return True
 
 

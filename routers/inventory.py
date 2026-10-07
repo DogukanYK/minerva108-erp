@@ -807,6 +807,14 @@ def _item_has_audit(db: Session, item_id: int) -> bool:
             or_(ProductionConsumption.item_id == item_id,
                 ProductionConsumption.recipe_item_id == item_id)).first():
         return True
+    # Fiyat satırı ya da kart kapsamlı tedarikçi tercihi olan kart — ikisi de
+    # FK ile karta bakar (ondelete yok); hard-delete 500 verirdi, lab'ın fiyat
+    # ve tercih kaydı da kaybolurdu.
+    from database import MaterialSupplierPref, SupplierPrice
+    if db.query(SupplierPrice.id).filter(SupplierPrice.item_id == item_id).first():
+        return True
+    if db.query(MaterialSupplierPref.id).filter(MaterialSupplierPref.item_id == item_id).first():
+        return True
     return False
 
 
@@ -990,7 +998,9 @@ def update_item(
                 action_type="item_edit",
                 target_table="items",
                 target_id=item.id,
-                payload={"item_id": item.id, "before": before_snapshot},
+                # after_supplier_id: geri alırken bağ arada (tedarikçi birleştirmesi) değiştiyse ezilmesin
+                payload={"item_id": item.id, "before": before_snapshot,
+                         "after_supplier_id": item.supplier_id},
                 description=f"Ürün düzenlendi: {item.name}",
             )
     except Exception:
@@ -1129,11 +1139,16 @@ def _check_supplier_ref(db: Session, domain: str, supplier_id: Optional[int],
     pasife alınmış firma yeniden atanamaz.  İstisna: kartın DEĞİŞMEYEN mevcut
     tedarikçisi (`current_id`) olduğu gibi kabul edilir — pasif ya da eski
     (panel öncesi) bir bağ olsa da; yoksa o kartı düzenleyip kaydetmek
-    imkânsız olurdu."""
+    imkânsız olurdu.
+
+    Satır FOR SHARE ile okunur: eşzamanlı bir tedarikçi birleştirmesi
+    (FOR UPDATE) commit edene kadar bekler ve pasifleşmiş kaybedeni görür —
+    yoksa kontrolden sonra yazılan lot/kart pasif kaybedene bağlı kalırdı."""
     if supplier_id is None or (current_id is not None and supplier_id == current_id):
         return None
     sup = (db.query(Supplier)
-           .filter(Supplier.id == supplier_id, Supplier.domain == domain).first())
+           .filter(Supplier.id == supplier_id, Supplier.domain == domain)
+           .with_for_update(read=True).populate_existing().first())
     if sup is None:
         return JSONResponse(status_code=400, content={
             "detail": "Seçilen tedarikçi bu panelde bulunamadı."})
@@ -1938,6 +1953,134 @@ def _names_similar(a: Item, b: Item) -> bool:
     return bool(ka & kb)
 
 
+def _active_groups(db: Session, domain: str) -> dict:
+    """{grup id: ad} — bu paneldeki AKTİF "aynı malzeme" grupları."""
+    return dict(db.query(MaterialGroup.id, MaterialGroup.name)
+                .filter(MaterialGroup.domain == domain,
+                        MaterialGroup.is_active == True).all())          # noqa: E712
+
+
+def _target_candidates(db: Session, domain: str, source: Item, supplier_id: Optional[int], *,
+                       who: str = "Seçilen tedarikçi", sup_names: Optional[dict] = None,
+                       groups: Optional[dict] = None) -> List[dict]:
+    """`source` kartı yerine stoğun yazılabileceği kartlar — numune "Stoğa
+    çevir" hedefi (convert-options) ve mal kabul ipucu (receive-options) ortak
+    sıralaması.
+
+    Sıra: aynı grup + `supplier_id` kartı > aynı grup > kart tedarikçisi =
+    `supplier_id` ve benzer ad > benzer ad (aynı sırada TR-katlanmış ad, id).
+    Yalnız aktif, aynı panel, aynı tür (hammadde/ambalaj; Bitmiş Ürün asla) ve
+    aynı birim ailesi (`core.purchase_plan.unit_norm`) kartlar; `source`
+    hariç.  `who`: gerekçe metnindeki tedarikçi ("Numunenin tedarikçisi")."""
+    from core.purchase_plan import unit_norm
+    if sup_names is None:
+        sup_names = dict(db.query(Supplier.id, Supplier.name).all())
+    if groups is None:
+        groups = _active_groups(db, domain)
+    src_gid = source.material_group_id if source.material_group_id in groups else None
+    kind = stock_lots.lot_kind(source.category)
+    unit_key = unit_norm(source.unit)
+    ranked = []
+    if kind == "finished":
+        return []
+    cards = (db.query(Item)
+             .filter(Item.domain == domain, Item.is_active == True,       # noqa: E712
+                     Item.id != source.id).all())
+    for it in cards:
+        if stock_lots.lot_kind(it.category) != kind or unit_norm(it.unit) != unit_key:
+            continue
+        same_group = src_gid is not None and it.material_group_id == src_gid
+        same_sup = supplier_id is not None and it.supplier_id == supplier_id
+        if same_group and same_sup:
+            tier, reason = 0, f"Aynı malzeme grubu · {who.lower()}"
+        elif same_group:
+            tier, reason = 1, "Aynı malzeme grubu"
+        elif _names_similar(source, it):
+            tier, reason = ((2, f"{who} · benzer ad") if same_sup else (3, "Benzer ad"))
+        else:
+            continue
+        ranked.append((tier, _tr_fold(it.name), it.id, {
+            "item_id": it.id, "name": it.name, "name_tr": it.name_tr or "",
+            "unit": it.unit or "",
+            "supplier_id": it.supplier_id,
+            "supplier_name": sup_names.get(it.supplier_id) if it.supplier_id else None,
+            "stock": round(float(it.current_stock or 0.0), 4),
+            "material_group_id": it.material_group_id if it.material_group_id in groups else None,
+            "reason": reason,
+        }))
+    ranked.sort(key=lambda x: x[:3])
+    return [c for *_, c in ranked]
+
+
+@router.get("/inventory/receive-options")
+def receive_options(
+    item_id: int,
+    supplier_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("inventory", "receive")),
+    domain: str = Depends(active_domain),
+):
+    """Mal kabul ipucu — seçilen tedarikçi kartın tedarikçisinden farklıysa
+    "bu tedarikçinin kartı «…» — oraya kabul et" / "yeni kart aç (aynı
+    malzeme grubuna)" önerisi; tedarikçi "bitirilecek" ise uyarı.  Lab'ın
+    düzeni her tedarikçiye ayrı kart (core/material_groups) — yanlış karta
+    kabul jojoba vakasını tekrarlar.  ASLA engellemez; yalnız bilgi.
+
+    Yanıt: `mismatch` (kartın tedarikçisi var VE seçilenle aynı firma değil —
+    mükerrer firma kartları `supplier_key` ile aynı sayılır), `card_supplier`,
+    `supplier` {id, name, status, status_label, status_reason} (durum firma
+    anahtarı düzeyinde: mükerrer kartlardan biri bitirilecekse bitirilecek),
+    `supplier_card` (bu tedarikçinin aynı malzemedeki ilk adayı ya da null),
+    `candidates` (convert-options sırası: aynı grup + bu tedarikçi önce, ≤30),
+    `new_card` {suggested_name "KART — FİRMA", join_group_of_item_id, unit,
+    category, supplier_id, supplier_name, conflict}."""
+    from core.purchase_pricing import SupplierIndex
+    from core.suppliers import STATUS_LABELS, normalize_status, status_by_key
+    item = db.query(Item).filter(Item.id == item_id, Item.domain == domain).first()
+    if item is None:
+        return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+    sup = db.query(Supplier).filter(Supplier.id == supplier_id, Supplier.domain == domain).first()
+    if sup is None:
+        return JSONResponse(status_code=404, content={"detail": "Tedarikçi bulunamadı."})
+    all_sups = db.query(Supplier).filter(Supplier.domain == domain).all()
+    ix = SupplierIndex([s.name for s in all_sups])
+    by_key, _ = status_by_key(all_sups, ix)
+    k = ix.key(sup.name)
+    status = by_key.get(k) or normalize_status(sup.purchase_status) or "normal"
+    card_sup = next((s for s in all_sups if s.id == item.supplier_id), None) if item.supplier_id else None
+    mismatch = card_sup is not None and card_sup.id != sup.id and ix.key(card_sup.name) != k
+    sup_names = {s.id: s.name for s in all_sups}
+    groups = _active_groups(db, domain)
+    cands = _target_candidates(db, domain, item, sup.id, sup_names=sup_names, groups=groups)
+    same_firm = {s.id for s in all_sups if ix.key(s.name) == k}
+    supplier_card = next((c for c in cands if c["supplier_id"] in same_firm), None)
+    suggested = f"{item.name} — {sup.name}"
+    conflict = _find_name_conflict(db, domain, suggested, None)
+    reason = None
+    if status == "phase_out":
+        reason = sup.status_reason or next(
+            (s.status_reason for s in all_sups if ix.key(s.name) == k and s.status_reason
+             and normalize_status(s.purchase_status) == "phase_out"), None)
+    return {
+        "item": {"id": item.id, "name": item.name, "unit": item.unit or "",
+                 "group": ({"id": item.material_group_id, "name": groups[item.material_group_id]}
+                           if item.material_group_id in groups else None)},
+        "mismatch": bool(mismatch),
+        "card_supplier": ({"id": card_sup.id, "name": card_sup.name} if card_sup is not None else None),
+        "supplier": {"id": sup.id, "name": sup.name, "status": status,
+                     "status_label": STATUS_LABELS[status], "status_reason": reason},
+        "supplier_status": status,
+        "supplier_card": supplier_card,
+        "candidates": cands[:30],
+        "new_card": {
+            "suggested_name": suggested[:150], "join_group_of_item_id": item.id,
+            "unit": item.unit or "", "category": item.category or "",
+            "supplier_id": sup.id, "supplier_name": sup.name,
+            "conflict": _conflict_payload(conflict) if conflict else None,
+        },
+    }
+
+
 @router.get("/inventory/samples/{inventory_id}/convert-options")
 def sample_convert_options(
     inventory_id: int,
@@ -1958,8 +2101,6 @@ def sample_convert_options(
     `sample.analysis_used` Numune Analizi'nde bu lottan düşülmüş miktardır
     ("yalnız lotu bağla" uyarısı için).
     """
-    from core.purchase_plan import unit_norm
-
     row = (db.query(Inventory).options(joinedload(Inventory.supplier))
            .filter(Inventory.id == inventory_id).first())
     if not row or not row.is_sample or row.domain != domain:
@@ -1970,42 +2111,10 @@ def sample_convert_options(
 
     sup_name = row.supplier.name if row.supplier else None
     sup_names = dict(db.query(Supplier.id, Supplier.name).all())
-    groups = dict(db.query(MaterialGroup.id, MaterialGroup.name)
-                  .filter(MaterialGroup.domain == domain,
-                          MaterialGroup.is_active == True).all())    # noqa: E712
+    groups = _active_groups(db, domain)
     src_gid = source.material_group_id if source.material_group_id in groups else None
-
-    kind = stock_lots.lot_kind(source.category)
-    unit_key = unit_norm(source.unit)
-    ranked = []
-    if kind != "finished":
-        cards = (db.query(Item)
-                 .filter(Item.domain == domain, Item.is_active == True,   # noqa: E712
-                         Item.id != source.id).all())
-        for it in cards:
-            if stock_lots.lot_kind(it.category) != kind or unit_norm(it.unit) != unit_key:
-                continue
-            same_group = src_gid is not None and it.material_group_id == src_gid
-            same_sup = row.supplier_id is not None and it.supplier_id == row.supplier_id
-            if same_group and same_sup:
-                tier, reason = 0, "Aynı malzeme grubu · numunenin tedarikçisi"
-            elif same_group:
-                tier, reason = 1, "Aynı malzeme grubu"
-            elif _names_similar(source, it):
-                tier, reason = ((2, "Numunenin tedarikçisi · benzer ad") if same_sup
-                                else (3, "Benzer ad"))
-            else:
-                continue
-            ranked.append((tier, _tr_fold(it.name), it.id, {
-                "item_id": it.id, "name": it.name, "name_tr": it.name_tr or "",
-                "unit": it.unit or "",
-                "supplier_id": it.supplier_id,
-                "supplier_name": sup_names.get(it.supplier_id) if it.supplier_id else None,
-                "stock": round(float(it.current_stock or 0.0), 4),
-                "material_group_id": it.material_group_id if it.material_group_id in groups else None,
-                "reason": reason,
-            }))
-    ranked.sort(key=lambda x: x[:3])
+    candidates = _target_candidates(db, domain, source, row.supplier_id, who="Numunenin tedarikçisi",
+                                    sup_names=sup_names, groups=groups)
 
     suggested = f"{source.name} — {sup_name}" if sup_name else source.name
     conflict = _find_name_conflict(db, domain, suggested, None)
@@ -2028,7 +2137,7 @@ def sample_convert_options(
             "is_active": bool(source.is_active),
             "group": {"id": src_gid, "name": groups[src_gid]} if src_gid else None,
         },
-        "candidates": [c for *_, c in ranked[:30]],
+        "candidates": candidates[:30],
         "guard": _count_guard(db, source.id, row.created_at, qty),
         "guards": _convert_guards(db, row, source, None, moving=True),
         "new_card": {

@@ -794,8 +794,10 @@ def _sp_clean(fields: dict, item: Item):
 
 
 def _sp_supplier(db: Session, domain: str, supplier_id: int):
+    # FOR SHARE: eşzamanlı tedarikçi birleştirmesini bekle (pasif kaybedene fiyat yazılmasın)
     sup = (db.query(Supplier)
-           .filter(Supplier.id == supplier_id, Supplier.domain == domain).first())
+           .filter(Supplier.id == supplier_id, Supplier.domain == domain)
+           .with_for_update(read=True).populate_existing().first())
     if sup is None:
         return None, _sp_bad("Tedarikçi bu panelde bulunamadı.", 404)
     if sup.is_active is False:
@@ -902,7 +904,10 @@ def update_supplier_price(
         vals["supplier_name"] = sup.name
     new_sid = vals.get("supplier_id", sp.supplier_id)
     new_pu = vals.get("price_unit", sp.price_unit)
-    if new_sid is not None and new_pu:
+    # Çift kontrolü yalnız tedarikçi / fiyat birimi DEĞİŞİYORSA — tedarikçi
+    # birleştirmesinden sonra aynı (kart, firma, birim) iki satır kalabilir
+    # (önizleme "ikisi de kalır" der); yalnız fiyatı düzeltmek engellenmesin.
+    if new_sid is not None and new_pu and (new_sid != sp.supplier_id or new_pu != sp.price_unit):
         dup = _sp_duplicate(db, domain, sp.item_id, new_sid, new_pu, exclude_id=sp.id)
         if dup is not None:
             return JSONResponse(status_code=409, content={

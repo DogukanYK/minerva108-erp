@@ -346,9 +346,12 @@ app.include_router(influencer_router.public_router)
 app.include_router(purchase_plan_router.router)
 # "Aynı malzeme" grupları — /api/material-groups/* (items.view/edit + active_domain)
 app.include_router(material_groups_router.router)
-# Tedarikçi satın alma durumu + firma fiyatları — /api/suppliers/{id}/status|prices
-# (suppliers.status; okuma items.view|reports.view; active_domain)
+# Tedarikçi satın alma durumu + firma fiyatları + birleştirme —
+# /api/suppliers/{id}/status|prices|merge-*  (suppliers.status|merge; okuma
+# items.view|reports.view; active_domain)
 app.include_router(suppliers_router.router)
+# Malzeme bazlı tedarikçi tercihi — /api/material-prefs (yazma suppliers.status)
+app.include_router(suppliers_router.prefs_router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────

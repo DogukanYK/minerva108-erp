@@ -12,8 +12,8 @@ Satın Alma Planı — fiyat + tedarikçi katmanı.
 `fiyat/fiyatli_liste.py` betiğinin sistemleştirilmiş hâli; Paraşüt faturası
 fiyatları SONRAKİ AŞAMA (burada `invoice` grubu yalnız ayrılmış bir addır).
 
-  • load_price_inputs(db, item_ids, domain, extra_item_ids=()) → PriceInputs
-                                                             (TEK DB okuyucu)
+  • load_price_inputs(db, item_ids, domain, extra_item_ids=(), offer_extra_ids=())
+                                             → PriceInputs (TEK DB okuyucu)
   • attach(result, pin, rates, currency=…)  → result         (SAF, yerinde)
   • sections(result)                         → bölüm listesi (UI/PDF/Excel'in
     TEK numaralandırma kaynağı; boş bölüm atlanır)
@@ -23,7 +23,21 @@ Kurallar:
     ikinci kartta duruyorsa — ALEOVERA vakası — kaybolmasın).
   • Her teklif `supplier_prices.price_per_purchase_unit` ile malzemenin alım
     birimine (kg / l / adet) normalize edilir, `core.fx.convert` ile rapor
-    para birimine çevrilir; fiyatlılar ucuzdan pahalıya, fiyatsızlar sonda.
+    para birimine çevrilir.
+  • Teklif seçimi (07.10.2026, `respect_supplier_status`, varsayılan açık):
+    uygun olmayanlar SEÇİLMEZ — firma "bitirilecek" (`Supplier.
+    purchase_status`, firma anahtarı düzeyinde), bu malzemede "alma"
+    (`material_supplier_prefs`), atlanacaklar listesi.  Uygunlar sırayla:
+    malzeme tercihi (rank) → "tercih edilen" firma → normal; aynı kademede
+    ucuzdan pahalıya, fiyatsızlar sonda.  Seçilen = ilk uygun FİYATLI teklif.
+    Uygun olmayanlar gri etiketle listede kalır.  Durum/tercih yoksa seçim
+    eskisiyle (en ucuz önce) birebir aynıdır; seçenek kapalıysa da öyle.
+  • Kural açıkken "aynı malzeme" grubundaki diğer kartların teklifleri de
+    yüklenir (`offer_extra_ids`) — "eşdeğer kart «X»" etiketiyle
+    (`via_item_id` / `via_name`).  Yalnız kendisi tercih kademesindeyse
+    (malzeme tercihi / "tercih edilen" firma) ya da satırın kendi teklifleri
+    durum / "alma" / atlanacaklar yüzünden elendiyse yarışır; yoksa gri bilgi
+    (`status="equivalent"`) olarak yazılır.  Kural kapalıyken yüklenmez.
   • Tutar = round_half_up(alınacak × birim fiyat) — Excel ROUND ile aynı
     (Python `round` bankacı yuvarlaması yapar, .5'te Excel'den sapardı).
   • İlişkiler: stok kartında yazan (`Item.supplier_id`), son alım (numune ve
@@ -116,6 +130,8 @@ class SupplierRec:
     email: Optional[str] = None
     address: Optional[str] = None
     is_active: bool = True
+    status: str = "normal"                     # normal | preferred | phase_out (core/suppliers)
+    status_reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -172,6 +188,9 @@ class PriceInputs:
     orders: Dict[int, List[OrderRec]] = field(default_factory=dict)        # item_id → işaretler
     analyses: Dict[int, List[AnalysisRec]] = field(default_factory=dict)   # item_id → analiz satırları
     lot_meta: Dict[int, LotMetaRec] = field(default_factory=dict)          # inventory id → iz
+    # Malzeme bazlı tedarikçi tercihi: kart → [(supplier_id, preferred|avoid, rank)]
+    # (grup tercihleri kartlara açılmış; kartın kendi satırı grubunkini ezer)
+    prefs: Dict[int, List[Tuple[int, str, int]]] = field(default_factory=dict)
 
 
 # ─── Yardımcılar ────────────────────────────────────────────────────────────
@@ -290,7 +309,8 @@ def unpriced_offer_text(o: dict) -> str:
     why = (o.get("note") or "").strip() or "fiyat yazılmamış"
     if why[:1].isupper() and why[1:2].islower():       # "Fiyat birimi" → "fiyat birimi"; "USD …" kalır
         why = {"I": "ı", "İ": "i"}.get(why[0], why[0].lower()) + why[1:]
-    return f"{o.get('name') or '—'} — fiyat listesinde, {why}"
+    tags, blocked = offer_tags(o)                      # tercih / eşdeğer kart / bitirilecek
+    return _with_tags(f"{o.get('name') or '—'} — fiyat listesinde, {why}", tags, blocked)
 
 
 def _phone(p) -> str:
@@ -340,26 +360,35 @@ def classify_input(note, lot=None) -> str:
 
 # ─── DB yükleyici ───────────────────────────────────────────────────────────
 
-def load_price_inputs(db, item_ids_incl_members, domain: str, extra_item_ids=()) -> PriceInputs:
+def load_price_inputs(db, item_ids_incl_members, domain: str, extra_item_ids=(),
+                      offer_extra_ids=()) -> PriceInputs:
     """Fiyat + ilişki girdileri — hepsi aktif panele kapsanır.
 
     `item_ids_incl_members`: plandaki malzemelerin BÜTÜN üye kartları
     (`member_ids`), teklifler bunların birleşimidir.  `extra_item_ids`:
-    "aynı malzeme" grubundaki diğer kartlar — yalnız ilişki için (kart
-    tedarikçisi, lotlar, girişler, siparişler, analizler); teklifleri
-    YÜKLENMEZ (fiyat/kur hesabına karışmasın).  Taşınmış lotların ilk geldiği
-    kartların (`moved_from_item_id`) Input'ları da okunur: alım geçmişi orada.
+    "aynı malzeme" grubundaki diğer kartlar — ilişki için (kart tedarikçisi,
+    lotlar, girişler, siparişler, analizler).  `offer_extra_ids`: teklifleri
+    DE yüklenecek ek kartlar (satın alma planı grubun alternatif kartlarını
+    verir — "eşdeğer kart" teklifi); ilişki için de okunur.  Taşınmış lotların
+    ilk geldiği kartların (`moved_from_item_id`) Input'ları da okunur: alım
+    geçmişi orada.  Tedarikçi durumu (`purchase_status`) ve malzeme
+    tercihleri (`material_supplier_prefs`, grup → kart açılmış) da yüklenir.
     """
     from sqlalchemy import or_
 
-    from database import (AppSetting, Inventory, Item, SampleAnalysis, SampleAnalysisIngredient,
-                          StockOrderFlag, Supplier, SupplierPrice, Transaction)
+    from core.suppliers import effective_prefs, normalize_status
+    from database import (AppSetting, Inventory, Item, MaterialGroup, MaterialSupplierPref, SampleAnalysis,
+                          SampleAnalysisIngredient, StockOrderFlag, Supplier, SupplierPrice, Transaction)
 
+    offer_extra = {int(i) for i in (offer_extra_ids or []) if i is not None}
     ids = sorted({int(i) for i in (item_ids_incl_members or []) if i is not None})
-    rel_ids = sorted(set(ids) | {int(i) for i in (extra_item_ids or []) if i is not None})
+    offer_ids = sorted(set(ids) | offer_extra)
+    rel_ids = sorted(set(offer_ids) | {int(i) for i in (extra_item_ids or []) if i is not None})
     suppliers = {s.id: SupplierRec(id=s.id, name=s.name or "", contact_person=s.contact_person,
                                    phone=s.phone, email=s.email, address=s.address,
-                                   is_active=bool(s.is_active) if s.is_active is not None else True)
+                                   is_active=bool(s.is_active) if s.is_active is not None else True,
+                                   status=normalize_status(s.purchase_status) or "normal",
+                                   status_reason=s.status_reason)
                  for s in db.query(Supplier).filter(Supplier.domain == domain).all()}
     pin = PriceInputs(suppliers=suppliers)
     row = db.query(AppSetting).filter(AppSetting.key == CFG_SKIP_SUPPLIERS).first()
@@ -367,9 +396,30 @@ def load_price_inputs(db, item_ids_incl_members, domain: str, extra_item_ids=())
         pin.skip_suppliers = tuple(x.strip() for x in row.value.split(",") if x.strip())
     if not rel_ids:
         return pin
-    if ids:
+    # ── Malzeme tercihleri: kartın kendi satırları + aktif grubunun satırları ──
+    group_of = {iid: gid for iid, gid in (
+        db.query(Item.id, Item.material_group_id)
+        .join(MaterialGroup, MaterialGroup.id == Item.material_group_id)
+        .filter(Item.id.in_(rel_ids), Item.domain == domain, MaterialGroup.is_active == True)   # noqa: E712
+        .all())}
+    pref_rows: Dict[int, list] = {}
+    pq = db.query(MaterialSupplierPref).filter(MaterialSupplierPref.domain == domain)
+    cond = MaterialSupplierPref.item_id.in_(rel_ids)
+    if group_of:
+        cond = or_(cond, MaterialSupplierPref.material_group_id.in_(sorted(set(group_of.values()))))
+    for p in pq.filter(cond).all():
+        rec = (p.supplier_id, p.preference, p.rank, p.item_id is not None)
+        targets = [p.item_id] if p.item_id else [i for i, g in group_of.items() if g == p.material_group_id]
+        for iid in targets:
+            pref_rows.setdefault(iid, []).append(rec)
+    for iid, rows in pref_rows.items():
+        eff = effective_prefs(rows)
+        if eff:
+            pin.prefs[iid] = sorted(((sid, pr, rk) for sid, (pr, rk) in eff.items()),
+                                    key=lambda x: (x[1] != "preferred", x[2], x[0]))
+    if offer_ids:
         for sp in (db.query(SupplierPrice)
-                   .filter(SupplierPrice.item_id.in_(ids), SupplierPrice.domain == domain)
+                   .filter(SupplierPrice.item_id.in_(offer_ids), SupplierPrice.domain == domain)
                    .order_by(SupplierPrice.id.asc()).all()):
             name = sp.supplier_name or (suppliers[sp.supplier_id].name if sp.supplier_id in suppliers else None)
             pin.offers.setdefault(sp.item_id, []).append(OfferRec(
@@ -456,6 +506,7 @@ _FIRM_RANK = {"card": 0, "purchase": 1, "order": 2, "offer": 3, "sample": 4, "im
 ORDER_STATUS_TEXT = {"open": "açık", "received": "teslim alındı", "manual": "kapatıldı"}
 ANALYSIS_TEXT = {"uygun": "uygun", "uygun_degil": "uygun değil"}
 REL_LINES_MAX = 3            # PDF/önizleme: sipariş ve eşdeğer kart satırı en çok 3 + "+N"
+STATUS_TEXT = {"normal": "normal", "preferred": "tercih edilen", "phase_out": "bitirilecek"}
 
 
 def _qty_text(q, unit) -> str:
@@ -680,14 +731,15 @@ def _relations(m: dict, ri: _RelIndex) -> dict:
         o.pop("_at")
     for o in m.get("offers") or []:
         k = o.get("supplier_key") or ""
-        if not k or k in ri.skip:
+        if not k or k in ri.skip or o.get("status") == "equivalent":   # eşdeğer kartın bilgi teklifi
             continue
         f = _firm(firms, k, o["name"], o.get("supplier_id"))
         f["types"].add("offer")
         f["offers"].append({"price": o.get("price"), "price_unit": o.get("price_unit"),
                             "currency": o.get("currency"), "package": o.get("package"),
                             "note": o.get("note"), "quoted_at": o.get("quoted_at"),
-                            "source_label": o.get("source_label")})
+                            "source_label": o.get("source_label"), "via_name": o.get("via_name"),
+                            "status": o.get("status"), "eligible": o.get("eligible", True)})
     firm_list = []
     for f in firms.values():
         for tmp in ("_p_at", "_i_at", "_seen"):
@@ -719,12 +771,175 @@ def _relations(m: dict, ri: _RelIndex) -> dict:
             "group": {"id": mg["id"], "name": mg["name"]} if mg else None}
 
 
+# Teklif durumu — seçime etkisi ve etiketi.  Uygun olmayanlar SEÇİLMEZ.
+OFFER_BLOCKED = ("skip", "phase_out", "avoid")
+OFFER_BLOCKED_TEXT = {"phase_out": "bitirilecek, alma", "avoid": "bu malzemede alma",
+                      "skip": "atlanacaklar listesinde"}
+
+
+@dataclass
+class _StatusCtx:
+    """attach() başına: firma anahtarı → durum (mükerrer kartlar tek duruma
+    indirgenmiş, `core.suppliers.status_by_key`) + çelişkiler + seçim kuralı
+    açık mı (`respect_supplier_status`)."""
+    respect: bool = True
+    by_key: Dict[str, str] = field(default_factory=dict)
+    conflicts: List[dict] = field(default_factory=list)
+    reasons: Dict[str, str] = field(default_factory=dict)       # phase_out anahtarı → sebep
+
+
+def _status_ctx(pin: PriceInputs, ix: "SupplierIndex", respect: bool) -> _StatusCtx:
+    from core.suppliers import status_by_key
+    by_key, conflicts = status_by_key(list(pin.suppliers.values()), ix)
+    reasons: Dict[str, str] = {}
+    for sid in sorted(pin.suppliers):
+        sr = pin.suppliers[sid]
+        k = ix.key(sr.name)
+        if k and sr.status == "phase_out" and sr.status_reason and sr.is_active and k not in reasons:
+            reasons[k] = " ".join(sr.status_reason.split())
+    return _StatusCtx(respect=respect, by_key=by_key, conflicts=conflicts, reasons=reasons)
+
+
+def _row_prefs(m: dict, pin: PriceInputs, ix: "SupplierIndex") -> dict:
+    """Satırın malzeme tercihleri (bütün üye kartlar): "alma" her şeyi yener,
+    tercih sırası en küçük rank.  → {"preferred": [{supplier_id, key, name,
+    rank}], "avoid": [...]} (supplier_id + anahtar ile eşleşir)."""
+    pref: Dict[int, int] = {}
+    avoid: Set[int] = set()
+    for mid in m.get("member_ids") or []:
+        for sid, p, rank in pin.prefs.get(mid, []):
+            if p == "avoid":
+                avoid.add(sid)
+            elif p == "preferred":
+                pref[sid] = min(int(rank or 1), pref.get(sid, 10 ** 6))
+
+    def rec(sid, rank=None):
+        sr = pin.suppliers.get(sid)
+        nm = clean_text(sr.name) if sr else None
+        d = {"supplier_id": sid, "key": ix.key(nm) if nm else "", "name": nm or f"Tedarikçi #{sid}"}
+        if rank is not None:
+            d["rank"] = rank
+        return d
+    return {"preferred": sorted((rec(sid, r) for sid, r in pref.items() if sid not in avoid),
+                                key=lambda x: (x["rank"], alnum_fold(x["name"]))),
+            "avoid": sorted((rec(sid) for sid in avoid), key=lambda x: alnum_fold(x["name"]))}
+
+
+def _offer_status(o: dict, rp: dict, sc: _StatusCtx, skip: Set[str], pin: PriceInputs) -> None:
+    """Teklife `status` / `eligible` / `pref` / `pref_rank` / `tier` yazar (yerinde)."""
+    k, sid = o.get("supplier_key") or "", o.get("supplier_id")
+    o.update(status="normal", eligible=True, pref=None, pref_rank=None, tier=(2, 0))
+    if not sc.respect:
+        return
+
+    def hit(lst):
+        return next((x for x in lst if (sid is not None and x["supplier_id"] == sid) or (k and x["key"] == k)),
+                    None)
+    sup_st = sc.by_key.get(k) if k else None
+    if sup_st is None and sid in pin.suppliers:
+        sup_st = pin.suppliers[sid].status
+    if k and k in skip:
+        o.update(status="skip", eligible=False, tier=(9, 0))
+    elif sup_st == "phase_out":
+        o.update(status="phase_out", eligible=False, tier=(9, 0))
+    elif hit(rp["avoid"]):
+        o.update(status="avoid", eligible=False, tier=(9, 0))
+    else:
+        p = hit(rp["preferred"])
+        if p is not None:
+            o.update(status="preferred", pref="material", pref_rank=p["rank"], tier=(0, p["rank"]))
+        elif sup_st == "preferred":
+            o.update(status="preferred", pref="supplier", tier=(1, 0))
+
+
+def offer_tags(o: dict, best: Optional[dict] = None) -> Tuple[List[str], Optional[str]]:
+    """Teklif satırının ekleri → (parantez içi etiketler, engel metni).
+    Etiketler: "tercih" (malzeme tercihi; 2+ sırada "tercih 2. sıra"),
+    "tercih edilen firma", "eşdeğer kart «X»", seçilenden farklı uygun fiyatlı
+    teklifte "daha pahalı" / "daha ucuz".  Engel: "bitirilecek, alma" /
+    "bu malzemede alma" / "atlanacaklar listesinde" (gri, seçilmez).
+    Eşdeğer kartın bilgi teklifi (`status="equivalent"`) engelsiz gridir —
+    "daha ucuz" / "daha pahalı" kıyası onda da yazılır."""
+    tags: List[str] = []
+    if o.get("pref") == "material":
+        r = o.get("pref_rank") or 1
+        tags.append("tercih" if r <= 1 else f"tercih {r}. sıra")
+    elif o.get("pref") == "supplier":
+        tags.append("tercih edilen firma")
+    if o.get("via_name"):
+        tags.append(f"eşdeğer kart «{o['via_name']}»")
+    blocked = OFFER_BLOCKED_TEXT.get(o.get("status")) if o.get("eligible") is False else None
+    if (best is not None and o is not best and not blocked and o.get("price") is not None
+            and best.get("price") is not None):
+        tags.append("daha ucuz" if o["price"] < best["price"] - 1e-9 else "daha pahalı")
+    return tags, blocked
+
+
+def offer_text(o: dict, cur: str) -> str:
+    """'BEFCHEM — 8,00 $/kg · 25 kg'lık ambalaj (2,50 €/kg)' — fiyatlı teklif
+    gövdesi (etiketsiz); önizleme / PDF / Excel ortak."""
+    from core.purchase_plan_pdf import PKG_SUFFIX, _qty
+    sym = CURRENCY_SYMBOL.get(cur, cur)
+    unit = UNIT_TEXT.get(o.get("price_unit"), o.get("price_unit") or "")
+    t = f"{o['name']} — {price_text(o['price'])} {sym}/{unit}"
+    if o.get("package"):
+        pu = o.get("orig_price_unit") or o.get("price_unit") or "kg"
+        t += f" · {_qty(o['package'])} {PKG_SUFFIX.get(pu, pu)} ambalaj"
+    if o.get("orig_currency") and o["orig_currency"] != cur and o.get("orig_price") is not None:
+        osym = CURRENCY_SYMBOL.get(o["orig_currency"], o["orig_currency"])
+        ou = UNIT_TEXT.get(o.get("orig_price_unit"), o.get("orig_price_unit") or unit)
+        t += f" ({price_text(o['orig_price'])} {osym}/{ou})"
+    return t
+
+
+def _with_tags(t: str, tags: List[str], blocked: Optional[str]) -> str:
+    if tags:
+        t += " (" + ", ".join(tags) + ")"
+    if blocked:
+        t += f" — {blocked}"
+    return t
+
+
+def offer_lines(m: dict, cur: str) -> List[Tuple[str, str]]:
+    """Tedarikçi hücresinin teklif kısmı → [(metin, stil)] — stil 'b' kalın
+    (seçilen) | 'g' gri | 'r' kırmızı.  Önizleme (`_sup_lines`) ve PDF
+    (`_sup_cell`) aynı listeyi basar: seçilen kalın; diğer fiyatlı teklifler
+    gri ("daha pahalı" / "daha ucuz", "tercih", "eşdeğer kart «X»"); uygun
+    olmayanlar gri + " — bitirilecek, alma" …; fiyat seçilemediyse kırmızı
+    "Fiyat yok — teklif alınacak"; fiyatı kullanılamayanlar gri sonda."""
+    out: List[Tuple[str, str]] = []
+    offers = m.get("offers") or []
+    priced = [o for o in offers if o.get("price") is not None]
+    best = next((o for o in priced if o.get("eligible", True)), None) if m.get("group") == "list" else None
+    if best is None:
+        out.append(("Fiyat yok — teklif alınacak", "r"))
+    for o in priced:
+        tags, blocked = offer_tags(o, best)
+        out.append((_with_tags(offer_text(o, cur), tags, blocked), "b" if o is best else "g"))
+    for o in offers:
+        if o.get("price") is None:
+            out.append((unpriced_offer_text(o), "g"))
+    return out
+
+
 def _price_row(m: dict, pin: PriceInputs, rates, currency: str, round_to_package: bool,
                fx_used: Set[str], sources: dict, flags: dict, skip: Set[str],
-               ix: "SupplierIndex", ri: Optional[_RelIndex] = None) -> None:
+               ix: "SupplierIndex", ri: Optional[_RelIndex] = None,
+               sc: Optional[_StatusCtx] = None) -> None:
     unit = m["unit"]
+    sc = sc or _StatusCtx(respect=False)
     offers, seen = [], set()
-    for mid in m.get("member_ids") or []:
+    # Satırın kendi (birleşik) kartları önce, sonra (seçim kuralı açıkken)
+    # "aynı malzeme" grubunun diğer kartları — "eşdeğer kart" teklifi (aynı
+    # firma + fiyat + ambalaj ikinci kez yazılmaz; kendi kartındaki kalır).
+    # Birim ailesi farklı eşdeğer kartın (126 "g" ↔ 599 "adet") teklifi bu
+    # satıra uygulanamaz → alınmaz.  Kural kapalıyken eşdeğer teklif HİÇ
+    # yoktur (eski davranış).
+    cards = [(mid, None) for mid in m.get("member_ids") or []]
+    if sc.respect:
+        cards += [(a["item_id"], a.get("name")) for a in (m.get("material_group") or {}).get("alts") or []
+                  if not a.get("unit_mismatch")]
+    for mid, via in cards:
         for o in pin.offers.get(mid, []):
             name = _offer_name(o, pin)
             price = o.unit_price if (o.unit_price is not None and o.unit_price > 0) else None
@@ -744,23 +959,57 @@ def _price_row(m: dict, pin: PriceInputs, rates, currency: str, round_to_package
             if dkey in seen:
                 continue
             seen.add(dkey)
-            if note == LITRE_KG_NOTE and conv is not None:
-                flags["litre_kg"] = True
-            if conv is not None:
-                skey = (o.source or "", o.source_label or "", o.quoted_at, ocur, o.price_unit or "")
-                sources[skey] = sources.get(skey, 0) + 1
             offers.append({"name": name, "supplier_key": k, "supplier_id": o.supplier_id,
                            "item_id": o.item_id, "price": conv, "price_unit": pu,
                            "orig_price": o.unit_price, "orig_currency": ocur,
                            "orig_price_unit": o.price_unit, "package": o.package_size,
                            "currency": currency, "note": note, "source": o.source,
                            "source_label": o.source_label,
-                           "quoted_at": o.quoted_at.isoformat() if o.quoted_at else None})
-    offers.sort(key=lambda x: (x["price"] is None, x["price"] if x["price"] is not None else 0.0,
-                               x["name"]))
-    best = offers[0] if offers and offers[0]["price"] is not None else None
+                           "quoted_at": o.quoted_at.isoformat() if o.quoted_at else None,
+                           "via_item_id": mid if via is not None else None, "via_name": via,
+                           "_skey": ((o.source or "", o.source_label or "", o.quoted_at, ocur, o.price_unit or "")
+                                     if conv is not None else None),
+                           "_lkg": note == LITRE_KG_NOTE and conv is not None})
+    rp = _row_prefs(m, pin, ix) if sc.respect else {"preferred": [], "avoid": []}
+    for o in offers:
+        _offer_status(o, rp, sc, skip, pin)
+    # Eşdeğer kart teklifi YALNIZ şu hallerde seçilebilir: kendisi bir tercih
+    # kademesinde (malzeme tercihi / "tercih edilen" firma) ya da satırın
+    # kendi teklifleri durum / "alma" / atlanacaklar yüzünden elendi.  Öbür
+    # hallerde gri bilgi ("equivalent") — durum yokken seçim, tutar, firma
+    # dökümü ve fiyat kaynakları bugünküyle aynı kalır.
+    own = [o for o in offers if o["via_item_id"] is None]
+    own_out = (any(o["status"] in OFFER_BLOCKED for o in own)
+               and not any(o["eligible"] and o["price"] is not None for o in own))
+    for o in offers:
+        if o["via_item_id"] is not None and o["eligible"] and o["tier"][0] >= 2 and not own_out:
+            o.update(status="equivalent", eligible=False)
+            flags["via_listed"] = True
+        if o["status"] not in ("normal", "equivalent"):
+            flags["status_used"] = True
+        skey, lkg = o.pop("_skey"), o.pop("_lkg")
+        if o["status"] == "equivalent":
+            continue
+        if lkg:
+            flags["litre_kg"] = True
+        if skey is not None:
+            sources[skey] = sources.get(skey, 0) + 1
+    # Uygun önce → kademe (malzeme tercihi rank → tercih edilen firma →
+    # normal) → ucuzdan pahalıya (fiyatsız sonda) → ad.  Durum yoksa kendi
+    # teklifler (uygun, normal) eski "en ucuz önce" sırasının aynısı; eşdeğer
+    # kartın bilgi teklifleri onlardan sonra.
+    offers.sort(key=lambda x: (not x["eligible"], x["tier"], x["price"] is None,
+                               x["price"] if x["price"] is not None else 0.0, x["name"]))
+    for o in offers:
+        o.pop("tier")
+    best = next((o for o in offers if o["eligible"] and o["price"] is not None), None)
+    if best is not None and best.get("via_name"):
+        flags["via_used"] = True
     buy_num = float(m["display"]["buy_num"] or 0.0)
     m["offers"] = offers
+    m["supplier_prefs"] = rp
+    m["supplier_status"] = best["status"] if best else None
+    m["supplier_via"] = best.get("via_name") if best else None
     m["group"] = "list" if best else "none"
     m["price"] = best["price"] if best else None
     m["price_unit"] = (best["price_unit"] if best else
@@ -779,24 +1028,30 @@ def _price_row(m: dict, pin: PriceInputs, rates, currency: str, round_to_package
 
 
 def attach(result: dict, pin: PriceInputs, rates, *, currency: str = "USD",
-           round_to_package: bool = False) -> dict:
+           round_to_package: bool = False, respect_status: Optional[bool] = None) -> dict:
     """Fiyat + tedarikçi alanlarını `result`'a yazar (yerinde) ve döndürür.
 
     `rates` (`core.fx.Rates`) yalnız para birimi farklı teklif varsa gerekir;
     None iken çevrilemeyen teklif fiyatsız sayılır (notla).
+    `respect_status` None → `result.meta.options.respect_supplier_status`
+    (yoksa açık).  Kapalıyken seçim yalnız en ucuz (eski davranış).
     """
     currency = (currency or "USD").upper()
+    if respect_status is None:
+        respect_status = bool(((result.get("meta") or {}).get("options") or {})
+                              .get("respect_supplier_status", True))
     ix = supplier_index(pin)
     skip = {ix.key(s) for s in (pin.skip_suppliers or ())}
     skip.discard("")
     fx_used: Set[str] = set()
     sources: dict = {}
-    flags = {"litre_kg": False}
+    flags = {"litre_kg": False, "status_used": False, "via_used": False, "via_listed": False}
     ri = _RelIndex(pin, skip, ix)
+    sc = _status_ctx(pin, ix, respect_status)
     for m in result.get("materials", []):
-        _price_row(m, pin, rates, currency, round_to_package, fx_used, sources, flags, skip, ix, ri)
+        _price_row(m, pin, rates, currency, round_to_package, fx_used, sources, flags, skip, ix, ri, sc)
     for m in result.get("held", []):
-        _price_row(m, pin, rates, currency, round_to_package, fx_used, sources, flags, skip, ix, ri)
+        _price_row(m, pin, rates, currency, round_to_package, fx_used, sources, flags, skip, ix, ri, sc)
 
     mats = [m for m in result.get("materials", []) if m["status"] == "to_buy"]
     totals = {k: sum(m["amount"] or 0 for m in mats if m["kind"] == k) for k in ("raw", "packaging", "label")}
@@ -822,8 +1077,11 @@ def attach(result: dict, pin: PriceInputs, rates, *, currency: str = "USD",
                     for (s, lbl, q, c, pu), n in sorted(sources.items(), key=lambda kv: -kv[1])],
         "totals": totals, "counts": counts,
         "held_what_if": sum(m.get("amount") or 0 for m in result.get("held", [])),
+        # Seçimi tedarikçi durumu / malzeme tercihi etkiledi mi (metinler buna göre)
+        "respect_status": bool(respect_status), "status_used": flags["status_used"],
+        "via_used": flags["via_used"], "via_listed": flags["via_listed"],
     }
-    result["suppliers"] = supplier_directory(result, pin, skip, ix)
+    result["suppliers"] = supplier_directory(result, pin, skip, ix, sc)
     return result
 
 
@@ -866,10 +1124,19 @@ def contact_line(c: Optional[dict]) -> Optional[str]:
 
 
 def supplier_directory(result: dict, pin: PriceInputs, skip: Optional[Set[str]] = None,
-                       ix: Optional[SupplierIndex] = None) -> dict:
-    """Seçilen (en ucuz) tedarikçi blokları + fiyatsızlar için aday firmalar +
-    hiçbir firmayla ilişkisi olmayanlar + kontrol listesi."""
+                       ix: Optional[SupplierIndex] = None, sc: Optional[_StatusCtx] = None) -> dict:
+    """Seçilen tedarikçi blokları + fiyatsızlar için aday firmalar + hiçbir
+    firmayla ilişkisi olmayanlar + kontrol listesi.
+
+    Seçim kuralı açıkken (`sc.respect`): adaylara "bitirilecek" firmalar ve
+    malzemenin "alma" listesindekiler GİRMEZ; malzeme tercihindeki firmalar
+    (ilişkisi olmasa da) "tercih edilen yedek" sebebiyle EKLENİR.  Kontrol
+    listesine `phase_out_firms` (bu planda karşılaşılan bitirilecek firmalar,
+    sebepleriyle) ve `status_conflicts` (aynı firmanın kartları farklı
+    işaretli) eklenir."""
     ix = ix or supplier_index(pin)
+    sc = sc or _StatusCtx(respect=False)
+    po_keys = {k for k, st in sc.by_key.items() if st == "phase_out"} if sc.respect else set()
     contacts = _contacts(pin, ix)
     mats = [m for m in result.get("materials", []) if m["status"] == "to_buy"]
     names: Dict[str, str] = {}
@@ -885,8 +1152,14 @@ def supplier_directory(result: dict, pin: PriceInputs, skip: Optional[Set[str]] 
             continue
         k = m["supplier_key"]
         b = chosen.setdefault(k, {"key": k, "name": disp(k, m["supplier"]), "items": [], "total": 0})
-        b["items"].append({"key": m["key"], "name": m["name"], "buy_text": m["display"]["buy_text"],
-                           "price": m["price"], "price_unit": m["price_unit"], "amount": m["amount"]})
+        row = {"key": m["key"], "name": m["name"], "buy_text": m["display"]["buy_text"],
+               "price": m["price"], "price_unit": m["price_unit"], "amount": m["amount"]}
+        best = next((o for o in m.get("offers") or [] if o.get("eligible", True) and o.get("price") is not None),
+                    None)
+        tags = offer_tags(best)[0] if best else []
+        if tags:                                   # "tercih", "eşdeğer kart «X»"
+            row["reasons"] = tags
+        b["items"].append(row)
         b["total"] += m["amount"] or 0
     for b in chosen.values():
         b["items"].sort(key=lambda x: -(x["amount"] or 0))
@@ -920,7 +1193,8 @@ def supplier_directory(result: dict, pin: PriceInputs, skip: Optional[Set[str]] 
                 okeys.add(o["key"])
                 ks.append((o["key"], o["name"], _dated("sipariş", o.get("date"))))
         for o in m.get("offers") or []:
-            if o["supplier_key"] and o["supplier_key"] not in (skip or set()):
+            if (o["supplier_key"] and o["supplier_key"] not in (skip or set())
+                    and o.get("status") != "equivalent"):
                 ks.append((o["supplier_key"], o["name"], "fiyat listesinde (fiyatsız)"))
         for a in rel.get("alternatives") or []:
             if a.get("supplier_key"):
@@ -929,10 +1203,15 @@ def supplier_directory(result: dict, pin: PriceInputs, skip: Optional[Set[str]] 
                 ks.append((a["last"]["key"], a["last"]["name"], _dated("eşdeğer kartta son alım", a["last"]["date"])))
             for s in a.get("samples") or []:
                 ks.append((s["key"], s["name"], _dated("eşdeğer kartta numune", s["date"])))
+        rp = m.get("supplier_prefs") or {}
+        for p in rp.get("preferred") or []:
+            ks.append((p["key"], p["name"], "tercih edilen yedek" if (p.get("rank") or 1) <= 1
+                       else f"tercih edilen yedek ({p['rank']}. sıra)"))
+        blocked = po_keys | {p["key"] for p in rp.get("avoid") or [] if p.get("key")}
         entry = {"key": m["key"], "name": m["name"], "buy_text": m["display"]["buy_text"]}
         seen: Dict[str, dict] = {}
         for k, nm, why in ks:
-            if not k:
+            if not k or k in blocked:
                 continue
             if k in seen:
                 if why not in seen[k]["reasons"]:
@@ -976,6 +1255,18 @@ def supplier_directory(result: dict, pin: PriceInputs, skip: Optional[Set[str]] 
         "no_card": [{"key": k, "name": disp(k, k)} for k in no_card],
         "duplicate_cards": [{"key": k, "name": disp(k, k), "cards": cs} for k, cs in dups],
     }
+    if sc.respect:
+        # Bu planda karşılaşılan firmalar: teklifler + ilişkiler + eşdeğer kartlar
+        seen_keys: Set[str] = set(used)
+        for m in mats:
+            rel = m.get("relations") or {}
+            seen_keys.update(o["supplier_key"] for o in m.get("offers") or [] if o.get("supplier_key"))
+            seen_keys.update(f["key"] for f in rel.get("firms") or [])
+            seen_keys.update(a["supplier_key"] for a in rel.get("alternatives") or [] if a.get("supplier_key"))
+        checklist["phase_out_firms"] = [{"key": k, "name": disp(k, k), "reason": sc.reasons.get(k)}
+                                        for k in sorted(po_keys & seen_keys, key=lambda k: disp(k, k))]
+        checklist["status_conflicts"] = [dict(c, name=disp(c["key"], c["key"])) for c in sc.conflicts
+                                         if c["key"] in seen_keys]
     return {"chosen": chosen_list, "candidates": cand_list, "unrelated": unrelated,
             "checklist": checklist}
 
@@ -1107,10 +1398,15 @@ def firm_lines(f: dict, currency: str = "USD") -> List[str]:
     sym = CURRENCY_SYMBOL.get(currency, currency)
     for o in f.get("offers") or []:
         if o.get("price") is not None:
-            out.append(f"fiyat listesi: {price_text(o['price'])} {sym}/"
-                       f"{UNIT_TEXT.get(o.get('price_unit'), o.get('price_unit') or '')}")
+            t = (f"fiyat listesi: {price_text(o['price'])} {sym}/"
+                 f"{UNIT_TEXT.get(o.get('price_unit'), o.get('price_unit') or '')}")
         else:
-            out.append("fiyat listesinde (fiyatsız)")
+            t = "fiyat listesinde (fiyatsız)"
+        if o.get("via_name"):
+            t += f" (eşdeğer kart «{o['via_name']}»)"
+        if o.get("eligible") is False and o.get("status") in OFFER_BLOCKED_TEXT:
+            t += f" — {OFFER_BLOCKED_TEXT[o['status']]}"
+        out.append(t)
     return out
 
 
@@ -1204,17 +1500,30 @@ def notes_lines(result: dict) -> List[str]:
     out.append("Alınacak miktarlar güvenli yuvarlandı: gereken yukarı, elimizde aşağı."
                if opts.get("safe_rounding", True) else "Miktarlar en yakın değere yuvarlandı.")
     if pr:
-        out.append("Tutar = alınacak × en ucuz birim fiyat. "
+        out.append(("Tutar = alınacak × seçilen teklifin birim fiyatı (önce malzeme tercihi ve “tercih "
+                    "edilen” firma, sonra en ucuz; “bitirilecek” ve “bu malzemede alma” firmaların "
+                    "teklifleri seçilmedi). " if pr.get("status_used") else
+                    "Tutar = alınacak × en ucuz birim fiyat. ")
                    + ("Ambalaj katına yuvarlanmış miktar ve tutarı ayrıca gösterildi."
                       if pr.get("round_to_package") else
                       "Firmalar tam ambalaj sattığı için gerçek alım biraz daha fazla olabilir."))
     if opts.get("subtract_open_orders"):
         out.append("Açık siparişler (sipariş verildi işareti) yolda sayılıp alınacaktan düşüldü.")
     out.append("Numune lotları stoğa dahil değildir; eksi stoklu kartlar 0 sayıldı.")
-    if any((m.get("material_group") or {}).get("alts")
-           for m in (result.get("materials") or []) + (result.get("held") or [])):
+    rows_all = (result.get("materials") or []) + (result.get("held") or [])
+    po_used = any((m.get("stock_phase_out") or 0) > 0 for m in rows_all)
+    if any((m.get("material_group") or {}).get("alts") for m in rows_all):
         out.append("“Aynı malzeme” grubundaki diğer tedarikçi kartları (eşdeğer kartlar) satırlarda bilgi "
-                   "olarak yazıldı; lab bunları ayrı ürün saydığı için stokları ihtiyaçtan düşülmedi.")
+                   "olarak yazıldı; lab bunları ayrı ürün saydığı için stokları ihtiyaçtan düşülmedi"
+                   + (" (bitirilecek tedarikçi kartları hariç)." if po_used else "."))
+    if po_used:
+        out.append("“Bitirilecek” (ya da bu malzemede alınmayacak) tedarikçinin aynı malzeme kartındaki stok "
+                   "önce kullanılacağı için ihtiyaçtan düşüldü; satırda hangi karttan ne kadar olduğu yazıyor.")
+    if pr.get("via_used") or pr.get("via_listed"):
+        out.append("Aynı malzeme grubundaki diğer kartların fiyatları “eşdeğer kart «…»” etiketiyle yazıldı. "
+                   "Eşdeğer kartın teklifi yalnız malzeme tercihi ya da “tercih edilen” firmaysa, ya da "
+                   "malzemenin kendi teklifleri (bitirilecek / alma) elendiyse seçilir; öbürleri gri, "
+                   "yalnız bilgi.")
     for e in result.get("excluded") or []:
         out.append(f"{e['name']} {e['need_text']} listede yok ({e['reason']}).")
     for h in result.get("held") or []:
@@ -1222,7 +1531,8 @@ def notes_lines(result: dict) -> List[str]:
         txt += (f"bekletiliyor: {h['reason'].rstrip('. ')}" if h.get("reason") else "teyit bekliyor")
         txt += "; listeye ve toplama girmedi."
         if h.get("amount") is not None and h.get("supplier"):
-            txt += (f" Alınırsa en ucuz teklifle ({h['supplier']}, {price_text(h['price'])} "
+            txt += (f" Alınırsa {'seçilen' if pr.get('status_used') else 'en ucuz'} teklifle "
+                    f"({h['supplier']}, {price_text(h['price'])} "
                     f"{CURRENCY_SYMBOL.get(cur, cur)}/{UNIT_TEXT.get(h['price_unit'], h['price_unit'])}) "
                     f"yaklaşık {money(h['amount'], cur)} tutar.")
         out.append(txt)
@@ -1272,10 +1582,14 @@ def sections(result: dict) -> List[dict]:
     lbl = sorted([m for m in to_buy if m["kind"] == "label"],
                  key=lambda m: (grp(m) != "list", -(m.get("amount") or 0),
                                 -float(m["display"]["buy_num"] or 0), alnum_fold(m["name"])))
+    picked = pr.get("status_used")
     add("raw_priced", raw_p, total=tot(raw_p),
         summary=f"{len(raw_p)} kalem, toplam {money(tot(raw_p), cur)}",
-        subtitle="Kalın yazılan tedarikçi en ucuz olanı; tutar onunla hesaplandı. "
-                 "Gri satırlar diğer teklifler ve sistemdeki kayıtlar.")
+        subtitle=("Kalın yazılan tedarikçi seçilen teklif: önce malzeme tercihi ve “tercih edilen” firma, "
+                  "sonra en ucuz; “bitirilecek” ve “bu malzemede alma” firmalar seçilmez. Tutar onunla "
+                  "hesaplandı. Gri satırlar diğer teklifler ve sistemdeki kayıtlar." if picked else
+                  "Kalın yazılan tedarikçi en ucuz olanı; tutar onunla hesaplandı. "
+                  "Gri satırlar diğer teklifler ve sistemdeki kayıtlar."))
     add("raw_unpriced", raw_u, summary=f"{len(raw_u)} kalem",
         subtitle="Satırda, sistemde bu malzeme için kayıtlı firma (stok kartı, son alım, numune, sipariş) "
                  "ve aynı malzemenin diğer kartları yazıyor.")
@@ -1293,7 +1607,8 @@ def sections(result: dict) -> List[dict]:
     chosen = sup.get("chosen") or []
     add("suppliers", chosen, total=sum(b["total"] for b in chosen),
         summary=f"{len(chosen)} firma, toplam {money(sum(b['total'] for b in chosen), cur)}",
-        subtitle="Her malzeme en ucuz teklifi veren firmanın altında.")
+        subtitle=("Her malzeme seçilen teklifi veren firmanın altında (tercih, sonra en ucuz)." if picked
+                  else "Her malzeme en ucuz teklifi veren firmanın altında."))
     cands = list(sup.get("candidates") or [])
     if sup.get("unrelated"):
         cands.append({"key": "__none__", "name": "Sistemde hiçbir firmayla ilişkisi yok",
@@ -1321,6 +1636,19 @@ def sections(result: dict) -> List[dict]:
                          "text": "Aynı firmanın birden fazla kartı var (bilgiyi tek karta girin): "
                                  + "; ".join(f"{s['name']}: " + " / ".join(f"“{c}”" for c in s["cards"])
                                              for s in chk["duplicate_cards"]) + "."})
+    if chk.get("phase_out_firms"):
+        chk_rows.append({"code": "phase_out_firms", "suppliers": chk["phase_out_firms"],
+                         "text": "“Bitirilecek — alma” işaretli firmalar (teklifleri seçilmedi, adaylara "
+                                 "girmedi): " + ", ".join(s["name"] + (f" ({s['reason']})" if s.get("reason") else "")
+                                                          for s in chk["phase_out_firms"]) + "."})
+    if chk.get("status_conflicts"):
+        chk_rows.append({"code": "status_conflicts", "suppliers": chk["status_conflicts"],
+                         "text": "Aynı firmanın kartları farklı işaretlenmiş (durumu birleştirin ya da "
+                                 "eşitleyin): " + "; ".join(
+                                     f"{c['name']}: " + " / ".join(
+                                         f"“{n}” {STATUS_TEXT.get(st, st)}"
+                                         for st, ns in sorted(c["names_by_status"].items()) for n in ns)
+                                     for c in chk["status_conflicts"]) + "."})
     owner = clean_text(opts.get("checklist_owner"))
     add("checklist", chk_rows, title=SECTION_TITLES["checklist"] + (f" ({owner} için)" if owner else ""),
         subtitle="Bu listedeki firmaların bilgileri sisteme girilmeli.")

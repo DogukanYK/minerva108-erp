@@ -12,7 +12,10 @@ benzer kart) · "aynı malzeme" grubu (birleşmez, benzer-ad bastırılır,
 alternatifler + group_alt_stock, ihtiyaç değişmez) · ikinci kart uyarısı ·
 triple5 tablo · hariç/bekletilen ·
 reçetesiz / ambalajsız / boy uyuşmazlığı / çift satır · kapasite · ürün
-dökümü · bitmiş stok düşme · kapsam metni · DB yükleyici (domain kapsamı).
+dökümü · bitmiş stok düşme · kapsam metni · DB yükleyici (domain kapsamı) ·
+"bitirilecek" tedarikçi kartının grup stoğu (ihtiyaçtan düşülür, satırlar
+arası ortak havuz, seçenek kapalı / brüt / planda kendi satırı → eski
+davranış, "alma" tercihi, DB yükleyicide firma anahtarı düzeyinde durum).
 """
 from datetime import datetime, timedelta
 
@@ -839,3 +842,154 @@ def test_load_inputs_material_groups_active_and_domain_scoped(db_session):
     assert inp.mgroup_names == {g.id: "Shea"}
     m = mat(compute(inp, PlanRequest(lines=[{"recipe_id": ids["new"], "qty": 1}])), ids["oil"])
     assert [a["item_id"] for a in m["material_group"]["alts"]] == [ids["oil2"]]
+
+
+# ─── "Bitirilecek" tedarikçi kartlarının stoğu (count_phase_out_stock) ──────
+
+# Jojoba: KRK kartı (normal), Hammadde Sepeti kartı (bitirilecek — 1 kg
+# satıyor), Naturalya kartı (normal), eski kg kartı (bitirilecek ama birimi
+# farklı → sayılmaz).
+JJ_KRK = it(201, "JOJOBA YAĞI", unit="g", stock=100)
+JJ_SEPET = it(202, "JOJOBA YAĞI — HAMMADDE SEPETİ", unit="g", stock=500)
+JJ_NAT = it(203, "JOJOBA OIL", unit="g", stock=0)
+JJ_KG = it(204, "JOJOBA ESKİ", unit="kg", stock=3)
+JJ = [JJ_KRK, JJ_SEPET, JJ_NAT, JJ_KG]
+JJ_PO = dict(mgroup_of={201: 9, 202: 9, 203: 9, 204: 9}, mgroup_names={9: "Jojoba"},
+             card_supplier={201: 1, 202: 2, 203: 3, 204: 2},
+             supplier_status={1: "normal", 2: "phase_out", 3: "normal"},
+             supplier_names={1: "KRK GIDA", 2: "HAMMADDE SEPETİ", 3: "NATURALYA"})
+R_JJ_KRK = rec(301, "Krem", [(201, 4)])           # 100 adet → 400 g
+R_JJ_NAT = rec(302, "Serum", [(203, 4)])          # 100 adet → 400 g
+
+
+def test_phase_out_alt_stock_reduces_buy_with_caution():
+    res = compute(inputs(JJ, [R_JJ_KRK], **JJ_PO), req([{"recipe_id": 301, "qty": 100}]))
+    m = mat(res, 201)
+    assert m["need"] == pytest.approx(400)
+    assert m["stock_phase_out"] == pytest.approx(300) and m["stock"] == pytest.approx(400)   # 100 + 300
+    assert m["buy"] == pytest.approx(0) and m["status"] == "yeterli"
+    assert m["phase_out_from"] == [{"item_id": 202, "name": "JOJOBA YAĞI — HAMMADDE SEPETİ", "supplier_id": 2,
+                                    "supplier": "HAMMADDE SEPETİ", "reason": "phase_out", "qty": 300.0,
+                                    "qty_text": "300 gram"}]
+    c = next(c for c in m["cautions"] if c["code"] == "phase_out_stock")
+    assert c["severity"] == "warn"
+    assert c["text"] == ("«JOJOBA YAĞI — HAMMADDE SEPETİ» (HAMMADDE SEPETİ, bitirilecek tedarikçi) kartındaki "
+                         "300 gram önce kullanılacak — ihtiyaçtan düşüldü.")
+    g = next(c for c in m["cautions"] if c["code"] == "group_alt_stock")
+    assert "HAMMADDE SEPETİ»" not in g["text"] and "«JOJOBA ESKİ» kartında stok var (3,0 kg; birimi farklı)" in g["text"]
+
+
+def test_phase_out_pool_shared_between_rows_counted_once():
+    res = compute(inputs(JJ, [R_JJ_KRK, R_JJ_NAT], **JJ_PO),
+                  req([{"recipe_id": 301, "qty": 100}, {"recipe_id": 302, "qty": 100}]))
+    krk, nat = mat(res, 201), mat(res, 203)
+    assert krk["stock_phase_out"] == pytest.approx(300) and krk["buy"] == pytest.approx(0)
+    assert nat["stock_phase_out"] == pytest.approx(200)                 # 500 − 300: kalan havuz
+    assert nat["buy"] == pytest.approx(200) and nat["display"]["buy_text"] == "200 gram"
+    assert krk["stock_phase_out"] + nat["stock_phase_out"] == pytest.approx(JJ_SEPET.current_stock)
+    # planda kendi satırı olan kart (KRK ↔ NATURALYA) bitirilecek havuza girmez
+    assert [a["item_id"] for a in nat["phase_out_from"]] == [202]
+
+
+def test_phase_out_option_off_or_gross_or_alt_in_plan_keeps_old_behaviour():
+    base = mat(compute(inputs(JJ, [R_JJ_KRK]), req([{"recipe_id": 301, "qty": 100}])), 201)
+    off = mat(compute(inputs(JJ, [R_JJ_KRK], **JJ_PO),
+                      req([{"recipe_id": 301, "qty": 100}], count_phase_out_stock=False)), 201)
+    assert off["buy"] == base["buy"] == pytest.approx(300) and off["stock_phase_out"] == 0
+    assert "phase_out_stock" not in codes(off)
+    assert "«JOJOBA YAĞI — HAMMADDE SEPETİ» (500 gram)" in next(
+        c for c in off["cautions"] if c["code"] == "group_alt_stock")["text"]
+    gross = mat(compute(inputs(JJ, [R_JJ_KRK], **JJ_PO),
+                        req([{"recipe_id": 301, "qty": 100}], stock_mode="gross")), 201)
+    assert gross["stock_phase_out"] == 0 and gross["buy"] == pytest.approx(400)
+    both = compute(inputs(JJ, [rec(303, "İkili", [(201, 4), (202, 1)])], **JJ_PO),
+                   req([{"recipe_id": 303, "qty": 100}]))
+    assert mat(both, 201)["stock_phase_out"] == 0 and mat(both, 201)["buy"] == pytest.approx(300)
+    assert mat(both, 202)["buy"] == pytest.approx(0)                   # kendi satırında kullanılıyor
+
+
+def test_avoid_pref_card_counts_like_phase_out():
+    po = dict(JJ_PO, supplier_status={1: "normal", 2: "normal", 3: "normal"}, avoid={201: {2}})
+    m = mat(compute(inputs(JJ, [R_JJ_KRK], **po), req([{"recipe_id": 301, "qty": 100}])), 201)
+    assert m["stock_phase_out"] == pytest.approx(300)
+    assert "(HAMMADDE SEPETİ, bu malzemede alınmayacak tedarikçi)" in next(
+        c for c in m["cautions"] if c["code"] == "phase_out_stock")["text"]
+    # "alma" kararı yalnız o satırın kartları için: NATURALYA satırında 202 normal
+    n = mat(compute(inputs(JJ, [R_JJ_NAT], **po), req([{"recipe_id": 302, "qty": 100}])), 203)
+    assert n["stock_phase_out"] == 0 and n["buy"] == pytest.approx(400)
+
+
+def test_load_inputs_supplier_status_by_firm_and_avoid_expanded(db_session):
+    from database import Item, MaterialGroup, MaterialSupplierPref, Supplier
+    ids = _seed(db_session)
+    a = Supplier(name="TATLIDİLİMLER", domain="cosmetics")
+    a2 = Supplier(name="TATLİDİLİMLER", domain="cosmetics", purchase_status="phase_out", status_reason="1 kg")
+    nat = Supplier(name="NATURALYA", domain="cosmetics")
+    db_session.add_all([a, a2, nat])
+    g = MaterialGroup(name="Shea", domain="cosmetics")
+    db_session.add(g)
+    db_session.flush()
+    oil, oil2 = db_session.get(Item, ids["oil"]), db_session.get(Item, ids["oil2"])
+    oil.material_group_id = oil2.material_group_id = g.id
+    oil.supplier_id, oil2.supplier_id = nat.id, a.id
+    db_session.add_all([
+        MaterialSupplierPref(domain="cosmetics", material_group_id=g.id, supplier_id=nat.id, preference="avoid"),
+        # kartın kendi kararı grubu ezer: oil2'de NATURALYA "alma" değil
+        MaterialSupplierPref(domain="cosmetics", item_id=oil2.id, supplier_id=nat.id, preference="preferred")])
+    db_session.commit()
+    inp = load_inputs(db_session, PlanRequest(lines=[{"recipe_id": ids["new"], "qty": 1}]), "cosmetics")
+    assert inp.card_supplier[ids["oil"]] == nat.id and inp.card_supplier[ids["oil2"]] == a.id
+    assert inp.supplier_status[a.id] == inp.supplier_status[a2.id] == "phase_out"   # aynı firma anahtarı
+    assert inp.supplier_status[nat.id] == "normal"
+    assert inp.avoid == {ids["oil"]: {nat.id}}
+    m = mat(compute(inp, PlanRequest(lines=[{"recipe_id": ids["new"], "qty": 50}])), ids["oil"])
+    assert m["need"] == pytest.approx(500) and m["stock_phase_out"] == pytest.approx(50)   # oil2 bitirilecek
+    assert m["buy"] == pytest.approx(50)                                # 500 − 400 − 50
+
+
+def test_held_row_does_not_take_from_phase_out_pool():
+    res = compute(inputs(JJ, [R_JJ_KRK, R_JJ_NAT], **JJ_PO),
+                  req([{"recipe_id": 301, "qty": 100}, {"recipe_id": 302, "qty": 100}],
+                      held_items=[{"item_id": 201, "reason": "teyit"}]))
+    held, nat = mat(res, 201, "held"), mat(res, 203)
+    assert held["stock_phase_out"] == 0                                 # bekletilen pay almaz
+    assert nat["stock_phase_out"] == pytest.approx(400) and nat["buy"] == pytest.approx(0)
+
+
+def test_phase_out_pool_covering_need_leaves_nothing_to_buy_after_safe_rounding():
+    """Havuz eksiği tam karşılıyorsa güvenli yuvarlamalı gösterimde de
+    alınacak 0 olmalı (gereken yukarı / elimizde aşağı yuvarlanınca tam eksik
+    kadar alım "yeterli" satırda "1 gram" bırakıyordu)."""
+    gli = it(211, "GLİ", unit="g", stock=0)
+    gli_po = it(212, "GLİ PO", unit="g", stock=5000)
+    po = dict(mgroup_of={211: 8, 212: 8}, mgroup_names={8: "Gliserin"}, card_supplier={212: 2},
+              supplier_status={2: "phase_out"}, supplier_names={2: "HAMMADDE SEPETİ"})
+    m = mat(compute(inputs([gli, gli_po], [rec(311, "Krem", [(211, 1.2345)])], **po),
+                    req([{"recipe_id": 311, "qty": 1000}])), 211)
+    assert m["need"] == pytest.approx(1234.5) and m["status"] == "yeterli"
+    assert m["stock_phase_out"] == pytest.approx(1235)                 # tam birime yukarı
+    assert (m["display"]["buy_text"], m["display"]["buy_num"]) == ("0 gram", 0)
+    assert m["display"]["need_text"] == m["display"]["stock_text"] == "1.235 gram"
+    # adet: 10,5 → 11 adet alınır havuzdan, alınacak 0
+    cap = it(221, "KAPAK", cat="Ambalaj", unit="adet", stock=0)
+    cap_po = it(222, "KAPAK PO", cat="Ambalaj", unit="adet", stock=50)
+    po = dict(po, mgroup_of={221: 7, 222: 7}, mgroup_names={7: "Kapak"}, card_supplier={222: 2})
+    m = mat(compute(inputs([cap, cap_po], [rec(312, "Krem", [(221, 0.0105)])], **po),
+                    req([{"recipe_id": 312, "qty": 1000}])), 221)
+    assert m["status"] == "yeterli" and m["stock_phase_out"] == pytest.approx(11)
+    assert m["display"]["buy_text"] == "0 adet"
+    # kg kartı: 0,001 kg'a (1 g) yukarı
+    oil = it(231, "YAĞ", unit="kg", stock=0.3)
+    oil_po = it(232, "YAĞ PO", unit="kg", stock=4)
+    po = dict(po, mgroup_of={231: 6, 232: 6}, mgroup_names={6: "Yağ"}, card_supplier={232: 2})
+    m = mat(compute(inputs([oil, oil_po], [rec(313, "Krem", [(231, 0.0012345)])], **po),
+                    req([{"recipe_id": 313, "qty": 1000}])), 231)
+    assert m["status"] == "yeterli" and m["stock_phase_out"] == pytest.approx(0.935)
+    assert m["display"]["buy_num"] == 0
+    # havuz yetmiyorsa hepsi alınır, kalan eksik normal yuvarlanır
+    gli_po2 = it(212, "GLİ PO", unit="g", stock=1000)
+    m = mat(compute(inputs([gli, gli_po2], [rec(311, "Krem", [(211, 1.2345)])],
+                           mgroup_of={211: 8, 212: 8}, mgroup_names={8: "Gliserin"}, card_supplier={212: 2},
+                           supplier_status={2: "phase_out"}, supplier_names={2: "HAMMADDE SEPETİ"}),
+                    req([{"recipe_id": 311, "qty": 1000}])), 211)
+    assert m["stock_phase_out"] == pytest.approx(1000) and m["display"]["buy_text"] == "235 gram"

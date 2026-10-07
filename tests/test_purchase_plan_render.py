@@ -47,7 +47,7 @@ def _it(id, name, *, cat="Hammadde", unit="g", stock=0.0, pkg=None):
     return ItemRec(id=id, name=name, category=cat, unit=unit, pkg_type=pkg, current_stock=stock)
 
 
-def _report(*, mode="net", open_orders=False, with_packaging=False):
+def _report(*, mode="net", open_orders=False, with_packaging=False, surya_preferred=False):
     items = [
         _it(1, "GLİSERİN", stock=500),
         _it(2, "SHEA & BUTTER <özel>"),
@@ -88,6 +88,8 @@ def _report(*, mode="net", open_orders=False, with_packaging=False):
                                   email="info@umaychem.example"),
                    2: SupplierRec(id=2, name="DOALİNN")},
         card_supplier={3: 2})
+    if surya_preferred:
+        pin.suppliers[3] = SupplierRec(id=3, name="SURYA KİMYA", status="preferred")
     return attach(res, pin, None, currency="USD")
 
 
@@ -134,6 +136,18 @@ def test_pdf_landscape_sections_and_alindi():
     assert "İletişim bilgisi sistemde yok — Satın alma ekibi girecek" in text
     # XML'e özel karakterli ad kaçışlanır (PDF düşmez, ad aynen görünür)
     assert "SHEA & BUTTER <özel>" in text
+
+
+def test_pdf_subtitle_amount_basis_follows_selection_rule():
+    """Başlık altındaki "Tutar = …" cümlesi notlar / bölüm alt başlıklarıyla
+    çelişmesin: seçimi tercih değiştirdiyse "seçilen teklif" der."""
+    _, text = _pdf_text(render_pdf(_report()))
+    assert "Tutar = alınacak × en ucuz birim fiyat." in text
+    res = _report(surya_preferred=True)
+    assert _mat(res, "GLİSERİN")["supplier"] == "SURYA KİMYA" and res["pricing"]["status_used"] is True
+    _, text = _pdf_text(render_pdf(res))
+    assert "en ucuz birim fiyat" not in text
+    assert "Tutar = alınacak × seçilen teklifin birim fiyatı (önce malzeme tercihi" in text
 
 
 def test_pdf_empty_section_not_printed_and_packaging_when_present():

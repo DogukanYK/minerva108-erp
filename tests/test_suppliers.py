@@ -64,6 +64,8 @@ def test_update_supplier_requires_items_edit(client: TestClient):
 
 import json  # noqa: E402
 
+import pytest  # noqa: E402
+
 from database import AdminAuditLog, Inventory, Item, Supplier, SupplierPrice  # noqa: E402
 
 
@@ -337,3 +339,211 @@ def test_supplier_permission_backfill_for_override_users(db_session):
     _backfill_perm_suppliers()
     db_session.expire_all()
     assert perms(mgr)["suppliers"]["status"] is False
+
+
+# ─── Tedarikçi birleştirme (P1b — 07.10.2026) ───────────────────────────────
+
+from database import (MaterialGroup, MaterialSupplierPref, ProductionConsumption,  # noqa: E402
+                      ProductionHistory, SampleAnalysis, SampleAnalysisIngredient, StockOrderFlag)
+
+
+def _dup_pair(db, *, domain="cosmetics"):
+    """Prod'daki mükerrer kart: TATLİDİLİMLER (kaybeden) / TATLIDİLİMLER (kazanan)
+    + kaybedene bağlı her türden kayıt."""
+    loser = Supplier(name="TATLİDİLİMLER", phone="0212 111 11 11", email="satis@tatli.com",
+                     notes="1 kg satıyor", purchase_status="phase_out", status_reason="küçük miktar",
+                     domain=domain)
+    survivor = Supplier(name="TATLIDİLİMLER", contact_person="Ayşe", domain=domain)
+    db.add_all([loser, survivor])
+    db.flush()
+    it = Item(name="SETİL STEARİL ALKOL", category="Hammadde", unit="g", supplier_id=loser.id, domain=domain)
+    it2 = Item(name="GLİSERİN", category="Hammadde", unit="g", supplier_id=loser.id, domain=domain,
+               is_active=False)
+    db.add_all([it, it2])
+    db.flush()
+    grp = MaterialGroup(name="Setil", domain=domain)
+    db.add(grp)
+    db.flush()
+    lot = Inventory(item_id=it.id, supplier_id=loser.id, lot_number="L1", quantity=5, domain=domain)
+    ph = ProductionHistory(recipe_name="Krem", produced_quantity=1, domain=domain)
+    db.add_all([lot, ph,
+                SupplierPrice(item_id=it.id, supplier_id=loser.id, supplier_name="TATLİDİLİMLER",
+                              unit_price=3.0, price_unit="kg", currency="USD", domain=domain),
+                SupplierPrice(item_id=it.id, supplier_id=survivor.id, supplier_name="TATLIDİLİMLER",
+                              unit_price=3.2, price_unit="kg", currency="USD", domain=domain),
+                StockOrderFlag(item_id=it.id, supplier_id=loser.id, quantity=10, domain=domain),
+                # aynı grup için iki firmanın da tercihi → kaybedeninki düşer
+                MaterialSupplierPref(domain=domain, material_group_id=grp.id, supplier_id=loser.id,
+                                     preference="avoid"),
+                MaterialSupplierPref(domain=domain, material_group_id=grp.id, supplier_id=survivor.id,
+                                     preference="preferred"),
+                MaterialSupplierPref(domain=domain, item_id=it.id, supplier_id=loser.id,
+                                     preference="preferred", rank=2)])
+    db.flush()
+    db.add(ProductionConsumption(production_id=ph.id, kind="raw", item_id=it.id, inventory_id=lot.id,
+                                 lot_number="L1", supplier_id=loser.id, supplier_name="TATLİDİLİMLER",
+                                 quantity=1, unit="g", domain=domain))
+    an = SampleAnalysis(document_no="NA-1", bulk_name="Deneme", domain=domain)
+    db.add(an)
+    db.flush()
+    db.add(SampleAnalysisIngredient(analysis_id=an.id, item_id=it.id, item_name=it.name,
+                                    supplier_name="TATLİDİLİMLER"))
+    db.commit()
+    return loser.id, survivor.id, it.id, it2.id, grp.id
+
+
+def test_merge_preview_counts_and_no_change(authed_client: TestClient, db_session):
+    lid, sid, *_ = _dup_pair(db_session)
+    r = authed_client.get(f"/api/suppliers/{lid}/merge-preview/{sid}")
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["counts"] == {"items": 2, "items_active": 1, "lots": 1, "prices": 1, "price_overlaps": 1,
+                           "order_flags": 1, "consumptions": 1, "prefs": 2, "prefs_dropped": 1}
+    assert b["copy_fields"] == ["phone", "email", "notes"]
+    assert "kendi durumunu (Normal) korur" in b["status_warning"]
+    db_session.expire_all()
+    assert db_session.get(Supplier, lid).is_active is True          # önizleme veri değiştirmez
+
+
+def test_merge_moves_every_fk_and_deactivates_loser(authed_client: TestClient, db_session):
+    lid, sid, iid, iid2, gid = _dup_pair(db_session)
+    r = authed_client.post(f"/api/suppliers/{lid}/merge-into/{sid}", headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["counts"]["items"] == 2 and body["warnings"] and "birleştirildi" in body["message"]
+    db_session.expire_all()
+    loser, survivor = db_session.get(Supplier, lid), db_session.get(Supplier, sid)
+    assert loser.is_active is False and "«TATLIDİLİMLER»" in loser.notes and loser.notes.startswith("1 kg")
+    assert survivor.purchase_status == "normal"                       # kazanan durumunu korur
+    assert (survivor.phone, survivor.email, survivor.contact_person) == \
+        ("0212 111 11 11", "satis@tatli.com", "Ayşe")                 # boş alanlar dolduruldu
+    assert db_session.get(Item, iid).supplier_id == sid and db_session.get(Item, iid2).supplier_id == sid
+    assert db_session.query(Inventory).filter(Inventory.supplier_id == lid).count() == 0
+    prices = db_session.query(SupplierPrice).filter(SupplierPrice.item_id == iid).all()
+    assert {p.supplier_id for p in prices} == {sid}
+    assert {p.supplier_name for p in prices} == {"TATLİDİLİMLER", "TATLIDİLİMLER"}   # metin kalır
+    assert db_session.query(StockOrderFlag).one().supplier_id == sid
+    pc = db_session.query(ProductionConsumption).one()
+    assert (pc.supplier_id, pc.supplier_name) == (sid, "TATLİDİLİMLER")
+    prefs = db_session.query(MaterialSupplierPref).order_by(MaterialSupplierPref.id).all()
+    assert [(p.material_group_id, p.item_id, p.supplier_id, p.preference) for p in prefs] == [
+        (gid, None, sid, "preferred"), (None, iid, sid, "preferred")]     # grup çakışması: kazananınki
+    assert db_session.query(SampleAnalysisIngredient).one().supplier_name == "TATLİDİLİMLER"   # anlık ad
+    a = _audits(db_session, "supplier.merge")
+    assert len(a) == 1 and a[0].target_id == sid
+    d = json.loads(a[0].details)
+    assert d["kaybeden_id"] == lid and d["sayilar"]["lots"] == 1
+    # ikinci kez: kaybeden artık pasif → 409
+    r = authed_client.post(f"/api/suppliers/{lid}/merge-into/{sid}", headers=ORIGIN)
+    assert r.status_code == 409
+    # birleşmeden sonra çakışan (kart, firma, birim) iki satır: yalnız fiyatı
+    # düzeltmek engellenmez; birimi/firmayı çakışmaya çevirmek yine 409
+    keep = next(p for p in prices if p.supplier_name == "TATLIDİLİMLER")
+    other = next(p for p in prices if p.id != keep.id)
+    r = authed_client.put(f"/api/supplier-prices/{keep.id}", json={"unit_price": 3.5}, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    assert r.json()["unit_price"] == 3.5
+    r = authed_client.put(f"/api/supplier-prices/{other.id}", json={"price_unit": "kg", "note": "eski"},
+                          headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    db_session.add(SupplierPrice(item_id=iid, supplier_id=sid, supplier_name="TATLIDİLİMLER", unit_price=1.0,
+                                 price_unit="l", currency="USD", domain="cosmetics"))
+    db_session.commit()
+    r = authed_client.put(f"/api/supplier-prices/{other.id}", json={"price_unit": "l"}, headers=ORIGIN)
+    assert r.status_code == 409 and r.json()["code"] == "price_exists"
+
+
+@pytest.mark.parametrize("call", ["receive", "pref", "price"])
+def test_write_to_loser_during_merge_waits_and_is_rejected(authed_client: TestClient, db_session, call):
+    """Birleştirme kaybedeni kilitliyken gelen mal kabul / tercih / fiyat
+    yazımı beklemeli ve commit sonrası pasif kaybedeni görüp reddetmeli —
+    kontrol kilitsiz okusaydı lot / tercih / fiyat pasif kaybedene bağlı kalırdı."""
+    import threading
+    from core.suppliers import merge_suppliers
+    lid, sid, *_ = _dup_pair(db_session)
+    free = Item(name="KAOLİN", category="Hammadde", unit="g", domain="cosmetics")
+    db_session.add(free)
+    db_session.commit()
+    fid = free.id
+    if call == "receive":
+        do = lambda: authed_client.post("/api/inventory/receive", headers=ORIGIN, json={  # noqa: E731
+            "item_id": fid, "supplier_id": lid, "lot_number": "YR-1", "quantity": 5})
+        expect = 400
+    elif call == "pref":
+        do = lambda: authed_client.post("/api/material-prefs", headers=ORIGIN, json={  # noqa: E731
+            "item_id": fid, "supplier_id": lid, "preference": "preferred", "rank": 1})
+        expect = 409
+    else:
+        do = lambda: authed_client.post("/api/supplier-prices", headers=ORIGIN, json={  # noqa: E731
+            "item_id": fid, "supplier_id": lid, "unit_price": 2.0, "currency": "USD", "price_unit": "kg"})
+        expect = 400
+    merge_suppliers(db_session, lid, sid, "cosmetics", "test")        # kilitli, commit yok
+    out = {}
+    th = threading.Thread(target=lambda: out.setdefault("r", do()))
+    th.start()
+    th.join(timeout=1.5)
+    assert th.is_alive(), "yazım birleştirmenin kilidini beklemeliydi"
+    db_session.commit()
+    th.join(timeout=20)
+    assert not th.is_alive()
+    assert out["r"].status_code == expect, out["r"].text
+    assert "pasif" in out["r"].json()["detail"]
+    db_session.expire_all()
+    assert db_session.query(Inventory).filter(Inventory.supplier_id == lid).count() == 0
+    assert db_session.query(MaterialSupplierPref).filter(MaterialSupplierPref.supplier_id == lid).count() == 0
+    assert db_session.query(SupplierPrice).filter(SupplierPrice.supplier_id == lid).count() == 0
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_undo_of_earlier_item_edit_does_not_relink_merged_loser(client: TestClient, db_session, legacy):
+    """Birleştirmeden ÖNCE yapılmış kart düzenlemesinin "Geri al"ı kartı pasif
+    kaybedene geri bağlamaz (yeni kayıtta `after_supplier_id`, eski kayıtta
+    kaybedenin pasifliği yakalar); diğer alanlar geri alınır.  Etkin eski
+    tedarikçiye dönüş normal çalışır."""
+    from database import UndoLog
+    lid, sid, iid, *_ = _dup_pair(db_session)
+    body = {"name": "SETİL STEARİL ALKOL", "category": "Hammadde", "unit": "g"}
+    _login(client, "songul")
+    r = client.put(f"/api/items/{iid}", headers=ORIGIN, json={**body, "min_stock": 300, "supplier_id": lid})
+    assert r.status_code == 200, r.text
+    assert client.post(f"/api/suppliers/{lid}/merge-into/{sid}", headers=ORIGIN).status_code == 200
+    if legacy:                                   # P1b öncesi kayıt: after_supplier_id yok
+        db_session.expire_all()
+        e = db_session.query(UndoLog).order_by(UndoLog.id.desc()).first()
+        e.payload = {k: v for k, v in e.payload.items() if k != "after_supplier_id"}
+        db_session.commit()
+    r = client.post("/api/undo", headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    assert "Tedarikçi bağı değiştirilmedi" in r.json()["message"]
+    db_session.expire_all()
+    it = db_session.get(Item, iid)
+    assert it.supplier_id == sid and it.min_stock_level == 0          # bağ kaldı, min stok geri alındı
+    # etkin eski tedarikçiye dönüş: geri alınır
+    other = Supplier(name="NATURALYA", domain="cosmetics")
+    db_session.add(other)
+    db_session.commit()
+    r = client.put(f"/api/items/{iid}", headers=ORIGIN, json={**body, "supplier_id": other.id})
+    assert r.status_code == 200, r.text
+    r = client.post("/api/undo", headers=ORIGIN)
+    assert r.status_code == 200 and "Tedarikçi bağı" not in r.json()["message"]
+    db_session.expire_all()
+    assert db_session.get(Item, iid).supplier_id == sid
+
+
+def test_merge_guards_same_other_domain_and_permission(client: TestClient, db_session):
+    lid, sid, *_ = _dup_pair(db_session)
+    other = Supplier(name="Takviye Firma", domain="supplement")
+    db_session.add(other)
+    db_session.commit()
+    _login(client, "dogukan")
+    assert client.post(f"/api/suppliers/{lid}/merge-into/{lid}", headers=ORIGIN).status_code == 400
+    assert client.post(f"/api/suppliers/{lid}/merge-into/{other.id}", headers=ORIGIN).status_code == 404
+    assert client.get(f"/api/suppliers/{lid}/merge-preview/{other.id}").status_code == 404
+    _switch(client, "supplement")
+    assert client.post(f"/api/suppliers/{lid}/merge-into/{sid}", headers=ORIGIN).status_code == 404
+    _switch(client, "cosmetics")
+    _login(client, "meltem")                                          # LabTech: suppliers.merge yok
+    assert client.get(f"/api/suppliers/{lid}/merge-preview/{sid}").status_code == 403
+    assert client.post(f"/api/suppliers/{lid}/merge-into/{sid}", headers=ORIGIN).status_code == 403
+    _login(client, "songul")                                          # LabLead: var
+    assert client.post(f"/api/suppliers/{lid}/merge-into/{sid}", headers=ORIGIN).status_code == 200

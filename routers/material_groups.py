@@ -15,7 +15,9 @@ tedarikçiyi, numune çevirme hedef kartı bu bağdan bulur.  İş kuralları ve
 KURALLAR
   • Kart en fazla TEK grupta — başka gruptaki kart `move: true` olmadan
     eklenmez (409 `in_other_group`).
-  • Aktif üyesi 2'nin altına düşen grup kendiliğinden dağılır.
+  • Aktif üyesi 2'nin altına düşen grup kendiliğinden dağılır; tedarikçi
+    tercihleri kalan karta (kart tercihi) ve — "taşı" ile dağıldıysa —
+    kartları alan gruba geçer (audit `tercihler_tasindi`).
   • Ad AKTİF gruplar arasında panel içinde TR-katlanmış tekil (409).
   • Bitmiş Ürün gruplanmaz; hammadde ile ambalaj aynı grupta olmaz.
   • Birim ailesi farklıysa (126 "g" ↔ 599 "adet") engellenmez, `warning` döner.
@@ -26,6 +28,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from core import material_groups as mg
@@ -33,7 +36,7 @@ from core.audit import log_admin_event
 from core.domain import active_domain
 from core.permissions import require_permission
 from core.stock_lots import lot_kind
-from database import Item, MaterialGroup, get_db
+from database import Item, MaterialGroup, MaterialSupplierPref, get_db
 
 router = APIRouter(prefix="/api/material-groups", tags=["material-groups"])
 
@@ -117,6 +120,14 @@ def _in_other_group(it: Item, other: MaterialGroup) -> JSONResponse:
 def _name_conflict(existing: MaterialGroup) -> JSONResponse:
     return _err(409, f"Bu adla bir grup zaten var: «{existing.name}».",
                 code="name_conflict", existing={"id": existing.id, "name": existing.name})
+
+
+def _group_pref_count(db: Session, group_id: int) -> int:
+    """Grubun grup kapsamlı tedarikçi tercihi sayısı (taşıma audit'i için)."""
+    db.flush()
+    return int(db.query(func.count(MaterialSupplierPref.id))
+               .filter(MaterialSupplierPref.material_group_id == group_id,
+                       MaterialSupplierPref.item_id.is_(None)).scalar() or 0)
 
 
 def _with_meta(payload: Optional[dict], **extra) -> dict:
@@ -236,12 +247,14 @@ def create_group(
     db.flush()
     for it in ordered:
         it.material_group_id = grp.id
-    dissolved = [gid for gid in olds if mg.prune(db, gid)]
+    # Taşımayla dağılan eski grubun tedarikçi tercihleri yeni gruba geçer
+    dissolved = [gid for gid in olds if mg.prune(db, gid, heir_group_id=grp.id)]
+    prefs_moved = _group_pref_count(db, grp.id)
     db.commit()
     log_admin_event(db, request, actor=current_user, action="material_group.create",
                     target_type="material_group", target_id=grp.id, target_name=grp.name,
                     details={"item_ids": ids, "tasinan_gruplar": sorted(olds),
-                             "dagilan_gruplar": dissolved})
+                             "dagilan_gruplar": dissolved, "tercihler_tasindi": prefs_moved})
     return _with_meta(mg.group_payload(db, grp.id),
                       message=f"«{grp.name}» grubu {len(ids)} kartla kuruldu.",
                       dissolved_groups=dissolved)
@@ -313,13 +326,18 @@ def add_member(
         return _in_other_group(it, other)
 
     it.material_group_id = grp.id
-    dissolved = [other.id] if other is not None and mg.prune(db, other.id) else []
+    # Taşımayla dağılan eski grubun tedarikçi tercihleri bu gruba geçer (bu
+    # grubun aynı firmadaki kendi tercihi esas)
+    prefs_before = _group_pref_count(db, grp.id)
+    dissolved = ([other.id] if other is not None and mg.prune(db, other.id, heir_group_id=grp.id)
+                 else [])
+    prefs_moved = _group_pref_count(db, grp.id) - prefs_before
     db.commit()
     log_admin_event(db, request, actor=current_user, action="material_group.add",
                     target_type="material_group", target_id=grp.id, target_name=grp.name,
                     details={"item_id": it.id, "item": it.name,
                              "onceki_grup": other.id if other is not None else None,
-                             "dagilan_gruplar": dissolved})
+                             "dagilan_gruplar": dissolved, "tercihler_tasindi": prefs_moved})
     return _with_meta(mg.group_payload(db, grp.id),
                       message=f"«{it.name}» «{grp.name}» grubuna eklendi.",
                       dissolved_groups=dissolved)

@@ -533,9 +533,15 @@
                     <small>Gereken yukarı, elimizde aşağı yuvarlanır; alınacak gerçek eksiğin altına inmez.</small></span></label>
                 <label class="sap-check"><input type="checkbox" id="sapPkgRound">
                   <span>Ambalaj katına yuvarla
-                    <small>En ucuz teklifin ambalaj boyuna göre alınacak ve tutar ayrıca gösterilir.</small></span></label>
+                    <small>Seçilen teklifin ambalaj boyuna göre alınacak ve tutar ayrıca gösterilir.</small></span></label>
                 <label class="sap-check"><input type="checkbox" id="sapLookalike">
                   <span>Benzer adlı kart uyarısı</span></label>
+                <label class="sap-check"><input type="checkbox" id="sapRespect">
+                  <span>Tedarikçi tercihlerine uy
+                    <small>“Bitirilecek” ve bu malzemede “alma” firmalar seçilmez; malzeme tercihi ve “tercih edilen” firma en ucuzdan önce gelir. Kapalıysa yalnız en ucuz.</small></span></label>
+                <label class="sap-check"><input type="checkbox" id="sapPhaseOut">
+                  <span>Bitirilecek firmanın stoğunu önce kullan
+                    <small>Aynı malzeme grubunda “bitirilecek” (ya da bu malzemede “alma”) firmanın kartındaki stok ihtiyaçtan düşülür.</small></span></label>
                 <div>
                   <label class="sap-lbl" for="sapCurrency">Para birimi</label>
                   <select id="sapCurrency" class="sap-sel">
@@ -613,7 +619,7 @@
 
   <div id="toast-container"></div>
 
-  <script src="/static/satin-alma.js?v=2" defer></script>
+  <script src="/static/satin-alma.js?v=3" defer></script>
   <script>
     document.getElementById('logoutBtn').addEventListener('click', async function () {
       try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}

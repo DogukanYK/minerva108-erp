@@ -48,7 +48,7 @@ from typing import Dict, List, Optional
 
 from core.purchase_plan import _amount_near
 from core.purchase_pricing import (CURRENCY_SYMBOL, REL_TYPE_TEXT, alt_texts, contact_line, money, notes_lines,
-                                   order_texts, round_half_up, sections, unpriced_offer_text)
+                                   offer_tags, order_texts, round_half_up, sections, unpriced_offer_text)
 from core.xlsx_cache import inject_cached_values
 
 SHEET_LIST = "Alım listesi"
@@ -132,6 +132,17 @@ def _rel_texts(m: dict):
     return card, last_t, samples
 
 
+def _offer_name(o: Optional[dict]) -> str:
+    """T1–T3 sütunu: firma adı + durum etiketi ("tercih", "eşdeğer kart «X»",
+    " — bitirilecek, alma") — PDF/önizlemedeki etiketlerin aynısı, fiyat
+    karşılaştırması ("daha pahalı") hariç.  Etiketsiz teklifte yalnız ad."""
+    if not o:
+        return ""
+    tags, blocked = offer_tags(o)
+    t = o["name"] + (" (" + ", ".join(tags) + ")" if tags else "")
+    return t + (f" — {blocked}" if blocked else "")
+
+
 def _products_text(m: dict) -> str:
     return "; ".join(f"{p['no']}. {p['product']}" for p in m.get("per_product") or [])
 
@@ -193,10 +204,10 @@ def _sheet_list(wb, report: dict, secs: List[dict], cache: Dict[str, object]) ->
             vals = [KIND_TEXT.get(m["kind"], m["kind"]), GROUP_TEXT.get(m.get("group") or "none"),
                     m["name"], D, E, F, None, unit, m.get("supplier") or "", price, None,
                     m.get("price_source") or "",
-                    o[0]["name"] if o[0] else "", o[0]["price"] if o[0] else None,
+                    _offer_name(o[0]), o[0]["price"] if o[0] else None,
                     o[0]["package"] if o[0] else None,
-                    o[1]["name"] if o[1] else "", o[1]["price"] if o[1] else None,
-                    o[2]["name"] if o[2] else "", o[2]["price"] if o[2] else None,
+                    _offer_name(o[1]), o[1]["price"] if o[1] else None,
+                    _offer_name(o[2]), o[2]["price"] if o[2] else None,
                     card, last_t, samples, _products_text(m), _note_text(m, cur),
                     "; ".join(alt_texts(m)), "; ".join(order_texts(m))]
             r = _append_as_text(ws, vals)
@@ -280,7 +291,8 @@ def _sheet_list(wb, report: dict, secs: List[dict], cache: Dict[str, object]) ->
 def _sheet_suppliers(wb, report: dict, cur: str) -> None:
     ws = wb.create_sheet(SHEET_SUP)
     sym = CURRENCY_SYMBOL.get(cur, cur)
-    ws.append(["Firma", "Kalem (en ucuz olduğu)", f"Tutar ({sym})", "Yetkili", "Telefon", "E-posta",
+    ws.append(["Firma", "Kalem (seçildiği)" if (report.get("pricing") or {}).get("status_used")
+               else "Kalem (en ucuz olduğu)", f"Tutar ({sym})", "Yetkili", "Telefon", "E-posta",
                "Adres / şehir", "Bilgi kaynağı", "Sistemdeki kart adı", "Fiyatı olmayan kalemlerde aday",
                "İlişki türleri"])
     _style_header(ws)
