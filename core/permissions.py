@@ -122,6 +122,12 @@ PERMISSION_CATEGORIES = {
     # links = UpPromote link/kod eşlemesi, payout = ödeme kaydı,
     # settings = kademe/benchmark/skaler ayarlar.
     "influencer":    ["view", "edit", "approve", "ship", "links", "payout", "settings"],
+    # Tedarikçi satın alma tercihleri (lab isteği 07.10.2026).  status = firma
+    # durumu (normal / tercih edilen / bitirilecek — core/suppliers.py),
+    # prices = elle fiyat ekle/düzenle/sil (Excel içe aktarma finans rolünde
+    # kalır), merge = mükerrer firma kartlarını birleştir.  Kart ekle/düzenle/
+    # pasife al hâlâ items.create/edit/delete'tedir.
+    "suppliers":     ["status", "prices", "merge"],
 }
 
 # Default permission set per role — used when a user's `permissions` JSON is null.
@@ -146,6 +152,7 @@ _DEFAULT_PERMISSIONS = {
         "retention":          {"view": True,  "edit": True,  "checkout": True,  "destroy": True},
         "reviews":       {"view": True,  "invite": True,  "moderate": True,  "delete": True},
         "influencer":    {"view": True,  "edit": True,  "approve": True,  "ship": True,  "links": True,  "payout": True,  "settings": True},
+        "suppliers":     {"status": True,  "prices": True,  "merge": True},
     },
     "LabLead": {
         "items":      {"view": True,  "create": True,  "edit": True,  "delete": True,  "import": True},
@@ -162,6 +169,7 @@ _DEFAULT_PERMISSIONS = {
         "retention":       {"view": True,  "edit": True,  "checkout": True,  "destroy": True},
         "reviews":         {"view": False, "invite": False, "moderate": False, "delete": False},
         "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
+        "suppliers":     {"status": True,  "prices": True,  "merge": True},
     },
     "LabTech": {
         "items":      {"view": True,  "create": True,  "edit": False, "delete": False, "import": False},
@@ -178,6 +186,7 @@ _DEFAULT_PERMISSIONS = {
         "retention":       {"view": True,  "edit": True,  "checkout": True,  "destroy": False},
         "reviews":         {"view": False, "invite": False, "moderate": False, "delete": False},
         "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
+        "suppliers":     {"status": False, "prices": False, "merge": False},
     },
     "Staff": {
         # Read-only baseline
@@ -195,6 +204,7 @@ _DEFAULT_PERMISSIONS = {
         "retention":       {"view": True,  "edit": False, "checkout": False, "destroy": False},
         "reviews":         {"view": False, "invite": False, "moderate": False, "delete": False},
         "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
+        "suppliers":     {"status": False, "prices": False, "merge": False},
     },
     "Distributor": {
         # Dışa dönük distribütör — YALNIZ sipariş portalı, ERP'ye hiçbir erişim yok.
@@ -214,6 +224,7 @@ _DEFAULT_PERMISSIONS = {
         "retention":         {"view": False, "edit": False, "checkout": False, "destroy": False},
         "reviews":           {"view": False, "invite": False, "moderate": False, "delete": False},
         "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
+        "suppliers":     {"status": False, "prices": False, "merge": False},
     },
 }
 

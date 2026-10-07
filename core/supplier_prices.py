@@ -5,6 +5,9 @@ satın alma raporunu otomatik dolduran çekirdek mantık.
 Akış:
   • parse_stok_son_durum(data)  → Excel'i (onun sütun düzeniyle) satırlara çevirir
   • import_prices(db, rows, …)  → malzeme/tedarikçi eşler, SupplierPrice'a upsert eder
+                                  (yalnız Excel kaynaklı satırları değiştirir; elle
+                                  girilen `manual` satır korunur)
+  • price_unit_ok / serialize_price → elle fiyat uçları (routers/reports.py)
   • prices_for_items(db, …)     → rapor için malzeme başına (ucuzdan) tedarikçi listesi
   • price_per_purchase_unit(…)  → fiyatı malzemenin alım birimine (kg / l / adet) çevirir
 
@@ -26,6 +29,7 @@ from datetime import date
 from io import BytesIO
 from typing import List, Optional, Tuple
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from database import Item, Supplier, SupplierPrice
@@ -47,6 +51,9 @@ PRICE_UNITS = ("kg", "l", "adet")
 # "uyuşmuyor"a düşürürdü (satın alma planında hammadde fiyatı kalmazdı).
 LIST_PRICE_UNITS = ("kg", "l")
 SOURCE_STOK_SON_DURUM = "stok_son_durum"
+# Lab'ın elle girdiği (ya da düzenlediği) satır — POST/PUT /api/supplier-prices.
+# İçe aktarma bu satırları SİLMEZ ve aynı firmanın teklifini üstüne yazmaz.
+SOURCE_MANUAL = "manual"
 SOURCE_LABEL_MAX = 120
 
 # Malzeme birimi aileleri (Item.unit: g/kg/ml/lt/adet/kutu/rulo …).  Ağırlık ve
@@ -135,6 +142,19 @@ def _unit_family(item_unit) -> str:
     return "count"
 
 
+def price_unit_ok(item_unit, price_unit) -> bool:
+    """Elle girilen fiyat biriminin malzemeye uygunluğu (birim ailesi).
+
+    Sayılan (adet/kutu/rulo…) malzeme → yalnız 'adet'; kütle/hacim malzemesi
+    → 'kg' ya da 'l' (çapraz kg↔l `price_per_purchase_unit`'te "1 l ≈ 1 kg"
+    notuyla kullanılır).  Adet ↔ kg/l hiçbir zaman çevrilemez — öyle bir satır
+    satın alma planında "fiyat yok" olurdu."""
+    pu = (price_unit or "").strip().lower()
+    if _unit_family(item_unit) == "count":
+        return pu == "adet"
+    return pu in LIST_PRICE_UNITS
+
+
 def default_price_unit(item_unit, list_unit: str = "kg") -> str:
     """Bir malzemenin fiyat satırına yazılacak `price_unit`.
 
@@ -149,10 +169,16 @@ def import_prices(db: Session, rows: List[dict], domain: str, *,
                   currency: str = "USD", price_unit: str = "kg",
                   source_label: Optional[str] = None,
                   quoted_at: Optional[date] = None) -> dict:
-    """Satırları SupplierPrice'a yazar (malzeme başına ESKİ satırları değiştirir).
+    """Satırları SupplierPrice'a yazar (malzeme başına ESKİ Excel satırlarını değiştirir).
 
-    Malzeme `Item.name` ile, tedarikçi `Supplier.name` ile (Türkçe-katlanmış)
-    eşlenir. Eşleşmeyen tedarikçi serbest metin olarak saklanır (supplier_id NULL).
+    Malzeme `Item.name` ile, tedarikçi AKTİF `Supplier.name` ile (Türkçe-
+    katlanmış; aynı anahtarda en eski kart) eşlenir — pasife alınmış mükerrer
+    kart (TATLİDİLİMLER / TATLIDİLİMLER) fiyatı üstüne çekmesin. Eşleşmeyen
+    tedarikçi serbest metin olarak saklanır (supplier_id NULL).
+    Silme YALNIZ `source` stok_son_durum ya da boş (eski) satırlarda; lab'ın
+    elle girdiği `manual` satır korunur (`kept_manual`) ve aynı firmanın Excel
+    teklifi o malzemeye YAZILMAZ (`skipped_manual`) — aynı firma iki kez
+    görünmesin, elle girilen değer ezilmesin.
     Her satır `currency` + `price_unit` + kaynak bilgisiyle yazılır; adet
     birimli malzemeler `price_unit`'ten bağımsız olarak 'adet' alır.
     `price_unit` listenin ağırlık/hacim temelidir → yalnız `LIST_PRICE_UNITS`
@@ -173,11 +199,15 @@ def import_prices(db: Session, rows: List[dict], domain: str, *,
     for it in db.query(Item).filter(Item.domain == domain, Item.is_active == True).all():
         item_by_norm.setdefault(normalize(it.name), it)
     sup_by_norm = {}
-    for sp in db.query(Supplier).filter(Supplier.domain == domain).all():
+    for sp in (db.query(Supplier)
+               .filter(Supplier.domain == domain, Supplier.is_active == True)  # noqa: E712
+               .order_by(Supplier.id).all()):
         sup_by_norm.setdefault(normalize(sp.name), sp)
 
     items_updated = 0
     prices_inserted = 0
+    kept_manual = 0
+    skipped_manual = 0
     unmatched_materials: List[str] = []
     unmatched_suppliers = set()
 
@@ -186,12 +216,26 @@ def import_prices(db: Session, rows: List[dict], domain: str, *,
         if not it:
             unmatched_materials.append(row["material"])
             continue
-        # Replace semantics: bu malzemenin eski fiyat satırlarını sil
+        # Replace semantics: bu malzemenin eski EXCEL satırlarını sil (elle
+        # girilenler kalır).  Kaynağı boş satır içe aktarma öncesi döneme ait.
         db.query(SupplierPrice).filter(
-            SupplierPrice.item_id == it.id, SupplierPrice.domain == domain
+            SupplierPrice.item_id == it.id, SupplierPrice.domain == domain,
+            or_(SupplierPrice.source == SOURCE_STOK_SON_DURUM, SupplierPrice.source.is_(None)),
         ).delete(synchronize_session=False)
+        manual_keys = set()
+        for m in (db.query(SupplierPrice)
+                  .filter(SupplierPrice.item_id == it.id, SupplierPrice.domain == domain).all()):
+            kept_manual += 1
+            if m.supplier_id is not None:
+                manual_keys.add(("id", m.supplier_id))
+            if normalize(m.supplier_name):
+                manual_keys.add(("name", normalize(m.supplier_name)))
         for s in row["suppliers"]:
             sup = sup_by_norm.get(normalize(s["name"]))
+            if (sup is not None and ("id", sup.id) in manual_keys) or \
+                    ("name", normalize(s["name"])) in manual_keys:
+                skipped_manual += 1
+                continue
             if not sup:
                 unmatched_suppliers.add(s["name"])
             db.add(SupplierPrice(
@@ -217,6 +261,8 @@ def import_prices(db: Session, rows: List[dict], domain: str, *,
         "unmatched_materials": unmatched_materials,
         "unmatched_suppliers": sorted(unmatched_suppliers),
         "matched_suppliers": prices_inserted - len(unmatched_suppliers),
+        "kept_manual": kept_manual,
+        "skipped_manual": skipped_manual,
         "currency": currency,
         "price_unit": price_unit,
         "source_label": source_label,
@@ -229,7 +275,9 @@ def prices_for_items(db: Session, item_ids: List[int], domain: str, limit: int =
     currency, price_unit, source_label, quoted_at}, … ] }.
 
     Her malzeme için fiyatı OLAN tedarikçiler ucuzdan pahalıya; fiyatı olmayanlar
-    (None) sona. En çok `limit` tedarikçi.
+    (None) sona. En çok `limit` tedarikçi.  Bir firmanın elle girilmiş
+    (`manual`) satırı varsa aynı firmanın Excel satırı listeye girmez —
+    yoksa aynı firma iki sütun kaplar ve 3. tedarikçi kesilirdi.
     """
     if not item_ids:
         return {}
@@ -237,7 +285,22 @@ def prices_for_items(db: Session, item_ids: List[int], domain: str, limit: int =
     q = (db.query(SupplierPrice)
          .filter(SupplierPrice.item_id.in_(item_ids), SupplierPrice.domain == domain)
          .all())
+
+    def _firm_keys(sp):
+        keys = set()
+        if sp.supplier_id is not None:
+            keys.add(("id", sp.supplier_id))
+        if normalize(sp.supplier_name):
+            keys.add(("name", normalize(sp.supplier_name)))
+        return keys
+
+    manual_firms: dict = {}
     for sp in q:
+        if sp.source == SOURCE_MANUAL:
+            manual_firms.setdefault(sp.item_id, set()).update(_firm_keys(sp))
+    for sp in q:
+        if sp.source != SOURCE_MANUAL and _firm_keys(sp) & manual_firms.get(sp.item_id, set()):
+            continue
         out.setdefault(sp.item_id, []).append({
             "supplier_name": sp.supplier_name or (sp.supplier.name if sp.supplier else "—"),
             "package_size": sp.package_size,
@@ -285,3 +348,35 @@ def price_per_purchase_unit(offer, item_unit) -> Tuple[Optional[float], str, Opt
     return None, purchase_unit, (
         f"Fiyat birimi ({basis}) malzemenin alım birimiyle ({purchase_unit}) "
         f"uyuşmuyor — fiyat kullanılmadı")
+
+
+def serialize_price(sp, item=None, supplier_status: Optional[str] = None) -> dict:
+    """Fiyat satırının uç yanıtı — GET /api/supplier-prices (grup içi satır),
+    GET /api/suppliers/{id}/prices ve POST/PUT yanıtı aynı şekli paylaşır.
+    `item` verilirse malzeme adı/birimi eklenir; tarih alanları ISO (quoted_at)
+    ve TR saati (updated_at)."""
+    from database import to_tr
+    out = {
+        "id": sp.id,
+        "item_id": sp.item_id,
+        "supplier_id": sp.supplier_id,
+        "supplier_name": sp.supplier_name or (sp.supplier.name if sp.supplier else "—"),
+        "package_size": sp.package_size,
+        "unit_price": sp.unit_price,
+        "currency": sp.currency,
+        "price_unit": sp.price_unit,
+        "source": sp.source,
+        "source_label": sp.source_label,
+        "quoted_at": sp.quoted_at.isoformat() if sp.quoted_at else None,
+        "note": sp.note,
+        "created_by": sp.created_by,
+        "updated_by": sp.updated_by,
+        "updated_at": to_tr(sp.updated_at).strftime("%d.%m.%Y %H:%M") if sp.updated_at else "",
+        "matched": sp.supplier_id is not None,
+        "supplier_status": supplier_status,
+    }
+    if item is not None:
+        out["material"] = item.name
+        out["unit"] = item.unit or ""
+        out["category"] = item.category or ""
+    return out

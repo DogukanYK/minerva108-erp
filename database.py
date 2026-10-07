@@ -100,9 +100,18 @@ class Supplier(Base):
     email = Column(String(100))
     address = Column(Text)
     notes = Column(Text)
+    # Silme YUMUŞAKTIR (is_active=False) — lot/kart/fiyat bağları kopmaz.
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Faz 3 — Kozmetik / Food Supplement
+    # Satın alma durumu (core/suppliers.STATUSES): normal | preferred ("tercih
+    # edilen") | phase_out ("bitirilecek — alma": elimizdekini bitir, yenisini
+    # başka firmadan al).  Lab işaretler; sistem tahmin ETMEZ.  phase_out'ta
+    # sebep zorunlu (PUT /api/suppliers/{id}/status).
+    purchase_status = Column(String(16), nullable=False, default="normal", server_default="normal")
+    status_reason = Column(Text, nullable=True)
+    status_by = Column(String(100), nullable=True)
+    status_at = Column(DateTime, nullable=True)
 
     items = relationship("Item", back_populates="supplier")
 
@@ -237,6 +246,12 @@ class SupplierPrice(Base):
     `_backfill_supplier_price_units()` ile bir kez USD + kg/adet işaretlendi.
     `source` (stok_son_durum | manual) + `source_label` + `quoted_at` raporda
     "fiyat kaynağı" notunu besler.
+
+    Elle fiyat (07.10.2026): lab (suppliers.prices) `POST/PUT
+    /api/supplier-prices` ile satır girer/düzenler → `source='manual'` +
+    `created_by`/`updated_by`.  Excel içe aktarma YALNIZ `stok_son_durum` (ya
+    da kaynağı boş eski) satırları değiştirir; elle satır korunur.  Düzenlenen
+    içe aktarılmış satır da 'manual' olur — sonraki import onu silmesin.
     """
     __tablename__ = "supplier_prices"
 
@@ -255,6 +270,9 @@ class SupplierPrice(Base):
     domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Kozmetik / Food Supplement
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Elle girilen/düzenlenen satırın kişisi (içe aktarılan satırda boş).
+    created_by = Column(String(100), nullable=True)
+    updated_by = Column(String(100), nullable=True)
 
     item = relationship("Item", foreign_keys=[item_id])
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
@@ -2488,6 +2506,70 @@ def _backfill_perm_production_cancel():
         db.close()
 
 
+def _backfill_perm_suppliers():
+    """Özel yetkili (override'lı) kullanıcılara yeni `suppliers.*`'ı yaz.
+
+    Aynı tuzak (`_backfill_perm_production_cancel`): override JSON'u rol
+    varsayılanının YERİNE geçtiği için yeni kategori override'lı kullanıcıya
+    hiç ulaşmaz (prod'da Işık Hanım: Manager + override; Meltem LabTech ve
+    Staff'lar da override'lı).  `suppliers` kategorisinde EKSİK olan her
+    aksiyona rol varsayılanı yazılır (Manager/LabLead True, diğerleri False);
+    var olan anahtara (yönetici bilerek açmış/kapatmış) dokunulmaz.  SuperAdmin
+    her zaman geçer, atlanır.  Değişen her kullanıcı için `permissions.backfill`
+    audit satırı yazılır.
+
+    BİR KEZ çalışır — `AppSetting` sentinel'i; değer = güncellenen kullanıcı
+    sayısı.
+    """
+    import json as _json
+    from core.permissions import _DEFAULT_PERMISSIONS, PERMISSION_CATEGORIES
+
+    SENTINEL = "backfill.perm.suppliers.v1"
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter(AppSetting.key == SENTINEL).first():
+            return                                  # zaten koştu → O(1) no-op
+        n = 0
+        for u in (db.query(User)
+                  .filter(User.permissions.isnot(None), User.role != "SuperAdmin")
+                  .order_by(User.id).all()):
+            try:
+                perms = _json.loads(u.permissions)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(perms, dict):
+                continue
+            cat = perms.get("suppliers")
+            if not isinstance(cat, dict):
+                cat = {}
+            role_def = ((_DEFAULT_PERMISSIONS.get(u.role) or _DEFAULT_PERMISSIONS["Staff"])
+                        .get("suppliers") or {})
+            added = {}
+            for act in PERMISSION_CATEGORIES["suppliers"]:
+                if act not in cat:
+                    cat[act] = added[act] = bool(role_def.get(act, False))
+            if not added:
+                continue
+            perms["suppliers"] = cat
+            u.permissions = _json.dumps(perms, ensure_ascii=False)
+            db.add(AdminAuditLog(
+                actor_name="sistem", action="permissions.backfill",
+                target_type="user", target_id=u.id, target_name=u.username,
+                details=_json.dumps({"keys": {f"suppliers.{k}": v for k, v in added.items()},
+                                     "role": u.role, "sentinel": SENTINEL},
+                                    ensure_ascii=False)))
+            n += 1
+        db.add(AppSetting(key=SENTINEL, value=str(n)))
+        db.commit()
+        if n:
+            print(f"[init_db] suppliers.* yetki backfill: {n} özel yetkili kullanıcı")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _backfill_drive_folders():
     """original_name'inde '/' olan DriveFile'ları gerçek klasör ağacına yerleştir.
 
@@ -2729,6 +2811,15 @@ def init_db():
             "ALTER TABLE production_history ADD COLUMN cancel_reason TEXT",
             "ALTER TABLE production_history ADD COLUMN lot_released BOOLEAN NOT NULL DEFAULT FALSE",
             "CREATE INDEX IF NOT EXISTS ix_prodhist_cancelled ON production_history(cancelled_at)",
+            # Tedarikçi satın alma durumu + elle fiyatın kişisi.  deploy.sh
+            # alembic ÇALIŞTIRMIYOR; kolonlar prod'a yalnız bu satırlarla
+            # ulaşır (migration e7b9d1f3a5c8 geçmiş + temiz kurulum içindir).
+            "ALTER TABLE suppliers ADD COLUMN purchase_status VARCHAR(16) NOT NULL DEFAULT 'normal'",
+            "ALTER TABLE suppliers ADD COLUMN status_reason TEXT",
+            "ALTER TABLE suppliers ADD COLUMN status_by VARCHAR(100)",
+            "ALTER TABLE suppliers ADD COLUMN status_at TIMESTAMP",
+            "ALTER TABLE supplier_prices ADD COLUMN created_by VARCHAR(100)",
+            "ALTER TABLE supplier_prices ADD COLUMN updated_by VARCHAR(100)",
         ):
             alter_safe(stmt)
 
@@ -2769,6 +2860,13 @@ def init_db():
     # anahtarı kendiliğinden alamazlar) — sentinel'li, bir kez.
     try:
         _backfill_perm_production_cancel()
+    except Exception:
+        pass
+
+    # Yeni `suppliers.*` yetkileri (durum / elle fiyat / birleştirme) — aynı
+    # sebeple override'lı kullanıcılara rol varsayılanı — sentinel'li, bir kez.
+    try:
+        _backfill_perm_suppliers()
     except Exception:
         pass
 

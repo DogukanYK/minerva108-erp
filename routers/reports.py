@@ -667,7 +667,21 @@ def production_history_report(
 
 
 # ─── Tedarikçi fiyat listesi (satın alma raporunu besler) ───────────────────
+# Excel içe aktarma finans rolünde (Işık Hanım'ın "Stok Son Durum" dosyası);
+# elle ekle/düzenle/sil `suppliers.prices` (Manager + LabLead — lab fiyatı
+# kendisi girer, 07.10.2026).  Hepsi audit'li: supplier_prices.import |
+# create | update | delete.
 _FINANCE = ["SuperAdmin", "Manager"]
+
+
+def _sp_actor(current_user: dict) -> str:
+    return ((current_user or {}).get("full_name") or (current_user or {}).get("username") or "—")[:100]
+
+
+def _sp_status_map(db: Session, domain: str) -> dict:
+    """{supplier_id: purchase_status} — fiyat satırında firma durumu rozeti."""
+    return dict(db.query(Supplier.id, Supplier.purchase_status)
+                .filter(Supplier.domain == domain).all())
 
 
 @router.get("/supplier-prices")
@@ -676,13 +690,17 @@ def list_supplier_prices(
     _: dict = Depends(require_permission("reports", "view")),
     domain: str = Depends(active_domain),
 ):
-    """Malzemeye göre gruplu tedarikçi fiyat listesi (görüntüleme paneli)."""
+    """Malzemeye göre gruplu tedarikçi fiyat listesi (görüntüleme paneli).
+    Satır şekli `core.supplier_prices.serialize_price` (+ kaynak, kim, not,
+    firma durumu)."""
+    from core.supplier_prices import serialize_price
     rows = db.query(SupplierPrice).filter(SupplierPrice.domain == domain).all()
     item_ids = {r.item_id for r in rows}
     meta = {}
     if item_ids:
         for it in db.query(Item).filter(Item.id.in_(item_ids)).all():
             meta[it.id] = {"name": it.name, "unit": it.unit or "", "category": it.category or ""}
+    status = _sp_status_map(db, domain)
     groups: dict = {}
     for r in rows:
         g = groups.setdefault(r.item_id, {
@@ -692,21 +710,221 @@ def list_supplier_prices(
             "category": meta.get(r.item_id, {}).get("category", ""),
             "suppliers": [],
         })
-        g["suppliers"].append({
-            "id": r.id,
-            "supplier_name": r.supplier_name or (r.supplier.name if r.supplier else "—"),
-            "package_size": r.package_size,
-            "unit_price": r.unit_price,
-            "currency": r.currency,
-            "price_unit": r.price_unit,
-            "source_label": r.source_label,
-            "quoted_at": r.quoted_at.isoformat() if r.quoted_at else None,
-            "matched": r.supplier_id is not None,
-        })
+        g["suppliers"].append(serialize_price(r, supplier_status=status.get(r.supplier_id)))
     out = sorted(groups.values(), key=lambda g: (g["material"] or "").lower())
     for g in out:
         g["suppliers"].sort(key=lambda s: (s["unit_price"] is None, s["unit_price"] or 0.0))
     return {"items": out, "total_items": len(out), "total_prices": len(rows)}
+
+
+class SupplierPriceIn(BaseModel):
+    item_id: int
+    supplier_id: int
+    unit_price: float
+    currency: str = Field("USD", max_length=8)
+    price_unit: str = Field(..., max_length=8)
+    package_size: Optional[float] = None
+    quoted_at: Optional[str] = Field(None, max_length=20)
+    note: Optional[str] = Field(None, max_length=2000)
+    source_label: Optional[str] = Field(None, max_length=120)
+
+
+class SupplierPriceUpdate(BaseModel):
+    supplier_id: Optional[int] = None
+    unit_price: Optional[float] = None
+    currency: Optional[str] = Field(None, max_length=8)
+    price_unit: Optional[str] = Field(None, max_length=8)
+    package_size: Optional[float] = None
+    quoted_at: Optional[str] = Field(None, max_length=20)
+    note: Optional[str] = Field(None, max_length=2000)
+    source_label: Optional[str] = Field(None, max_length=120)
+
+
+def _sp_bad(msg: str, code: int = 400) -> JSONResponse:
+    return JSONResponse(status_code=code, content={"detail": msg})
+
+
+def _sp_finite(v) -> bool:
+    import math
+    try:
+        return math.isfinite(float(v))
+    except (TypeError, ValueError):
+        return False
+
+
+def _sp_clean(fields: dict, item: Item):
+    """Elle fiyat alanlarını doğrula/normalize et → (temiz dict, hata|None).
+    Yalnız `fields`'ta OLAN anahtarlar işlenir (PUT kısmi)."""
+    from core import supplier_prices as SP
+    out = {}
+    if "unit_price" in fields:
+        v = fields["unit_price"]
+        # NaN/Infinity her karşılaştırmada False — `<= 0` kontrolünü atlardı.
+        if v is None or not _sp_finite(v) or float(v) <= 0:
+            return None, _sp_bad("Birim fiyat sıfırdan büyük bir sayı olmalı.")
+        out["unit_price"] = float(v)
+    if "currency" in fields:
+        cur = (fields["currency"] or "").strip().upper()
+        if cur not in SP.CURRENCIES:
+            return None, _sp_bad("Para birimi USD, EUR ya da TRY olmalı.")
+        out["currency"] = cur
+    if "price_unit" in fields:
+        pu = (fields["price_unit"] or "").strip().lower()
+        if pu not in SP.PRICE_UNITS or not SP.price_unit_ok(item.unit, pu):
+            fam = "adet" if SP.default_price_unit(item.unit) == "adet" else "kg ya da l"
+            return None, _sp_bad(f"«{item.name}» ({item.unit or 'birimsiz'}) için fiyat birimi "
+                                 f"{fam} olmalı.")
+        out["price_unit"] = pu
+    if "package_size" in fields:
+        v = fields["package_size"]
+        if v is not None and (not _sp_finite(v) or float(v) <= 0):
+            return None, _sp_bad("Alınabilecek miktar sıfırdan büyük olmalı (ya da boş).")
+        out["package_size"] = float(v) if v is not None else None
+    if "quoted_at" in fields:
+        raw = (fields["quoted_at"] or "").strip()
+        try:
+            out["quoted_at"] = _dt.date.fromisoformat(raw) if raw else None
+        except ValueError:
+            return None, _sp_bad("Geçersiz teklif tarihi.")
+    if "note" in fields:
+        out["note"] = (fields["note"] or "").strip() or None
+    if "source_label" in fields:
+        out["source_label"] = SP.clean_name(fields["source_label"])
+    return out, None
+
+
+def _sp_supplier(db: Session, domain: str, supplier_id: int):
+    sup = (db.query(Supplier)
+           .filter(Supplier.id == supplier_id, Supplier.domain == domain).first())
+    if sup is None:
+        return None, _sp_bad("Tedarikçi bu panelde bulunamadı.", 404)
+    if sup.is_active is False:
+        return None, _sp_bad(f"«{sup.name}» pasif tedarikçi — fiyat girilemez.")
+    return sup, None
+
+
+def _sp_duplicate(db: Session, domain: str, item_id: int, supplier_id: int, price_unit: str,
+                  exclude_id: Optional[int] = None):
+    q = db.query(SupplierPrice).filter(
+        SupplierPrice.domain == domain, SupplierPrice.item_id == item_id,
+        SupplierPrice.supplier_id == supplier_id, SupplierPrice.price_unit == price_unit)
+    if exclude_id is not None:
+        q = q.filter(SupplierPrice.id != exclude_id)
+    return q.order_by(SupplierPrice.id).first()
+
+
+def _sp_audit_view(sp: SupplierPrice) -> dict:
+    return {"item_id": sp.item_id, "supplier_id": sp.supplier_id, "supplier_name": sp.supplier_name,
+            "unit_price": sp.unit_price, "currency": sp.currency, "price_unit": sp.price_unit,
+            "package_size": sp.package_size, "source": sp.source, "source_label": sp.source_label,
+            "quoted_at": sp.quoted_at.isoformat() if sp.quoted_at else None, "note": sp.note}
+
+
+@router.post("/supplier-prices", status_code=201)
+def create_supplier_price(
+    data: SupplierPriceIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("suppliers", "prices")),
+    domain: str = Depends(active_domain),
+):
+    """Elle fiyat ekle (lab) → `source='manual'` + `created_by`.  Kart ve
+    tedarikçi aktif panelde ve aktif olmalı; fiyat birimi malzemenin birim
+    ailesine uymalı (adetli → adet, kütle/hacim → kg|l).  Aynı (malzeme,
+    tedarikçi, fiyat birimi) satırı varsa 409 `{code: 'price_exists', id}` —
+    arayüz o satırı düzenlemeyi önerir."""
+    from core.supplier_prices import SOURCE_MANUAL, serialize_price
+    item = (db.query(Item)
+            .filter(Item.id == data.item_id, Item.domain == domain,
+                    Item.is_active == True).first())                              # noqa: E712
+    if item is None:
+        return _sp_bad("Malzeme bu panelde bulunamadı.", 404)
+    sup, err = _sp_supplier(db, domain, data.supplier_id)
+    if err:
+        return err
+    vals, err = _sp_clean(data.model_dump(), item)
+    if err:
+        return err
+    dup = _sp_duplicate(db, domain, item.id, sup.id, vals["price_unit"])
+    if dup is not None:
+        return JSONResponse(status_code=409, content={
+            "detail": f"«{item.name}» için «{sup.name}» fiyatı ({vals['price_unit']} başına) zaten "
+                      f"kayıtlı — o satırı düzenleyin.",
+            "code": "price_exists", "id": dup.id})
+    actor = _sp_actor(current_user)
+    sp = SupplierPrice(item_id=item.id, supplier_id=sup.id, supplier_name=sup.name,
+                       source=SOURCE_MANUAL, created_by=actor, domain=domain, **vals)
+    db.add(sp)
+    db.commit()
+    db.refresh(sp)
+    log_admin_event(db, request, actor=current_user, action="supplier_prices.create",
+                    target_type="supplier_price", target_id=sp.id,
+                    target_name=f"{item.name} — {sup.name}"[:150],
+                    details={"domain": domain, **_sp_audit_view(sp)})
+    return serialize_price(sp, item, supplier_status=sup.purchase_status)
+
+
+@router.put("/supplier-prices/{price_id}")
+def update_supplier_price(
+    price_id: int,
+    data: SupplierPriceUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("suppliers", "prices")),
+    domain: str = Depends(active_domain),
+):
+    """Fiyat satırını kısmen düzenle (yalnız gönderilen alanlar).  Excel'den
+    gelen satır düzenlenince `source='manual'` olur — sonraki içe aktarma onu
+    silmesin; `updated_by` yazılır.  Audit: değişen alanlar eski → yeni."""
+    from core.supplier_prices import SOURCE_MANUAL, serialize_price
+    sp = (db.query(SupplierPrice)
+          .filter(SupplierPrice.id == price_id, SupplierPrice.domain == domain).first())
+    if sp is None:
+        return _sp_bad("Kayıt bulunamadı.", 404)
+    item = db.query(Item).filter(Item.id == sp.item_id).first()
+    if item is None:
+        return _sp_bad("Fiyat satırının malzemesi bulunamadı.", 404)
+    fields = {k: getattr(data, k) for k in data.model_fields_set}
+    sup = None
+    if "supplier_id" in fields:
+        if fields["supplier_id"] is None:
+            return _sp_bad("Tedarikçi seçilmeli.")
+        if fields["supplier_id"] != sp.supplier_id:
+            sup, err = _sp_supplier(db, domain, fields["supplier_id"])
+            if err:
+                return err
+        fields.pop("supplier_id")
+    vals, err = _sp_clean(fields, item)
+    if err:
+        return err
+    if sup is not None:
+        vals["supplier_id"] = sup.id
+        vals["supplier_name"] = sup.name
+    new_sid = vals.get("supplier_id", sp.supplier_id)
+    new_pu = vals.get("price_unit", sp.price_unit)
+    if new_sid is not None and new_pu:
+        dup = _sp_duplicate(db, domain, sp.item_id, new_sid, new_pu, exclude_id=sp.id)
+        if dup is not None:
+            return JSONResponse(status_code=409, content={
+                "detail": "Bu malzeme + tedarikçi + fiyat birimi için başka bir satır var.",
+                "code": "price_exists", "id": dup.id})
+    before = _sp_audit_view(sp)
+    for k, v in vals.items():
+        setattr(sp, k, v)
+    sp.source = SOURCE_MANUAL
+    sp.updated_by = _sp_actor(current_user)
+    db.commit()
+    db.refresh(sp)
+    after = _sp_audit_view(sp)
+    changes = {k: {"eski": before[k], "yeni": after[k]} for k in after if before[k] != after[k]}
+    log_admin_event(db, request, actor=current_user, action="supplier_prices.update",
+                    target_type="supplier_price", target_id=sp.id,
+                    target_name=f"{item.name} — {sp.supplier_name or ''}"[:150],
+                    details={"domain": domain, "changes": changes})
+    status = None
+    if sp.supplier_id is not None:
+        status = db.query(Supplier.purchase_status).filter(Supplier.id == sp.supplier_id).scalar()
+    return serialize_price(sp, item, supplier_status=status)
 
 
 @router.post("/supplier-prices/import")
@@ -721,7 +939,8 @@ async def import_supplier_prices(
     current_user: dict = Depends(require_role(_FINANCE)),
     domain: str = Depends(active_domain),
 ):
-    """Işık Hanım'ın 'Stok Son Durum' Excel'ini içe aktarır (malzeme başına eski satırları değiştirir).
+    """Işık Hanım'ın 'Stok Son Durum' Excel'ini içe aktarır (malzeme başına eski
+    Excel satırlarını değiştirir; lab'ın elle girdiği satırlar korunur).
 
     Form alanları fiyat temelini belirler: `currency` (USD|EUR|TRY, vars. USD),
     `price_unit` (kg|l, vars. kg — listenin ağırlık/hacim temeli; adet birimli
@@ -765,6 +984,8 @@ async def import_supplier_prices(
                              "quoted_at": summary["quoted_at"],
                              "items_updated": summary["items_updated"],
                              "prices_inserted": summary["prices_inserted"],
+                             "kept_manual": summary["kept_manual"],
+                             "skipped_manual": summary["skipped_manual"],
                              "unmatched_materials": len(summary["unmatched_materials"]),
                              "unmatched_suppliers": len(summary["unmatched_suppliers"])})
     return summary
@@ -773,16 +994,25 @@ async def import_supplier_prices(
 @router.delete("/supplier-prices/{price_id}")
 def delete_supplier_price(
     price_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_role(_FINANCE)),
+    current_user: dict = Depends(require_permission("suppliers", "prices")),
     domain: str = Depends(active_domain),
 ):
-    """Tek bir tedarikçi fiyat satırını siler."""
+    """Tek bir tedarikçi fiyat satırını siler.  Yetki `suppliers.prices`
+    (izin tablosundan — JWT'deki rol değil; rolü düşürülen kullanıcının eski
+    oturumu silemez).  Audit `supplier_prices.delete` silinen değerlerle."""
     row = db.query(SupplierPrice).filter(
         SupplierPrice.id == price_id, SupplierPrice.domain == domain
     ).first()
     if not row:
         return JSONResponse(status_code=404, content={"detail": "Kayıt bulunamadı."})
+    item = db.query(Item).filter(Item.id == row.item_id).first()
+    details = {"domain": domain, **_sp_audit_view(row)}
+    name = f"{item.name if item else row.item_id} — {row.supplier_name or ''}"[:150]
     db.delete(row)
     db.commit()
+    log_admin_event(db, request, actor=current_user, action="supplier_prices.delete",
+                    target_type="supplier_price", target_id=price_id, target_name=name,
+                    details=details)
     return {"ok": True}

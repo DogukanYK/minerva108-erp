@@ -241,6 +241,47 @@
     .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
     .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
     @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+
+    /* ══ SATIN ALMA DURUMU + FİYATLAR (07.10.2026) — `btn-*` adı YASAK ══ */
+    .sup-st { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; border: 1px solid transparent; }
+    .sup-st-normal { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
+    .sup-st-pref   { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+    .sup-st-phase  { background: #ffedd5; color: #9a3412; border-color: #fed7aa; }
+    .sup-st-off    { background: #f3f4f6; color: #9ca3af; border-color: #e5e7eb; text-decoration: line-through; }
+    .sup-why { display: block; font-size: 0.74rem; color: #9a3412; margin-top: 3px; max-width: 260px; white-space: normal; }
+    .sup-why.sup-why-pref { color: #166534; }
+    .sup-addr { display: block; font-size: 0.76rem; font-weight: 400; color: #9ca3af; margin-top: 2px; white-space: pre-line; }
+    tbody tr.sup-row-off td { opacity: 0.6; }
+    .sup-ic { width: 30px; height: 30px; border-radius: 6px; border: none; display: inline-flex; align-items: center; justify-content: center; font-size: 0.85rem; cursor: pointer; transition: background 0.15s; margin-right: 4px; }
+    .sup-ic-price  { background: #ecfeff; color: #0e7490; }
+    .sup-ic-price:hover { background: #cffafe; }
+    .sup-ic-status { background: #fff7ed; color: #c2410c; }
+    .sup-ic-status:hover { background: #ffedd5; }
+    .sup-ic-on { background: #f0fdf4; color: #15803d; }
+    .sup-ic-on:hover { background: #dcfce7; }
+    .sup-filter { padding: 0.5rem 0.75rem; border: 1.5px solid #e5e7eb; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.86rem; background: var(--white); color: #374151; }
+    .sup-toggle { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.84rem; color: #6b7280; cursor: pointer; user-select: none; }
+    .sup-toggle input { accent-color: var(--navy); }
+    .sup-st-opt { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.65rem 0.8rem; border: 1.5px solid #e5e7eb; border-radius: 10px; margin-bottom: 0.5rem; cursor: pointer; }
+    .sup-st-opt:hover { background: #faf8f4; }
+    .sup-st-opt input { margin-top: 0.3rem; accent-color: var(--navy); }
+    .sup-st-opt b { display: block; font-size: 0.9rem; color: #1f2937; }
+    .sup-st-opt small { display: block; font-size: 0.78rem; color: #6b7280; }
+    .sup-last { font-size: 0.78rem; color: #9ca3af; margin-top: 0.4rem; }
+    .sup-pr-tools { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.6rem; }
+    .sup-pr-tools input { padding: 0.4rem 0.7rem; border: 1.5px solid #e5e7eb; border-radius: 8px; font-size: 0.84rem; min-width: 200px; }
+    .sup-pr-add { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.42rem 0.9rem; background: var(--navy); color: #fff; border: none; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.84rem; font-weight: 600; cursor: pointer; margin-left: auto; }
+    .sup-pr-table td, .sup-pr-table th { padding: 0.45rem 0.55rem; font-size: 0.82rem; }
+    .sup-pr-table thead th { font-size: 0.68rem; }
+    .sup-pr-src { font-size: 0.76rem; color: #6b7280; white-space: nowrap; }
+    .sup-pr-src.sup-pr-manual { color: #4338ca; font-weight: 600; }
+    .sup-pr-act a { text-decoration: none; font-weight: 700; margin-left: 6px; }
+    .sup-pr-empty { padding: 1.2rem; text-align: center; color: #9ca3af; font-size: 0.86rem; }
+    :root[data-theme="dark"] .sup-st-normal, :root[data-theme="dark"] .sup-st-off { background: var(--surface-2); color: var(--text-muted); border-color: var(--border); }
+    :root[data-theme="dark"] .sup-st-opt { border-color: var(--border); }
+    :root[data-theme="dark"] .sup-st-opt:hover { background: var(--surface-2); }
+    :root[data-theme="dark"] .sup-st-opt b { color: var(--text); }
+    :root[data-theme="dark"] .sup-filter, :root[data-theme="dark"] .sup-pr-tools input { background: var(--surface-2); color: var(--text); border-color: var(--border); }
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
   <script src="/static/mobile.js" defer></script>
@@ -368,10 +409,19 @@
         {% endif %}
         {% if can('items', 'delete') %}
         <button class="btn-danger-soft" id="bulkDeleteBtn">
-          <i class="bi bi-trash3"></i> Seçilenleri Sil
+          <i class="bi bi-archive"></i> Seçilenleri Pasife Al
           (<span id="selectedCount">0</span>)
         </button>
         {% endif %}
+        <select id="supStatusFilter" class="sup-filter" title="Satın alma durumuna göre süz">
+          <option value="">Durum: Tümü</option>
+          <option value="normal">Normal</option>
+          <option value="preferred">Tercih edilen</option>
+          <option value="phase_out">Bitirilecek — alma</option>
+        </select>
+        <label class="sup-toggle" title="Pasife alınmış tedarikçileri de listele">
+          <input type="checkbox" id="supShowInactive" /> Pasifleri göster
+        </label>
         <div class="search-box">
           <i class="bi bi-search"></i>
           <input type="text" id="searchInput" placeholder="Tedarikçi ara…" />
@@ -389,6 +439,7 @@
                 </th>
                 <th style="width:60px;">ID</th>
                 <th class="sortable" data-col="name">Firma Adı <span class="sort-icon"></span></th>
+                <th class="sortable" data-col="purchase_status">Durum <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="contact_person">Yetkili Kişi <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="email">E-posta <span class="sort-icon"></span></th>
                 <th class="sortable" data-col="phone">Telefon <span class="sort-icon"></span></th>
@@ -396,7 +447,7 @@
               </tr>
             </thead>
             <tbody id="suppliersBody">
-              <tr><td colspan="7"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
+              <tr><td colspan="8"><div class="empty-state"><i class="bi bi-hourglass-split"></i><p>Yükleniyor…</p></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -439,6 +490,10 @@
               </div>
             </div>
             <div class="mb-3">
+              <label class="form-label-sm">Adres</label>
+              <textarea class="form-control" id="supAddress" maxlength="1000" rows="2" style="min-height:60px;" placeholder="Fatura / sevk adresi"></textarea>
+            </div>
+            <div class="mb-3">
               <label class="form-label-sm">Notlar</label>
               <textarea class="form-control" id="supNotes" placeholder="Ödeme koşulları, teslim süreleri vb."></textarea>
             </div>
@@ -453,65 +508,161 @@
   </div>
   <!-- /MODAL -->
 
+  <!-- ════ MODAL: SATIN ALMA DURUMU ════ -->
+  <div class="modal fade" id="supStatusModal" tabindex="-1" aria-labelledby="supStatusTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="supStatusTitle">Satın alma durumu</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:0.86rem;color:#6b7280;margin:0 0 0.8rem;">
+            Firmadan alışverişi nasıl sürdüreceğinizi işaretleyin. Durum yalnız bilgidir — stok, lot ve geçmiş kayıtlar değişmez.
+          </p>
+          <label class="sup-st-opt"><input type="radio" name="supStatus" value="normal" />
+            <span><b>Normal</b><small>Özel bir tercih yok.</small></span></label>
+          <label class="sup-st-opt"><input type="radio" name="supStatus" value="preferred" />
+            <span><b>Tercih edilen</b><small>Bu firmadan almayı tercih ediyoruz.</small></span></label>
+          <label class="sup-st-opt"><input type="radio" name="supStatus" value="phase_out" />
+            <span><b>Bitirilecek — alma</b><small>Elimizdekini bitir, yenisini başka firmadan al (ör. küçük miktar satıyor).</small></span></label>
+          <label class="form-label-sm" for="supStatusReason" style="margin-top:0.4rem;">Sebep <span id="supReasonReq" style="color:#b91c1c;">*</span></label>
+          <textarea class="form-control" id="supStatusReason" maxlength="1000" rows="2" style="min-height:60px;" placeholder="ör. küçük miktar satıyor, eldeki bitince alınmayacak"></textarea>
+          <div class="sup-last" id="supStatusLast"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" data-bs-dismiss="modal">İptal</button>
+          <button type="button" class="btn-save" id="supStatusSave">Kaydet</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MODAL: FİRMANIN FİYATLARI ════ -->
+  <div class="modal fade" id="supPricesModal" tabindex="-1" aria-labelledby="supPricesTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="supPricesTitle">Fiyatlar</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+        </div>
+        <div class="modal-body">
+          <div class="sup-pr-tools">
+            <input type="text" id="supPrSearch" placeholder="Malzeme ara…" />
+            <span id="supPrCount" style="font-size:0.8rem;color:#9ca3af;"></span>
+            <button type="button" class="sup-pr-add" id="supPrAdd" hidden><i class="bi bi-plus-lg"></i> Fiyat ekle</button>
+          </div>
+          <div id="supPrForm" hidden></div>
+          <div class="table-responsive">
+            <table class="sup-pr-table">
+              <thead>
+                <tr><th>Malzeme</th><th>Miktar</th><th>Birim fiyat</th><th>Kaynak</th><th>Tarih</th><th>Not</th><th></th></tr>
+              </thead>
+              <tbody id="supPrBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/static/supplier-price-form.js?v=1"></script>
   <script>
     let allSuppliers = [];
     let sortCol = null, sortDir = 'asc';
     const selectedIds = new Set();
+    const SPF = window.SupplierPriceForm;
+    const _fold = s => (window.trFold ? window.trFold(s) : String(s ?? '').toLocaleLowerCase('tr'));
 
     function escHtml(str) {
       return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    /* Satın alma durumu rozeti — core/suppliers.STATUS_LABELS ile aynı metinler */
+    const _ST = {
+      normal:    { cls: 'sup-st-normal', label: 'Normal' },
+      preferred: { cls: 'sup-st-pref',   label: 'Tercih edilen' },
+      phase_out: { cls: 'sup-st-phase',  label: 'Bitirilecek — alma' },
+    };
+    function statusCell(s) {
+      if (s.is_active === false) return '<span class="sup-st sup-st-off">Pasif</span>';
+      const st = _ST[s.purchase_status] || _ST.normal;
+      const who = [s.status_by, s.status_at].filter(Boolean).join(' · ');
+      const why = (s.purchase_status !== 'normal' && s.status_reason)
+        ? `<span class="sup-why${s.purchase_status === 'preferred' ? ' sup-why-pref' : ''}">${escHtml(s.status_reason)}</span>` : '';
+      return `<span class="sup-st ${st.cls}"${who ? ` title="${escHtml(who)}"` : ''}>${st.label}</span>${why}`;
+    }
+
     function renderTable(data) {
       const tbody = document.getElementById('suppliersBody');
       if (!data.length) {
-        tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">
-          <i class="bi bi-truck"></i><p>Henüz kayıtlı tedarikçi yok. Yeni tedarikçi ekleyerek başlayın.</p>
+        tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state">
+          <i class="bi bi-truck"></i><p>${allSuppliers.length ? 'Süzgece uyan tedarikçi yok.' : 'Henüz kayıtlı tedarikçi yok. Yeni tedarikçi ekleyerek başlayın.'}</p>
         </div></td></tr>`;
         document.getElementById('tableInfo').textContent = '0 tedarikçi';
         return;
       }
-      tbody.innerHTML = data.map(s => `
-        <tr data-id="${s.id}" class="${selectedIds.has(s.id) ? 'selected' : ''}">
+      const canPrice = window.can('suppliers', 'prices');
+      tbody.innerHTML = data.map(s => {
+        const off = s.is_active === false;
+        return `
+        <tr data-id="${s.id}" class="${selectedIds.has(s.id) ? 'selected' : ''}${off ? ' sup-row-off' : ''}">
           <td style="padding-left:1.1rem;">
-            <input type="checkbox" class="row-check" data-id="${s.id}"
-              style="accent-color:var(--navy);" ${selectedIds.has(s.id) ? 'checked' : ''} />
+            ${off ? '' : `<input type="checkbox" class="row-check" data-id="${s.id}"
+              style="accent-color:var(--navy);" ${selectedIds.has(s.id) ? 'checked' : ''} />`}
           </td>
           <td class="td-id">#${s.id}</td>
-          <td class="td-name">${escHtml(s.name)}</td>
+          <td class="td-name">${escHtml(s.name)}${s.address ? `<span class="sup-addr">${escHtml(s.address)}</span>` : ''}</td>
+          <td>${statusCell(s)}</td>
           <td class="td-muted">${escHtml(s.contact_person) || '—'}</td>
           <td class="td-muted">${s.email ? `<a href="mailto:${escHtml(s.email)}" style="color:var(--navy);text-decoration:none;">${escHtml(s.email)}</a>` : '—'}</td>
           <td class="td-muted">${escHtml(s.phone) || '—'}</td>
           <td style="text-align:center;white-space:nowrap;">
-            ${window.can('items', 'edit') ? `
+            <button class="sup-ic sup-ic-price" onclick="openSupplierPrices(${s.id})" title="${canPrice && !off ? 'Fiyatlar — gör / ekle' : 'Fiyatlar'}">
+              <i class="bi bi-tags"></i>
+            </button>
+            ${!off && window.can('suppliers', 'status') ? `
+            <button class="sup-ic sup-ic-status" onclick="openSupplierStatus(${s.id})" title="Satın alma durumu">
+              <i class="bi bi-flag"></i>
+            </button>` : ''}
+            ${!off && window.can('items', 'edit') ? `
             <button class="btn-icon btn-icon-edit" onclick="openEditSupplier(${s.id})" title="Düzenle">
               <i class="bi bi-pencil"></i>
             </button>` : ''}
-            ${window.can('items', 'delete') ? `
-            <button class="btn-icon btn-icon-delete" onclick="deleteSupplier(${s.id}, '${escHtml(s.name)}')" title="Sil">
-              <i class="bi bi-trash3"></i>
-            </button>` : ''}
+            ${window.can('items', 'delete') ? (off ? `
+            <button class="sup-ic sup-ic-on" onclick="activateSupplier(${s.id})" title="Etkinleştir">
+              <i class="bi bi-arrow-counterclockwise"></i>
+            </button>` : `
+            <button class="btn-icon btn-icon-delete" onclick="deleteSupplier(${s.id})" title="Pasife al">
+              <i class="bi bi-archive"></i>
+            </button>`) : ''}
           </td>
-        </tr>`).join('');
-      document.getElementById('tableInfo').textContent = `${data.length} tedarikçi listeleniyor`;
+        </tr>`;
+      }).join('');
+      const act = data.filter(s => s.is_active !== false);
+      const nPhase = act.filter(s => s.purchase_status === 'phase_out').length;
+      const nPref = act.filter(s => s.purchase_status === 'preferred').length;
+      const nOff = data.length - act.length;
+      document.getElementById('tableInfo').textContent =
+        `${data.length} tedarikçi listeleniyor · ${nPhase} bitirilecek · ${nPref} tercih edilen` +
+        (nOff ? ` · ${nOff} pasif` : '');
       attachCheckboxListeners();
     }
 
     function applyFiltersAndSort() {
-      const q = document.getElementById('searchInput').value.toLowerCase();
+      const q = _fold(document.getElementById('searchInput').value);
+      const st = document.getElementById('supStatusFilter').value;
       let data = allSuppliers.filter(s =>
-        s.name.toLowerCase().includes(q) ||
-        (s.contact_person || '').toLowerCase().includes(q) ||
-        (s.email || '').toLowerCase().includes(q)
+        (!st || (s.is_active !== false && (s.purchase_status || 'normal') === st)) &&
+        (!q || [s.name, s.contact_person, s.email, s.address, s.status_reason]
+          .some(v => _fold(v).includes(q)))
       );
       if (sortCol) {
         data = [...data].sort((a, b) => {
-          let va = (a[sortCol] ?? '').toString().toLowerCase();
-          let vb = (b[sortCol] ?? '').toString().toLowerCase();
-          if (va < vb) return sortDir === 'asc' ? -1 : 1;
-          if (va > vb) return sortDir === 'asc' ? 1 : -1;
-          return 0;
+          const va = (a[sortCol] ?? '').toString(), vb = (b[sortCol] ?? '').toString();
+          const c = window.trCompare ? window.trCompare(va, vb) : va.localeCompare(vb, 'tr');
+          return sortDir === 'asc' ? c : -c;
         });
       }
       renderTable(data);
@@ -529,6 +680,8 @@
     });
 
     document.getElementById('searchInput').addEventListener('input', applyFiltersAndSort);
+    document.getElementById('supStatusFilter').addEventListener('change', applyFiltersAndSort);
+    document.getElementById('supShowInactive').addEventListener('change', loadSuppliers);
 
     function updateBulkBtn() {
       const btn = document.getElementById('bulkDeleteBtn');
@@ -563,36 +716,52 @@
       updateBulkBtn();
     });
 
-    async function deleteSupplier(id, name) {
-      if (!confirm(`"${name}" tedarikçisini silmek istediğinizden emin misiniz?`)) return;
+    /* Silme YUMUŞAK — tedarikçi pasife alınır; lot/kart/fiyat bağları kalır.
+       Ad onclick'e gömülmez (adında ' olan firma JS çalıştırabiliyordu). */
+    async function deleteSupplier(id) {
+      const s = allSuppliers.find(x => x.id === id);
+      if (!s) return;
+      if (!confirm(`"${s.name}" pasife alınsın mı?\n\nListeden gizlenir; stok lotları, kartlar ve fiyatlar bağlı kalır. "Pasifleri göster" ile geri açabilirsiniz.`)) return;
       try {
         const res = await fetch(`/api/suppliers/${id}`, { method: 'DELETE' });
-        const data = await res.json();
-        if (!res.ok) { showToast(data.detail || 'Silme başarısız.'); return; }
-        showToast('Tedarikçi silindi.', 'success');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showToast(data.detail || 'Pasife alma başarısız.'); return; }
+        showToast(data.message || 'Tedarikçi pasife alındı.', 'success');
         selectedIds.delete(id);
         updateBulkBtn();
         loadSuppliers();
-      } catch { showToast('Silme işlemi sırasında hata oluştu.'); }
+      } catch { showToast('İşlem sırasında hata oluştu.'); }
+    }
+
+    async function activateSupplier(id) {
+      const s = allSuppliers.find(x => x.id === id);
+      if (!s || !confirm(`"${s.name}" yeniden etkinleştirilsin mi?`)) return;
+      try {
+        const res = await fetch(`/api/suppliers/${id}/activate`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showToast(data.detail || 'Etkinleştirilemedi.'); return; }
+        showToast(data.message || 'Tedarikçi etkinleştirildi.', 'success');
+        loadSuppliers();
+      } catch { showToast('İşlem sırasında hata oluştu.'); }
     }
 
     document.getElementById('bulkDeleteBtn')?.addEventListener('click', async function () {
       if (!selectedIds.size) return;
-      if (!confirm(`Seçilen ${selectedIds.size} tedarikçiyi silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.`)) return;
+      if (!confirm(`Seçilen ${selectedIds.size} tedarikçi pasife alınsın mı? Listeden gizlenir; lot ve kart bağları korunur.`)) return;
       try {
         const res = await fetch('/api/suppliers/bulk-delete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ supplier_ids: [...selectedIds] }),
         });
-        const data = await res.json();
-        if (!res.ok) { showToast(data.detail || 'Toplu silme başarısız.'); return; }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showToast(data.detail || 'Toplu işlem başarısız.'); return; }
         showToast(data.message, 'success');
         selectedIds.clear();
         document.getElementById('selectAll').checked = false;
         updateBulkBtn();
         loadSuppliers();
-      } catch { showToast('Toplu silme sırasında hata oluştu.'); }
+      } catch { showToast('Toplu işlem sırasında hata oluştu.'); }
     });
 
     /* Düzenleme — ekleme penceresi bilgiler dolu açılır; kapanınca yeniden "ekle" moduna döner. */
@@ -606,6 +775,7 @@
       document.getElementById('supContact').value = s.contact_person || '';
       document.getElementById('supEmail').value = s.email || '';
       document.getElementById('supPhone').value = s.phone || '';
+      document.getElementById('supAddress').value = s.address || '';
       document.getElementById('supNotes').value = s.notes || '';
       bootstrap.Modal.getOrCreateInstance(document.getElementById('addSupplierModal')).show();
     }
@@ -629,6 +799,7 @@
             contact_person: document.getElementById('supContact').value.trim() || null,
             email: document.getElementById('supEmail').value.trim() || null,
             phone: document.getElementById('supPhone').value.trim() || null,
+            address: document.getElementById('supAddress').value.trim() || null,
             notes: document.getElementById('supNotes').value.trim() || null,
           }),
         });
@@ -642,6 +813,131 @@
       } finally { this.disabled = false; this.textContent = 'Kaydet'; }
     });
 
+    /* ── Satın alma durumu (suppliers.status) ── */
+    let statusSupplierId = null;
+    function _reasonRequired() {
+      const v = document.querySelector('input[name="supStatus"]:checked')?.value;
+      document.getElementById('supReasonReq').style.visibility = v === 'phase_out' ? 'visible' : 'hidden';
+    }
+    document.querySelectorAll('input[name="supStatus"]').forEach(r => r.addEventListener('change', _reasonRequired));
+    function openSupplierStatus(id) {
+      const s = allSuppliers.find(x => x.id === id);
+      if (!s) return;
+      statusSupplierId = id;
+      document.getElementById('supStatusTitle').textContent = `Satın alma durumu — ${s.name}`;
+      const cur = s.purchase_status || 'normal';
+      document.querySelectorAll('input[name="supStatus"]').forEach(r => { r.checked = r.value === cur; });
+      document.getElementById('supStatusReason').value = s.status_reason || '';
+      document.getElementById('supStatusLast').textContent = s.status_at
+        ? `Son değişiklik: ${s.status_label || ''} · ${s.status_by || ''} · ${s.status_at}` : '';
+      _reasonRequired();
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('supStatusModal')).show();
+    }
+    document.getElementById('supStatusSave').addEventListener('click', async function () {
+      const status = document.querySelector('input[name="supStatus"]:checked')?.value;
+      const reason = document.getElementById('supStatusReason').value.trim();
+      if (!status) { showToast('Bir durum seçin.'); return; }
+      if (status === 'phase_out' && !reason) { showToast('“Bitirilecek — alma” için sebep yazın.'); return; }
+      this.disabled = true;
+      try {
+        const res = await fetch(`/api/suppliers/${statusSupplierId}/status`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status, reason: reason || null }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showToast(typeof data.detail === 'string' ? data.detail : 'Durum kaydedilemedi.'); return; }
+        const i = allSuppliers.findIndex(x => x.id === data.id);
+        if (i >= 0) allSuppliers[i] = data;
+        applyFiltersAndSort();
+        bootstrap.Modal.getInstance(document.getElementById('supStatusModal'))?.hide();
+        showToast('Durum kaydedildi.', 'success');
+      } catch { showToast('Durum kaydedilemedi.');
+      } finally { this.disabled = false; }
+    });
+
+    /* ── Firmanın fiyatları (GET /api/suppliers/{id}/prices; yazma suppliers.prices) ── */
+    let _pr = { sup: null, rows: [] };
+    async function openSupplierPrices(id) {
+      const s = allSuppliers.find(x => x.id === id);
+      if (!s) return;
+      _pr = { sup: s, rows: [] };
+      document.getElementById('supPricesTitle').textContent = `Fiyatlar — ${s.name}`;
+      document.getElementById('supPrSearch').value = '';
+      SPF.unmount(document.getElementById('supPrForm'));
+      document.getElementById('supPrAdd').hidden = !(window.can('suppliers', 'prices') && s.is_active !== false);
+      document.getElementById('supPrBody').innerHTML = '<tr><td colspan="7" class="sup-pr-empty">Yükleniyor…</td></tr>';
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('supPricesModal')).show();
+      await loadSupplierPrices();
+    }
+    async function loadSupplierPrices() {
+      try {
+        const r = await fetch(`/api/suppliers/${_pr.sup.id}/prices`);
+        if (!r.ok) throw new Error();
+        const j = await r.json();
+        _pr.rows = j.prices || [];
+        renderSupplierPrices();
+      } catch {
+        document.getElementById('supPrBody').innerHTML = '<tr><td colspan="7" class="sup-pr-empty">Fiyatlar yüklenemedi.</td></tr>';
+      }
+    }
+    function renderSupplierPrices() {
+      const q = _fold(document.getElementById('supPrSearch').value);
+      const rows = _pr.rows.filter(p => !q || _fold(p.material).includes(q));
+      const canEdit = window.can('suppliers', 'prices') && _pr.sup.is_active !== false;
+      document.getElementById('supPrCount').textContent = `${_pr.rows.length} fiyat satırı`;
+      const body = document.getElementById('supPrBody');
+      if (!rows.length) {
+        body.innerHTML = `<tr><td colspan="7" class="sup-pr-empty">${_pr.rows.length ? 'Eşleşen malzeme yok.' : 'Bu firmanın kayıtlı fiyatı yok.'}</td></tr>`;
+        return;
+      }
+      body.innerHTML = rows.map(p => {
+        const loose = p.matched ? '' : ' <span title="Excel’deki ad bu firma kartına bağlı değil (ad eşleşmesiyle gösteriliyor)" style="color:#b45309;">⚠</span>';
+        const pkg = p.package_size != null ? `${Number(p.package_size).toLocaleString('tr-TR', { maximumFractionDigits: 4 })} ${escHtml(p.unit || '')}` : '—';
+        const src = SPF.sourceText(p);
+        const ttl = SPF.sourceTitle(p);
+        const act = canEdit && p.matched ? `<span class="sup-pr-act">
+            <a href="#" onclick="editSupplierPrice(${p.id});return false;" title="Düzenle" style="color:#4338ca;"><i class="bi bi-pencil"></i></a>
+            <a href="#" onclick="deleteSupplierPrice(${p.id});return false;" title="Sil" style="color:#dc2626;">×</a></span>` : '';
+        return `<tr>
+          <td style="font-weight:600;">${escHtml(p.material || '—')}${loose}</td>
+          <td class="td-muted">${pkg}</td>
+          <td><b>${SPF.priceText(p)}</b></td>
+          <td><span class="sup-pr-src${p.source === 'manual' ? ' sup-pr-manual' : ''}"${ttl ? ` title="${escHtml(ttl)}"` : ''}>${escHtml(src)}</span></td>
+          <td class="td-muted">${SPF.fmtDate(p.quoted_at) || '—'}</td>
+          <td class="td-muted" style="max-width:180px;">${escHtml(p.note || '')}</td>
+          <td style="white-space:nowrap;">${act}</td>
+        </tr>`;
+      }).join('');
+    }
+    document.getElementById('supPrSearch').addEventListener('input', renderSupplierPrices);
+    document.getElementById('supPrAdd').addEventListener('click', function () {
+      SPF.mount(document.getElementById('supPrForm'), {
+        mode: 'create', supplierId: _pr.sup.id, supplierName: _pr.sup.name,
+        onSaved: loadSupplierPrices,
+      });
+    });
+    function editSupplierPrice(id) {
+      const p = _pr.rows.find(x => x.id === id);
+      if (!p) return;
+      const box = document.getElementById('supPrForm');
+      SPF.mount(box, { mode: 'edit', row: p, onSaved: loadSupplierPrices });
+      box.scrollIntoView({ block: 'nearest' });
+    }
+    async function deleteSupplierPrice(id) {
+      const p = _pr.rows.find(x => x.id === id);
+      if (!p || !confirm(`«${p.material}» fiyat satırı silinsin mi?`)) return;
+      try {
+        const r = await fetch(`/api/supplier-prices/${id}`, { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(typeof d.detail === 'string' ? d.detail : 'Silinemedi.'); return; }
+        showToast('Fiyat silindi.', 'success');
+        loadSupplierPrices();
+      } catch { showToast('Silinemedi.'); }
+    }
+    document.getElementById('supPricesModal').addEventListener('hidden.bs.modal', function () {
+      SPF.unmount(document.getElementById('supPrForm'));
+    });
+
     document.getElementById('logoutBtn').addEventListener('click', async function () {
       this.disabled = true;
       try { await fetch('/api/logout', { method: 'POST' }); window.location.href = '/login'; }
@@ -650,8 +946,15 @@
 
     async function loadSuppliers() {
       try {
-        const res = await fetch('/api/suppliers');
+        const inactive = document.getElementById('supShowInactive').checked;
+        const res = await fetch('/api/suppliers' + (inactive ? '?include_inactive=1' : ''));
         allSuppliers = await res.json();
+        // Pasif satır seçilemez — görünürlükten düşen seçimleri temizle
+        [...selectedIds].forEach(id => {
+          const s = allSuppliers.find(x => x.id === id);
+          if (!s || s.is_active === false) selectedIds.delete(id);
+        });
+        updateBulkBtn();
         applyFiltersAndSort();
       } catch { showToast('Tedarikçiler yüklenirken hata oluştu.'); }
     }

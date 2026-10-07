@@ -1860,11 +1860,31 @@
       const sel = document.getElementById('itemSupplierId');
       if (!sel) return;
       const currentVal = sel.value;
+      const extra = [...sel.querySelectorAll('option[data-extra]')];   // pasif tedarikçi seçeneği
       sel.innerHTML = '<option value="">— Tedarikçi yok —</option>' +
         window.trSortBy(allSuppliers, 'name').map(s =>
           `<option value="${s.id}">${escHtml(s.name)}</option>`
         ).join('');
+      extra.forEach(o => { if (![...sel.options].some(x => x.value === o.value)) sel.appendChild(o); });
       if (currentVal) sel.value = currentVal;
+    }
+
+    /* Kartın tedarikçisi pasife alınmışsa /api/suppliers onu döndürmez —
+       seçicide yoksa select '' olur ve kayıt kartın tedarikçi bağını
+       sessizce NULL'a çekerdi.  Mevcut tedarikçi "(pasif tedarikçi)" ek
+       seçeneği olarak tutulur; sunucu değişmeyen pasif tedarikçiyi kabul
+       eder, YENİ atamayı reddeder. */
+    function ensureSupplierOption(id, name) {
+      const sel = document.getElementById('itemSupplierId');
+      if (!sel || !id || [...sel.options].some(o => o.value === String(id))) return;
+      const o = document.createElement('option');
+      o.value = String(id);
+      o.dataset.extra = '1';
+      o.textContent = `${name || ('#' + id)} (pasif tedarikçi)`;
+      sel.appendChild(o);
+    }
+    function clearExtraSupplierOptions() {
+      document.querySelectorAll('#itemSupplierId option[data-extra]').forEach(o => o.remove());
     }
 
     /* ── Update tab count badges ── */
@@ -2793,6 +2813,7 @@
     /* ── Open "Add Item" modal pre-seeded with the active tab's default category ── */
     function openAddItemModal() {
       editingItemId = null;
+      clearExtraSupplierOptions();
       document.getElementById('addItemModalLabel').textContent = 'Yeni Ürün Ekle';
       document.getElementById('addItemForm').reset();
       resetVariationFields();
@@ -2829,6 +2850,8 @@
       if (_langEl) _langEl.value = item.language || '';
       // Default supplier — mal kabulde oto-doldurma için
       const _supEl = document.getElementById('itemSupplierId');
+      clearExtraSupplierOptions();
+      if (item.supplier_id) ensureSupplierOption(item.supplier_id, item.supplier_name);
       if (_supEl) _supEl.value = item.supplier_id || '';
 
       // ── Variation state ─────────────────────────────────────────────────
@@ -2861,6 +2884,7 @@
       // (başarılı kayıtta resumeSampleAfterCreate zaten 300 ms sonra devralır).
       setTimeout(() => { if (!document.getElementById('sampleEntryModal').classList.contains('show')) _sampleReturn = null; }, 800);
       editingItemId = null;
+      clearExtraSupplierOptions();
       document.getElementById('addItemModalLabel').textContent = 'Yeni Ürün Ekle';
       document.getElementById('addItemForm').reset();
       resetVariationFields();

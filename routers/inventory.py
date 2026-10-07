@@ -98,6 +98,9 @@ class SupplierCreateRequest(BaseModel):
     contact_person: Optional[str] = Field(None, max_length=100)
     email: Optional[str] = Field(None, max_length=150)
     phone: Optional[str] = Field(None, max_length=30)
+    # PUT'ta YALNIZ gönderilirse yazılır (model_fields_set) — adres alanını
+    # bilmeyen eski istemci kayıtlı adresi silmesin.
+    address: Optional[str] = Field(None, max_length=1000)
     notes: Optional[str] = Field(None, max_length=2000)
 
 
@@ -163,10 +166,15 @@ def list_items(
         if i.parent_id:
             child_count[i.parent_id] = child_count.get(i.parent_id, 0) + 1
 
-    # Supplier lookup — listing'de supplier_name göstermek için
-    supplier_name_by_id = {
-        s.id: s.name for s in db.query(Supplier).filter(Supplier.is_active == True).all()
-    }
+    # Supplier lookup — listing'de supplier_name göstermek için.  Pasif
+    # (yumuşak silinmiş) tedarikçinin adı da çözülür; `supplier_active` kart
+    # penceresinin onu "(pasif)" seçeneği olarak tutmasını sağlar.
+    supplier_name_by_id, inactive_sup = {}, set()
+    for sid, sname, sact in (db.query(Supplier.id, Supplier.name, Supplier.is_active)
+                             .filter(Supplier.domain == domain).all()):
+        supplier_name_by_id[sid] = sname
+        if sact is False:
+            inactive_sup.add(sid)
     # Kartta bekleyen numune miktarı — stoğa DAHİL DEĞİL, ama "Mevcut Stok"
     # yanında görünmezse lab numuneyi kayıp sanıyor (Songül Hanım, 05.10).
     # Tek GROUP BY sorgusu.
@@ -205,6 +213,7 @@ def list_items(
             "is_variation":    i.parent_id is not None,
             "supplier_id":     i.supplier_id,
             "supplier_name":   supplier_name_by_id.get(i.supplier_id) if i.supplier_id else None,
+            "supplier_active": (i.supplier_id not in inactive_sup) if i.supplier_id else None,
             "created_at":      to_tr(i.created_at).strftime("%d.%m.%Y") if i.created_at else "",
             "sample_qty":      round(float(sample_qty.get(i.id) or 0.0), 4),
             "material_group_id":   i.material_group_id if i.material_group_id in group_name_by_id else None,
@@ -287,8 +296,7 @@ def print_items(
                 qn in str(v or "").casefold()
                 for v in (i.name, i.name_tr, i.category, i.pkg_type, i.barcode))]
 
-        suppliers = {s.id: s.name for s in db.query(Supplier)
-                     .filter(Supplier.is_active == True).all()}  # noqa: E712
+        suppliers = _supplier_names(db, domain)       # pasif firmanın adı da
 
         def flat_row(i):
             return {"name": i.name, "unit": i.unit or "", "stock": i.current_stock,
@@ -415,6 +423,8 @@ def create_item(data: ItemCreateRequest, request: Request, db: Session = Depends
                 domain: str = Depends(active_domain)):
     err = _validate_variation(db, data.parent_id, data.variation_name)
     if err: return err
+    err = _check_supplier_ref(db, domain, data.supplier_id)
+    if err: return err
 
     # `join_group_of_item_id` BİLİNÇLİ İSTİSNA: grup yazma kuralı items.edit'tir
     # (/api/material-groups) ama bu yol items.create ile açılır — numune giriş
@@ -457,7 +467,9 @@ def create_item(data: ItemCreateRequest, request: Request, db: Session = Depends
         category=data.category,
         unit=data.unit,
         min_stock_level=data.min_stock  or 0.0,
-        cost_price=data.cost_price or 0.0,
+        # Maliyet yalnız finans rolünden — LabLead/LabTech'in gönderdiği
+        # cost_price (API ile bile) yok sayılır.
+        cost_price=(data.cost_price or 0.0) if _can_see_finance(current_user) else 0.0,
         parent_id=data.parent_id,
         variation_name=(data.variation_name.strip() if data.parent_id and data.variation_name else None),
         barcode=(data.barcode.strip() if data.barcode and data.barcode.strip() else None),
@@ -882,7 +894,7 @@ def update_item(
     current_user: dict = Depends(require_permission("items", "edit")),
     domain: str = Depends(active_domain),
 ):
-    item = db.query(Item).filter(Item.id == item_id).first()
+    item = db.query(Item).filter(Item.id == item_id, Item.domain == domain).first()
     if not item:
         return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
 
@@ -907,6 +919,15 @@ def update_item(
 
     err = _validate_variation(db, data.parent_id, data.variation_name, self_id=item_id)
     if err: return err
+    err = _check_supplier_ref(db, domain, data.supplier_id, current_id=item.supplier_id)
+    if err: return err
+
+    # Maliyet YALNIZ finans rolü alanı fiilen gönderdiyse yazılır.  Eskiden
+    # `data.cost_price or 0.0` koşulsuzdu: items.html finans dışı kullanıcıda
+    # alanı hiç göndermiyor (undefined), Pydantic varsayılanı 0.0 → LabLead
+    # min stoğu düzeltip kaydedince Manager'ın girdiği maliyet 0'lanıyordu.
+    write_cost = ("cost_price" in data.model_fields_set and data.cost_price is not None
+                  and _can_see_finance(current_user))
 
     # "Aynı malzeme" grubu tek türdür (hammadde | ambalaj; bitmiş ürün hiç) —
     # gruplu kartın türü değişirse grup karışır ve /members her eklemede 400
@@ -928,7 +949,6 @@ def update_item(
         "category":        item.category,
         "unit":            item.unit,
         "min_stock_level": float(item.min_stock_level or 0.0),
-        "cost_price":      float(item.cost_price or 0.0),
         "parent_id":       item.parent_id,
         "variation_name":  item.variation_name,
         "barcode":         item.barcode,
@@ -937,13 +957,19 @@ def update_item(
         "label_group":     item.label_group,
         "supplier_id":     item.supplier_id,
     }
+    # cost_price YALNIZ bu düzenleme ona dokunduysa geri alınır — yoksa
+    # LabLead'in "Geri al"ı arada Manager'ın girdiği maliyeti sessizce eski
+    # değere çekerdi (core/undo._undo_item_edit `if col in before`).
+    if write_cost:
+        before_snapshot["cost_price"] = float(item.cost_price or 0.0)
 
     item.name            = data.name
     item.name_tr         = ((data.name_tr or "").strip() or None)
     item.category        = data.category
     item.unit            = data.unit
     item.min_stock_level = data.min_stock  or 0.0
-    item.cost_price      = data.cost_price or 0.0
+    if write_cost:
+        item.cost_price  = data.cost_price
     item.parent_id       = data.parent_id
     item.variation_name  = (data.variation_name.strip() if data.parent_id and data.variation_name else None)
     item.barcode         = (data.barcode.strip() if data.barcode and data.barcode.strip() else None)
@@ -1084,54 +1110,109 @@ def bulk_delete_items(data: BulkDeleteRequest, request: Request, db: Session = D
 
 
 # ─── Suppliers Endpoints ─────────────────────────────────────────────────────
+# Silme YUMUŞAKTIR (07.10.2026): tedarikçiye lot, kart, fiyat, sipariş ve
+# üretim tüketimi bağlıdır — kalıcı silme ya IntegrityError (500) veriyordu ya
+# da izi koparırdı.  Pasif kart listede gizlenir (`?include_inactive=1` ile
+# görünür), adı kart/lot listelerinde çözülmeye devam eder, yeni atamada
+# kabul edilmez (`_check_supplier_ref`).  Geri dönüş: POST .../activate.
+
+def _clean(v) -> Optional[str]:
+    return (v or "").strip() or None
+
+
+def _check_supplier_ref(db: Session, domain: str, supplier_id: Optional[int],
+                        current_id: Optional[int] = None) -> Optional[JSONResponse]:
+    """Karta/lota yazılacak `supplier_id`'yi doğrula; sorun yoksa None.
+
+    Aktif panelin tedarikçisi olmalı (başka panelin firması bağlanırsa P1b
+    birleştirmesi lotu taşıyamaz, raporlarda panel karışır) ve AKTİF olmalı —
+    pasife alınmış firma yeniden atanamaz.  İstisna: kartın DEĞİŞMEYEN mevcut
+    tedarikçisi (`current_id`) olduğu gibi kabul edilir — pasif ya da eski
+    (panel öncesi) bir bağ olsa da; yoksa o kartı düzenleyip kaydetmek
+    imkânsız olurdu."""
+    if supplier_id is None or (current_id is not None and supplier_id == current_id):
+        return None
+    sup = (db.query(Supplier)
+           .filter(Supplier.id == supplier_id, Supplier.domain == domain).first())
+    if sup is None:
+        return JSONResponse(status_code=400, content={
+            "detail": "Seçilen tedarikçi bu panelde bulunamadı."})
+    if sup.is_active is False:
+        return JSONResponse(status_code=400, content={
+            "detail": f"«{sup.name}» pasif tedarikçi — yeni kayda bağlanamaz."})
+    return None
+
+
+def _supplier_names(db: Session, domain: str) -> dict:
+    """Panelin BÜTÜN tedarikçileri (pasifler dahil) → {id: ad}.  Kart/lot
+    listelerindeki ad çözümü için — pasife alınan firmanın adı kartlarda
+    sessizce kaybolmasın."""
+    return dict(db.query(Supplier.id, Supplier.name).filter(Supplier.domain == domain).all())
+
 
 @router.get("/suppliers")
-def list_suppliers(db: Session = Depends(get_db), domain: str = Depends(active_domain),
+def list_suppliers(include_inactive: bool = False,
+                   include_ids: Optional[str] = None,
+                   db: Session = Depends(get_db), domain: str = Depends(active_domain),
                    _: dict = Depends(require_any_permission(("items", "view"), ("inventory", "view"),
                                                             ("reports", "view")))):
-    rows = (db.query(Supplier)
-            .filter(Supplier.is_active == True, Supplier.domain == domain)
-            .order_by(Supplier.id.desc()).all())
-    return [
-        {
-            "id": s.id,
-            "name": s.name,
-            "contact_person": s.contact_person,
-            "email": s.email,
-            "phone": s.phone,
-            "notes": s.notes,
-            "created_at": to_tr(s.created_at).strftime("%d.%m.%Y") if s.created_at else "",
-        }
-        for s in rows
-    ]
+    """Aktif panelin tedarikçileri (varsayılan yalnız aktifler).
+
+    `include_inactive=1` pasifleri de döndürür (Tedarikçiler sayfasının
+    "Pasifleri göster" anahtarı).  `include_ids=3,7` yalnız bu id'lerdeki
+    pasifleri ekler — kart penceresi, kartın mevcut (pasif) tedarikçisini
+    seçenek olarak tutabilsin.  Yanıt düz dizi; satır şekli
+    `core.suppliers.serialize_supplier`."""
+    from core.suppliers import serialize_supplier
+    extra: set = set()
+    for x in (include_ids or "").split(","):
+        x = x.strip()
+        if x.isdigit():
+            extra.add(int(x))
+    q = db.query(Supplier).filter(Supplier.domain == domain)
+    if not include_inactive:
+        if extra:
+            q = q.filter((Supplier.is_active == True) | Supplier.id.in_(sorted(extra)))  # noqa: E712
+        else:
+            q = q.filter(Supplier.is_active == True)                                    # noqa: E712
+    return [serialize_supplier(s) for s in q.order_by(Supplier.id.desc()).all()]
 
 
 @router.post("/suppliers", status_code=201)
-def create_supplier(data: SupplierCreateRequest, db: Session = Depends(get_db),
-                    _: dict = Depends(require_permission("items", "create")),
+def create_supplier(data: SupplierCreateRequest, request: Request, db: Session = Depends(get_db),
+                    current_user: dict = Depends(require_permission("items", "create")),
                     domain: str = Depends(active_domain)):
+    name = data.name.strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"detail": "Firma adı zorunludur."})
     supplier = Supplier(
-        name=data.name,
-        contact_person=data.contact_person,
-        email=data.email,
-        phone=data.phone,
-        notes=data.notes,
+        name=name,
+        contact_person=_clean(data.contact_person),
+        email=_clean(data.email),
+        phone=_clean(data.phone),
+        address=_clean(data.address),
+        notes=_clean(data.notes),
         domain=domain,                     # Faz 3 — aktif panele damgala
     )
     db.add(supplier)
     db.commit()
     db.refresh(supplier)
+    log_admin_event(db, request, actor=current_user, action="supplier.create",
+                    target_type="supplier", target_id=supplier.id, target_name=supplier.name,
+                    details={"domain": domain})
     return {"id": supplier.id, "message": "Tedarikçi başarıyla eklendi."}
 
 
 @router.put("/suppliers/{supplier_id}")
-def update_supplier(supplier_id: int, data: SupplierCreateRequest, db: Session = Depends(get_db),
-                    _: dict = Depends(require_permission("items", "edit")),
+def update_supplier(supplier_id: int, data: SupplierCreateRequest, request: Request,
+                    db: Session = Depends(get_db),
+                    current_user: dict = Depends(require_permission("items", "edit")),
                     domain: str = Depends(active_domain)):
     """Tedarikçi bilgilerini düzenle.  Sayfada düzenleme hiç yoktu (yalnız ekle/sil) —
     yanlış girilen firma adı/telefonu silip yeniden eklemek gerekiyordu, bu da kayda
     bağlı mal kabul lotlarını koparırdı.  Aktif panelin (domain) dışındaki tedarikçi
-    değiştirilemez."""
+    değiştirilemez.  `address` yalnız gövdede varsa yazılır.  Audit
+    `supplier.update` (değişen alanlar eski → yeni)."""
     supplier = (db.query(Supplier)
                 .filter(Supplier.id == supplier_id, Supplier.is_active == True,   # noqa: E712
                         Supplier.domain == domain)
@@ -1141,30 +1222,85 @@ def update_supplier(supplier_id: int, data: SupplierCreateRequest, db: Session =
     name = data.name.strip()
     if not name:
         return JSONResponse(status_code=400, content={"detail": "Firma adı zorunludur."})
-    supplier.name = name
-    supplier.contact_person = (data.contact_person or "").strip() or None
-    supplier.email = (data.email or "").strip() or None
-    supplier.phone = (data.phone or "").strip() or None
-    supplier.notes = (data.notes or "").strip() or None
+    new = {"name": name, "contact_person": _clean(data.contact_person),
+           "email": _clean(data.email), "phone": _clean(data.phone), "notes": _clean(data.notes)}
+    if "address" in data.model_fields_set:
+        new["address"] = _clean(data.address)
+    changes = {}
+    for col, val in new.items():
+        old = getattr(supplier, col)
+        if old != val:
+            changes[col] = {"eski": old, "yeni": val}
+            setattr(supplier, col, val)
     db.commit()
+    if changes:
+        log_admin_event(db, request, actor=current_user, action="supplier.update",
+                        target_type="supplier", target_id=supplier.id, target_name=supplier.name,
+                        details={"changes": changes})
     return {"id": supplier.id, "message": "Tedarikçi güncellendi."}
 
 
+def _log_deactivated(db: Session, request: Request, actor: dict, sup: Supplier, via: str) -> None:
+    log_admin_event(db, request, actor=actor, action="supplier.deactivate",
+                    target_type="supplier", target_id=sup.id, target_name=sup.name,
+                    details={"via": via, "domain": sup.domain,
+                             "purchase_status": sup.purchase_status})
+
+
 @router.delete("/suppliers/{supplier_id}")
-def delete_supplier(supplier_id: int, db: Session = Depends(get_db), _: dict = Depends(require_permission("items", "delete"))):
-    supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
+def delete_supplier(supplier_id: int, request: Request, db: Session = Depends(get_db),
+                    current_user: dict = Depends(require_permission("items", "delete")),
+                    domain: str = Depends(active_domain)):
+    """Tedarikçiyi PASİFE al (yumuşak silme) — lot/kart/fiyat bağları korunur."""
+    supplier = (db.query(Supplier)
+                .filter(Supplier.id == supplier_id, Supplier.domain == domain).first())
     if not supplier:
         return JSONResponse(status_code=404, content={"detail": "Tedarikçi bulunamadı."})
-    db.delete(supplier)
+    if supplier.is_active is False:
+        return {"message": "Tedarikçi zaten pasif."}
+    supplier.is_active = False
     db.commit()
-    return {"message": "Tedarikçi silindi."}
+    _log_deactivated(db, request, current_user, supplier, "tekil")
+    return {"message": "Tedarikçi pasife alındı."}
 
 
 @router.post("/suppliers/bulk-delete")
-def bulk_delete_suppliers(data: SupplierBulkDeleteRequest, db: Session = Depends(get_db), _: dict = Depends(require_permission("items", "delete"))):
-    deleted = db.query(Supplier).filter(Supplier.id.in_(data.supplier_ids)).delete(synchronize_session=False)
+def bulk_delete_suppliers(data: SupplierBulkDeleteRequest, request: Request,
+                          db: Session = Depends(get_db),
+                          current_user: dict = Depends(require_permission("items", "delete")),
+                          domain: str = Depends(active_domain)):
+    """Seçilenleri pasife al — yalnız aktif paneldeki AKTİF kayıtlar; diğer
+    id'ler sessizce atlanır (sayıya girmez)."""
+    rows = (db.query(Supplier)
+            .filter(Supplier.id.in_(data.supplier_ids), Supplier.domain == domain,
+                    Supplier.is_active == True)                                  # noqa: E712
+            .order_by(Supplier.id).all())
+    for s in rows:
+        s.is_active = False
     db.commit()
-    return {"message": f"{deleted} tedarikçi silindi."}
+    for s in rows:
+        _log_deactivated(db, request, current_user, s, "toplu")
+    return {"message": f"{len(rows)} tedarikçi pasife alındı.", "deactivated": len(rows)}
+
+
+@router.post("/suppliers/{supplier_id}/activate")
+def activate_supplier(supplier_id: int, request: Request, db: Session = Depends(get_db),
+                      current_user: dict = Depends(require_permission("items", "delete")),
+                      domain: str = Depends(active_domain)):
+    """Yanlışlıkla pasife alınan tedarikçiyi geri aç (pasife almanın tersi,
+    aynı yetki).  Audit `supplier.activate`."""
+    supplier = (db.query(Supplier)
+                .filter(Supplier.id == supplier_id, Supplier.domain == domain).first())
+    if not supplier:
+        return JSONResponse(status_code=404, content={"detail": "Tedarikçi bulunamadı."})
+    if supplier.is_active is not False:
+        return {"message": "Tedarikçi zaten aktif."}
+    supplier.is_active = True
+    db.commit()
+    log_admin_event(db, request, actor=current_user, action="supplier.activate",
+                    target_type="supplier", target_id=supplier.id, target_name=supplier.name,
+                    details={"domain": domain})
+    return {"message": "Tedarikçi yeniden etkinleştirildi."}
 
 
 # ─── Inventory / Receiving Endpoints ────────────────────────────────────────
@@ -1213,6 +1349,9 @@ def receive_stock(
         return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
     if (item.domain or "cosmetics") != domain:
         return JSONResponse(status_code=400, content={"detail": "Bu ürün aktif panelde değil."})
+    err = _check_supplier_ref(db, domain, data.supplier_id)
+    if err:
+        return err
 
     actor = current_user.get("full_name") or current_user.get("username") or "—"
 
@@ -1482,9 +1621,8 @@ def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(activ
         .all()
     )
     # Supplier lookup — listing'de supplier_name göstermek için tek query
-    supplier_name_by_id = {
-        s.id: s.name for s in db.query(Supplier).filter(Supplier.is_active == True).all()
-    }
+    # (pasife alınan tedarikçinin adı da — kart tedarikçisiz görünmesin)
+    supplier_name_by_id = _supplier_names(db, domain)
     return [
         {
             "item_id":       i.id,
@@ -3089,7 +3227,13 @@ async def smart_excel_import(
 
     # ── Pre-flight analysis: classify each row as create vs update ──────────
     name_index = {i.name.strip().upper(): i for i in db.query(Item).filter(Item.is_active == True).all()}
-    supp_index = {s.name.strip().upper(): s for s in db.query(Supplier).filter(Supplier.is_active == True).all()}
+    # Tedarikçi dizini aktif panelin BÜTÜN firmaları (pasifler dahil, aktif
+    # olan aynı adı ezer): pasife alınmış firmanın adıyla gelen satır aynı
+    # adlı YENİ bir tedarikçi açmasın.
+    supp_index = {}
+    for s in (db.query(Supplier).filter(Supplier.domain == domain)
+              .order_by(Supplier.is_active.asc(), Supplier.id.asc()).all()):
+        supp_index[s.name.strip().upper()] = s
 
     plan = {
         "schema":               schema,
@@ -3161,7 +3305,9 @@ async def smart_excel_import(
             if existing:
                 # Add stock to existing item
                 existing.current_stock = round((existing.current_stock or 0) + row["quantity"], 6)
-                if supplier_obj and not existing.supplier_id:
+                # Kartın varsayılan tedarikçisi yalnız AKTİF firmadan (pasif
+                # firma lota bağlanır, karta yeni atanmaz).
+                if supplier_obj and supplier_obj.is_active is not False and not existing.supplier_id:
                     existing.supplier_id = supplier_obj.id
                 item = existing
                 items_updated += 1
@@ -3172,7 +3318,8 @@ async def smart_excel_import(
                     unit=row["unit"],
                     current_stock=row["quantity"],
                     cost_price=0.0,
-                    supplier_id=supplier_obj.id if supplier_obj else None,
+                    supplier_id=(supplier_obj.id if supplier_obj and supplier_obj.is_active is not False
+                                 else None),
                     is_active=True,
                     domain=domain,                      # Faz 3 — aktif panel
                 )

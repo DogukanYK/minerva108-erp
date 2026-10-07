@@ -36,7 +36,7 @@ from core.limiter import limiter
 from core.permissions import _ROLE_LABELS, _has_permission, _resolve_permissions, get_role_labels
 from core.scheduler import start_scheduler, stop_scheduler
 
-from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router, shopify as shopify_router, pdks as pdks_router, retention as retention_router, product_images as product_images_router, reviews as reviews_router, influencer as influencer_router, purchase_plan as purchase_plan_router, material_groups as material_groups_router
+from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router, shopify as shopify_router, pdks as pdks_router, retention as retention_router, product_images as product_images_router, reviews as reviews_router, influencer as influencer_router, purchase_plan as purchase_plan_router, material_groups as material_groups_router, suppliers as suppliers_router
 from core.domain import get_active_domain, domain_label
 
 
@@ -346,6 +346,9 @@ app.include_router(influencer_router.public_router)
 app.include_router(purchase_plan_router.router)
 # "Aynı malzeme" grupları — /api/material-groups/* (items.view/edit + active_domain)
 app.include_router(material_groups_router.router)
+# Tedarikçi satın alma durumu + firma fiyatları — /api/suppliers/{id}/status|prices
+# (suppliers.status; okuma items.view|reports.view; active_domain)
+app.include_router(suppliers_router.router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────

@@ -1198,6 +1198,7 @@
       retention:    { tr: 'Şahit Numune',    icon: 'bi-archive' },
       reviews:      { tr: 'Ürün Yorumları',  icon: 'bi-chat-quote' },
       influencer:   { tr: 'Influencer',      icon: 'bi-megaphone' },
+      suppliers:    { tr: 'Tedarikçiler',    icon: 'bi-truck' },
     };
     const _ACTION_LABELS = {
       view: 'Görüntüle', create: 'Oluştur', edit: 'Düzenle', delete: 'Sil',
@@ -1211,6 +1212,7 @@
       invite: 'Davet Oluştur', moderate: 'Moderasyon',
       ship: 'Ürün Gönderimi', links: 'Link/Kod Eşleme', payout: 'Ödeme Kaydı', settings: 'Program Ayarları',
       cancel: 'İptal',
+      status: 'Durum', merge: 'Birleştir',
     };
 
     async function ensurePermSchema() {
@@ -1283,6 +1285,7 @@
         'invite', 'moderate',
         'ship', 'links', 'payout', 'settings',
         'cancel',
+        'status', 'merge',
       ];
       // Eksik kalanları da göster (yeni action eklendi ama actionOrder güncel
       // değilse en azından kaybolmasınlar)

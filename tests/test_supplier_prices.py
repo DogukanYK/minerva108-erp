@@ -392,3 +392,198 @@ def test_price_per_purchase_unit_cases():
     assert ppu({"unit_price": 2.0}, "ml") == (2.0, "l", LITRE_KG_NOTE)
     # SupplierPrice nesnesi de kabul edilir
     assert ppu(SupplierPrice(unit_price=7.5, price_unit="kg"), "g") == (7.5, "kg", None)
+
+
+# ─── Elle fiyat (lab — suppliers.prices, 07.10.2026) ────────────────────────
+
+import json  # noqa: E402
+
+from database import AdminAuditLog  # noqa: E402
+
+
+def _login(c: TestClient, username: str) -> TestClient:
+    c.post("/api/logout", headers=_H)
+    r = c.post("/api/login", json={"username": username, "password": "minerva123"}, headers=_H)
+    assert r.status_code == 200, r.text
+    return c
+
+
+def _ids(db):
+    db.expire_all()
+    items = {i.name: i.id for i in db.query(Item).all()}
+    sups = {s.name: s.id for s in db.query(Supplier).all()}
+    return items, sups
+
+
+def _audit_actions(db):
+    db.expire_all()
+    return [a.action for a in db.query(AdminAuditLog).order_by(AdminAuditLog.id).all()]
+
+
+def test_lablead_manual_price_crud(client: TestClient, db_session):
+    _seed_unit_items(db_session)
+    items, sups = _ids(db_session)
+    _login(client, "songul")                                   # LabLead
+    r = client.post("/api/supplier-prices", headers=_H, json={
+        "item_id": items["ARGAN YAĞI"], "supplier_id": sups["NATURALYA"], "unit_price": 24.5,
+        "currency": "eur", "price_unit": "kg", "package_size": 25, "quoted_at": "2026-10-07",
+        "note": "telefonla teyit"})
+    assert r.status_code == 201, r.text
+    row = r.json()
+    assert row["source"] == "manual" and row["created_by"] and row["currency"] == "EUR"
+    assert row["material"] == "ARGAN YAĞI" and row["quoted_at"] == "2026-10-07"
+    pid = row["id"]
+    r = client.put(f"/api/supplier-prices/{pid}", headers=_H, json={"unit_price": 23.0})
+    assert r.status_code == 200, r.text
+    assert r.json()["unit_price"] == 23.0 and r.json()["package_size"] == 25   # kısmi
+    assert r.json()["updated_by"]
+    lst = client.get("/api/supplier-prices").json()
+    s = lst["items"][0]["suppliers"][0]
+    assert s["source"] == "manual" and s["note"] == "telefonla teyit" and s["supplier_status"] == "normal"
+    assert client.delete(f"/api/supplier-prices/{pid}", headers=_H).status_code == 200
+    acts = _audit_actions(db_session)
+    for a in ("supplier_prices.create", "supplier_prices.update", "supplier_prices.delete"):
+        assert a in acts
+    db_session.expire_all()
+    dl = db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "supplier_prices.delete").one()
+    d = json.loads(dl.details)
+    assert d["unit_price"] == 23.0 and d["supplier_name"] == "NATURALYA" and d["source"] == "manual"
+
+
+def test_labtech_cannot_write_prices(client: TestClient, db_session):
+    _seed_unit_items(db_session)
+    items, sups = _ids(db_session)
+    sp = SupplierPrice(item_id=items["ARGAN YAĞI"], supplier_id=sups["NATURALYA"],
+                       supplier_name="NATURALYA", unit_price=1, price_unit="kg", domain="cosmetics")
+    db_session.add(sp); db_session.commit()
+    _login(client, "meltem")                                   # LabTech
+    assert client.post("/api/supplier-prices", headers=_H, json={
+        "item_id": items["ARGAN YAĞI"], "supplier_id": sups["NATURALYA"], "unit_price": 2,
+        "price_unit": "kg"}).status_code == 403
+    assert client.put(f"/api/supplier-prices/{sp.id}", headers=_H,
+                      json={"unit_price": 3}).status_code == 403
+    assert client.delete(f"/api/supplier-prices/{sp.id}", headers=_H).status_code == 403
+
+
+def test_manual_price_validation(authed_client: TestClient, db_session):
+    _seed_unit_items(db_session)
+    items, sups = _ids(db_session)
+    base = {"supplier_id": sups["NATURALYA"], "unit_price": 1.5}
+    # Birim ailesi: adetli kart → yalnız adet; g kart → kg|l
+    r = authed_client.post("/api/supplier-prices", headers=_H,
+                           json={**base, "item_id": items["POMPA 24/410"], "price_unit": "kg"})
+    assert r.status_code == 400
+    r = authed_client.post("/api/supplier-prices", headers=_H,
+                           json={**base, "item_id": items["ARGAN YAĞI"], "price_unit": "adet"})
+    assert r.status_code == 400
+    for bad in ({"unit_price": 0}, {"unit_price": -1}, {"currency": "GBP"},
+                {"quoted_at": "07.10.2026"}, {"package_size": 0}):
+        r = authed_client.post("/api/supplier-prices", headers=_H,
+                               json={**base, "item_id": items["ARGAN YAĞI"], "price_unit": "kg", **bad})
+        assert r.status_code == 400, bad
+    r = authed_client.post("/api/supplier-prices", headers=_H,
+                           json={**base, "item_id": items["POMPA 24/410"], "price_unit": "adet"})
+    assert r.status_code == 201
+    # Mükerrer (malzeme + tedarikçi + birim) → 409 + mevcut id
+    r2 = authed_client.post("/api/supplier-prices", headers=_H,
+                            json={**base, "item_id": items["POMPA 24/410"], "price_unit": "adet"})
+    assert r2.status_code == 409
+    assert r2.json()["code"] == "price_exists" and r2.json()["id"] == r.json()["id"]
+    # Pasif tedarikçiye fiyat girilmez
+    authed_client.delete(f"/api/suppliers/{sups['NATURALYA']}", headers=_H)
+    r = authed_client.post("/api/supplier-prices", headers=_H,
+                           json={**base, "item_id": items["GÜL SUYU"], "price_unit": "l"})
+    assert r.status_code == 400
+
+
+def test_manual_price_other_domain_rejected(authed_client: TestClient, db_session):
+    _seed_unit_items(db_session)
+    items, sups = _ids(db_session)
+    authed_client.post("/api/domain/switch", json={"domain": "supplement"}, headers=_H)
+    r = authed_client.post("/api/supplier-prices", headers=_H, json={
+        "item_id": items["ARGAN YAĞI"], "supplier_id": sups["NATURALYA"], "unit_price": 2,
+        "price_unit": "kg"})
+    assert r.status_code == 404
+
+
+def test_import_keeps_manual_rows(authed_client: TestClient, db_session):
+    _seed_items_suppliers(db_session)
+    items, sups = _ids(db_session)
+    r = authed_client.post("/api/supplier-prices", headers=_H, json={
+        "item_id": items["ARGAN YAĞI"], "supplier_id": sups["NATURALYA"], "unit_price": 30,
+        "price_unit": "kg"})
+    assert r.status_code == 201
+    manual_id = r.json()["id"]
+    xls = _make_xlsx([("ARGAN YAĞI", "Hammadde", "g", [("NATURALYA", 25, 25.8),
+                                                     ("ULUDAĞ HERBAL", 25, 119.46)])])
+    r = authed_client.post("/api/supplier-prices/import",
+                           files={"file": ("x.xlsx", xls, _MIME)}, headers=_H)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["kept_manual"] == 1 and body["skipped_manual"] == 1
+    db_session.expire_all()
+    rows = db_session.query(SupplierPrice).all()
+    assert len(rows) == 2                                        # elle NATURALYA + Excel ULUDAĞ
+    m = db_session.get(SupplierPrice, manual_id)
+    assert m is not None and m.unit_price == 30 and m.source == "manual"
+    # Tekrar içe aktarma da elle satıra dokunmaz
+    authed_client.post("/api/supplier-prices/import",
+                       files={"file": ("x.xlsx", xls, _MIME)}, headers=_H)
+    db_session.expire_all()
+    assert db_session.get(SupplierPrice, manual_id).unit_price == 30
+
+
+def test_edited_import_row_becomes_manual_and_survives(authed_client: TestClient, db_session):
+    _seed_items_suppliers(db_session)
+    xls = _make_xlsx([("ARGAN YAĞI", "Hammadde", "g", [("NATURALYA", 25, 25.8)])])
+    authed_client.post("/api/supplier-prices/import",
+                       files={"file": ("x.xlsx", xls, _MIME)}, headers=_H)
+    db_session.expire_all()
+    pid = db_session.query(SupplierPrice).one().id
+    r = authed_client.put(f"/api/supplier-prices/{pid}", headers=_H, json={"unit_price": 21.0})
+    assert r.status_code == 200 and r.json()["source"] == "manual"
+    authed_client.post("/api/supplier-prices/import",
+                       files={"file": ("x.xlsx", xls, _MIME)}, headers=_H)
+    db_session.expire_all()
+    rows = db_session.query(SupplierPrice).all()
+    assert len(rows) == 1 and rows[0].id == pid and rows[0].unit_price == 21.0
+
+
+def test_import_matches_only_active_suppliers(db_session):
+    from core.supplier_prices import parse_stok_son_durum, import_prices
+    db_session.add(Item(name="ARGAN YAĞI", category="Hammadde", unit="g", current_stock=0,
+                        domain="cosmetics"))
+    old = Supplier(name="TATLIDİLİMLER", domain="cosmetics", is_active=False)
+    db_session.add(old); db_session.commit()
+    new = Supplier(name="TATLİDİLİMLER", domain="cosmetics")
+    db_session.add(new); db_session.commit()
+    import_prices(db_session, parse_stok_son_durum(
+        _make_xlsx([("ARGAN YAĞI", "Hammadde", "g", [("Tatlıdilimler", 1, 9.0)])])), "cosmetics")
+    assert db_session.query(SupplierPrice).one().supplier_id == new.id
+
+
+def test_prices_for_items_manual_hides_same_firm_import(db_session):
+    from core.supplier_prices import prices_for_items
+    _seed_items_suppliers(db_session)
+    items, sups = _ids(db_session)
+    iid = items["ARGAN YAĞI"]
+    db_session.add_all([
+        SupplierPrice(item_id=iid, supplier_id=sups["NATURALYA"], supplier_name="NATURALYA",
+                      unit_price=25.8, source="stok_son_durum", domain="cosmetics"),
+        SupplierPrice(item_id=iid, supplier_id=sups["NATURALYA"], supplier_name="NATURALYA",
+                      unit_price=30.0, source="manual", domain="cosmetics"),
+        SupplierPrice(item_id=iid, supplier_id=sups["UMAYCHEM"], supplier_name="UMAYCHEM",
+                      unit_price=40.0, source="stok_son_durum", domain="cosmetics"),
+    ])
+    db_session.commit()
+    out = prices_for_items(db_session, [iid], "cosmetics")
+    assert [(s["supplier_name"], s["unit_price"]) for s in out[iid]] == \
+        [("NATURALYA", 30.0), ("UMAYCHEM", 40.0)]
+
+
+def test_price_unit_ok_rules():
+    from core.supplier_prices import price_unit_ok
+    assert price_unit_ok("adet", "adet") and not price_unit_ok("adet", "kg")
+    assert price_unit_ok("kutu", "adet")
+    assert price_unit_ok("g", "kg") and price_unit_ok("g", "l") and not price_unit_ok("g", "adet")
+    assert price_unit_ok("ml", "l") and price_unit_ok("lt", "kg")

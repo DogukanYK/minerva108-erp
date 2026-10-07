@@ -460,6 +460,11 @@
             <p class="panel-title" style="margin:0;">Tedarikçi Fiyatları</p>
             <p class="panel-subtitle" style="margin:0;">Malzeme başına tedarikçi · alınabilecek miktar · birim fiyat. Üretim Stok Analizi Excel'inin <b>Satın Alma</b> sayfasını otomatik doldurur.</p>
           </div>
+          {% if can('suppliers','prices') %}
+          <button type="button" id="spAddBtn" class="btn-primary-gold">
+            <i class="bi bi-plus-lg"></i> Fiyat ekle
+          </button>
+          {% endif %}
           {% if role in ['SuperAdmin','Manager'] %}
           <button type="button" onclick="document.getElementById('spImport').click()" class="btn-primary-gold">
             <i class="bi bi-upload"></i> Excel'den İçe Aktar
@@ -470,7 +475,7 @@
         <div class="panel-body" style="padding:0.6rem 1.25rem 1.1rem;">
           {% if role in ['SuperAdmin','Manager'] %}
           <div style="font-size:0.76rem;color:#9ca3af;margin-bottom:0.6rem;">
-            Işık Hanım'ın <b>“Stok Son Durum”</b> Excel'ini (Malzeme + 3 tedarikçiye kadar ad/miktar/fiyat) yükleyin; malzeme başına eski fiyatlar değiştirilir.
+            Işık Hanım'ın <b>“Stok Son Durum”</b> Excel'ini (Malzeme + 3 tedarikçiye kadar ad/miktar/fiyat) yükleyin; malzeme başına eski Excel fiyatları değiştirilir — lab'ın <b>elle girdiği</b> fiyatlar korunur (aynı firmanın Excel teklifi onların üstüne yazılmaz).
             Fiyatın para birimini ve birimini aşağıdan seçin — adet birimli malzemelerin fiyatı her zaman adet başına sayılır.
           </div>
           <div class="ph-toolbar" style="margin-bottom:0.8rem;">
@@ -503,21 +508,26 @@
           </div>
           {% endif %}
           <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin-bottom:0.7rem;">
-            <input type="text" id="spSearch" placeholder="Malzeme ara…" oninput="spRender()"
+            <input type="text" id="spSearch" placeholder="Malzeme / tedarikçi ara…" oninput="spRender()"
               style="padding:0.4rem 0.7rem;border:1.5px solid #e5e7eb;border-radius:8px;font-size:0.82rem;min-width:180px;">
             <span id="spSummary" style="font-size:0.8rem;color:#9ca3af;"></span>
           </div>
           <div id="spImportInfo" style="display:none;margin-bottom:0.7rem;font-size:0.82rem;line-height:1.4;"></div>
+          <div id="spFormBox" hidden></div>
           <div style="overflow-x:auto;">
             <table style="width:100%;border-collapse:collapse;font-size:0.84rem;">
               <thead>
                 <tr style="text-align:left;color:#6b7280;border-bottom:2px solid #f0ece4;">
                   <th style="padding:0.4rem 0.5rem;">Malzeme</th>
                   <th style="padding:0.4rem 0.5rem;">Birim</th>
-                  <th style="padding:0.4rem 0.5rem;">Tedarikçiler (ucuzdan pahalıya · ad · miktar · birim fiyat)</th>
+                  <th style="padding:0.4rem 0.5rem;">Tedarikçi</th>
+                  <th style="padding:0.4rem 0.5rem;">Miktar</th>
+                  <th style="padding:0.4rem 0.5rem;">Birim fiyat (ucuzdan)</th>
+                  <th style="padding:0.4rem 0.5rem;">Kaynak</th>
+                  <th style="padding:0.4rem 0.5rem;"></th>
                 </tr>
               </thead>
-              <tbody id="spBody"><tr><td colspan="3" style="padding:0.8rem;color:#9ca3af;">Yükleniyor…</td></tr></tbody>
+              <tbody id="spBody"><tr><td colspan="7" style="padding:0.8rem;color:#9ca3af;">Yükleniyor…</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -708,6 +718,7 @@
   <div id="toast-container"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/static/supplier-price-form.js?v=1"></script>
   <script>
     /* ── helpers ── */
     function escHtml(s) {
@@ -1428,66 +1439,87 @@
     });
     phLoad();
 
-    /* ════ Tedarikçi Fiyatları ════ */
-    const SP_CAN_EDIT = {{ 'true' if role in ['SuperAdmin','Manager'] else 'false' }};
+    /* ════ Tedarikçi Fiyatları ════
+       Elle ekle/düzenle/sil `suppliers.prices` (Manager + LabLead — lab fiyatı
+       kendisi girer); Excel içe aktarma finans rolünde kalır.  Form:
+       static/supplier-price-form.js (Tedarikçiler → Fiyatlar ile ortak). */
+    const SP_CAN_PRICE = window.can('suppliers', 'prices');
+    const SPF = window.SupplierPriceForm;
+    const _spFold = s => (window.trFold ? window.trFold(s) : String(s == null ? '' : s).toLocaleLowerCase('tr'));
     let _spData = [];
     function _spEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-    // Birim fiyat: 1'in altında 4 hane (ambalaj/etiket — 0,1193 $/adet), değilse
-    // 2 hane.  Eskiden hep 2 haneydi → 0,0045 "0,00" görünüyordu.
-    function _spMoney(v){
-      if(v==null) return '—';
-      const n=Number(v), d=(n!==0&&Math.abs(n)<1)?4:2;
-      return n.toLocaleString('tr-TR',{minimumFractionDigits:d,maximumFractionDigits:d});
-    }
-    // Fiyat temeli: satırın kendi para birimi + birimi ("25,80 $/kg").  Birimi
-    // boş eski satırda yalnız sembol basılır — ₺ artık varsayılmıyor.
     const _SP_SYM={USD:'$',EUR:'€',TRY:'₺'};
-    function _spPrice(s){
-      const cur=(s.currency||'').toUpperCase();
-      const sym=_SP_SYM[cur]||cur;
-      return `${_spMoney(s.unit_price)}${sym?' '+_spEsc(sym):''}${s.price_unit?'/'+_spEsc(s.price_unit):''}`;
-    }
-    function _spSourceTitle(s){
-      const parts=[];
-      if(s.source_label) parts.push('Kaynak: '+s.source_label);
-      if(s.quoted_at){ const d=String(s.quoted_at).split('-'); if(d.length===3) parts.push('Liste tarihi: '+d[2]+'.'+d[1]+'.'+d[0]); }
-      return parts.join(' · ');
-    }
+    const _SP_STATUS={phase_out:'<span title="Firma “bitirilecek — alma” işaretli" style="display:inline-block;margin-left:4px;padding:0 6px;border-radius:8px;background:#ffedd5;color:#9a3412;font-size:0.68rem;font-weight:700;">bitirilecek</span>',
+                      preferred:'<span title="Tercih edilen firma" style="display:inline-block;margin-left:4px;padding:0 6px;border-radius:8px;background:#dcfce7;color:#166534;font-size:0.68rem;font-weight:700;">tercih</span>'};
     async function spLoad(){
       const body=document.getElementById('spBody');
       try{
         const r=await fetch('/api/supplier-prices');
-        if(!r.ok){ body.innerHTML='<tr><td colspan="3" style="padding:0.8rem;color:#9ca3af;">Yüklenemedi.</td></tr>'; return; }
+        if(!r.ok){ body.innerHTML='<tr><td colspan="7" style="padding:0.8rem;color:#9ca3af;">Yüklenemedi.</td></tr>'; return; }
         const j=await r.json();
         _spData=j.items||[];
         document.getElementById('spSummary').textContent=`${j.total_items} malzeme · ${j.total_prices} fiyat satırı`;
         spRender();
-      }catch{ body.innerHTML='<tr><td colspan="3" style="padding:0.8rem;color:#9ca3af;">Yüklenemedi.</td></tr>'; }
+      }catch{ body.innerHTML='<tr><td colspan="7" style="padding:0.8rem;color:#9ca3af;">Yüklenemedi.</td></tr>'; }
+    }
+    function _spRow(it, s){
+      // Form ve düzenleme için satır + malzeme bilgisi (grup düzeyinde gelir)
+      return Object.assign({}, s, {material: it.material, unit: it.unit, item_id: it.item_id});
     }
     function spRender(){
-      const q=(document.getElementById('spSearch').value||'').toLocaleLowerCase('tr');
-      const rows=_spData.filter(it=>!q||(it.material||'').toLocaleLowerCase('tr').includes(q));
+      const q=_spFold(document.getElementById('spSearch').value);
+      const rows=_spData.filter(it=>!q||_spFold(it.material).includes(q)||(it.suppliers||[]).some(s=>_spFold(s.supplier_name).includes(q)));
       const body=document.getElementById('spBody');
-      if(!rows.length){ body.innerHTML=`<tr><td colspan="3" style="padding:0.8rem;color:#9ca3af;">${_spData.length?'Eşleşen malzeme yok.':'Henüz fiyat yok — Excel\'den içe aktarın.'}</td></tr>`; return; }
+      if(!rows.length){ body.innerHTML=`<tr><td colspan="7" style="padding:0.8rem;color:#9ca3af;">${_spData.length?'Eşleşen malzeme yok.':(SP_CAN_PRICE?'Henüz fiyat yok — “Fiyat ekle” ile girin ya da Excel’den içe aktarın.':'Henüz fiyat yok.')}</td></tr>`; return; }
+      const td='padding:0.35rem 0.5rem;vertical-align:top;';
       body.innerHTML=rows.map(it=>{
-        const sup=(it.suppliers||[]).map((s,i)=>{
-          const style=i===0?'background:#15803d;color:#fff;':'background:#eef0f5;color:#374151;';
-          const pkg=s.package_size!=null?` · ${s.package_size}`:'';
-          const price=s.unit_price!=null?` · <b>${_spPrice(s)}</b>`:'';
+        const sups=it.suppliers||[];
+        if(!sups.length) return '';
+        return sups.map((s,i)=>{
+          const first=i===0, last=i===sups.length-1;
+          const priced=s.unit_price!=null;
+          const cheapest=first&&priced;
           const warn=s.matched?'':' <span title="tedarikçi sistemde eşleşmedi — serbest metin" style="color:#b45309;">⚠</span>';
-          const del=SP_CAN_EDIT?` <a href="#" onclick="spDelete(${s.id});return false;" title="sil" style="color:#fff;opacity:0.85;text-decoration:none;font-weight:700;">×</a>`:'';
-          const ttl=_spSourceTitle(s);
-          return `<span${ttl?` title="${_spEsc(ttl)}"`:''} style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:999px;${style}font-size:0.78rem;">${_spEsc(s.supplier_name)}${pkg}${price}${warn}${del}</span>`;
+          const pkg=s.package_size!=null?`${Number(s.package_size).toLocaleString('tr-TR',{maximumFractionDigits:4})} ${_spEsc(it.unit||'')}`:'—';
+          const src=SPF.sourceText(s), ttl=SPF.sourceTitle(s);
+          const note=s.note?` <i class="bi bi-chat-left-text" title="${_spEsc(s.note)}" style="color:#9ca3af;"></i>`:'';
+          const act=SP_CAN_PRICE?`<span style="white-space:nowrap;">${s.matched?`<a href="#" onclick="spEdit(${s.id});return false;" title="düzenle" style="color:#4338ca;text-decoration:none;"><i class="bi bi-pencil"></i></a> `:''}<a href="#" onclick="spDelete(${s.id});return false;" title="sil" style="color:#dc2626;text-decoration:none;font-weight:700;">×</a></span>`:'';
+          const border=last?'border-bottom:1px solid #ece7dc;':'border-bottom:1px dashed #f5f2ea;';
+          return `<tr style="${border}">
+            <td style="${td}font-weight:600;">${first?_spEsc(it.material):''}</td>
+            <td style="${td}color:#6b7280;">${first?_spEsc(it.unit||''):''}</td>
+            <td style="${td}">${_spEsc(s.supplier_name)}${warn}${_SP_STATUS[s.supplier_status]||''}</td>
+            <td style="${td}color:#6b7280;">${pkg}</td>
+            <td style="${td}">${priced?`<b${cheapest?' style="color:#15803d;"':''}>${SPF.priceText(s)}</b>`:'<span style="color:#9ca3af;">—</span>'}</td>
+            <td style="${td}font-size:0.78rem;color:${s.source==='manual'?'#4338ca':'#6b7280'};"${ttl?` title="${_spEsc(ttl)}"`:''}>${_spEsc(src)}${note}</td>
+            <td style="${td}text-align:right;">${act}</td>
+          </tr>`;
         }).join('');
-        return `<tr style="border-bottom:1px solid #f5f2ea;"><td style="padding:0.4rem 0.5rem;font-weight:600;">${_spEsc(it.material)}</td><td style="padding:0.4rem 0.5rem;color:#6b7280;">${_spEsc(it.unit||'')}</td><td style="padding:0.4rem 0.5rem;">${sup||'<span style="color:#9ca3af;">—</span>'}</td></tr>`;
       }).join('');
     }
+    function _spFind(id){
+      for(const it of _spData){ const s=(it.suppliers||[]).find(x=>x.id===id); if(s) return _spRow(it,s); }
+      return null;
+    }
+    function _spMount(opts){
+      const box=document.getElementById('spFormBox');
+      SPF.mount(box, Object.assign({onSaved: spLoad}, opts));
+      box.scrollIntoView({block:'nearest'});
+    }
+    document.getElementById('spAddBtn')?.addEventListener('click', ()=>_spMount({mode:'create'}));
+    function spEdit(id){
+      if(!SP_CAN_PRICE) return;
+      const row=_spFind(id); if(!row) return;
+      _spMount({mode:'edit', row});
+    }
     async function spDelete(id){
-      if(!SP_CAN_EDIT) return;
-      if(!confirm('Bu tedarikçi fiyat satırı silinsin mi?')) return;
+      if(!SP_CAN_PRICE) return;
+      const row=_spFind(id);
+      if(!confirm(row?`«${row.material}» — ${row.supplier_name} fiyat satırı silinsin mi?`:'Bu tedarikçi fiyat satırı silinsin mi?')) return;
       try{
         const r=await fetch('/api/supplier-prices/'+id,{method:'DELETE'});
-        if(r.ok){ showToast('Silindi.','success'); spLoad(); } else { showToast('Silinemedi.'); }
+        const d=await r.json().catch(()=>({}));
+        if(r.ok){ showToast('Silindi.','success'); spLoad(); } else { showToast(typeof d.detail==='string'?d.detail:'Silinemedi.'); }
       }catch{ showToast('Silinemedi.'); }
     }
     async function spDoImport(input){
@@ -1506,6 +1538,7 @@
         if(!r.ok){ info.style.color='#b91c1c'; info.textContent=j.detail||'İçe aktarılamadı.'; input.value=''; return; }
         const _sym=_SP_SYM[(j.currency||'').toUpperCase()]||j.currency||'';
         let msg=`✓ ${j.items_updated} malzeme güncellendi · ${j.prices_inserted} fiyat satırı (${_sym}/${j.price_unit||'kg'}; adet birimliler adet başına).`;
+        if(j.kept_manual) msg+=` Elle girilmiş ${j.kept_manual} fiyat korundu`+(j.skipped_manual?` (aynı firmanın ${j.skipped_manual} Excel teklifi yazılmadı).`:'.');
         if(j.unmatched_materials&&j.unmatched_materials.length) msg+=` ⚠ Eşleşmeyen malzeme (${j.unmatched_materials.length}): ${j.unmatched_materials.slice(0,10).join(', ')}${j.unmatched_materials.length>10?'…':''}.`;
         if(j.unmatched_suppliers&&j.unmatched_suppliers.length) msg+=` Tedarikçi eşleşmedi (${j.unmatched_suppliers.length}, serbest metin saklandı): ${j.unmatched_suppliers.slice(0,10).join(', ')}${j.unmatched_suppliers.length>10?'…':''}.`;
         info.style.color='#15803d'; info.textContent=msg;
