@@ -670,6 +670,60 @@ class ProductionHistory(Base):
     # Transaction not metninde vardı; rapor/denetim için kalıcı kolon.
     witness_quantity = Column(Float, nullable=False, default=0.0)
     domain = Column(String(20), default="cosmetics", nullable=False, index=True)  # Faz 3 — Kozmetik / Food Supplement
+    # Üretim iptali (core/production_cancel.py) — kayıt SİLİNMEZ, damgalanır.
+    # `lot_released` True ise lot no aynı üründe tekrar kullanılabilir
+    # (core/lots); varsayılan False — GMP: iptal edilen lot no yeniden verilmez.
+    cancelled_at = Column(DateTime, nullable=True)    # indeks: ix_prodhist_cancelled (init_db + alembic)
+    cancelled_by = Column(String(100), nullable=True)
+    cancel_reason = Column(Text, nullable=True)
+    lot_released = Column(Boolean, nullable=False, default=False)
+
+
+class ProductionConsumption(Base):
+    """Üretimin defter dökümü — başlatırken yazılan HER Transaction'ın satırı.
+
+    `ProductionHistory` neyin tüketildiğini saklamıyordu; iptal (ve föy/
+    izlenebilirlik) defteri not metninden tahmin etmek zorundaydı.  Satır
+    başına: hangi karttan (`item_id`, etiket kardeşine inilmişse reçetedeki
+    kart `recipe_item_id`'de), hangi lottan, ne kadar, hangi Transaction ile
+    (`transaction_id`) ve iptalde hangi telafi kaydıyla (`cancel_transaction_id`).
+
+    kind: raw | packaging | label (tüketim, Output) · output (bitmiş ürün
+    satırı — showroom ya da `-S` şahit lotu; ikisi de tek Input'u taşır).
+    source: live (üretimde yazıldı) | ledger (eski üretim, iptal anında
+    defterden yeniden kurulup kalıcılaştırıldı).
+    Reçete düzenlenince `recipe_ingredients` satırları silinip yeniden
+    yaratıldığı için reçete satırına FK TUTULMAZ.
+    """
+    __tablename__ = "production_consumptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    production_id = Column(Integer, ForeignKey("production_history.id"), nullable=False, index=True)
+    kind = Column(String(12), nullable=False)                  # raw | packaging | label | output
+    # Bilgi amaçlı bağlar SET NULL — kart/tedarikçi hard-delete'i dökümü
+    # yüzünden FK ihlaline düşmesin (kart silmede `_item_has_audit` zaten
+    # soft-delete'e çevirir; bu ikinci emniyet).
+    recipe_item_id = Column(Integer, ForeignKey("items.id", ondelete="SET NULL"), nullable=True)   # reçetedeki kart; output'ta NULL
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)         # fiilen düşülen / üretilen kart
+    inventory_id = Column(Integer, ForeignKey("inventory.id", ondelete="SET NULL"), nullable=True)
+    lot_number = Column(String(100), nullable=True)            # kaynak lot (tüketim) | lot ya da lot-S (output)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
+    supplier_name = Column(String(150), nullable=True)
+    quantity = Column(Float, nullable=False)
+    factor = Column(Float, nullable=False, default=1.0)        # fire çarpanı (ambalaj/etiket 1.0)
+    unit = Column(String(20), nullable=True)
+    phase = Column(String(8), nullable=True)
+    transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True, index=True)
+    cancel_transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
+    source = Column(String(10), nullable=False, default="live")   # live | ledger
+    domain = Column(String(20), default="cosmetics", nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # İlişkiler yalnız yazım kolaylığı için (pc.transaction = tx → satır başına
+    # flush gerekmez); geri-referans yok, cascade Transaction'a dokunmaz.
+    transaction = relationship("Transaction", foreign_keys=[transaction_id])
+    cancel_transaction = relationship("Transaction", foreign_keys=[cancel_transaction_id])
+    inventory = relationship("Inventory", foreign_keys=[inventory_id])
 
 
 class RetentionSample(Base):
@@ -2371,6 +2425,69 @@ def _backfill_sample_converted_at():
         db.close()
 
 
+def _backfill_perm_production_cancel():
+    """Özel yetkili (override'lı) kullanıcılara yeni `production.cancel`'i yaz.
+
+    `core.permissions._resolve_permissions` kullanıcı override'ını rol
+    varsayılanının YERİNE koyar — kataloğa eklenen yeni bir aksiyon override'lı
+    kullanıcıya hiç ulaşmaz (prod'da Işık Hanım: Manager + override).  Override
+    JSON'unda `production.cancel` anahtarı YOKSA rol varsayılanı yazılır; anahtar
+    varsa (yönetici bilerek açmış/kapatmış) dokunulmaz.  Ek koşul: override'da
+    `production.create` kapalıysa iptal de kapalı yazılır — üretim başlatması
+    bilerek kapatılmış birine iptal yetkisi kendiliğinden verilmez.
+    SuperAdmin her zaman geçer (override'ı okunmaz), atlanır.  Değişen her
+    kullanıcı için `permissions.backfill` audit satırı yazılır.
+
+    BİR KEZ çalışır — `AppSetting` sentinel'i ile korunur (kalıp:
+    `_backfill_supplier_price_units`); değer = güncellenen kullanıcı sayısı.
+    """
+    import json as _json
+    from core.permissions import _DEFAULT_PERMISSIONS
+
+    SENTINEL = "backfill.perm.production_cancel.v1"
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter(AppSetting.key == SENTINEL).first():
+            return                                  # zaten koştu → O(1) no-op
+        n = 0
+        for u in (db.query(User)
+                  .filter(User.permissions.isnot(None), User.role != "SuperAdmin")
+                  .order_by(User.id).all()):
+            try:
+                perms = _json.loads(u.permissions)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(perms, dict):
+                continue
+            prod = perms.get("production")
+            if not isinstance(prod, dict):
+                prod = {}
+            if "cancel" in prod:
+                continue
+            role_def = (_DEFAULT_PERMISSIONS.get(u.role) or _DEFAULT_PERMISSIONS["Staff"])
+            value = bool((role_def.get("production") or {}).get("cancel", False)
+                         and prod.get("create", False))
+            prod["cancel"] = value
+            perms["production"] = prod
+            u.permissions = _json.dumps(perms, ensure_ascii=False)
+            db.add(AdminAuditLog(
+                actor_name="sistem", action="permissions.backfill",
+                target_type="user", target_id=u.id, target_name=u.username,
+                details=_json.dumps({"key": "production.cancel", "value": value,
+                                     "role": u.role, "sentinel": SENTINEL},
+                                    ensure_ascii=False)))
+            n += 1
+        db.add(AppSetting(key=SENTINEL, value=str(n)))
+        db.commit()
+        if n:
+            print(f"[init_db] production.cancel yetki backfill: {n} özel yetkili kullanıcı")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _backfill_drive_folders():
     """original_name'inde '/' olan DriveFile'ları gerçek klasör ağacına yerleştir.
 
@@ -2603,6 +2720,15 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS ix_items_material_group_id ON items(material_group_id)",
             "ALTER TABLE inventory ADD COLUMN moved_from_item_id INTEGER REFERENCES items(id)",
             "ALTER TABLE inventory ADD COLUMN sample_converted_at TIMESTAMP",
+            # Üretim iptali — production_consumptions YENİ tablo (create_all);
+            # mevcut production_history'ye eklenen kolonlar burada.  deploy.sh
+            # alembic ÇALIŞTIRMIYOR; kolonlar prod'a yalnız bu satırlarla
+            # ulaşır (migration d6a8c0e2f4b7 geçmiş + temiz kurulum içindir).
+            "ALTER TABLE production_history ADD COLUMN cancelled_at TIMESTAMP",
+            "ALTER TABLE production_history ADD COLUMN cancelled_by VARCHAR(100)",
+            "ALTER TABLE production_history ADD COLUMN cancel_reason TEXT",
+            "ALTER TABLE production_history ADD COLUMN lot_released BOOLEAN NOT NULL DEFAULT FALSE",
+            "CREATE INDEX IF NOT EXISTS ix_prodhist_cancelled ON production_history(cancelled_at)",
         ):
             alter_safe(stmt)
 
@@ -2635,6 +2761,14 @@ def init_db():
     # Eski numune çevirmelerinin lot izi (sample_converted_at) — sentinel'li, bir kez.
     try:
         _backfill_sample_converted_at()
+    except Exception:
+        pass
+
+    # Yeni `production.cancel` yetkisi — özel yetkili kullanıcılara rol
+    # varsayılanı (override rol varsayılanını TAMAMEN değiştirdiği için yeni
+    # anahtarı kendiliğinden alamazlar) — sentinel'li, bir kez.
+    try:
+        _backfill_perm_production_cancel()
     except Exception:
         pass
 

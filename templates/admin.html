@@ -1210,6 +1210,7 @@
       checkout: 'Numune Çıkışı', destroy: 'İmha',
       invite: 'Davet Oluştur', moderate: 'Moderasyon',
       ship: 'Ürün Gönderimi', links: 'Link/Kod Eşleme', payout: 'Ödeme Kaydı', settings: 'Program Ayarları',
+      cancel: 'İptal',
     };
 
     async function ensurePermSchema() {
@@ -1281,6 +1282,7 @@
         'checkout', 'destroy',
         'invite', 'moderate',
         'ship', 'links', 'payout', 'settings',
+        'cancel',
       ];
       // Eksik kalanları da göster (yeni action eklendi ama actionOrder güncel
       // değilse en azından kaybolmasınlar)

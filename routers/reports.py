@@ -278,6 +278,7 @@ def report_top_usage(
 ):
     import datetime as _dt
     from sqlalchemy import func
+    from core.production_cancel import cancelled_tx_ids_subq
     since = _dt.datetime.utcnow() - _dt.timedelta(days=30)
     rows = (
         db.query(
@@ -291,6 +292,8 @@ def report_top_usage(
             Transaction.transaction_type == "Output",
             Transaction.timestamp >= since,
             Item.domain == domain,
+            # İptal edilen üretimin tüketimi gerçek kullanım değil
+            ~Transaction.id.in_(cancelled_tx_ids_subq(db)),
         )
         .group_by(Item.id)
         .order_by(func.sum(Transaction.quantity).desc())
@@ -315,7 +318,8 @@ def report_production_trends(
     since = _dt.datetime.combine(today - _dt.timedelta(days=6), _dt.time.min)
     rows = (db.query(ProductionHistory)
             .filter(ProductionHistory.produced_at >= since,
-                    ProductionHistory.domain == domain).all())
+                    ProductionHistory.domain == domain,
+                    ProductionHistory.cancelled_at.is_(None)).all())
     # Gün gün topla
     day_map = {}
     for i in range(7):
@@ -528,7 +532,8 @@ def dashboard_stats(
     # ── Recent production (last 5) ─────────────────────────────────────────
     recent_prod = (
         db.query(ProductionHistory)
-        .filter(ProductionHistory.domain == domain)
+        .filter(ProductionHistory.domain == domain,
+                ProductionHistory.cancelled_at.is_(None))       # iptaller panoda yok
         .order_by(ProductionHistory.id.desc())
         .limit(5)
         .all()

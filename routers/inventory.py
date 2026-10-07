@@ -784,8 +784,16 @@ def _item_has_audit(db: Session, item_id: int) -> bool:
         return True
     # Numune analiz formunda bileşen olarak geçen kart (pending satırda ne
     # Transaction ne Inventory olabilir) — FK kırılmasın, soft-delete.
-    from database import SampleAnalysisIngredient
+    from database import SampleAnalysisIngredient, ProductionConsumption
+    from sqlalchemy import or_
     if db.query(SampleAnalysisIngredient.id).filter(SampleAnalysisIngredient.item_id == item_id).first():
+        return True
+    # Üretim tüketim dökümünde geçen kart — etiket kardeşi çözümünde reçetedeki
+    # orijinal kart (ör. TR etiket) YALNIZ `recipe_item_id`'de durur, kartın
+    # Transaction'ı/lotu olmayabilir; hard-delete FK ihlaliyle 500 verirdi.
+    if db.query(ProductionConsumption.id).filter(
+            or_(ProductionConsumption.item_id == item_id,
+                ProductionConsumption.recipe_item_id == item_id)).first():
         return True
     return False
 
@@ -2299,24 +2307,55 @@ def _import_dt():
 
 
 @router.get("/traceability/lot/{lot_number}")
-def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(require_internal_user(("inventory", "view")))):
+def trace_lot(lot_number: str, item_id: Optional[int] = None, db: Session = Depends(get_db),
+              _: dict = Depends(require_internal_user(("inventory", "view")))):
     """
     Full genealogy tree for a lot. Resolves:
       • Lot identity (Inventory record + supplier)
       • Production record (if internally produced)
       • Ingredients consumed during that production (with their own supplier/expiry/received_by)
       • All transactions for this lot — chronological audit trail.
+
+    Lot no ÜRÜN BAZLIDIR (SR005 prod'da 7 üründe var): lot satırı ile üretim
+    kaydı AYNI ürüne bağlanır — önce üretim (iptal edilmemiş, en yeni), lot
+    satırı onun hedef kartından.  `item_id` verilirse o ürün seçilir; aynı lot
+    no'lu öbür ürünler `other_items`'ta döner (arayüz ürün seçtirir).
     """
     # Imported here to avoid cross-router top-level dependency on production model
-    from database import ProductionHistory
+    from database import ProductionHistory, ProductionConsumption
+    from sqlalchemy import case
+    from core.production_cancel import cancelled_view
 
-    inv  = db.query(Inventory).filter(Inventory.lot_number == lot_number).first()
-    prod = db.query(ProductionHistory).filter(ProductionHistory.lot_number == lot_number).first()
+    # İptal edilmiş üretim / iptalle kapanmış lot satırı yalnız başka aday
+    # yoksa gösterilir (lot no serbest bırakılıp yeniden kullanılmış olabilir).
+    prod_q = db.query(ProductionHistory).filter(ProductionHistory.lot_number == lot_number)
+    if item_id is not None:
+        prod_q = prod_q.filter(ProductionHistory.target_item_id == item_id)
+    prod = (prod_q.order_by(ProductionHistory.cancelled_at.isnot(None),
+                            ProductionHistory.id.desc()).first())
+    inv_q = db.query(Inventory).filter(Inventory.lot_number == lot_number)
+    if item_id is not None:
+        inv_q = inv_q.filter(Inventory.item_id == item_id)
+    elif prod is not None and prod.target_item_id:
+        inv_q = inv_q.filter(Inventory.item_id == prod.target_item_id)
+    inv = (inv_q.order_by(case((Inventory.status == "CANCELLED", 1), else_=0), Inventory.id.asc())
+           .first())
 
     if not inv and not prod:
         return JSONResponse(status_code=404, content={"detail": f"Lot bulunamadı: {lot_number}"})
 
     out = {"lot_number": lot_number}
+    chosen = inv.item_id if inv is not None else prod.target_item_id
+    other_ids = ({i for (i,) in db.query(Inventory.item_id)
+                  .filter(Inventory.lot_number == lot_number).distinct().all()}
+                 | {i for (i,) in db.query(ProductionHistory.target_item_id)
+                    .filter(ProductionHistory.lot_number == lot_number,
+                            ProductionHistory.target_item_id.isnot(None)).distinct().all()})
+    other_ids.discard(chosen)
+    out["item_id"] = chosen
+    out["other_items"] = [{"item_id": it.id, "item_name": it.name}
+                          for it in (db.query(Item).filter(Item.id.in_(other_ids))
+                                     .order_by(Item.name.asc()).all() if other_ids else [])]
 
     # ── Lot bilgisi (Inventory) ──────────────────────────────────────────────
     if inv:
@@ -2349,17 +2388,36 @@ def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(
 
     # ── Üretim kaydı + tüketilen hammaddeler ────────────────────────────────
     if prod:
-        # Production-time Output transactions are stamped with "Üretim Lot: {lot}" in notes.
-        marker = f"Üretim Lot: {lot_number}"
-        ing_outputs = (
-            db.query(Transaction)
-            .filter(
-                Transaction.transaction_type == "Output",
-                Transaction.notes.like(f"%{marker}%"),
+        # Tüketim dökümü (production_consumptions) varsa kesin kaynak odur —
+        # aynı lot no'lu başka ürünün üretimi karışmaz.  Yoksa (eski kayıt)
+        # üretimin defter imzasıyla yeniden kurulur (core/production_cancel —
+        # reçete adı + lot + kişi + zaman; salt okur); o da boşsa Output
+        # notundaki "Üretim Lot: {lot}" damgasına düşülür.
+        snap = (db.query(ProductionConsumption)
+                .filter(ProductionConsumption.production_id == prod.id,
+                        ProductionConsumption.kind != "output",
+                        ProductionConsumption.transaction_id.isnot(None))
+                .order_by(ProductionConsumption.id.asc()).all())
+        if not snap and prod.produced_at:
+            from core.production_cancel import reconstruct_from_ledger
+            snap = [pc for pc in reconstruct_from_ledger(db, prod)
+                    if pc.kind != "output" and pc.transaction_id]
+        if snap:
+            ing_outputs = (db.query(Transaction)
+                           .filter(Transaction.id.in_([pc.transaction_id for pc in snap]))
+                           .order_by(Transaction.id.asc()).all())
+        else:
+            marker = f"Üretim Lot: {lot_number}"
+            ing_outputs = (
+                db.query(Transaction)
+                .filter(
+                    Transaction.transaction_type == "Output",
+                    Transaction.notes.like(f"%{marker}%"),
+                )
+                .order_by(Transaction.id.asc())
+                .all()
             )
-            .order_by(Transaction.id.asc())
-            .all()
-        )
+        snap_inv = {pc.transaction_id: pc.inventory_id for pc in snap}
 
         ingredients_consumed = []
         for tx in ing_outputs:
@@ -2368,7 +2426,9 @@ def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(
             # yazıyor.  Varsa o kesin lottan tedarikçi/SKT/numune bilgisi gelir;
             # yoksa (eski kayıtlar) eski "en yakın APPROVED lot" tahminine düşülür.
             tx_inv = None
-            if tx.lot_number:
+            if snap_inv.get(tx.id):
+                tx_inv = db.query(Inventory).filter(Inventory.id == snap_inv[tx.id]).first()
+            if tx_inv is None and tx.lot_number:
                 tx_inv = (
                     db.query(Inventory)
                     .filter(Inventory.item_id == tx.item_id,
@@ -2412,6 +2472,7 @@ def trace_lot(lot_number: str, db: Session = Depends(get_db), _: dict = Depends(
             "produced_at":       to_tr(prod.produced_at).strftime("%d.%m.%Y %H:%M") if prod.produced_at else "—",
             "produced_by":       prod.produced_by or "—",
             "ingredients_consumed": ingredients_consumed,
+            "cancelled":         cancelled_view(prod),
         }
     else:
         out["production"] = None

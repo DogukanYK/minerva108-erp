@@ -194,6 +194,27 @@
     .status-quarantine { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
     .status-approved   { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
     .status-rejected   { background: #fff1f1; color: #b91c1c; border: 1px solid #fca5a5; }
+    .status-cancelled  { background: #f3f4f6; color: #6b7280; border: 1px solid #d1d5db; }
+
+    /* İptal edilmiş üretim bandı (Üretim Detayı kartı) */
+    .cancel-band { margin-bottom: 1rem; padding: 0.75rem 1rem; background: #fff1f1; border: 1px solid #fecaca;
+      border-left: 4px solid #b91c1c; border-radius: 8px; font-size: 0.86rem; color: #7f1d1d; line-height: 1.5; }
+    .cancel-band-title { font-weight: 700; color: #b91c1c; margin-bottom: 0.2rem; }
+    .cancel-band-sub { margin-top: 0.3rem; font-size: 0.78rem; color: #9a3412; }
+    :root[data-theme="dark"] .cancel-band { background: #3a1414; color: #fca5a5; border-color: #7f1d1d; }
+    :root[data-theme="dark"] .cancel-band-title { color: #fca5a5; }
+    :root[data-theme="dark"] .cancel-band-sub { color: #fdba74; }
+    :root[data-theme="dark"] .status-cancelled { background: #232B45; color: #8A93AB; border-color: #2A3454; }
+
+    /* Aynı lot no başka ürünlerde de var — ürün seçimi (lot no ürün bazlı) */
+    .lot-choice { margin-bottom: 1rem; padding: 0.75rem 1rem; background: #eff6ff; border: 1px solid #bfdbfe;
+      border-left: 4px solid #1d4ed8; border-radius: 8px; font-size: 0.86rem; color: #1e3a8a; line-height: 1.5; }
+    .lot-choice-list { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+    .lot-choice-chip { border: 1px solid #93c5fd; background: #fff; color: #1d4ed8; border-radius: 999px;
+      padding: 0.2rem 0.75rem; font-size: 0.8rem; cursor: pointer; }
+    .lot-choice-chip:hover { background: #dbeafe; }
+    :root[data-theme="dark"] .lot-choice { background: #16223f; color: #bfdbfe; border-color: #1e3a8a; }
+    :root[data-theme="dark"] .lot-choice-chip { background: #1B2238; color: #93c5fd; border-color: #1e40af; }
 
     /* ══ PERSON CHIP — accountable personnel ══ */
     .person-chip {
@@ -266,6 +287,7 @@
     .tl-dot.out  { border-color: #ef4444; }
     .tl-dot.qc   { border-color: #3b82f6; }
     .tl-dot.qcr  { border-color: #f59e0b; }
+    .tl-dot.adj  { border-color: #8b5cf6; }
     .tl-time { font-size: 0.75rem; font-weight: 600; color: #9ca3af; letter-spacing: 0.03em; }
     .tl-body { font-size: 0.86rem; color: #374151; margin-top: 2px; }
     .tl-body strong { color: #1f2937; }
@@ -278,6 +300,7 @@
     .tx-out  { background: #fff1f1; color: #b91c1c; }
     .tx-qc   { background: #eff6ff; color: #1d4ed8; }
     .tx-qcr  { background: #fffbeb; color: #b45309; }
+    .tx-adj  { background: #f5f3ff; color: #6d28d9; }
 
     /* ══ EXPIRING TABLE ══ */
     table.exp-table { width: 100%; border-collapse: collapse; }
@@ -439,6 +462,7 @@
           </div>
 
           <!-- Result containers (populated by JS) -->
+          <div id="lotChoiceCard"    style="display:none;"></div>
           <div id="lotInfoCard"      style="display:none;"></div>
           <div id="qcFormCard"       style="display:none;"></div>
           <div id="productionCard"   style="display:none;"></div>
@@ -588,9 +612,10 @@
         'APPROVED':   ['status-approved',   'Onaylı ✓'],
         'REJECTED':   ['status-rejected',   'Reddedildi ✗'],
         'QUARANTINE': ['status-quarantine', 'Karantina'],
+        'CANCELLED':  ['status-cancelled',  'İptal edildi'],
       };
       const [cls, label] = map[status] || ['status-quarantine', status || '—'];
-      return `<span class="status-badge ${cls}">${label}</span>`;
+      return `<span class="status-badge ${cls}">${escHtml(label)}</span>`;
     }
 
     /* ── Transaction type → CSS class & Turkish label ── */
@@ -600,6 +625,7 @@
         'Output':        { dot: 'out', pill: 'tx-out', label: 'Çıkış'      },
         'QC Approval':   { dot: 'qc',  pill: 'tx-qc',  label: 'QC Onay'    },
         'QC Rejection':  { dot: 'qcr', pill: 'tx-qcr', label: 'QC Red'     },
+        'Adjustment':    { dot: 'adj', pill: 'tx-adj', label: 'Düzeltme'   },
       };
       return m[type] || { dot: '', pill: '', label: type || '—' };
     }
@@ -771,6 +797,19 @@
 
       card.style.display = 'block';
 
+      // İptal edilmiş üretim: kim / ne zaman / neden + lot no durumu.
+      const c = prod.cancelled;
+      const cancelHtml = c ? `
+        <div class="cancel-band">
+          <div class="cancel-band-title"><i class="bi bi-x-octagon-fill"></i> Bu üretim iptal edildi</div>
+          <div><b>Ne zaman:</b> ${escHtml(c.at)} &nbsp;·&nbsp; <b>Kim:</b> ${escHtml(c.by)}</div>
+          <div><b>Sebep:</b> ${escHtml(c.reason || '—')}</div>
+          <div class="cancel-band-sub">
+            Tüketilen kalemler telafi kayıtlarıyla stoğa iade edildi; orijinal kayıtlar defterde duruyor.
+            ${c.lot_released ? 'Lot numarası serbest bırakıldı.' : 'Lot numarası kilitli kaldı.'}
+          </div>
+        </div>` : '';
+
       const ingRows = (prod.ingredients_consumed || []).map(ing => `
         <tr>
           <td>
@@ -789,8 +828,10 @@
           <div class="panel-header">
             <span class="panel-title-icon icon-gold"><i class="bi bi-gear-fill"></i></span>
             <h2 class="panel-title">Üretim Detayı</h2>
+            ${c ? statusBadge('CANCELLED') : ''}
           </div>
           <div class="panel-body">
+            ${cancelHtml}
             <div class="kv-grid">
               <div class="kv-cell">
                 <div class="kv-cell-label">Reçete</div>
@@ -886,9 +927,32 @@
     }
 
     /* ── Trace lot search ── */
-    async function searchLot() {
+    /* Lot no ürün bazlıdır (SR005 birden çok üründe) — sunucu lot satırını
+       ve üretim kaydını AYNI ürüne bağlar; öbür ürünler buradan seçilir. */
+    function renderLotChoice(data) {
+      const card = document.getElementById('lotChoiceCard');
+      const others = data.other_items || [];
+      if (!others.length) { card.style.display = 'none'; card.innerHTML = ''; return; }
+      const cur = (data.production && data.production.target_item_name)
+        || (data.lot_info && data.lot_info.item_name) || '—';
+      card.style.display = 'block';
+      card.innerHTML = `
+        <div class="lot-choice">
+          <div><i class="bi bi-info-circle"></i> <b>${escHtml(data.lot_number)}</b> lot numarası başka
+            ürünlerde de var. Gösterilen: <b>${escHtml(cur)}</b>. Başka ürünün kaydı için seçin:</div>
+          <div class="lot-choice-list">${others.map(o =>
+            `<button type="button" class="lot-choice-chip" data-item-id="${Number(o.item_id)}">${escHtml(o.item_name)}</button>`
+          ).join('')}</div>
+        </div>`;
+      card.querySelectorAll('.lot-choice-chip').forEach(b =>
+        b.addEventListener('click', () => searchLot(Number(b.dataset.itemId))));
+    }
+
+    async function searchLot(itemId) {
       const input = document.getElementById('lotSearchInput');
       const lot   = input.value.trim();
+      // Düğme/klavye çağrısında argüman Event olabilir — yalnız tam sayı ürün id'si.
+      const itemQuery = Number.isInteger(itemId) ? `?item_id=${itemId}` : '';
       if (!lot) { showToast('Lütfen bir lot numarası girin.'); return; }
 
       const btn = document.getElementById('lotSearchBtn');
@@ -897,13 +961,13 @@
 
       // Reset all result cards
       document.getElementById('traceEmptyCard').style.display  = 'none';
-      ['lotInfoCard','qcFormCard','productionCard','timelineCard'].forEach(id => {
+      ['lotChoiceCard','lotInfoCard','qcFormCard','productionCard','timelineCard'].forEach(id => {
         document.getElementById(id).style.display = 'none';
         document.getElementById(id).innerHTML = '';
       });
 
       try {
-        const res = await fetch(`/api/traceability/lot/${encodeURIComponent(lot)}`);
+        const res = await fetch(`/api/traceability/lot/${encodeURIComponent(lot)}${itemQuery}`);
         const data = await res.json();
         if (!res.ok) {
           showToast(data.detail || 'Lot bulunamadı.');
@@ -911,6 +975,7 @@
           document.getElementById('traceEmptyCard').style.display = 'block';
           return;
         }
+        renderLotChoice(data);
         renderLotInfo(data.lot_info);
         renderQcForm(data.qc_form, data.lot_info);
         renderProduction(data.production);

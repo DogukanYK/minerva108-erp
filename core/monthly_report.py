@@ -23,7 +23,7 @@ from io import BytesIO
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from sqlalchemy import text
+from sqlalchemy import and_, or_, text
 
 from database import (
     to_tr, tr_now,
@@ -82,11 +82,12 @@ def gather_report_data(db, year: int, month: int) -> dict:
     start, end = _month_bounds(year, month)
     period = f"{month:02d}.{year}"
 
-    # ── Üretim hattı ──────────────────────────────────────────────────────
+    # ── Üretim hattı — iptal edilenler ayrı bölümde (core/production_cancel) ──
     prods = (
         db.query(ProductionHistory)
         .filter(ProductionHistory.produced_at >= start,
-                ProductionHistory.produced_at < end)
+                ProductionHistory.produced_at < end,
+                ProductionHistory.cancelled_at.is_(None))
         .order_by(ProductionHistory.produced_at)
         .all()
     )
@@ -98,6 +99,33 @@ def gather_report_data(db, year: int, month: int) -> dict:
         "lot":      p.lot_number or "—",
         "by":       p.produced_by or "—",
     } for p in prods]
+
+    # Bu ay üretilen YA DA bu ay iptal edilen üretimler — iptal geçmişi
+    # kaybolmasın (Eylül üretimi Ekim'de iptal edildiyse iki ayda da görünür).
+    from core.production_cancel import cancelled_tx_ids
+    cancelled_prods = (
+        db.query(ProductionHistory)
+        .filter(ProductionHistory.cancelled_at.isnot(None),
+                or_(and_(ProductionHistory.produced_at >= start,
+                         ProductionHistory.produced_at < end),
+                    and_(ProductionHistory.cancelled_at >= start,
+                         ProductionHistory.cancelled_at < end)))
+        .order_by(ProductionHistory.cancelled_at)
+        .all()
+    )
+    cancelled = [{
+        "date":     to_tr(p.produced_at).strftime("%d.%m.%Y %H:%M") if p.produced_at else "—",
+        "product":  p.target_item_name or p.recipe_name or "—",
+        "quantity": round(p.produced_quantity or 0.0, 2),
+        "lot":      p.lot_number or "—",
+        "cancelled_at": to_tr(p.cancelled_at).strftime("%d.%m.%Y %H:%M") if p.cancelled_at else "—",
+        "by":       p.cancelled_by or "—",
+        "reason":   (p.cancel_reason or "")[:120],
+    } for p in cancelled_prods]
+    # İptal edilen üretimin tüketim/çıktı satırları ve telafi kayıtları
+    # malzeme / giriş / düzeltme toplamlarına girmez (net sıfır, gerçek
+    # tüketim değil).
+    skip_tx = cancelled_tx_ids(db)
 
     # ── Stok hareketleri (transactions) ───────────────────────────────────
     txs = (
@@ -116,6 +144,8 @@ def gather_report_data(db, year: int, month: int) -> dict:
     adjustments = []
     output_count = input_count = 0
     for t in txs:
+        if t.id in skip_tx:
+            continue
         it = items.get(t.item_id)
         nm  = it.name if it else (f"#{t.item_id}" if t.item_id else "—")
         cat = (it.category if it else "") or ""
@@ -233,6 +263,7 @@ def gather_report_data(db, year: int, month: int) -> dict:
         "period":               period,
         "production_count":      len(production),
         "production_total_qty":  round(sum(p["quantity"] for p in production), 2),
+        "cancelled_count":       len(cancelled),
         "transaction_count":     len(txs),
         "output_count":          output_count,
         "input_count":           input_count,
@@ -247,6 +278,7 @@ def gather_report_data(db, year: int, month: int) -> dict:
         "generated_at": tr_now().strftime("%d.%m.%Y %H:%M"),
         "summary":      summary,
         "production":   production,
+        "cancelled":    cancelled,
         "materials":    materials_list,
         "receiving":    receiving_list,
         "adjustments":  adjustments,
@@ -370,6 +402,15 @@ def render_pdf(data: dict) -> bytes:
          for p in data["production"]],
         [W*0.15*mm, W*0.25*mm, W*0.22*mm, W*0.10*mm, W*0.15*mm, W*0.13*mm],
         "Bu dönemde üretim kaydı yok.")
+
+    if data.get("cancelled"):
+        _section(
+            "2.1 · İptal Edilen Üretimler",
+            ["Üretim", "Ürün", "Miktar", "Lot", "İptal", "İptal Eden", "Sebep"],
+            [[c["date"], c["product"], c["quantity"], c["lot"], c["cancelled_at"],
+              c["by"], c["reason"]] for c in data["cancelled"]],
+            [W*0.13*mm, W*0.21*mm, W*0.08*mm, W*0.10*mm, W*0.13*mm, W*0.13*mm, W*0.22*mm],
+            "—")
 
     # ── 3) Harcanan malzemeler ────────────────────────────────────────────
     _section(
@@ -501,6 +542,12 @@ def render_excel(data: dict) -> bytes:
     _sheet("Üretim", ["Tarih", "Ürün", "Reçete", "Miktar", "Lot", "Üreten"],
            [[p["date"], p["product"], p["recipe"], p["quantity"], p["lot"], p["by"]]
             for p in data["production"]])
+
+    if data.get("cancelled"):
+        _sheet("İptal Edilen Üretim",
+               ["Üretim", "Ürün", "Miktar", "Lot", "İptal", "İptal Eden", "Sebep"],
+               [[c["date"], c["product"], c["quantity"], c["lot"], c["cancelled_at"],
+                 c["by"], c["reason"]] for c in data["cancelled"]])
 
     _sheet("Harcanan Malzeme",
            ["Malzeme", "Kategori", "Toplam Miktar", "Birim", "İşlem Sayısı"],

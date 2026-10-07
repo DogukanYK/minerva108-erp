@@ -296,6 +296,27 @@ def _get(db: Session, sample_id: int, domain: str) -> Optional[RetentionSample]:
                     RetentionSample.is_active == True).first())      # noqa: E712
 
 
+def _get_locked(db: Session, sample_id: int, domain: str) -> Optional[RetentionSample]:
+    """Çıkış/imha için numune kaydı — FOR UPDATE, sıra kart → lot → kayıt
+    (core/production_cancel.lock_rows ile aynı; ters sıra kilitlenme
+    yaratırdı).  `is_active`/`status`/`quantity` KİLİTTEN SONRA okunur:
+    eşzamanlı üretim iptali kaydı kapattıysa (pasif, 0 adet) bayat kopya
+    üzerinden stok ikinci kez düşülmez — kayıt bulunamaz (404)."""
+    r = _get(db, sample_id, domain)
+    if r is None:
+        return None
+    (db.query(Item).filter(Item.id == r.item_id)
+     .with_for_update().populate_existing().first())
+    if r.inventory_id:
+        (db.query(Inventory).filter(Inventory.id == r.inventory_id)
+         .with_for_update().populate_existing().first())
+    return (db.query(RetentionSample)
+            .filter(RetentionSample.id == sample_id,
+                    RetentionSample.domain == domain,
+                    RetentionSample.is_active == True)               # noqa: E712
+            .with_for_update().populate_existing().first())
+
+
 def _consume(db: Session, sample: RetentionSample, qty: float, note: str,
              actor: str) -> None:
     """Dolaptan fiilen çıkan adedi stoktan da düş.
@@ -563,16 +584,21 @@ def checkout_sample(
     domain: str = Depends(active_domain),
 ):
     """Dolaptan numune al — stoktan da düşer (fiilen tüketildi)."""
-    r = _get(db, sample_id, domain)
+    r = _get_locked(db, sample_id, domain)
     if not r:
+        db.rollback()
         return _err(404, "Numune kaydı bulunamadı.")
-    if r.status != "stored":
-        return _err(400, f"Bu numune '{status_label(r.status)}' durumunda — çıkış yapılamaz.")
     qty = round(float(data.quantity), 4)
-    if qty > (r.quantity or 0.0):
-        return _err(400, f"Dolapta {r.quantity:g} adet var — {qty:g} adet çıkarılamaz.")
-    if data.reason not in CHECKOUT_REASONS:
-        return _err(400, "Geçersiz çıkış sebebi.")
+    problem = None
+    if r.status != "stored":
+        problem = f"Bu numune '{status_label(r.status)}' durumunda — çıkış yapılamaz."
+    elif qty > (r.quantity or 0.0):
+        problem = f"Dolapta {r.quantity:g} adet var — {qty:g} adet çıkarılamaz."
+    elif data.reason not in CHECKOUT_REASONS:
+        problem = "Geçersiz çıkış sebebi."
+    if problem:
+        db.rollback()                                    # kilitler bırakılsın
+        return _err(400, problem)
 
     actor = _actor(current_user)
     note = f"Şahit numune çıkışı — {reason_label(data.reason)}"
@@ -613,16 +639,21 @@ def destroy_sample(
     domain: str = Depends(active_domain),
 ):
     """Saklama süresi dolan numuneyi imha et — kalan adet stoktan düşer."""
-    r = _get(db, sample_id, domain)
+    r = _get_locked(db, sample_id, domain)
     if not r:
+        db.rollback()
         return _err(404, "Numune kaydı bulunamadı.")
-    if r.status != "stored":
-        return _err(400, f"Bu numune '{status_label(r.status)}' durumunda — imha edilemez.")
     qty = round(float(data.quantity), 4) if data.quantity is not None else (r.quantity or 0.0)
-    if qty <= 0:
-        return _err(400, "İmha edilecek adet yok.")
-    if qty > (r.quantity or 0.0):
-        return _err(400, f"Dolapta {r.quantity:g} adet var — {qty:g} adet imha edilemez.")
+    problem = None
+    if r.status != "stored":
+        problem = f"Bu numune '{status_label(r.status)}' durumunda — imha edilemez."
+    elif qty <= 0:
+        problem = "İmha edilecek adet yok."
+    elif qty > (r.quantity or 0.0):
+        problem = f"Dolapta {r.quantity:g} adet var — {qty:g} adet imha edilemez."
+    if problem:
+        db.rollback()                                    # kilitler bırakılsın
+        return _err(400, problem)
 
     actor = _actor(current_user)
     note = "Şahit numune imhası"

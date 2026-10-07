@@ -151,6 +151,7 @@ def _rows_in_range(db: Session, domain: str, start: _dt.date, end: _dt.date):
     lo, hi = utc_bounds(start, end)
     return (db.query(ProductionHistory)
             .filter(ProductionHistory.domain == domain,
+                    ProductionHistory.cancelled_at.is_(None),     # iptal edilen üretim sayılmaz
                     ProductionHistory.produced_at >= lo,
                     ProductionHistory.produced_at < hi)
             .order_by(ProductionHistory.produced_at.asc(), ProductionHistory.id.asc())
@@ -158,12 +159,15 @@ def _rows_in_range(db: Session, domain: str, start: _dt.date, end: _dt.date):
 
 
 def history_quantities(db: Session, domain: str, start: _dt.date, end: _dt.date) -> Dict[int, float]:
-    """{target_item_id: toplam üretilen} — hedefi olmayan eski kayıtlar dahil edilmez."""
+    """{target_item_id: toplam üretilen} — hedefi olmayan eski kayıtlar ve
+    iptal edilen üretimler dahil edilmez (Satın Alma Planı history-fill de bunu
+    okur)."""
     lo, hi = utc_bounds(start, end)
     rows = (db.query(ProductionHistory.target_item_id,
                      func.sum(ProductionHistory.produced_quantity))
             .filter(ProductionHistory.domain == domain,
                     ProductionHistory.target_item_id.isnot(None),
+                    ProductionHistory.cancelled_at.is_(None),
                     ProductionHistory.produced_at >= lo,
                     ProductionHistory.produced_at < hi)
             .group_by(ProductionHistory.target_item_id)

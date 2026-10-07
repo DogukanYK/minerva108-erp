@@ -26,6 +26,7 @@ Aynı ürünün iki eşzamanlı üretimi böylece sıraya girer.  (Bu kilit, bug
 import re
 from typing import Optional
 
+from sqlalchemy import and_, not_, or_
 from sqlalchemy.orm import Session
 
 from core.brands import lot_code
@@ -59,6 +60,14 @@ def parse_sequence(lot: str, prefix: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
+def _not_released():
+    """İptal edilip lot no'su serbest bırakılmış üretimler SAYILMAZ
+    (core/production_cancel — `lot_released`).  İptal edilip serbest
+    bırakılMAMIŞ üretim lotu tutmaya devam eder (GMP varsayılanı)."""
+    return not_(and_(ProductionHistory.cancelled_at.isnot(None),
+                     ProductionHistory.lot_released == True))      # noqa: E712
+
+
 def scan_max_seq(db: Session, item: Item, prefix: str) -> int:
     """Bu ÜRÜNE ait geçmiş lotlardaki en büyük sıra (yoksa 0).
 
@@ -68,7 +77,8 @@ def scan_max_seq(db: Session, item: Item, prefix: str) -> int:
     rows = (db.query(ProductionHistory.lot_number)
             .filter(ProductionHistory.target_item_id == item.id,
                     ProductionHistory.lot_number.isnot(None),
-                    ProductionHistory.lot_number.like(f"{prefix}%"))
+                    ProductionHistory.lot_number.like(f"{prefix}%"),
+                    _not_released())
             .all())
     best = 0
     for (lot,) in rows:
@@ -94,17 +104,23 @@ def is_taken(db: Session, item_id: int, lot: str) -> bool:
     Farklı üründe aynı lot serbesttir (labın düzeni bunu gerektiriyor), bu
     yüzden kontrol item_id ile sınırlı.  Hem üretim geçmişine hem stok
     lotlarına bakılır — `-S` (şahit) türevi de çakışma sayılır.
+
+    İptal edilip lot no'su serbest bırakılmış üretim ve iptalle kapanmış
+    (`status='CANCELLED'`) stok satırları çakışma SAYILMAZ.
     """
     lot = normalize_lot(lot)
     if not lot:
         return False
     if (db.query(ProductionHistory.id)
             .filter(ProductionHistory.target_item_id == item_id,
-                    ProductionHistory.lot_number == lot).first()):
+                    ProductionHistory.lot_number == lot,
+                    _not_released()).first()):
         return True
     return bool(db.query(Inventory.id)
                 .filter(Inventory.item_id == item_id,
-                        Inventory.lot_number.in_([lot, f"{lot}-S"])).first())
+                        Inventory.lot_number.in_([lot, f"{lot}-S"]),
+                        or_(Inventory.status.is_(None),
+                            Inventory.status != "CANCELLED")).first())
 
 
 def last_production(db: Session, item: Item, prefix: str):
@@ -112,7 +128,8 @@ def last_production(db: Session, item: Item, prefix: str):
     rows = (db.query(ProductionHistory.lot_number, ProductionHistory.produced_at)
             .filter(ProductionHistory.target_item_id == item.id,
                     ProductionHistory.lot_number.isnot(None),
-                    ProductionHistory.lot_number.like(f"{prefix}%"))
+                    ProductionHistory.lot_number.like(f"{prefix}%"),
+                    _not_released())
             .order_by(ProductionHistory.produced_at.desc())
             .limit(50).all())
     best = None

@@ -40,8 +40,8 @@ from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from database import (Inventory, Item, RetentionSample, SampleAnalysisIngredient, Supplier,
-                      Transaction)
+from database import (Inventory, Item, ProductionConsumption, RetentionSample,
+                      SampleAnalysisIngredient, Supplier, Transaction)
 
 EPS = 1e-9
 
@@ -301,12 +301,26 @@ def redirect_analysis_rows(db: Session, inventory_id: int, *, item_id: Optional[
     return len(rows)
 
 
+def redirect_production_rows(db: Session, inventory_id: int, to_inventory_id: int) -> int:
+    """Üretim tüketim dökümünü (`production_consumptions`) birleşmede silinecek
+    satırdan yerine geçen satıra yönlendir.
+
+    FK ondelete=SET NULL yüzünden bağ NULL'a düşerdi; üretim iptali
+    (core/production_cancel) lotu "artık yok" sayıp iadeyi ESKİ karta lotsuz
+    yazardı — eski kartta lotu olmayan hayalî stok, lotun bugünkü kartı eksik."""
+    rows = (db.query(ProductionConsumption)
+            .filter(ProductionConsumption.inventory_id == inventory_id).all())
+    for r in rows:
+        r.inventory_id = to_inventory_id
+    return len(rows)
+
+
 def absorb_row(db: Session, row: Inventory, twin: Inventory, *, item_id: int) -> int:
     """`row`'un TAMAMINI aynı lot no'lu `twin` satırına kat ve `row`'u sil.
 
     Tedarikçi/SKT `twin`'de boşsa `row`'dan dolar (COALESCE — mal kabul
-    upsert'üyle aynı kural).  Analiz satırları silmeden ÖNCE `twin`'e
-    yönlenir.  Dönüş: yönlenen analiz satırı sayısı."""
+    upsert'üyle aynı kural).  Analiz ve üretim dökümü satırları silmeden
+    ÖNCE `twin`'e yönlenir.  Dönüş: yönlenen analiz satırı sayısı."""
     twin.quantity = round(float(twin.quantity or 0.0) + float(row.quantity or 0.0), 6)
     if twin.supplier_id is None and row.supplier_id is not None:
         twin.supplier_id = row.supplier_id
@@ -314,6 +328,7 @@ def absorb_row(db: Session, row: Inventory, twin: Inventory, *, item_id: int) ->
         twin.expiry_date = row.expiry_date
     twin.updated_at = datetime.utcnow()
     n = redirect_analysis_rows(db, row.id, item_id=item_id, to_inventory_id=twin.id)
+    redirect_production_rows(db, row.id, twin.id)
     db.flush()                                   # bağlar silmeden önce yazılsın
     db.delete(row)
     return n

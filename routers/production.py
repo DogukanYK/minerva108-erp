@@ -8,9 +8,10 @@
 Production router — manufacturing workflows + Quality Control (QA).
 """
 import io
+import logging
 import re
 
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -18,16 +19,21 @@ from typing import Optional
 
 from database import (
     to_tr, AppSetting,
-    get_db, Item, Recipe, ProductionHistory, Inventory, Transaction,
+    get_db, Item, Recipe, ProductionHistory, ProductionConsumption, Inventory, Transaction,
     RetentionSample, RetentionSampleMovement,
 )
 from core import lots
+from core.audit import log_admin_event
+from core.production_cancel import CancelError, apply_cancel, cancelled_view
+from core.production_cancel import preview as cancel_preview
 from core.brands import cabinet_location, cabinet_of
 from core.permissions import require_internal_user, require_permission
 from core.notifications import notify_low_stock
 from core.domain import active_domain
 from core.retention import (CFG_EXTRA, CFG_SHELF_LIFE, DEFAULT_EXTRA_MONTHS,
                             DEFAULT_SHELF_LIFE_MONTHS, retention_until)
+
+logger = logging.getLogger("minerva108.production")
 
 
 def retention_cfg_months(db: Session) -> tuple:
@@ -68,6 +74,16 @@ class ProductionCreateRequest(BaseModel):
     ingredient_lot_choices: Optional[dict] = None
 
 
+class ProductionCancelRequest(BaseModel):
+    # Sebep zorunlu — denetim izi (PH.cancel_reason + her telafi kaydının notu).
+    reason: str = Field(..., min_length=5, max_length=500)
+    # Önizlemenin parmak izi — arada stok değiştiyse 409 preview_stale.
+    fingerprint: str = Field(..., min_length=1, max_length=64)
+    # Lot no'yu serbest bırak (aynı üründe tekrar kullanılabilsin).  Varsayılan
+    # hayır — GMP: iptal edilen lot no yeniden verilmez.
+    release_lot: bool = False
+
+
 class QCActionRequest(BaseModel):
     notes:  str = Field(..., max_length=2000)
     status: str = Field(..., max_length=20)  # 'APPROVED' veya 'REJECTED'
@@ -98,9 +114,33 @@ def list_production_history(db: Session = Depends(get_db), domain: str = Depends
             "target_item_name": r.target_item_name,
             "produced_quantity": r.produced_quantity,
             "produced_at": to_tr(r.produced_at).strftime("%d.%m.%Y %H:%M") if r.produced_at else "",
+            "lot_number": r.lot_number or "",
+            # İptal edilmiş üretim listede KALIR (geçmiş silinmez) — UI üstü
+            # çizili gösterir; iptal değilse None.
+            "cancelled": cancelled_view(r),
         }
         for r in rows
     ]
+
+
+def _lock_lot_for_qc(db: Session, inventory_id: int):
+    """QC kararı için (lot, kart) — FOR UPDATE, sıra kart → lot (üretim
+    iptaliyle aynı: core/production_cancel.lock_rows; ters sıra kilitlenme
+    yaratırdı).  Durum KİLİTTEN SONRA okunur: eşzamanlı iptal lotu
+    CANCELLED/0 yaptıysa bayat kopya üzerinden ikinci düşüm yapılmaz, istek
+    "QC listesinde değil" ile döner.  Lot yoksa (None, None)."""
+    peek = db.query(Inventory.item_id).filter(Inventory.id == inventory_id).first()
+    if peek is None:
+        return None, None
+    item = (db.query(Item).filter(Item.id == peek[0])
+            .with_for_update().populate_existing().first())
+    inv = (db.query(Inventory).filter(Inventory.id == inventory_id)
+           .with_for_update().populate_existing().first())
+    if inv is not None and (item is None or inv.item_id != item.id):
+        # Okuma ile kilit arasında lot başka karta taşındı — o kartı da kilitle.
+        item = (db.query(Item).filter(Item.id == inv.item_id)
+                .with_for_update().populate_existing().first())
+    return inv, item
 
 
 def _mark_retention_rejected(db: Session, inv: Inventory, actor: str, reason: str) -> None:
@@ -161,6 +201,7 @@ def suggest_next_lot(
 # (Satın Alma Planı da ürün boyunu aynı kuralla okuyor).  Bu satır RE-EXPORT
 # SHIM'idir — eski ad buradan çağrılıyor.
 from core.consumption import parse_ml as _parse_ml  # noqa: E402
+from core.consumption import _kind as consumption_kind  # noqa: E402
 
 
 def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[dict]:
@@ -225,6 +266,7 @@ def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[di
         "produced_at_date":  to_tr(prod.produced_at).strftime("%d.%m.%Y") if prod.produced_at else "",
         "produced_by":       prod.produced_by or "",
         "lot_number":        prod.lot_number or "",
+        "cancelled":         cancelled_view(prod),
         "bottle_ml":         bottle_ml,
         "waste_percentage":  round(waste, 2),
         "production_notes":  recipe.production_notes or "",
@@ -234,6 +276,88 @@ def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[di
             "gross": round(gross_total, 4),
             "fire":  round(gross_total - net_total, 4),
         },
+    }
+
+
+# ─── Üretim iptali ──────────────────────────────────────────────────────────
+# DİKKAT: "/production/{prod_id}"nin ÜSTÜNDE kalsın (next-lot tuzağı).
+# Motor: core/production_cancel.py — hiçbir Transaction silinmez, telafi kaydı.
+
+@router.get("/production/{prod_id}/cancel-preview")
+def production_cancel_preview(
+    prod_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("production", "cancel")),
+    domain: str = Depends(active_domain),
+):
+    """İptal önizlemesi — stoğa iade edilecekler, stoktan düşülecekler,
+    şahit numune, engeller, uyarılar ve POST'ta geri gönderilecek
+    `fingerprint`.  Hiçbir şey yazmaz."""
+    prod = (db.query(ProductionHistory)
+            .filter(ProductionHistory.id == prod_id, ProductionHistory.domain == domain).first())
+    if not prod:
+        return JSONResponse(status_code=404, content={"detail": "Üretim kaydı bulunamadı."})
+    return cancel_preview(db, prod)
+
+
+@router.post("/production/{prod_id}/cancel")
+def production_cancel(
+    prod_id: int,
+    data: ProductionCancelRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("production", "cancel")),
+    domain: str = Depends(active_domain),
+):
+    """Üretimi iptal et — tüketilen her kalem stoğa (ve kaynak lotuna) iade,
+    bitmiş ürün stoktan düşülür, şahit numune dolaptan kalkar.  İdempotent:
+    zaten iptal edilmişse 200 ``already_cancelled`` (hiçbir şey yazılmaz)."""
+    reason = (data.reason or "").strip()
+    if len(reason) < 5:
+        return JSONResponse(status_code=422, content={"detail": "İptal sebebi en az 5 karakter olmalı."})
+    prod = (db.query(ProductionHistory)
+            .filter(ProductionHistory.id == prod_id, ProductionHistory.domain == domain)
+            .with_for_update().first())
+    if not prod:
+        return JSONResponse(status_code=404, content={"detail": "Üretim kaydı bulunamadı."})
+    if prod.cancelled_at:
+        out = {"already_cancelled": True, "production_id": prod.id,
+               "cancelled": cancelled_view(prod)}
+        db.rollback()
+        return out
+
+    actor = current_user.get("full_name") or current_user.get("username") or "—"
+    try:
+        summary = apply_cancel(db, prod, actor=actor, reason=reason,
+                               release_lot=data.release_lot,
+                               expected_fingerprint=data.fingerprint)
+        db.commit()
+    except CancelError as e:
+        db.rollback()
+        return JSONResponse(status_code=e.status, content=e.payload())
+    except Exception:
+        db.rollback()
+        logger.exception("Üretim iptali başarısız (#%s)", prod_id)
+        return JSONResponse(status_code=500, content={
+            "detail": "İptal sırasında hata oluştu, stoklar değiştirilmedi."})
+
+    # log_admin_event kendi commit'ini yapar — ana commit'ten SONRA.
+    log_admin_event(db, request, current_user, action="production.cancel",
+                    target_type="production", target_id=summary["production_id"],
+                    target_name=f"{summary['lot'] or '—'} · {summary['recipe'] or '—'}"[:150],
+                    details={"lot": summary["lot"], "recipe": summary["recipe"],
+                             "qty": summary["qty"], "source": summary["source"],
+                             "tx_ids": summary["tx_ids"],
+                             "cancel_tx_ids": summary["cancel_tx_ids"],
+                             "reason": reason, "release_lot": summary["release_lot"]})
+    prod = db.query(ProductionHistory).filter(ProductionHistory.id == prod_id).first()
+    return {
+        "message": (f"Üretim iptal edildi — {summary['restored']} kalem stoğa iade edildi"
+                    + (f", {summary['qty']:g} adet bitmiş ürün stoktan düşüldü."
+                       if summary["lot"] and prod and prod.target_item_id else ".")),
+        "already_cancelled": False,
+        **{k: v for k, v in summary.items() if k != "recipe"},
+        "cancelled": cancelled_view(prod) if prod else None,
     }
 
 
@@ -424,8 +548,12 @@ def start_production(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("production", "create")),
+    domain: str = Depends(active_domain),
 ):
-    recipe = db.query(Recipe).filter(Recipe.id == data.recipe_id).first()
+    # Aktif panel — başka panelin reçetesi bu panelden üretilemez (eskiden
+    # Recipe.id ile bulunuyordu, panel filtresi yoktu).
+    recipe = (db.query(Recipe)
+              .filter(Recipe.id == data.recipe_id, Recipe.domain == domain).first())
     if not recipe:
         return JSONResponse(status_code=404, content={"detail": "Reçete bulunamadı."})
     if data.produced_quantity <= 0:
@@ -553,6 +681,40 @@ def start_production(
             # Hedef ürünü olmayan reçete (yarı mamul denemesi) — eski biçim.
             produced_lot = f"PRD-{now.strftime('%Y%m%d-%H%M%S')}"
 
+        # ── Üretim kaydı — lot kesinleşir kesinleşmez (tüketim satırları
+        #    prod.id'ye bağlanacak).  Eskiden en sonda ekleniyordu.
+        rec_domain = recipe.domain or "cosmetics"
+        prod = ProductionHistory(
+            recipe_id=recipe.id,
+            recipe_name=recipe.name,
+            target_item_id=recipe.target_item_id,
+            target_item_name=recipe.target_item.name if recipe.target_item else recipe.description,
+            produced_quantity=data.produced_quantity,
+            produced_at=now,
+            produced_by=actor,                       # Audit
+            lot_number=produced_lot if recipe.target_item_id else None,
+            witness_quantity=0.0,                    # aşağıda, kırpılmış değerle
+            domain=rec_domain,                       # Faz 3 — reçetenin paneli
+        )
+        db.add(prod)
+        db.flush()
+
+        def _consumption(kind, tx, *, item_id, recipe_item_id=None, lot=None,
+                         lot_number=None, quantity, factor=1.0, unit=None, phase=None):
+            """Defter satırının dökümü (core/production_cancel bunu okur).
+            İlişkiyle bağlanır → satır başına flush gerekmez."""
+            sup = lot.supplier if (lot is not None and lot.supplier_id) else None
+            pc = ProductionConsumption(
+                production_id=prod.id, kind=kind, recipe_item_id=recipe_item_id,
+                item_id=item_id, lot_number=lot_number,
+                supplier_id=sup.id if sup else None, supplier_name=sup.name if sup else None,
+                quantity=quantity, factor=factor, unit=unit, phase=phase,
+                source="live", domain=rec_domain)
+            pc.transaction = tx
+            if lot is not None:
+                pc.inventory = lot
+            db.add(pc)
+
         # ── Stok düş + Output transaction kaydet ───────────────────────────
         # NOT: item burada *çözülmüş* malzeme — etiket dil çözümü sonrası
         # kardeş etikete inilmiş olabilir, o yüzden Transaction.item_id = item.id
@@ -560,6 +722,10 @@ def start_production(
         for ing, item, gross_qty, is_ambalaj, allocations, uncovered in ing_plan:
             # current_stock kaynak-of-truth: her zaman tam brüt kadar düşer.
             item.current_stock = round(item.current_stock - gross_qty, 6)
+            kind = consumption_kind(item)            # raw | packaging | label
+            factor = 1.0 if is_ambalaj else waste_factor
+            pc_common = dict(item_id=item.id, recipe_item_id=ing.item_id, factor=factor,
+                             unit=item.unit, phase=ing.phase)
             fire_note = (
                 f" | %{recipe.waste_percentage or 0} fire dahil, brüt girdi"
                 if not is_ambalaj and (recipe.waste_percentage or 0) > 0
@@ -570,11 +736,13 @@ def start_production(
 
             if not allocations:
                 # Ambalaj/etiket ya da lotsuz hammadde — toplam stoktan, lot kaydı yok
-                db.add(Transaction(
+                tx = Transaction(
                     item_id=item.id, transaction_type="Output", quantity=gross_qty,
                     notes=f"{base_note} | Üretim Lot: {produced_lot}",
                     performed_by=actor,
-                ))
+                )
+                db.add(tx)
+                _consumption(kind, tx, quantity=gross_qty, **pc_common)
             else:
                 # Hammadde — seçilen/FIFO lot(lar)ından düş, her tahsis ayrı Output
                 # (Transaction.lot_number = KAYNAK lot → izlenebilirlikte kesin).
@@ -582,22 +750,27 @@ def start_production(
                     lot.quantity = round((lot.quantity or 0) - take, 6)
                     sup = lot.supplier.name if lot.supplier else "—"
                     smp = " (numune)" if lot.is_sample else ""
-                    db.add(Transaction(
+                    tx = Transaction(
                         item_id=item.id, transaction_type="Output", quantity=take,
                         lot_number=lot.lot_number,
                         notes=(f"{base_note} | Tedarikçi: {sup}{smp} | "
                                f"Kaynak Lot: {lot.lot_number} | Üretim Lot: {produced_lot}"),
                         performed_by=actor,
-                    ))
+                    )
+                    db.add(tx)
+                    _consumption(kind, tx, quantity=take, lot=lot,
+                                 lot_number=lot.lot_number, **pc_common)
                 # Lot toplamı brütü karşılamadıysa (eksik lot verisi) artığı toplam
                 # stoktan düş — audit bütünlüğü için yine Output yaz (toplam = brüt).
                 if uncovered > _EPS:
-                    db.add(Transaction(
+                    tx = Transaction(
                         item_id=item.id, transaction_type="Output", quantity=round(uncovered, 6),
                         notes=(f"{base_note} | (lot kaydı dışı, toplam stoktan) | "
                                f"Üretim Lot: {produced_lot}"),
                         performed_by=actor,
-                    ))
+                    )
+                    db.add(tx)
+                    _consumption(kind, tx, quantity=round(uncovered, 6), **pc_common)
 
         # ── Şahit numune ayrımı ─────────────────────────────────────────────
         # Üretilen X adetin Y'si "Şahit Numune Dolabı"na (marka bazlı), kalanı
@@ -608,6 +781,7 @@ def start_production(
         if witness_qty > data.produced_quantity:
             witness_qty = data.produced_quantity        # taşmayı kırp
         showroom_qty = round(data.produced_quantity - witness_qty, 6)
+        prod.witness_quantity = witness_qty          # şahit numuneye ayrılan adet
 
         # Marka/dolap adı — TEK KAYNAK core/brands.py (eskiden burada hard-coded
         # bir harita vardı; üç ayrı marka implementasyonundan biriydi).
@@ -621,9 +795,10 @@ def start_production(
         # → QC onaylarsa qc_required=False, status APPROVED kalır
         # → QC reddederse status=REJECTED + stok düşülür + Adjustment audit
         if recipe.target_item_id:
+            finished_rows = []                     # [(Inventory, adet)] — output dökümü
             # 1) Showroom lot'u — kalan kısım
             if showroom_qty > 0:
-                db.add(Inventory(
+                showroom_inv = Inventory(
                     item_id=recipe.target_item_id,
                     lot_number=produced_lot,
                     quantity=showroom_qty,
@@ -632,7 +807,9 @@ def start_production(
                     received_by=actor,
                     qc_required=True,
                     domain=(recipe.domain or "cosmetics"),   # Faz 3 — reçetenin paneli
-                ))
+                )
+                db.add(showroom_inv)
+                finished_rows.append((showroom_inv, showroom_qty))
             # 2) Şahit numune lot'u — varsa.  Stok kaynağı burasıdır (adet
             #    current_stock içinde sayılmaya devam eder); RetentionSample
             #    bunun ÜSTÜNE dolap yönetimini ekler (raf/göz, saklama süresi,
@@ -649,10 +826,12 @@ def start_production(
                     domain=(recipe.domain or "cosmetics"),
                 )
                 db.add(witness_inv)
+                finished_rows.append((witness_inv, witness_qty))
                 db.flush()                                 # inventory_id gerekli
                 shelf_life_m, extra_m = retention_cfg_months(db)
                 retention_row = RetentionSample(
                     inventory_id=witness_inv.id,
+                    production_history_id=prod.id,
                     item_id=recipe.target_item_id,
                     item_name=target_name,
                     lot_number=witness_inv.lot_number,
@@ -676,7 +855,7 @@ def start_production(
             # Tek toplam Input transaction'ı — audit'te bölünme not olarak yazılır
             split_note = (f" | Showroom: {showroom_qty}, Şahit: {witness_qty} ({brand})"
                           if witness_qty > 0 else "")
-            db.add(Transaction(
+            input_tx = Transaction(
                 item_id=recipe.target_item_id,
                 lot_number=produced_lot,
                 transaction_type="Input",
@@ -684,7 +863,14 @@ def start_production(
                 notes=(f"Üretim çıktısı — Reçete: {recipe.name} | "
                        f"Dil: {sel_lang_label} | Lot: {produced_lot}{split_note}"),
                 performed_by=actor,
-            ))
+            )
+            db.add(input_tx)
+            # Her bitmiş satır (showroom, -S) ayrı output satırı; ikisi de
+            # aynı tek Input'u taşır.
+            for inv_row, qty_row in finished_rows:
+                _consumption("output", input_tx, item_id=recipe.target_item_id,
+                             lot=inv_row, lot_number=inv_row.lot_number, quantity=qty_row,
+                             unit=(target_item_obj.unit if target_item_obj else None))
             # Item.current_stock = TOPLAM artar (witness de stokta sayılır —
             # dolaptaki numuneler satılabilir stoktan DÜŞMEZ, bilinçli karar).
             # Satır yukarıda lot sayacı için zaten kilitlendi, yeniden sorgulanmaz.
@@ -692,19 +878,6 @@ def start_production(
                 target_item_row.current_stock = round(
                     (target_item_row.current_stock or 0) + data.produced_quantity, 6
                 )
-
-        # Üretim kaydı
-        db.add(ProductionHistory(
-            recipe_id=recipe.id,
-            recipe_name=recipe.name,
-            target_item_id=recipe.target_item_id,
-            target_item_name=recipe.target_item.name if recipe.target_item else recipe.description,
-            produced_quantity=data.produced_quantity,
-            produced_by=actor,                       # Audit
-            lot_number=produced_lot if recipe.target_item_id else None,
-            witness_quantity=witness_qty,            # şahit numuneye ayrılan adet
-            domain=(recipe.domain or "cosmetics"),   # Faz 3 — reçetenin paneli
-        ))
 
         db.commit()
 
@@ -736,6 +909,7 @@ def start_production(
                     f"stoktan düşülmedi: {', '.join(label_warnings)}.")
         return {
             "message": msg,
+            "production_id": prod.id,
             "lot_number": produced_lot if recipe.target_item_id else None,
             "label_language": sel_lang,
             "label_warnings": label_warnings,
@@ -748,6 +922,8 @@ def start_production(
 
     except Exception:
         db.rollback()
+        logger.exception("Üretim başlatılamadı (reçete %s, %s adet)",
+                         data.recipe_id, data.produced_quantity)
         return JSONResponse(status_code=500, content={"detail": "Üretim sırasında hata oluştu, stoklar değiştirilmedi."})
 
 
@@ -805,11 +981,13 @@ def process_qc(
     if data.status not in ("APPROVED", "REJECTED"):
         return JSONResponse(status_code=400, content={"detail": "Geçersiz statü. 'APPROVED' veya 'REJECTED' olmalıdır."})
 
-    inv = db.query(Inventory).filter(Inventory.id == inventory_id).first()
+    inv, item = _lock_lot_for_qc(db, inventory_id)
     if not inv:
+        db.rollback()
         return JSONResponse(status_code=404, content={"detail": "Envanter kaydı bulunamadı."})
     # Hem mal kabul karantinası hem de üretim qc_required lot'ları işlenebilir
     if inv.status != "QUARANTINE" and not inv.qc_required:
+        db.rollback()
         return JSONResponse(status_code=400, content={"detail": "Bu kayıt QC inceleme listesinde değil."})
 
     actor = current_user.get("full_name") or current_user.get("username") or "—"
@@ -824,7 +1002,6 @@ def process_qc(
         inv.qc_required    = False     # QC karar verdi, artık listede çıkmasın
         inv.updated_at     = __import__("datetime").datetime.utcnow()
 
-        item = db.query(Item).filter(Item.id == inv.item_id).first()
         # Stok değişikliği — karmaşık ama anlamlı:
         #   QUARANTINE + APPROVED → stok henüz eklenmemiş, ekle
         #   QUARANTINE + REJECTED → stok henüz eklenmemiş, hiçbir şey yapma
@@ -884,16 +1061,19 @@ def qc_approve_form(
     if data.status not in ("APPROVED", "REJECTED"):
         return JSONResponse(status_code=400, content={"detail": "Geçersiz statü. 'APPROVED' veya 'REJECTED' olmalıdır."})
 
-    inv = db.query(Inventory).filter(Inventory.id == inventory_id).first()
+    inv, approved_item = _lock_lot_for_qc(db, inventory_id)
     if not inv:
+        db.rollback()
         return JSONResponse(status_code=404, content={"detail": "Envanter kaydı bulunamadı."})
     # Hem mal kabul karantinası hem üretim qc_required lot'ları işlenebilir
     if inv.status != "QUARANTINE" and not inv.qc_required:
+        db.rollback()
         return JSONResponse(status_code=400, content={"detail": "Bu lot zaten işlenmiş — tekrar değiştirilemez."})
 
     was_quarantine = (inv.status == "QUARANTINE")
 
     if not data.checklist:
+        db.rollback()
         return JSONResponse(status_code=422, content={"detail": "Kontrol listesi boş gönderilemez."})
 
     # ── Serialize full form payload for permanent audit ────────────────────
@@ -924,7 +1104,6 @@ def qc_approve_form(
         #   QUARANTINE + REJECTED → stok henüz yok, hiçbir şey
         #   qc_required (PROD) + APPROVED → stok zaten var, hiçbir şey
         #   qc_required (PROD) + REJECTED → stok geri al + Adjustment audit
-        approved_item = db.query(Item).filter(Item.id == inv.item_id).first()
         if was_quarantine and data.status == "APPROVED" and approved_item:
             approved_item.current_stock = round((approved_item.current_stock or 0) + inv.quantity, 6)
         elif not was_quarantine and data.status == "REJECTED" and approved_item:

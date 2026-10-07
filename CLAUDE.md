@@ -683,6 +683,24 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   aggregate (no lot picker). Items with no lots fall back to today's aggregate-only
   decrement (`_plan_lot_allocation` in `routers/production.py`). Available lots:
   `POST /api/inventory/available-lots`.
+- **Üretimi iptal et** (`core/production_cancel.py`; `GET /api/production/{id}/
+  cancel-preview` + `POST …/cancel {reason, fingerprint, release_lot}`, perm
+  `production.cancel`, 07.10.2026). `start_production` her Output/Input'u
+  `production_consumptions`'a döker (source='live'); iptal her satıra +Adjustment
+  (kaynak lota iade), bitmiş ürüne Input'u aynalayan TEK −Adjustment yazar, lotlar
+  `CANCELLED`/0, şahit pasif — **hiçbir Transaction silinmez**. Önizleme ile POST
+  arası değişiklik `fingerprint` ile 409 `preview_stale`. Dökümü olmayan **eski
+  üretim** defter imzasıyla kurulur (Output notu `"Üretim tüketimi — Reçete: {ad} | "`
+  ile başlar + `"Üretim Lot: {lot}"` ile biter, aynı kişi, `produced_at −10/+1 dk`)
+  ve iptalde `source='ledger'` olarak kalıcılaşır. **TUZAK — imza tekil değil**:
+  `Recipe.name` benzersiz değil + lot sayacı ürün bazlı → aynı kişinin aynı
+  dakikalarda aynı reçete adı + aynı lot no'lu iki eski üretimi ayrılamaz; bu
+  durum ENGELDİR (`_ambiguity`), tahmin YAPILMAZ. Lot satırını silip ikizine katan
+  her yol (`stock_lots.absorb_row`) dökümü de ikize yönlendirmeli (FK SET NULL).
+  Pasif karta iade yapılmaz (engel). Kilit sırası kart → lot → şahit kaydı; QC
+  kararı ve şahit çıkış/imha da bu sırayla kilitler (bayat okumayla çift düşüm
+  olmasın). Lot no ürün bazlı olduğundan `trace_lot` lot satırını ve üretimi aynı
+  ürüne bağlar (`?item_id=`, `other_items`). Testler `tests/test_production_cancel.py`.
 - Item delete is **soft** (`is_active=False`) when audit/transaction rows exist;
   hard delete only when there are no references.
 - **QC forms** are stored as JSON on `Inventory.qc_form_data` (written by

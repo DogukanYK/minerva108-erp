@@ -51,16 +51,19 @@ class MergeError(Exception):
 
 
 def _adjust(db: Session, item: Item, delta: float, note: str, actor: str,
-            lot_number: Optional[str] = None) -> None:
+            lot_number: Optional[str] = None) -> Optional[Transaction]:
     """İmzalı Adjustment yaz + `current_stock`'u kaydır (lot taşıma da kullanır,
-    core/stock_lots.move_lot — orada `lot_number` dolu)."""
+    core/stock_lots.move_lot — orada `lot_number` dolu).  Yazılan Transaction'ı
+    döner (delta ~0 ise None) — üretim iptali telafi kaydını satıra bağlar."""
     if abs(delta) < 1e-9:
-        return
-    db.add(Transaction(item_id=item.id, transaction_type="Adjustment",
-                       quantity=round(delta, 6), timestamp=datetime.utcnow(),
-                       lot_number=lot_number,
-                       notes=note[:500], performed_by=actor))
+        return None
+    tx = Transaction(item_id=item.id, transaction_type="Adjustment",
+                     quantity=round(delta, 6), timestamp=datetime.utcnow(),
+                     lot_number=lot_number,
+                     notes=note[:500], performed_by=actor)
+    db.add(tx)
     item.current_stock = round((item.current_stock or 0.0) + delta, 6)
+    return tx
 
 
 def _blockers(db: Session, loser: Item) -> List[str]:
