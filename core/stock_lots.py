@@ -36,7 +36,7 @@ tam miktar kadar düşer — otorite odur, laboratuvarın işi durmaz.
 """
 import math
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -56,6 +56,7 @@ def plan_fifo(
     *,
     exclude_samples: bool = True,
     lock: bool = True,
+    reserved: Optional[Dict[int, float]] = None,
 ) -> Tuple[List[Tuple[Inventory, float]], float]:
     """`qty` kadar stoğun hangi lotlardan düşeceğini planla — en eski önce.
 
@@ -70,6 +71,12 @@ def plan_fifo(
 
     `exclude_samples=True` varsayılan: numune lotu (`is_sample`) satışa/
     teslimata KONU OLAMAZ — 24.08.2026 numune olayının kuralı.
+
+    `reserved` — {inventory_id: miktar}: aynı planda ÖNCEKİ satırların bu
+    lotlardan aldığı (henüz yazılmamış) miktar; lotun kullanılabilir kalanı
+    bundan düşülür.  Üretim planlayıcısı (core/production_plan) aynı kartı
+    birden çok satırda kullanırken aynı lotu iki kez vermesin diye.  Sözlük
+    OKUNUR, güncellenmez — çağıran kendi tahsisini ekler.
     """
     qty = float(qty or 0.0)
     if qty <= EPS:
@@ -93,10 +100,13 @@ def plan_fifo(
     for lot in lots:
         if remaining <= EPS:
             break
-        take = min(float(lot.quantity or 0.0), remaining)
+        avail = float(lot.quantity or 0.0)
+        if reserved:
+            avail -= float(reserved.get(lot.id, 0.0))
+        take = round(min(avail, remaining), 6)
         if take > EPS:
-            allocations.append((lot, round(take, 6)))
-            remaining -= take
+            allocations.append((lot, take))
+            remaining = round(remaining - take, 6)
     return allocations, max(0.0, round(remaining, 6))
 
 

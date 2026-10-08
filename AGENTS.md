@@ -200,9 +200,22 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   A **picked lot that is short → hard 400 error** (never silently spills). Each
   consumed lot writes an `Output` `Transaction` whose `lot_number` is the *source* lot
   (+ supplier in notes), so `trace_lot` shows exact provenance. Ambalaj/etiket stay
-  aggregate (no lot picker). Items with no lots fall back to today's aggregate-only
-  decrement (`_plan_lot_allocation` in `routers/production.py`). Available lots:
+  aggregate (no lot picker). Items with no lots fall back to aggregate-only
+  decrement (`core/production_plan.py`). Available lots:
   `POST /api/inventory/available-lots`.
+- **Production source choices**: preview (`POST /api/production/preview`) and
+  start share `core/production_plan.plan`. If another compatible active card in
+  the same material group has stock, the user must explicitly select sources
+  via `ingredient_sources` (recipe item ID -> card/quantity/optional lot list).
+  Splits must total the gross requirement. Stock is gated per actual card and
+  lot allocations are reserved across all lines. Snapshots retain both recipe
+  and actual source cards; exports and cancellation use those snapshots.
+  Kill switch: AppSetting `production.source_choice.enabled=0` restores the
+  recipe-card-only choices. Preview is read-only; production writes are audited.
+  Live rollout keeps this setting at `0` until laboratory equivalence review.
+  With the switch disabled, the purchase-plan API cannot deduct phase-out
+  stock from other cards; it returns `source_choice_disabled` and preserves
+  saved scenario options. Packaging and labels are separate consumption kinds.
 - Item delete is **soft** (`is_active=False`) when audit/transaction rows exist;
   hard delete only when there are no references.
 - **QC forms** are stored as JSON on `Inventory.qc_form_data` (written by

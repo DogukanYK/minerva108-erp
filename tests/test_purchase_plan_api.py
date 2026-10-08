@@ -193,6 +193,63 @@ def test_preview_same_material_group_firms(authed_client: TestClient, db_session
     assert x.status_code == 200
 
 
+def test_source_choice_switch_gates_phase_out_stock_without_changing_request_or_scenario(
+        authed_client: TestClient, db_session: Session):
+    from core.purchase_plan_models import PlanRequest
+    from database import MaterialGroup, MaterialSupplierPref, Supplier
+    from routers.purchase_plan import build_report
+
+    ids = _seed(db_session)
+    sepet = Supplier(name="HAMMADDE SEPETİ", domain="cosmetics", purchase_status="phase_out")
+    nat = Supplier(name="NATURALYA", domain="cosmetics")
+    group = MaterialGroup(name="Gliserin", domain="cosmetics")
+    setting = AppSetting(key="production.source_choice.enabled", value="0")
+    db_session.add_all([sepet, nat, group, setting])
+    db_session.flush()
+    gli = db_session.get(Item, ids["gli"])
+    po = _item(db_session, "GLİSERİN — HAMMADDE SEPETİ", unit="g", stock=1000)
+    alt = _item(db_session, "GLYCERINE NAT", unit="g", stock=0)
+    po.supplier_id, alt.supplier_id = sepet.id, nat.id
+    gli.material_group_id = po.material_group_id = alt.material_group_id = group.id
+    db_session.add_all([
+        SupplierPrice(item_id=alt.id, supplier_id=nat.id, supplier_name="NATURALYA", unit_price=5.0,
+                      currency="USD", price_unit="kg", domain="cosmetics"),
+        MaterialSupplierPref(domain="cosmetics", material_group_id=group.id, supplier_id=nat.id,
+                             preference="preferred", rank=1)])
+    db_session.commit()
+    config = _req(ids, qty=100, count_phase_out_stock=True)
+    sid = authed_client.post("/api/purchase-plan/scenarios", headers=_HDR,
+                             json={"name": "Kaynak geçişi", "config": config}).json()["id"]
+    saved = authed_client.get(f"/api/purchase-plan/scenarios/{sid}").json()["config"]
+    request = PlanRequest.model_validate(saved)
+    before = request.model_dump(mode="json")
+
+    disabled = build_report(db_session, request, "cosmetics")
+    m = {x["item_id"]: x for x in disabled["materials"]}[ids["gli"]]
+    assert m["stock_phase_out"] == 0 and m["display"]["buy_num"] == pytest.approx(2.8)
+    assert (m["supplier"], m["price"]) == ("NATURALYA", 5.0)
+    assert disabled["meta"]["options"]["count_phase_out_stock"] is False
+    assert "source_choice_disabled" in disabled["meta"]["warning_codes"]
+    assert any("Üretimde kaynak seçimi kapalı" in w for w in disabled["meta"]["warnings"])
+    assert request.model_dump(mode="json") == before
+    assert authed_client.get(f"/api/purchase-plan/scenarios/{sid}").json()["config"] == saved
+
+    setting.value = "1"
+    db_session.commit()
+    enabled = build_report(db_session, request, "cosmetics")
+    m = {x["item_id"]: x for x in enabled["materials"]}[ids["gli"]]
+    assert m["stock_phase_out"] == pytest.approx(1000) and m["display"]["buy_num"] == pytest.approx(1.8)
+    assert enabled["meta"]["options"]["count_phase_out_stock"] is True
+    assert "source_choice_disabled" not in enabled["meta"].get("warning_codes", [])
+    off_request = request.model_copy(update={"options": request.options.model_copy(
+        update={"count_phase_out_stock": False})})
+    off = build_report(db_session, off_request, "cosmetics")
+    m = {x["item_id"]: x for x in off["materials"]}[ids["gli"]]
+    assert m["stock_phase_out"] == 0 and m["display"]["buy_num"] == pytest.approx(2.8)
+    assert request.model_dump(mode="json") == before
+    assert authed_client.get(f"/api/purchase-plan/scenarios/{sid}").json()["config"] == saved
+
+
 def test_preview_supplier_status_prefs_and_phase_out_stock(authed_client: TestClient, db_session: Session):
     """P1b uçtan uca: bitirilecek firmanın grup kartındaki stok ihtiyaçtan
     düşülür, onun ucuz teklifi seçilmez; malzeme tercihi (gruba yazılmış)

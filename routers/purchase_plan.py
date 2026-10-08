@@ -229,9 +229,19 @@ def build_report(db: Session, req: PlanRequest, domain: str) -> dict:
     (kullanıcıya gösterilebilir) yukarı fırlar; router 400'e çevirir."""
     from core import purchase_plan as pp
     from core import purchase_pricing as pricing
+    from core.production_plan import source_choice_enabled
 
-    inputs = pp.load_inputs(db, req, domain)
-    res = pp.compute(inputs, req)
+    sources_enabled = source_choice_enabled(db)
+    effective_req = req if sources_enabled else req.model_copy(update={
+        "options": req.options.model_copy(update={"count_phase_out_stock": False})})
+    inputs = pp.load_inputs(db, effective_req, domain)
+    res = pp.compute(inputs, effective_req)
+    if not sources_enabled:
+        res["meta"]["warning_codes"] = ["source_choice_disabled"]
+        res["meta"]["warnings"].append(
+            "Üretimde kaynak seçimi kapalı olduğu için bitirilecek tedarikçilerin alternatif "
+            "kart stokları ihtiyaçtan düşülmedi. Fiyat ve tedarikçi tercihleri rapor ayarlarına "
+            "göre hesaplanmaya devam eder.")
     prods = res.get("products") or []
     if not prods or all(any(c["code"] == "recipeless_product" for c in p["cautions"]) for p in prods):
         raise pp.PlanInputError(

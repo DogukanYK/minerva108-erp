@@ -2668,6 +2668,13 @@ def trace_lot(lot_number: str, item_id: Optional[int] = None, db: Session = Depe
                 .all()
             )
         snap_inv = {pc.transaction_id: pc.inventory_id for pc in snap}
+        # P2 — bölünmüş üretimde Output reçetedeki karttan değil gruptaki
+        # başka karttan (tedarikçiden) düşmüş olabilir; döküm reçete kartını
+        # ayrıca taşır (`recipe_item_id`).  Etikette fark dil kardeşidir.
+        snap_by_tx = {pc.transaction_id: pc for pc in snap}
+        rec_ids = {pc.recipe_item_id for pc in snap if pc.recipe_item_id}
+        rec_names = ({i: n for i, n in db.query(Item.id, Item.name).filter(Item.id.in_(rec_ids)).all()}
+                     if rec_ids else {})
 
         ingredients_consumed = []
         for tx in ing_outputs:
@@ -2698,6 +2705,9 @@ def trace_lot(lot_number: str, item_id: Optional[int] = None, db: Session = Depe
                     .first()
                 )
             tx_supplier = db.query(Supplier).filter(Supplier.id == tx_inv.supplier_id).first() if tx_inv and tx_inv.supplier_id else None
+            pc = snap_by_tx.get(tx.id)
+            rec_id = pc.recipe_item_id if pc is not None else None
+            substituted = bool(rec_id and rec_id != tx.item_id)
             ingredients_consumed.append({
                 "item_id":       tx.item_id,
                 "item_name":     tx_item.name if tx_item else "—",
@@ -2705,7 +2715,14 @@ def trace_lot(lot_number: str, item_id: Optional[int] = None, db: Session = Depe
                 "quantity":      tx.quantity,
                 "unit":          tx_item.unit if tx_item else "",
                 "source_lot":    (tx.lot_number or (tx_inv.lot_number if tx_inv else None)) or "—",
-                "supplier_name": tx_supplier.name    if tx_supplier else "—",
+                # Reçetedeki kart (döküm varsa) — fiilen düşülenden farklıysa
+                # `substituted` (kaynak kart seçimi ya da etiket dil kardeşi).
+                "recipe_item_id":   rec_id,
+                "recipe_item_name": rec_names.get(rec_id) if substituted else None,
+                "substituted":      substituted,
+                "kind":             pc.kind if pc is not None else None,
+                "supplier_name": (tx_supplier.name if tx_supplier
+                                  else ((pc.supplier_name if pc is not None else None) or "—")),
                 "is_sample":     bool(tx_inv.is_sample) if tx_inv else False,
                 "expiry_date":   (tx_inv.expiry_date if tx_inv else None) or "—",
                 "received_by":   (tx_inv.received_by if tx_inv else None) or "—",

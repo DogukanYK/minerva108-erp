@@ -6,8 +6,11 @@ Ortak tüketim motoru (core/consumption.py) testleri.
     scale yalnız hammadde, include_packaging=False, exclude/new modları
   • PARİTE: gerçek `POST /api/production` uç noktasının yazdığı Output
     transaction toplamları kalem başına `expand_recipe` brütüne eşit olmalı.
-    start_production kendi döngüsünü taşıyor (canlı akış, lot kilitleri);
-    iki taraftan biri değişirse bu test kırılır.
+    start_production artık satırları core/production_plan üzerinden (o da
+    expand_recipe ile) kurar; yazım tarafı değişirse bu test kırılır.
+    P2 — bölünmüş üretimde (aynı malzeme grubundan ikinci kart) Output'lar
+    iki karta dağılır; eşitlik o zaman tüketim dökümünün REÇETE KARTI
+    (`recipe_item_id` ↔ `source_item_id`) toplamıyla aranır.
 """
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -18,7 +21,8 @@ from sqlalchemy.orm import Session
 
 from core.consumption import (IngredientRec, ItemRec, RecipeRec, expand_recipe,
                               load_recipe_recs)
-from database import Inventory, Item, Recipe, RecipeIngredient, Transaction
+from database import (Inventory, Item, MaterialGroup, ProductionConsumption, Recipe,
+                      RecipeIngredient, Transaction)
 
 _HDR = {"Origin": "http://testserver"}
 
@@ -201,6 +205,16 @@ def _outputs_by_item(db: Session) -> dict:
     return dict(out)
 
 
+def _consumed_by_recipe_item(db: Session) -> dict:
+    """Tüketim dökümü reçete kartı başına — bölünmüş üretimde de expand_recipe
+    satırının (`source_item_id`) brütüne eşit olmalı."""
+    out = defaultdict(float)
+    for pc in (db.query(ProductionConsumption)
+               .filter(ProductionConsumption.kind != "output").all()):
+        out[pc.recipe_item_id] += pc.quantity
+    return dict(out)
+
+
 @pytest.mark.parametrize("lang", ["TR", "EN"])
 def test_parity_with_real_production_endpoint(authed_client: TestClient, db_session: Session, lang):
     rid, ids = _parity_recipe(db_session)
@@ -234,3 +248,43 @@ def test_parity_with_real_production_endpoint(authed_client: TestClient, db_sess
     for item_id, gross in expected.items():
         it = db_session.get(Item, item_id)
         assert it.current_stock == pytest.approx(10_000 - gross, abs=1e-5)
+
+
+def test_parity_split_production_by_recipe_item(authed_client: TestClient, db_session: Session):
+    """P2 — lotlu hammadde aynı malzeme grubundaki ikinci karttan kısmen
+    karşılanır: Output'lar iki karta dağılır, reçete kartı toplamı yine brüt."""
+    rid, ids = _parity_recipe(db_session)
+    raw = db_session.get(Item, ids["raw_lot"])
+    g = MaterialGroup(name="Parite grubu", domain="cosmetics")
+    db_session.add(g); db_session.flush()
+    alt = Item(name="Parite Yağ (2. firma)", sku="par-raw1b", category="Hammadde", unit="g",
+               current_stock=100, domain="cosmetics", material_group_id=g.id)
+    raw.material_group_id = g.id
+    db_session.add(alt); db_session.commit()
+    qty = 6
+    recs, items, sibs = load_recipe_recs(db_session, [rid], "cosmetics")
+    exp = expand_recipe(recs[0], qty, items, sibs, label_mode="TR")
+    expected = {ln.source_item_id: ln.gross for ln in exp.lines}
+    gross_raw = expected[ids["raw_lot"]]
+
+    r = authed_client.post("/api/production", json={
+        "recipe_id": rid, "produced_quantity": qty, "label_language": "TR",
+        "ingredient_sources": {str(ids["raw_lot"]): [
+            {"item_id": alt.id, "quantity": 2.0},
+            {"item_id": ids["raw_lot"], "quantity": gross_raw - 2.0}]},
+    }, headers=_HDR)
+    assert r.status_code == 201, r.text
+
+    db_session.expire_all()
+    by_recipe = _consumed_by_recipe_item(db_session)
+    assert set(by_recipe) == set(expected)
+    for rec_item, gross in expected.items():
+        assert by_recipe[rec_item] == pytest.approx(gross, abs=1e-5), rec_item
+    outs = _outputs_by_item(db_session)
+    assert outs[alt.id] == pytest.approx(2.0)
+    assert outs[ids["raw_lot"]] == pytest.approx(gross_raw - 2.0, abs=1e-5)
+    # Defter = döküm (kart düzeyinde)
+    by_card = defaultdict(float)
+    for pc in db_session.query(ProductionConsumption).filter(ProductionConsumption.kind != "output"):
+        by_card[pc.item_id] += pc.quantity
+    assert {k: round(v, 6) for k, v in by_card.items()} == {k: round(v, 6) for k, v in outs.items()}

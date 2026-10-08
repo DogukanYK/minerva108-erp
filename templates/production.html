@@ -208,6 +208,20 @@
       font-variant-numeric: tabular-nums;
     }
     .preview-item-name { font-weight: 600; color: #1f2937; }
+    .source-choice { margin: 0; padding: 0.7rem 0; border: 0; }
+    .source-choice legend { float: none; width: auto; margin-bottom: 0.45rem; font-size: 0.85rem; font-weight: 600; }
+    .source-modes { display: flex; gap: 1rem; margin-bottom: 0.5rem; font-size: 0.8rem; }
+    .source-option { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; padding: 0.5rem 0; border-top: 1px solid #f0ece4; }
+    .source-option label { flex: 1; min-width: 170px; margin: 0; }
+    .source-option .form-control { width: 115px; font-size: 0.8rem; }
+    .source-option .form-select { width: auto; max-width: 100%; font-size: 0.8rem; }
+    .source-hint { font-size: 0.76rem; color: #6b7280; }
+    .source-badge { display: inline-block; margin-left: 0.35rem; padding: 1px 6px; border-radius: 5px; font-size: 0.68rem; background: #eaf2ed; color: #166534; }
+    .source-badge.finish { background: #fff3d6; color: #92400e; }
+    .source-errors { color: #b91c1c; font-size: 0.8rem; margin-top: 0.4rem; }
+    .source-total { margin-top: 0.45rem; font-size: 0.8rem; font-weight: 600; }
+    .source-card-totals { padding: 0.5rem 0.85rem; font-size: 0.8rem; }
+    .source-card-totals div { padding: 0.3rem 0; }
     .preview-cat-pill {
       display: inline-block;
       margin-left: 0.4rem;
@@ -346,6 +360,11 @@
     .foy-table th { background: var(--navy); color: #fff; font-weight: 600; }
     .foy-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
     .foy-table tr.foy-total td { font-weight: 700; background: #f3f0ea; }
+    .foy-table .foy-source-row > td { padding: 0.45rem 0.6rem; background: #faf8f3; }
+    .foy-sources { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+    .foy-sources caption { padding: 0 0 0.3rem; caption-side: top; font-weight: 600; color: #374151; }
+    .foy-table .foy-sources th { background: transparent; color: #6b7280; font-size: 0.7rem; }
+    .foy-table .foy-sources th, .foy-table .foy-sources td { padding: 0.3rem 0.4rem; }
     .foy-notes { margin-top: 1rem; padding: 0.75rem 1rem; background: #faf8f3;
       border: 1px solid #e8e2d4; border-radius: 8px; font-size: 0.85rem; white-space: pre-wrap; }
     .foy-notes-label { font-weight: 700; color: var(--navy); display: block; margin-bottom: 0.3rem; }
@@ -718,7 +737,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn-cancel" data-bs-dismiss="modal">İptal</button>
-          <button type="button" class="btn-save" id="confirmProductionBtn">
+          <button type="button" class="btn-save" id="confirmProductionBtn" disabled>
             <i class="bi bi-play-fill"></i> Üretimi Başlat
           </button>
         </div>
@@ -807,51 +826,20 @@
   <script>
     let allRecipes   = [];
     let selectedRecipeDetail = null;
-    // Faz 2 — hammadde başına tüketilebilir lotlar ve kullanıcı seçimi
-    let availableLotsByItem = {};   // { item_id: [ {inventory_id, lot_number, supplier_name, quantity, is_sample, ...} ] }
-    let lotChoices = {};            // { item_id: inventory_id }  (boş = otomatik/FIFO)
+    let lotChoices = {};            // eski akış: { item_id: inventory_id }; boş = FIFO
+    let sourceSelections = {};     // reçete kartı başına açık kullanıcı seçimi
+    let latestPreview = null;
+    let confirmedPreviewBody = null;
+    let previewTimer = null;
+    let previewController = null;
+    let previewEpoch = 0;
+    let recipeEpoch = 0;
+    let startingProduction = false;
 
-    /* Hammadde başına tüketilebilir lotları çek (üretim lot/tedarikçi seçimi). */
-    async function loadAvailableLots() {
-      availableLotsByItem = {};
-      if (!selectedRecipeDetail) return;
-      const ids = (selectedRecipeDetail.ingredients || [])
-        .filter(ing => !ing.is_ambalaj && !(ing.language && ing.label_group))
-        .map(ing => ing.item_id);
-      if (!ids.length) return;
-      try {
-        const res = await fetch('/api/inventory/available-lots', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ item_ids: ids }),
-        });
-        if (res.ok) availableLotsByItem = await res.json();
-      } catch { /* sessiz — seçim olmazsa backend FIFO uygular */ }
-    }
-
-    /* Lot seçimi değişince kaydet (boş = otomatik/FIFO). */
     function setLotChoice(itemId, val) {
-      if (val) lotChoices[itemId] = parseInt(val);
+      if (val) lotChoices[itemId] = Number(val);
       else delete lotChoices[itemId];
-    }
-
-    /* ── Etiket dil indeksi ────────────────────────────────────────────────
-       label_group → { TR: item, EN: item }.  Üretim önizlemesi, reçetedeki
-       dile özel bir etiketi seçilen dilin kardeşine çevirmek için kullanır.
-       window.fetchItems() static/items-cache.js'ten 30sn cache'li gelir. */
-    let labelIndex = {};
-    async function loadLabelIndex() {
-      try {
-        const items = await window.fetchItems();
-        const idx = {};
-        (items || []).forEach(it => {
-          if (it.category === 'Ambalaj' && it.pkg_type === 'etiket'
-              && it.label_group && it.language) {
-            (idx[it.label_group] = idx[it.label_group] || {})[it.language] = it;
-          }
-        });
-        labelIndex = idx;
-      } catch (e) { /* cache yoksa önizleme yine çalışır, sadece sibling çözmez */ }
+      updatePreview();
     }
 
     /* ── Toast ── */
@@ -941,9 +929,14 @@
     /* ── Reçete seçilince detay çek ── */
     async function onRecipeChange() {
       const id = document.getElementById('prodRecipe').value;
+      const epoch = ++recipeEpoch;
+      invalidatePreview();
       selectedRecipeDetail = null;
-      lotChoices = {};                     // yeni reçete → seçimleri sıfırla
-      availableLotsByItem = {};
+      latestPreview = null;
+      lotChoices = {};
+      sourceSelections = {};
+      document.getElementById('previewBody').innerHTML = '';
+      document.getElementById('previewTotals').innerHTML = '';
       document.getElementById('previewPanel').style.display = 'none';
       document.getElementById('prodUnitAddon').textContent = '—';
       document.getElementById('prodQuantity').value = '';
@@ -951,13 +944,15 @@
       if (!id) return;
       try {
         const res = await fetch(`/api/recipes/${id}`);
+        if (epoch !== recipeEpoch) return;
         if (!res.ok) { showToast('Reçete detayı alınamadı.'); return; }
-        selectedRecipeDetail = await res.json();
+        const detail = await res.json();
+        if (epoch !== recipeEpoch) return;
+        selectedRecipeDetail = detail;
         document.getElementById('prodUnitAddon').textContent =
           selectedRecipeDetail.target_item_unit || 'birim';
-        await loadAvailableLots();         // hammadde lotlarını çek (tedarikçi seçimi)
         updatePreview();
-      } catch { showToast('Reçete detayı yüklenirken hata oluştu.'); }
+      } catch { if (epoch === recipeEpoch) showToast('Reçete detayı yüklenirken hata oluştu.'); }
     }
 
     /* ── Sayı formatı (Türkçe locale, 4 ondalık) ── */
@@ -965,16 +960,11 @@
       return Number(n || 0).toLocaleString('tr-TR', { maximumFractionDigits: 4 });
     }
 
-    /* ── Canlı önizleme hesapla — Fire (waste) dahil ───────────────────────
-       Backend (production.py) her bileşenin brüt miktarını şöyle hesaplar:
-         - Hammadde:  net × multiplier × (1 + fire% / 100)
-         - Ambalaj:   net × multiplier              (fire muaf)
-       Önizleme hem net'i hem brüt'ü ayrı sütunlarda gösterir; stok kontrolü
-       backend'in gerçekten düşeceği BRÜT miktara karşı yapılır. */
     /* Lot numarası önerisi — 'bu üründen en son MNR005'i ürettiniz, bu MNR006
        olmalı'.  Sayaç ürün bazlı; kullanıcı alanı düzenleyebilir. */
     let _cabinetName = '';
     async function loadNextLot(recipeId) {
+      const epoch = recipeEpoch;
       const inp  = document.getElementById('prodLot');
       const hint = document.getElementById('prodLotHint');
       if (!inp || !hint) return;
@@ -986,11 +976,13 @@
       try {
         const r = await fetch(`/api/production/next-lot?recipe_id=${recipeId}`);
         const d = await r.json();
+        if (epoch !== recipeEpoch) return;
         if (!r.ok) throw new Error(d.detail || 'Lot önerisi alınamadı.');
         inp.value = d.lot_number || '';
         _cabinetName = d.cabinet || '';
         hint.textContent = d.message || '';
       } catch (e) {
+        if (epoch !== recipeEpoch) return;
         inp.value = '';
         hint.textContent = e.message || 'Lot önerisi alınamadı — elle girebilirsiniz.';
       }
@@ -1014,263 +1006,343 @@
       } else if (w >= total) {
         hint.innerHTML = `<span style="color:#b45309;">Uyarı: tüm üretim şahit numuneye gidiyor (showroom 0).</span>`;
       } else {
-        const cab = _cabinetName ? ` (${_cabinetName})` : '';
+        const cab = _cabinetName ? ` (${escHtml(_cabinetName)})` : '';
         hint.innerHTML = `<b>${show}</b> adet showroom · <b>${w}</b> adet şahit numune dolabı${cab}.`;
       }
     }
 
-    function updatePreview() {
-      if (!selectedRecipeDetail) return;
-      const qty = parseFloat(document.getElementById('prodQuantity').value);
-      const panel = document.getElementById('previewPanel');
-      const body  = document.getElementById('previewBody');
-      const totalsEl  = document.getElementById('previewTotals');
-      const summaryEl = document.getElementById('previewSummary');
-      const wastePill = document.getElementById('previewWastePill');
-
-      if (!qty || qty <= 0) { panel.style.display = 'none'; return; }
-
-      const wastePct    = parseFloat(selectedRecipeDetail.waste_percentage || 0);
-      const wasteFactor = 1 + wastePct / 100;
-      const multiplier  = qty / selectedRecipeDetail.expected_yield;
-      const ingredients = selectedRecipeDetail.ingredients || [];
-
-      // Fire başlığı pill'i — sadece fire varsa göster
-      if (wastePct > 0) {
-        wastePill.textContent = `Fire: %${wastePct}`;
-        wastePill.style.display = 'inline-block';
-      } else {
-        wastePill.style.display = 'none';
-      }
-
-      // ── Etiket dil çözümü ────────────────────────────────────────────────
-      // Reçetedeki dile özel bir etiket, seçilen dilin kardeşine çevrilir.
-      const selLang = (document.querySelector('input[name="prodLang"]:checked') || {}).value || 'TR';
-      const selLangLabel = selLang === 'EN' ? 'İngilizce' : 'Türkçe';
-      const seenGroups = new Set();
-      const labelWarnings = [];
-      const resolvedIngredients = [];
-      for (const ing of ingredients) {
-        if (ing.language && ing.label_group) {
-          if (seenGroups.has(ing.label_group)) continue;   // kardeş zaten işlendi
-          seenGroups.add(ing.label_group);
-          if (ing.language !== selLang) {
-            const sib = (labelIndex[ing.label_group] || {})[selLang];
-            if (!sib) { labelWarnings.push(ing.item_name); continue; }
-            resolvedIngredients.push({
-              ...ing,
-              item_id:       sib.id,
-              item_name:     sib.name,
-              current_stock: sib.current_stock,
-              language:      selLang,
-            });
-            continue;
-          }
-        }
-        resolvedIngredients.push(ing);
-      }
-
-      let hasShortage = false;
-      // Birim bazlı toplamlar — farklı birimler ayrı toplanır (g, ml, adet karışmaz)
-      const totalsByUnit = {};   // { unit: {net, gross, loss} }
-      // Tüm hammaddelerin birim-bağımsız toplamı (ambalaj hariç) — lab
-      // "1 adet için toplam ne harcayacağım?" sorusunu tek bakışta görsün.
-      // g ve ml karıştırılır (kozmetikte yoğunluklar ~1, pratik tahmin).
-      let rawNetAll = 0, rawGrossAll = 0;
-
-      const rowsHtml = resolvedIngredients.map(ing => {
-        const isAmbalaj = !!ing.is_ambalaj;
-        const isLabel   = !!(ing.language && ing.label_group);
-        const factor    = isAmbalaj ? 1 : wasteFactor;
-        const net       = ing.quantity * multiplier;
-        const gross     = net * factor;
-        const loss      = gross - net;
-        const stock     = ing.current_stock ?? 0;
-        const enough    = stock >= gross;          // ← BRÜT'e göre kontrol
-        if (!enough) hasShortage = true;
-
-        const unit = ing.unit || '';
-        if (!totalsByUnit[unit]) totalsByUnit[unit] = { net: 0, gross: 0, loss: 0 };
-        totalsByUnit[unit].net   += net;
-        totalsByUnit[unit].gross += gross;
-        totalsByUnit[unit].loss  += loss;
-        // Ambalaj hariç, birim bağımsız: hammadde toplamı
-        if (!isAmbalaj) {
-          rawNetAll   += net;
-          rawGrossAll += gross;
-        }
-
-        const catPill = isLabel
-          ? `<span class="preview-cat-pill pill-amb" title="Etiket — üretim dili: ${selLangLabel}">Etiket · ${selLang}</span>`
-          : isAmbalaj
-            ? `<span class="preview-cat-pill pill-amb" title="Ambalaja fire uygulanmaz">Ambalaj</span>`
-            : `<span class="preview-cat-pill pill-raw">Hammadde</span>`;
-
-        // Sonrası stok = mevcut − brüt.  Negatife düşerse zaten "yetersiz"
-        // pop-up'ı tetiklenir (yukarıdaki enough = false), bu kolon kırmızı.
-        const after      = stock - gross;
-        const afterClass = (after < 0)             ? 'col-stock-after warn'
-                         : (stock > 0 && after / stock < 0.10) ? 'col-stock-after low'
-                         : 'col-stock-after';
-        const afterText  = (after < 0 ? '' : '') + fmt(after) + ' ' + escHtml(unit);
-
-        // Faz 2 — hammadde için lot/tedarikçi seçim satırı (yalnızca ≥2 lot varsa:
-        // ör. normal lot + numune).  Tek lot varsa otomatik, satır gösterilmez.
-        let lotPickerRow = '';
-        if (!isAmbalaj && !isLabel) {
-          const lots = availableLotsByItem[ing.item_id] || [];
-          if (lots.length >= 2) {
-            const chosen = lotChoices[ing.item_id] || '';
-            const opts = ['<option value="">Otomatik — en eski lot (FIFO)</option>']
-              .concat(lots.map(l =>
-                `<option value="${l.inventory_id}" ${String(chosen) === String(l.inventory_id) ? 'selected' : ''}>`
-                + `${escHtml(l.supplier_name)} · ${escHtml(l.lot_number)} — ${fmt(l.quantity)} ${escHtml(unit)}`
-                + `${l.is_sample ? ' · NUMUNE' : ''}</option>`)).join('');
-            lotPickerRow = `
-              <tr class="lot-pick-row">
-                <td colspan="6" style="background:#faf8f4;padding:0.45rem 0.9rem;">
-                  <span style="font-size:0.74rem;color:#6b7280;font-weight:600;margin-right:0.5rem;">
-                    <i class="bi bi-truck"></i> ${escHtml(ing.item_name)} — tedarikçi/lot seçimi:
-                  </span>
-                  <select onchange="setLotChoice(${ing.item_id}, this.value)"
-                          style="font-size:0.8rem;padding:0.25rem 0.5rem;border:1.5px solid #e5e7eb;border-radius:6px;min-width:300px;">
-                    ${opts}
-                  </select>
-                </td>
-              </tr>`;
-          }
-        }
-
-        return `
-          <tr>
-            <td>
-              <span class="preview-item-name">${escHtml(ing.item_name)}</span>
-              ${catPill}
-            </td>
-            <td class="col-num col-net">${fmt(net)} ${escHtml(unit)}</td>
-            <td class="col-num col-gross">${fmt(gross)} ${escHtml(unit)}</td>
-            <td class="col-num ${loss > 0 ? 'col-loss' : 'col-loss zero'}">
-              ${loss > 0 ? '+' + fmt(loss) + ' ' + escHtml(unit) : '—'}
-            </td>
-            <td class="col-num ${enough ? 'col-stock-ok' : 'col-stock-warn'}">
-              ${fmt(stock)} ${escHtml(unit)}
-            </td>
-            <td class="col-num ${afterClass}" title="Mevcut − Brüt (fireli)">
-              ${afterText}
-            </td>
-          </tr>${lotPickerRow}`;
-      }).join('');
-
-      body.innerHTML = rowsHtml;
-
-      // 1) En üstte tek satır: birim ayırmaksızın TOPLAM HAMMADDE (ambalaj hariç).
-      //    Lab "1 üretim için kaç g+ml harcayacağım" sorusunu tek bakışta görür.
-      const grandTotalHtml = `
-        <div class="total-grand">
-          <div class="total-grand-cell total-grand-net">
-            <span class="total-grand-label">Toplam Hammadde (firesiz)</span>
-            <span class="total-grand-value">${fmt(rawNetAll)} <small>g+ml</small></span>
-          </div>
-          <div class="total-grand-cell total-grand-gross">
-            <span class="total-grand-label">Toplam Hammadde (fireli — stoktan düşecek)</span>
-            <span class="total-grand-value">${fmt(rawGrossAll)} <small>g+ml</small></span>
-          </div>
-          <div class="total-grand-cell total-grand-loss">
-            <span class="total-grand-label">Fire Payı</span>
-            <span class="total-grand-value">+${fmt(rawGrossAll - rawNetAll)} <small>g+ml</small></span>
-          </div>
-        </div>`;
-
-      // 2) Aşağıda birim başına detay (ml ayrı, g ayrı, adet ayrı).
-      const unitKeys = Object.keys(totalsByUnit);
-      const totalsHtml = unitKeys.map(u => {
-        const t = totalsByUnit[u];
-        return `
-          <div class="total-card total-net">
-            <div class="total-card-label">Toplam Firesiz (${escHtml(u)})</div>
-            <div class="total-card-value">${fmt(t.net)}</div>
-          </div>
-          <div class="total-card total-gross">
-            <div class="total-card-label">Toplam Fireli (${escHtml(u)})</div>
-            <div class="total-card-value">${fmt(t.gross)}</div>
-          </div>
-          <div class="total-card total-loss">
-            <div class="total-card-label">Fire Kaybı (${escHtml(u)})</div>
-            <div class="total-card-value">+${fmt(t.loss)}</div>
-          </div>`;
-      }).join('');
-      totalsEl.innerHTML = grandTotalHtml + totalsHtml;
-
-      summaryEl.innerHTML = hasShortage
-        ? `<div class="preview-summary summary-warn">
-             <i class="bi bi-exclamation-triangle-fill"></i>
-             Bazı hammaddelerde stok yetersiz (brüt/fireli miktara göre)! Üretim başlatılamaz.
-           </div>`
-        : `<div class="preview-summary summary-ok">
-             <i class="bi bi-check-circle-fill"></i>
-             Tüm hammaddeler yeterli. Üretim dili: <strong>${selLangLabel}</strong> — stoktan brüt (fireli) miktarlar düşülecek.
-           </div>`;
-
-      // Seçilen dilde etiketi olmayan kalemler için uyarı
-      if (labelWarnings.length) {
-        summaryEl.innerHTML += `
-          <div class="preview-summary summary-warn" style="margin-top:0.4rem;">
-            <i class="bi bi-tag"></i>
-            ${selLangLabel} etiketi tanımlı olmayan kalem(ler): ${escHtml(labelWarnings.join(', '))}.
-            Bu üretimde stoktan düşülmeyecek — eksikse Ürünler sayfasından ekleyin.
-          </div>`;
-      }
-
-      panel.style.display = 'block';
+    /* Tüketim, etiket ve stok hesabının tek kaynağı sunucudaki planlayıcıdır. */
+    function hasExplicitSource(line) {
+      const selection = sourceSelections[line.key];
+      return !!selection && (selection.mode === 'split'
+        ? Object.values(selection.quantities).some(q => q !== '' && Number(q) !== 0)
+        : !!selection.item_id);
     }
 
-    /* ── Üretimi başlat ── */
-    document.getElementById('confirmProductionBtn').addEventListener('click', async function () {
-      const recipeId = parseInt(document.getElementById('prodRecipe').value);
-      const qty      = parseFloat(document.getElementById('prodQuantity').value);
+    function previewRequestBody() {
+      const body = {
+        recipe_id: Number(document.getElementById('prodRecipe').value),
+        produced_quantity: Number(document.getElementById('prodQuantity').value),
+        label_language: document.querySelector('input[name="prodLang"]:checked')?.value || 'TR',
+        ingredient_lot_choices: { ...lotChoices },
+        ingredient_sources: {},
+      };
+      if (!latestPreview || latestPreview.source_choice_enabled === false) return body;
+      const sameContext = latestPreview.recipe.id === body.recipe_id
+        && latestPreview.quantity === body.produced_quantity
+        && latestPreview.label_language === body.label_language;
+      for (const line of latestPreview.lines) {
+        if (!line.needs_choice && !hasExplicitSource(line)) continue;
+        const selection = sourceSelections[line.key];
+        if (!selection) continue;
+        let picks = [];
+        if (selection.mode === 'split') {
+          picks = Object.entries(selection.quantities).filter(([, q]) => Number(q) > 0)
+            .map(([id, q]) => ({ item_id: Number(id), quantity: Number(q) }));
+        } else if (selection.item_id && sameContext) {
+          picks = [{ item_id: selection.item_id, quantity: line.gross }];
+        }
+        for (const pick of picks) {
+          const inventoryId = selection.lots[pick.item_id];
+          if (inventoryId) pick.inventory_id = inventoryId;
+        }
+        if (picks.length) body.ingredient_sources[line.key] = picks;
+      }
+      return body;
+    }
 
-      if (!recipeId) { showToast('Lütfen bir reçete seçiniz.'); return; }
-      if (!qty || qty <= 0) { showToast('Geçerli bir üretim miktarı giriniz.'); return; }
+    function invalidSourceDraft() {
+      if (!latestPreview?.source_choice_enabled) return false;
+      return latestPreview.lines.some(line => {
+        const selection = sourceSelections[line.key];
+        return (line.needs_choice || hasExplicitSource(line)) && selection?.mode === 'split'
+          && Object.values(selection.quantities).some(q => !Number.isFinite(Number(q)) || Number(q) < 0);
+      });
+    }
 
-      this.disabled = true;
-      this.innerHTML = '<i class="bi bi-hourglass-split"></i> İşleniyor…';
+    function updateStartButton() {
+      document.getElementById('confirmProductionBtn').disabled = startingProduction
+        || !confirmedPreviewBody || invalidSourceDraft();
+    }
 
+    function invalidatePreview() {
+      clearTimeout(previewTimer);
+      previewController?.abort();
+      previewController = null;
+      previewEpoch += 1;
+      confirmedPreviewBody = null;
+      updateStartButton();
+      return previewEpoch;
+    }
+
+    function updatePreview(delay = 300) {
+      const epoch = invalidatePreview();
+      const panel = document.getElementById('previewPanel');
+      const qty = Number(document.getElementById('prodQuantity').value);
+      if (!selectedRecipeDetail || !Number.isFinite(qty) || qty <= 0) {
+        panel.style.display = 'none';
+        return;
+      }
+      panel.style.display = 'block';
+      document.getElementById('previewSummary').innerHTML =
+        '<div class="preview-summary"><i class="bi bi-hourglass-split"></i> Önizleme güncelleniyor…</div>';
+      previewTimer = setTimeout(() => fetchProductionPreview(epoch), delay);
+    }
+
+    async function fetchProductionPreview(epoch) {
+      if (epoch !== previewEpoch) return;
+      const controller = new AbortController();
+      previewController = controller;
+      const requestBody = JSON.stringify(previewRequestBody());
       try {
-        const selLang = (document.querySelector('input[name="prodLang"]:checked') || {}).value || 'TR';
-        const witness = Math.max(0, parseFloat(document.getElementById('prodWitnessQty').value) || 0);
-        const res = await fetch('/api/production', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            recipe_id: recipeId,
-            produced_quantity: qty,
-            label_language: selLang,
-            lot_number: (document.getElementById('prodLot')?.value || '').trim() || null,
-            witness_quantity: witness,
-            ingredient_lot_choices: lotChoices,   // {item_id: inventory_id} — boş = FIFO
-          }),
+        const res = await fetch('/api/production/preview', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: requestBody, signal: controller.signal,
         });
         const data = await res.json();
-        if (!res.ok) { showToast(data.detail || 'Üretim başlatılamadı.'); return; }
+        if (epoch !== previewEpoch) return;
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Önizleme alınamadı.');
+        latestPreview = data;
+        if (data.source_choice_enabled === false) sourceSelections = {};
+        renderProductionPreview(data);
+        // Miktar/dil değişince tek kart seçiminin yeni brüt miktarı sunucudan gelir.
+        // Yeni miktarı yeniden doğrulamadan Başlat düğmesi açılmaz.
+        if (JSON.stringify(previewRequestBody()) !== requestBody) {
+          updatePreview(0);
+          return;
+        }
+        if (data.can_start && !invalidSourceDraft()) confirmedPreviewBody = requestBody;
+        updateStartButton();
+      } catch (error) {
+        if (epoch !== previewEpoch || error.name === 'AbortError') return;
+        document.getElementById('previewSummary').innerHTML =
+          `<div class="preview-summary summary-warn">${escHtml(error.message || 'Önizleme bağlantısı kurulamadı. Yenilemek için miktarı tekrar girin.')}</div>`;
+      } finally {
+        if (previewController === controller) previewController = null;
+      }
+    }
 
+    function sourceState(key) {
+      return sourceSelections[key] ||= { mode: 'single', item_id: null, quantities: {}, lots: {} };
+    }
+
+    function sourceLotPicker(line, option, selected, action = 'source-lot') {
+      const lots = option.lots || [];
+      const options = ['<option value="">Otomatik — en eski lot (FIFO)</option>'].concat(lots.map(l =>
+        `<option value="${l.inventory_id}" ${Number(selected) === l.inventory_id ? 'selected' : ''}>`
+        + `${escHtml(l.supplier_name || option.supplier_name || 'Tedarikçi belirtilmemiş')} · ${escHtml(l.lot_number || 'Lotsuz')}`
+        + ` — ${fmt(l.qty)} ${escHtml(option.unit || line.unit)}${l.is_sample ? ' · NUMUNE' : ''}</option>`)).join('');
+      return `<select class="form-select form-select-sm" aria-label="${escHtml(option.name)} için kaynak lot"
+        data-action="${action}" data-key="${escHtml(line.key)}" data-item="${option.item_id}"
+        data-focus="${escHtml(line.key)}:lot:${option.item_id}">${options}</select>`;
+    }
+
+    function renderSourceChoice(line, perCard) {
+      const selection = sourceState(line.key);
+      const key = escHtml(line.key);
+      const split = selection.mode === 'split';
+      const suggested = (line.suggested || []).map(p => `${p.name}: ${fmt(p.quantity)} ${line.unit}`).join(' · ');
+      const selectedIds = split ? Object.keys(selection.quantities).filter(id => Number(selection.quantities[id]) > 0)
+        : selection.item_id ? [String(selection.item_id)] : [];
+      const missingOptions = selectedIds.filter(id => !line.options.some(o => o.item_id === Number(id)))
+        .map(id => ({ item_id: Number(id), name: `Önceki seçim (kart ${id})`, unit: line.unit, unavailable: true }));
+      const options = [...line.options, ...missingOptions].map(option => {
+        const id = option.item_id;
+        const active = split ? Number(selection.quantities[id]) > 0 : selection.item_id === id;
+        const finish = option.supplier_status === 'phase_out' || option.material_pref === 'avoid';
+        const preferred = option.supplier_status === 'preferred' || option.material_pref === 'preferred';
+        const total = perCard[id];
+        const stockHint = total ? ` · Üretim sonrası: ${fmt(total.stock - total.requested)} ${option.unit}` : '';
+        return `<div class="source-option">
+          <label>${!split ? `<input type="radio" name="source-${key}" data-action="source-card" data-key="${key}" data-item="${id}" ${active ? 'checked' : ''} /> ` : ''}
+            <strong>${escHtml(option.supplier_name || option.name)}</strong>
+            ${finish ? '<span class="source-badge finish">Önce bitir</span>' : ''}
+            ${preferred ? '<span class="source-badge">Tercih</span>' : ''}
+            ${option.is_recipe_card ? '<span class="source-badge">Reçete kartı</span>' : ''}
+            <br><span class="source-hint">${escHtml(option.name)} · ${option.unavailable
+              ? 'Artık bu kalemin seçenekleri arasında değil; seçimi değiştirin veya miktarı sıfırlayın.'
+              : `Stok: ${fmt(option.stock)} ${escHtml(option.unit)}${escHtml(stockHint)}`}</span>
+          </label>
+          ${split ? `<input type="number" class="form-control form-control-sm" min="0" step="any" placeholder="0"
+            value="${escHtml(selection.quantities[id] ?? '')}" aria-label="${escHtml(option.name)} tüketim miktarı (${escHtml(line.unit)})"
+            data-action="source-quantity" data-key="${key}" data-item="${id}" data-focus="${key}:qty:${id}" />
+            <span class="source-hint">${escHtml(line.unit)}</span>` : ''}
+          ${active && !option.unavailable ? sourceLotPicker(line, option, selection.lots[id]) : ''}
+        </div>`;
+      }).join('');
+      const total = split ? Object.values(selection.quantities).reduce((sum, q) => sum + (Number(q) || 0), 0)
+        : selection.item_id ? line.gross : 0;
+      const errors = [...new Set(line.errors || [])];
+      if (split && Object.values(selection.quantities).some(q => !Number.isFinite(Number(q)) || Number(q) < 0)) {
+        errors.push('Miktarlar sıfır veya daha büyük olmalıdır.');
+      }
+      return `<tr><td colspan="6"><fieldset class="source-choice">
+        <legend>Hangi tedarikçiden? — ${escHtml(line.item_name)}</legend>
+        <div class="source-modes">
+          <label><input type="radio" name="source-mode-${key}" value="single" data-action="source-mode" data-key="${key}" ${!split ? 'checked' : ''} /> Tek kart</label>
+          <label><input type="radio" name="source-mode-${key}" value="split" data-action="source-mode" data-key="${key}" ${split ? 'checked' : ''} /> Böl</label>
+        </div>
+        ${suggested ? `<div class="source-hint">Öneri: ${escHtml(suggested)}
+          <button type="button" class="btn btn-sm btn-outline-secondary ms-1" data-action="source-suggestion" data-key="${key}">Öneriyi kullan</button></div>` : ''}
+        ${options}
+        <div class="source-total">Seçilen toplam: ${fmt(total)} / ${fmt(line.gross)} ${escHtml(line.unit)} (brüt)</div>
+        ${errors.length ? `<div class="source-errors">${errors.map(escHtml).join('<br>')}</div>` : ''}
+      </fieldset></td></tr>`;
+    }
+
+    function renderProductionPreview(data) {
+      const focused = document.activeElement?.dataset.focus;
+      const perCard = Object.fromEntries((data.per_card || []).map(c => [c.item_id, c]));
+      const wastePill = document.getElementById('previewWastePill');
+      wastePill.textContent = `Fire: %${fmt(data.recipe.waste_percentage)}`;
+      wastePill.style.display = data.recipe.waste_percentage > 0 ? 'inline-block' : 'none';
+      document.getElementById('previewBody').innerHTML = data.lines.map(line => {
+        const chosen = line.chosen || [];
+        const cardId = chosen.length === 1 ? chosen[0].item_id : line.item_id;
+        const card = perCard[cardId];
+        const stock = card ? card.stock : line.stock;
+        const after = card ? card.stock - card.requested : null;
+        const several = chosen.length > 1;
+        const pill = line.kind === 'label' ? `Etiket · ${escHtml(data.label_language)}`
+          : line.is_ambalaj ? 'Ambalaj' : 'Hammadde';
+        let picker = '';
+        if (data.source_choice_enabled && (line.needs_choice || hasExplicitSource(line))) {
+          picker = renderSourceChoice(line, perCard);
+        }
+        else if (line.kind === 'raw') {
+          const option = line.options.find(o => o.item_id === line.item_id);
+          if (option && option.lots.length >= 2) {
+            picker = `<tr><td colspan="6"><div class="source-option"><label class="source-hint">${escHtml(line.item_name)} — lot seçimi:</label>
+              ${sourceLotPicker(line, option, lotChoices[line.item_id], 'legacy-lot')}</div></td></tr>`;
+          }
+        }
+        return `<tr>
+          <td><span class="preview-item-name">${escHtml(line.item_name)}</span>
+            <span class="preview-cat-pill ${line.is_ambalaj ? 'pill-amb' : 'pill-raw'}">${pill}</span></td>
+          <td class="col-num col-net">${fmt(line.net)} ${escHtml(line.unit)}</td>
+          <td class="col-num col-gross">${fmt(line.gross)} ${escHtml(line.unit)}</td>
+          <td class="col-num ${line.loss > 0 ? 'col-loss' : 'col-loss zero'}">${line.loss > 0 ? '+' + fmt(line.loss) + ' ' + escHtml(line.unit) : '—'}</td>
+          <td class="col-num ${line.shortfall > 0 ? 'col-stock-warn' : 'col-stock-ok'}">${several ? 'Kaynaklarda' : fmt(stock) + ' ' + escHtml(line.unit)}</td>
+          <td class="col-num col-stock-after ${after < 0 ? 'warn' : ''}">${several ? 'Aşağıda' : after === null ? '—' : fmt(after) + ' ' + escHtml(line.unit)}</td>
+        </tr>${picker}`;
+      }).join('');
+      const t = data.totals;
+      document.getElementById('previewTotals').innerHTML = `<div class="total-grand">
+        <div class="total-grand-cell total-grand-net"><span class="total-grand-label">Toplam Hammadde (firesiz)</span><span class="total-grand-value">${fmt(t.raw_net)} <small>g+ml</small></span></div>
+        <div class="total-grand-cell total-grand-gross"><span class="total-grand-label">Toplam Hammadde (fireli — stoktan düşecek)</span><span class="total-grand-value">${fmt(t.raw_gross)} <small>g+ml</small></span></div>
+        <div class="total-grand-cell total-grand-loss"><span class="total-grand-label">Fire Payı</span><span class="total-grand-value">+${fmt(t.raw_loss)} <small>g+ml</small></span></div>
+      </div>` + t.by_unit.map(u => `
+        <div class="total-card total-net"><div class="total-card-label">Toplam Firesiz (${escHtml(u.unit)})</div><div class="total-card-value">${fmt(u.net)}</div></div>
+        <div class="total-card total-gross"><div class="total-card-label">Toplam Fireli (${escHtml(u.unit)})</div><div class="total-card-value">${fmt(u.gross)}</div></div>
+        <div class="total-card total-loss"><div class="total-card-label">Fire Kaybı (${escHtml(u.unit)})</div><div class="total-card-value">+${fmt(u.loss)}</div></div>`).join('');
+      const totals = data.per_card.length ? `<div class="source-card-totals"><strong>Kart başına toplam tüketim</strong>`
+        + data.per_card.map(c => `<div class="${c.ok ? '' : 'source-errors'}">${escHtml(c.name)}: ${fmt(c.requested)} ${escHtml(c.unit)} tüketilecek · Mevcut: ${fmt(c.stock)} · Sonrası: ${fmt(c.stock - c.requested)}</div>`).join('') + '</div>' : '';
+      const blockers = data.blockers || [];
+      document.getElementById('previewSummary').innerHTML = totals
+        + (data.can_start && !invalidSourceDraft()
+          ? `<div class="preview-summary summary-ok"><i class="bi bi-check-circle-fill"></i> Seçimler ve stok yeterli. Üretim dili: <strong>${escHtml(data.label_language_label)}</strong>.</div>`
+          : `<div class="preview-summary summary-warn"><i class="bi bi-exclamation-triangle-fill"></i> ${blockers.length ? blockers.map(escHtml).join('<br>') : 'Tüm kaynak seçimlerini ve bölünen miktarları tamamlayın.'}</div>`)
+        + (data.warnings || []).map(w => `<div class="preview-summary summary-warn">${escHtml(w)}</div>`).join('');
+      if (focused) {
+        const control = Array.from(document.querySelectorAll('[data-focus]')).find(e => e.dataset.focus === focused);
+        control?.focus({ preventScroll: true });
+      }
+    }
+
+    function onSourceInput(event) {
+      const control = event.target.closest('[data-action]');
+      if (!control) return;
+      const action = control.dataset.action;
+      if (event.type === 'input' && action !== 'source-quantity') return;
+      if (event.type === 'change' && action === 'source-quantity') return;
+      const line = latestPreview?.lines.find(l => String(l.key) === control.dataset.key);
+      if (!line) return;
+      if (action === 'legacy-lot') { setLotChoice(line.item_id, control.value); return; }
+      const selection = sourceState(line.key);
+      const itemId = Number(control.dataset.item);
+      if (action === 'source-mode') selection.mode = control.value;
+      else if (action === 'source-card') selection.item_id = itemId;
+      else if (action === 'source-quantity') selection.quantities[itemId] = control.value;
+      else if (action === 'source-lot') {
+        if (control.value) selection.lots[itemId] = Number(control.value);
+        else delete selection.lots[itemId];
+      } else if (action === 'source-suggestion') {
+        if (!line.suggested.length) return;
+        selection.mode = line.suggested.length > 1 ? 'split' : 'single';
+        selection.item_id = line.suggested[0].item_id;
+        selection.quantities = Object.fromEntries(line.suggested.map(p => [p.item_id, p.quantity]));
+        selection.lots = {};
+      } else return;
+      delete lotChoices[line.item_id];
+      if (action !== 'source-quantity') renderProductionPreview(latestPreview);
+      updatePreview();
+    }
+
+    document.getElementById('previewBody').addEventListener('input', onSourceInput);
+    document.getElementById('previewBody').addEventListener('change', onSourceInput);
+    document.getElementById('previewBody').addEventListener('click', event => {
+      if (event.target.closest('[data-action="source-suggestion"]')) onSourceInput(event);
+    });
+
+    /* Yalnız son başarılı önizlemenin değiştirilemeyen kaynak planı gönderilir. */
+    document.getElementById('confirmProductionBtn').addEventListener('click', async function () {
+      if (startingProduction) return;
+      const currentBody = JSON.stringify(previewRequestBody());
+      if (!confirmedPreviewBody || confirmedPreviewBody !== currentBody || invalidSourceDraft()) {
+        showToast('Önizlemenin tamamlanmasını bekleyin ve tüm kaynak seçimlerini yanıtlayın.');
+        updatePreview();
+        return;
+      }
+      const witness = Number(document.getElementById('prodWitnessQty').value);
+      if (!Number.isFinite(witness) || witness < 0) {
+        showToast('Geçerli bir şahit numune adedi giriniz.');
+        return;
+      }
+      const payload = JSON.parse(confirmedPreviewBody);
+      payload.lot_number = document.getElementById('prodLot').value.trim() || null;
+      payload.witness_quantity = witness;
+      const startBody = JSON.stringify(payload);
+      startingProduction = true;
+      invalidatePreview();
+      const controls = Array.from(document.querySelectorAll('#productionForm input, #productionForm select, #productionForm button'));
+      const disabledBefore = controls.map(control => control.disabled);
+      controls.forEach(control => { control.disabled = true; });
+      this.innerHTML = '<i class="bi bi-hourglass-split"></i> İşleniyor…';
+      try {
+        const res = await fetch('/api/production', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: startBody,
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(typeof data.detail === 'string' ? data.detail : 'Üretim başlatılamadı. Önizlemeyi kontrol edin.');
+          return;
+        }
         showToast(data.message, 'success');
         bootstrap.Modal.getInstance(document.getElementById('startProductionModal')).hide();
         loadHistory();
       } catch { showToast('Üretim sırasında bağlantı hatası oluştu.');
       } finally {
-        this.disabled = false;
+        controls.forEach((control, i) => { control.disabled = disabledBefore[i]; });
+        startingProduction = false;
         this.innerHTML = '<i class="bi bi-play-fill"></i> Üretimi Başlat';
+        if (selectedRecipeDetail) updatePreview(0);
+        else updateStartButton();
       }
     });
 
     /* ── Modal kapanınca sıfırla ── */
     document.getElementById('startProductionModal').addEventListener('hidden.bs.modal', function () {
+      recipeEpoch += 1;
+      invalidatePreview();
       document.getElementById('productionForm').reset();
       document.getElementById('previewPanel').style.display = 'none';
       document.getElementById('prodUnitAddon').textContent = '—';
+      document.getElementById('previewBody').innerHTML = '';
+      document.getElementById('previewTotals').innerHTML = '';
       selectedRecipeDetail = null;
+      latestPreview = null;
       lotChoices = {};
-      availableLotsByItem = {};
+      sourceSelections = {};
     });
 
     /* ── Logout ── */
@@ -1307,14 +1379,27 @@
 
     function buildFoyHtml(d) {
       const t = d.totals;
-      const rows = d.ingredients.map(ing => `
+      const rows = d.ingredients.map(ing => {
+        const sources = (ing.sources || []).map(source => `<tr>
+          <td>${escHtml(source.item_name || '—')}</td>
+          <td>${escHtml(source.supplier_name || '—')}</td>
+          <td class="lot-code">${escHtml(source.lot_number || '—')}</td>
+          <td class="num">${fmt(source.quantity)} ${escHtml(source.unit || ing.unit || '')}</td>
+        </tr>`).join('');
+        return `
         <tr>
           <td style="text-align:center;">${escHtml(ing.phase || '')}</td>
           <td>${escHtml(ing.item_name)}</td>
           <td class="num">${ing.percent != null ? fmt(ing.percent) : '—'}</td>
           <td class="num">${fmt(ing.net)} ${escHtml(ing.unit)}</td>
           <td class="num">${fmt(ing.gross)} ${escHtml(ing.unit)}</td>
-        </tr>`).join('');
+        </tr>${sources ? `<tr class="foy-source-row"><td colspan="5">
+          <table class="foy-sources"><caption>Tüketim kaynakları (brüt)</caption>
+            <thead><tr><th>Kaynak kartı</th><th>Tedarikçi</th><th>Kaynak lot</th><th>Brüt miktar</th></tr></thead>
+            <tbody>${sources}</tbody>
+          </table>
+        </td></tr>` : ''}`;
+      }).join('');
       return `
         ${cancelledBandHtml(d.cancelled)}
         <div class="foy-meta">
@@ -1676,7 +1761,6 @@
     /* ── Init ── */
     loadRecipes();
     loadHistory();
-    loadLabelIndex();
   </script>
 
 </body>

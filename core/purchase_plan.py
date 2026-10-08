@@ -1041,7 +1041,7 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
         po_from: List[dict] = []
         po_taken = 0.0
         if count_po and members and not is_held and not is_excluded:
-            for a in _phase_out_alts(members, unit, inputs, mg_members, in_plan):
+            for a in _phase_out_alts(members, unit, inputs, mg_members, in_plan, kind=kind):
                 po_ids.add(a["item_id"])
                 deficit = need - (stock + po_taken) - open_qty
                 avail = po_pool.setdefault(a["item_id"], stock_of(a["item_id"]))
@@ -1290,9 +1290,10 @@ PHASE_OUT_REASON_TEXT = {"phase_out": "bitirilecek tedarikçi", "avoid": "bu mal
 
 
 def _phase_out_alts(members: List[int], unit, inputs: PlanInputs,
-                    mg_members: Dict[int, List[int]], in_plan) -> List[dict]:
+                    mg_members: Dict[int, List[int]], in_plan, *, kind: str) -> List[dict]:
     """Satırın grubundaki stoğu önce bitirilecek kartlar: satırda olmayan,
-    planda kendi satırı olmayan (`in_plan`), aktif, aynı birim (`unit_norm`),
+    planda kendi satırı olmayan (`in_plan`), aktif, aynı tüketim türü ve
+    birim (`unit_norm`),
     stoklu, kartının tedarikçisi "bitirilecek" ya da satırın "alma" kümesinde
     olan grup kartları.  Sıra: bitirilecek önce, sonra ad, id."""
     gids = list(dict.fromkeys(inputs.mgroup_of[i] for i in members if i in inputs.mgroup_of))
@@ -1311,7 +1312,7 @@ def _phase_out_alts(members: List[int], unit, inputs: PlanInputs,
             if i in mset or i in seen or a is None or not a.is_active or in_plan(i):
                 continue
             seen.add(i)
-            if unit_norm(a.unit) != u or float(a.current_stock or 0.0) <= 1e-9:
+            if _kind(a) != kind or unit_norm(a.unit) != u or float(a.current_stock or 0.0) <= 1e-9:
                 continue
             sid = inputs.card_supplier.get(i)
             if sid is None:

@@ -629,8 +629,9 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   Elle düzeltme (negatif delta, lot seçilmemiş) `stock_lots.draw_down()`
   kullanır: yalnız lotu düşer, defter kaydı yine TEK imzalı `Adjustment`'tır
   (birleştirme script'leri bu konvansiyona dayanıyor). Numune lotu
-  (`is_sample`) hiçbir tüketimde kullanılmaz. `production._plan_lot_allocation`
-  da aynı motoru çağırır — FIFO'nun ikinci bir kopyası YAZILMAZ.
+  (`is_sample`) hiçbir tüketimde kullanılmaz. Üretim planlayıcısı
+  (`core/production_plan`) da aynı motoru çağırır (`plan_fifo(..., reserved=)`)
+  — FIFO'nun ikinci bir kopyası YAZILMAZ.
   **Bilinçli açık:** girişler (iade, '+' düzeltme) lot AÇMAZ; stok lottan fazla
   kalabilir, `uncovered` bunu sorunsuz karşılar. `tests/test_stock_lots.py`
 - **Samples (numune)**: `Inventory.is_sample=True` marks a lot received from an
@@ -640,8 +641,8 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   sample on the same lot number merges into the first, supplier is COALESCE-only).
   **Samples are NOT stock** (2026-08-24 fix): `current_stock` is untouched and no
   `Transaction` is written on sample receive — only the `Inventory` row + an
-  `admin_audit_log` entry. Production's lot pool (`_plan_lot_allocation` in
-  `routers/production.py`, `/api/inventory/available-lots`) excludes
+  `admin_audit_log` entry. Production's lot pool (`core/production_plan._lot_query`,
+  `/api/inventory/available-lots`) excludes
   `is_sample=True` lots entirely, so a sample can never be silently consumed by
   FIFO or picked by id. To promote a sample into real stock, use
   `POST /api/inventory/samples/{id}/convert` — that's the ONE place a sample
@@ -681,8 +682,37 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   consumed lot writes an `Output` `Transaction` whose `lot_number` is the *source* lot
   (+ supplier in notes), so `trace_lot` shows exact provenance. Ambalaj/etiket stay
   aggregate (no lot picker). Items with no lots fall back to today's aggregate-only
-  decrement (`_plan_lot_allocation` in `routers/production.py`). Available lots:
+  decrement (`core/production_plan._allocate_lots`). Available lots:
   `POST /api/inventory/available-lots`.
+- **Üretimde "Hangi tedarikçiden?"** (P2, 08.10.2026; `core/production_plan.py`,
+  `POST /api/production/preview` perm `production.create` + `active_domain`).
+  Önizleme ve başlatma TEK planlayıcıyı çağırır (`plan(..., lock=)`; satırlar
+  `expand_recipe` — aynı kart birleşir, `parts` reçete satırlarını tutar ve
+  yazımda her reçete satırı eskisi gibi kendi Output'unu/fazını alır).
+  Hammadde/ambalaj satırının kartı AKTİF bir "aynı malzeme" grubundaysa
+  seçenekler = reçete kartı + gruptaki aktif, aynı panel/tür/birim ailesi
+  kartlar; reçete kartı dışındaki birinde stok varsa `needs_choice` ve
+  başlatma `ingredient_sources {reçete kartı id: [{item_id, quantity,
+  inventory_id?}]}` ister (yoksa 400 `source_choice_required`, hiçbir şey
+  yazılmaz). Bölme serbest; toplam = brüt (tolerans içinde son giriş kalana
+  oturur). Öneri ortak havuzla: bitirilecek/alma → reçete kartı → tercih →
+  diğer. Kart başına TOPLAM stok kapısı (eskiden satır başınaydı — çift satır
+  taşıyordu) ve `reserved` ile aynı lot iki satıra verilmez. Not: kart
+  farklıysa "Tedarikçi:"den önce `| Kaynak kart: X (reçetede: Y)`, son ek
+  `Üretim Lot: {lot}` SÖZLEŞME. Döküm `recipe_item_id` ≠ `item_id`; föy
+  dökümden kurulur (reçete değişse/silinse de aynı; `sources` alt satırları,
+  Excel'de "Tüketim Kaynakları" sayfası). Eski `ingredient_lot_choices`
+  geriye uyumlu ama seçim gereken satırı cevaplamaz. **Kill switch:**
+  `INSERT INTO app_setting(key,value) VALUES ('production.source_choice.enabled','0')
+  ON CONFLICT (key) DO UPDATE SET value='0'` → seçenek yalnız reçete kartı
+  (eski davranış, deploysuz). Hata kodları: `source_choice_required`,
+  `invalid_source`, `lot_not_found`, `lot_insufficient`, `insufficient_stock`
+  (400 + `errors` + `lines`). Testler `tests/test_production_sources.py`.
+  Canlıda 08.10.2026 kararıyla bu ayar `0`: laboratuvar eşdeğerlik teyidi
+  gelene kadar kapalı. Satın Alma API'si de ayar kapalıyken diğer karttaki
+  bitirilecek stoğu ihtiyaçtan düşmez ve `source_choice_disabled` uyarısı
+  döndürür; kaydedilmiş senaryonun tercihini değiştirmez. Kaynak stoğu aynı
+  tüketim türüne ait olmalıdır (etiket stoğu şişe ihtiyacını karşılayamaz).
 - **Üretimi iptal et** (`core/production_cancel.py`; `GET /api/production/{id}/
   cancel-preview` + `POST …/cancel {reason, fingerprint, release_lot}`, perm
   `production.cancel`, 07.10.2026). `start_production` her Output/Input'u
@@ -761,8 +791,15 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   stok_son_durum'a dokunmaz, aynı firmanın elle fiyatı varsa yazmaz; (kart,
   firma) başına tek kayıt, en yeni belge > lab tablosu; `cizili: true` belge
   satırı ve `tur: fiyat_listesi` (s.11 Doalin — plan: D yüklenmez) yazılmaz,
-  yarışmaz; belgenin adı ↔ "lab tablosu karşılığı" ipucu farklı karttaysa
-  belirsiz) · `--apply-prefs ONAYLI.xlsx [--commit]` yalnız E onaylı sarı
+  yarışmaz; belge, ipucu satırında AYNI firmanın kaydı hangi karttaysa oraya
+  gider, yoksa adı ↔ ipucu farklı karttaysa belirsiz).  Birden çok aday kart
+  (lab her tedarikçiye ayrı kart tutar): (a) tedarikçinin kendi kartı (aynı
+  gruptaki dahil) → (b) adaylar tek gruptaysa grup ana kartı (reçetedeki tek
+  kart, yoksa stoğu en yüksek) → (c) yalnız biri reçetedeyse o kart ama
+  eşleşme güveni BELİRSİZ (Excel "Eşleşmeyenler"de doğrulanır) → (d) belirsiz;
+  veri dosyasında `malzeme_takma_adlari` (belge adı → kart adı; `lab_belirlesin`
+  biçimi adayları listeler, seçmez); toz kaydı yalnız ALOEVERA EKSTRAKT TOZU
+  kartına · `--apply-prefs ONAYLI.xlsx [--commit]` yalnız E onaylı sarı
   seçimleri `material_supplier_prefs`'e, E onaylı küçük satıcıları
   `phase_out`'a yazar — otomatik tercih/bitirme YOK.  Onay hücreleri YALNIZ
   E/H ("X", "✓" hata; Excel listesi `showErrorMessage` ile reddeder); yeni
@@ -771,6 +808,19 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   `elle_eslesme.kart`) aktarılmadan iki adım da hiçbir şey yazmaz; aynı
   firmaya tercih + bitirilecek E'si (ya da zaten bitirilecek firmaya tercih)
   hatadır.
+  Kısmi fiyat aktarımı: `--record-ids SECIM.json --onayli ONAYLI.xlsx
+  [--commit]`; JSON `[{"id":"A1-02-S1","item_id":160,"supplier_id":10}]`.
+  Kaynak veri dosyası daraltılmaz: tam plandaki kazanan ve kart/firma
+  kimlikleri doğrulanır. Yalnız seçilen çiftlerin bu kaynağa ait fiyatları
+  yenilenir; diğer lab ve elle fiyatlar korunur. Excel'de `Aktarım seçimi`
+  sayfası varsa dış manifest zorunludur ve üç kimlik birebir eşleşmelidir.
+  İlk kapsam 93 fiyat; A1-36-S1, C-s12-1, C-s12-2 birim/paket teyidi bekler.
+  Firma politikası: `scripts/apply_songul_supplier_policy_20261008.py
+  [--commit]`, kuru varsayılan, tek transaction + kart bazında audit.
+  UMAYCHEM/NATURALYA/YİĞİTOGLU KİMYA/DOGASA eşit `preferred`;
+  TATLIDİLİMLER/KRK GIDA tüm aktif aliaslarıyla `phase_out`. DOGASA,
+  DOALİNN değildir. Eksik/çelişkili firma veya bitirilecek firmaya mevcut
+  açık malzeme tercihi işlemi durdurur. Yeni firma/stok/minimum değiştirmez.
   `import_prices` (Stok Son Durum) lab satırlarını silmez; aynı firmanın Excel
   satırını yalnız ELLE (`manual`) satır engeller — lab + Stok Son Durum yan yana kalır.
   **Para birimi karışık malzeme** (lab notları EUR/TRY + Stok Son Durum USD):

@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, BackgroundTasks, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Dict, List, Optional
 
 from database import (
     to_tr, AppSetting,
@@ -24,6 +24,7 @@ from database import (
 )
 from core import lots
 from core.audit import log_admin_event
+from core import production_plan
 from core.production_cancel import CancelError, apply_cancel, cancelled_view
 from core.production_cancel import preview as cancel_preview
 from core.brands import cabinet_location, cabinet_of
@@ -55,6 +56,15 @@ router = APIRouter(prefix="/api", tags=["production"])
 
 # ─── Schemas ────────────────────────────────────────────────────────────────
 
+class SourceIn(BaseModel):
+    """Reçete satırının bir kaynak kartı — core/production_plan doğrular
+    (kart satırın seçeneği mi, miktar sonlu > 0 mı, toplam = brüt mü, lot o
+    karta mı ait).  Burada yalnız tip; NaN/sonsuz da planlayıcıda 400 olur."""
+    item_id: int
+    quantity: float
+    inventory_id: Optional[int] = None
+
+
 class ProductionCreateRequest(BaseModel):
     recipe_id: int
     produced_quantity: float = Field(..., gt=0, le=1_000_000)
@@ -72,6 +82,13 @@ class ProductionCreateRequest(BaseModel):
     # ile düşer.  Seçilen lot yetersizse üretim NET HATA ile durur (sessizce
     # başka lottan düşmez).  Ambalaj/etiket bu seçimden muaftır (toplam stok).
     ingredient_lot_choices: Optional[dict] = None
+    # P2 (08.10.2026) — "Hangi tedarikçiden?": {reçete kartı id: [{item_id,
+    # quantity, inventory_id?}]}.  Reçete kartının "aynı malzeme" grubundaki
+    # başka kartta stok varsa (needs_choice) ZORUNLU; yoksa 400
+    # source_choice_required.  Bölmeye izin verir (iki karttan).  Anahtar
+    # satır id'si DEĞİL kart id'si — reçete düzenlenince satırlar yeniden
+    # yaratılıyor.  Ayrıntı: core/production_plan.py.
+    ingredient_sources: Optional[Dict[str, List[SourceIn]]] = None
 
 
 class ProductionCancelRequest(BaseModel):
@@ -187,12 +204,43 @@ def suggest_next_lot(
     if not recipe.target_item_id:
         return {"lot_number": "", "message": "Bu reçetenin hedef ürünü yok — "
                                              "lot numarası üretimde otomatik atanır."}
-    item = db.query(Item).filter(Item.id == recipe.target_item_id).first()
+    item = db.query(Item).filter(Item.id == recipe.target_item_id, Item.domain == domain).first()
     if not item:
         return JSONResponse(status_code=404, content={"detail": "Hedef ürün bulunamadı."})
     out = lots.suggest(db, item)
     out["cabinet"] = cabinet_of(item.name)
     return out
+
+
+# ─── Üretim önizlemesi (P2 — "Hangi tedarikçiden?") ─────────────────────────
+# DİKKAT: "/production/{prod_id}"nin ÜSTÜNDE kalsın (next-lot tuzağı).
+# Hesap TEK KAYNAK: core/production_plan.plan() — başlatma da aynısını çağırır.
+
+@router.post("/production/preview")
+def production_preview(
+    data: ProductionCreateRequest,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("production", "create")),
+    domain: str = Depends(active_domain),
+):
+    """Üretim öncesi canlı önizleme — satırlar (net/brüt/fire), "aynı malzeme"
+    grubundaki seçenek kartlar, önerilen bölme, seçilenin lot planı, kart
+    başına toplam stok kapısı, engeller.  Hiçbir şey yazmaz, kilit almaz.
+    Gövde başlatmayla aynı (`ingredient_sources` / `ingredient_lot_choices`);
+    `can_start` False iken başlatma aynı gerekçeyle 400 döner."""
+    recipe = (db.query(Recipe)
+              .filter(Recipe.id == data.recipe_id, Recipe.domain == domain).first())
+    if not recipe:
+        return JSONResponse(status_code=404, content={"detail": "Reçete bulunamadı."})
+    try:
+        pl = production_plan.plan(db, recipe, data.produced_quantity, data.label_language,
+                                  domain=domain, sources=data.ingredient_sources,
+                                  lot_choices=data.ingredient_lot_choices, lock=False)
+        return production_plan.preview_payload(pl)
+    except production_plan.PlanError as e:
+        return JSONResponse(status_code=e.status, content=e.payload())
+    finally:
+        db.rollback()                 # salt okur — açık transaction kalmasın
 
 
 # ─── Üretim föyü (production sheet) ─────────────────────────────────────────
@@ -204,20 +252,14 @@ from core.consumption import parse_ml as _parse_ml  # noqa: E402
 from core.consumption import _kind as consumption_kind  # noqa: E402
 
 
-def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[dict]:
-    """
-    Üretim föyünü reçeteden yeniden hesaplar — üretim öncesi canlı önizlemenin
-    aynısı: net / brüt(fireli) / fire.  Reçete silinmişse None döner.
-    """
-    recipe = db.query(Recipe).filter(Recipe.id == prod.recipe_id).first()
-    if not recipe:
-        return None
-
+def _sheet_rows_from_recipe(recipe: Recipe, prod: ProductionHistory, db: Session):
+    """Föy satırları reçeteden (dökümü olmayan eski üretim) — net / brüt
+    (fireli) / % bileşim; % hammadde net'i üzerinden (Excel föyündeki
+    "% MİKTAR" mantığı).  Dönüş (satırlar, fire %)."""
     multiplier   = prod.produced_quantity / (recipe.output_quantity or 1.0)
     waste        = recipe.waste_percentage or 0.0
     waste_factor = 1.0 + waste / 100.0
 
-    # % bileşim hammadde net'i üzerinden — Excel föyündeki "% MİKTAR" mantığı
     hammadde_qty_total = 0.0
     ings = []
     for ing in recipe.ingredients:
@@ -230,26 +272,120 @@ def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[di
         ings.append((ing, item, is_amb))
 
     rows = []
-    net_total = gross_total = 0.0
     for ing, item, is_amb in ings:
         factor = 1.0 if is_amb else waste_factor
         net    = round(ing.quantity * multiplier, 6)
         gross  = round(net * factor, 6)
         pct    = (round(ing.quantity / hammadde_qty_total * 100, 4)
                   if (not is_amb and hammadde_qty_total) else None)
-        net_total   += net
-        gross_total += gross
         rows.append({
-            "phase":      ing.phase or "",
-            "item_name":  item.name,
-            "unit":       ing.unit or item.unit or "",
-            "percent":    pct,
-            "net":        net,
-            "gross":      gross,
-            "is_ambalaj": is_amb,
+            "phase":          ing.phase or "",
+            "item_name":      item.name,
+            "recipe_item_id": item.id,
+            "unit":           ing.unit or item.unit or "",
+            "percent":        pct,
+            "net":            net,
+            "gross":          gross,
+            "is_ambalaj":     is_amb,
+            "substituted":    False,
+            "sources":        [],
         })
+    return rows, waste
 
-    target = db.query(Item).filter(Item.id == recipe.target_item_id).first() if recipe.target_item_id else None
+
+def _sheet_rows_from_snapshot(snap, recipe: Optional[Recipe], db: Session):
+    """Föy satırları tüketim dökümünden (production_consumptions) — üretimde
+    GERÇEKTEN düşülen; reçete sonradan düzenlense/silinse de değişmez.
+
+    Reçete kartı + faza (`recipe_item_id`, `phase`) göre gruplanır — aynı
+    kart reçetede iki fazdaysa föyde eskisi gibi iki satır: brüt = Σ miktar,
+    net = brüt / fire çarpanı, % bu netlerden.  Alt satırlar `sources`: hangi
+    kart, tedarikçi, lot, miktar (P2 — bölünmüş üretimde iki kart).  Etiket
+    satırı dil kardeşinin (fiilen düşülen) adıyla görünür; hammadde/ambalaj
+    satırı reçetedeki kartın adıyla, kaynak kart farklıysa `substituted`.
+    Dönüş (satırlar, fire %)."""
+    groups: Dict[tuple, list] = {}
+    for pc in snap:
+        groups.setdefault((pc.recipe_item_id or pc.item_id, pc.phase or ""), []).append(pc)
+    ids = {k[0] for k in groups} | {pc.item_id for pc in snap}
+    names = {i: n for i, n in db.query(Item.id, Item.name).filter(Item.id.in_(ids)).all()}
+
+    raw_net_total = 0.0
+    built = []
+    for (key, _phase), pcs in groups.items():
+        kind = pcs[0].kind
+        is_amb = kind != "raw"
+        factor = float(pcs[0].factor or 1.0) or 1.0
+        gross = round(sum(float(pc.quantity or 0.0) for pc in pcs), 6)
+        net = round(gross / factor, 6)
+        if not is_amb:
+            raw_net_total += net
+        distinct = list(dict.fromkeys(pc.item_id for pc in pcs))
+        shown = distinct[0] if kind == "label" and len(distinct) == 1 else key
+        built.append((key, pcs, kind, is_amb, factor, gross, net, shown))
+
+    rows = []
+    waste = None
+    for key, pcs, kind, is_amb, factor, gross, net, shown in built:
+        if kind == "raw" and waste is None:
+            waste = round((factor - 1.0) * 100.0, 6)
+        rows.append({
+            "phase":          pcs[0].phase or "",
+            "item_name":      names.get(shown) or "—",
+            "recipe_item_id": key,
+            "unit":           pcs[0].unit or "",
+            "percent":        (round(net / raw_net_total * 100, 4)
+                               if (not is_amb and raw_net_total) else None),
+            "net":            net,
+            "gross":          gross,
+            "is_ambalaj":     is_amb,
+            "substituted":    kind != "label" and any(pc.item_id != key for pc in pcs),
+            "sources": [{
+                "item_id":        pc.item_id,
+                "item_name":      names.get(pc.item_id) or "—",
+                "is_recipe_card": pc.item_id == key,
+                "supplier_name":  pc.supplier_name or "",
+                "lot_number":     pc.lot_number or "",
+                "quantity":       round(float(pc.quantity or 0.0), 6),
+                "unit":           pc.unit or "",
+            } for pc in pcs],
+        })
+    if waste is None:
+        waste = float(recipe.waste_percentage or 0.0) if recipe else 0.0
+    return rows, waste
+
+
+def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[dict]:
+    """
+    Üretim föyü — net / brüt(fireli) / fire.
+
+    Tüketim dökümü (P0 sonrası her üretim) varsa ONDAN kurulur: reçete
+    sonradan düzenlense ya da silinse de üretimde gerçekten düşüleni ve hangi
+    karttan/tedarikçiden/lottan düşüldüğünü (`sources`) gösterir.  Döküm
+    yoksa (eski üretim) reçeteden yeniden hesaplanır; reçete de silinmişse
+    None döner.
+    """
+    recipe = db.query(Recipe).filter(Recipe.id == prod.recipe_id).first() if prod.recipe_id else None
+    snap = (db.query(ProductionConsumption)
+            .filter(ProductionConsumption.production_id == prod.id,
+                    ProductionConsumption.kind != "output")
+            .order_by(ProductionConsumption.id.asc()).all())
+    # Defterden kurulmuş döküm (source='ledger', eski üretimin iptalinde
+    # kalıcılaşır) faz ve reçete kartı taşımaz — reçete duruyorsa föy ondan.
+    live = [pc for pc in snap if (pc.source or "live") == "live"]
+    if live:
+        rows, waste = _sheet_rows_from_snapshot(live, recipe, db)
+    elif recipe is not None:
+        rows, waste = _sheet_rows_from_recipe(recipe, prod, db)
+    elif snap:
+        rows, waste = _sheet_rows_from_snapshot(snap, recipe, db)
+    else:
+        return None
+
+    net_total = sum(r["net"] for r in rows)
+    gross_total = sum(r["gross"] for r in rows)
+    target_id = prod.target_item_id or (recipe.target_item_id if recipe else None)
+    target = db.query(Item).filter(Item.id == target_id).first() if target_id else None
     bottle_ml = _parse_ml(
         getattr(target, "variation_name", None) if target else None,
         target.name if target else None,
@@ -258,8 +394,8 @@ def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[di
 
     return {
         "id":               prod.id,
-        "recipe_id":         recipe.id,
-        "recipe_name":       prod.recipe_name or recipe.name,
+        "recipe_id":         prod.recipe_id,
+        "recipe_name":       prod.recipe_name or (recipe.name if recipe else ""),
         "target_item_name":  prod.target_item_name or (target.name if target else ""),
         "produced_quantity": prod.produced_quantity,
         "produced_at":       to_tr(prod.produced_at).strftime("%d.%m.%Y %H:%M") if prod.produced_at else "",
@@ -269,7 +405,9 @@ def _build_production_sheet(prod: ProductionHistory, db: Session) -> Optional[di
         "cancelled":         cancelled_view(prod),
         "bottle_ml":         bottle_ml,
         "waste_percentage":  round(waste, 2),
-        "production_notes":  recipe.production_notes or "",
+        "production_notes":  (recipe.production_notes if recipe else None) or "",
+        # snapshot: üretimde düşülenden | recipe: reçeteden yeniden hesap
+        "source":            "snapshot" if (live or recipe is None) else "recipe",
         "ingredients":       rows,
         "totals": {
             "net":   round(net_total, 4),
@@ -469,6 +607,34 @@ def production_export(
     ws.column_dimensions["C"].width = 14
     ws.column_dimensions["D"].width = 22
 
+    # ── "Tüketim Kaynakları" — hangi karttan / tedarikçiden / lottan ────────
+    # Ana sayfa lab formatında KALIR; kaynak dökümü (P2: bölünmüş üretimde
+    # iki kart) ayrı sayfada.  Yalnız döküm varsa (eski üretimde yok).
+    src_rows = [(ing, s) for ing in sheet["ingredients"] for s in ing.get("sources") or []]
+    if src_rows:
+        ws2 = wb.create_sheet("Tüketim Kaynakları")
+        heads = ["FAZ", "REÇETEDEKİ KALEM", "KULLANILAN KART", "TEDARİKÇİ", "KAYNAK LOT",
+                 "MİKTAR", "BİRİM"]
+        for ci, h in enumerate(heads, start=1):
+            c = ws2.cell(row=1, column=ci, value=h)
+            c.font = hdr_font; c.fill = hdr_fill; c.border = box
+            c.alignment = Alignment(horizontal="center")
+        for ri, (ing, s) in enumerate(src_rows, start=2):
+            vals = [ing["phase"], ing["item_name"],
+                    s["item_name"] + ("" if s["is_recipe_card"] else " (kaynak kart)"),
+                    s["supplier_name"] or "—", s["lot_number"] or "—",
+                    round(s["quantity"], 4), s["unit"]]
+            for ci, v in enumerate(vals, start=1):
+                c = ws2.cell(row=ri, column=ci, value=v)
+                c.border = box
+                if isinstance(v, str) and c.data_type == "f":
+                    # "=" ile başlayan kart/tedarikçi adı formüle dönmesin
+                    # (core/purchase_plan_xlsx._put_text ile aynı kalkan).
+                    c.data_type = "s"
+                    c.quotePrefix = True
+        for col, w in zip("ABCDEFG", (8, 36, 40, 28, 16, 14, 8)):
+            ws2.column_dimensions[col].width = w
+
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -480,66 +646,6 @@ def production_export(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
-
-_EPS = 1e-9   # kayan nokta toleransı (stok karşılaştırmaları)
-
-
-class _LotChoiceError(Exception):
-    """Seçilen lot bulunamadı / yetersiz — üretim net hatayla durur."""
-
-
-def _plan_lot_allocation(db, item, gross_qty, chosen_inv_id):
-    """
-    Bir hammadde kalemi için gross_qty'yi hangi Inventory lot(lar)ından
-    düşeceğimizi planlar.  Inventory satırları with_for_update ile kilitlenir
-    (aynı anda iki üretim aynı lottan düşmesin).
-
-    Dönüş: (allocations, uncovered)
-      • allocations: [(inventory_row, take_qty), …]
-      • uncovered:   lot kaydı bulunmayan ama current_stock'tan düşülecek artık
-                     (eski/lotsuz kalemlerde geri uyum — üretimi engellemez)
-
-    Kurallar:
-      • chosen_inv_id verilmişse O lottan düşülür; lot yok/uygun değil ya da
-        miktarı yetersizse _LotChoiceError fırlatır (sessizce başka lota geçmez).
-      • Seçim yoksa FIFO: en eski APPROVED lotlardan sırayla düşülür.
-    """
-    # NOT: with_for_update() ile joinedload(supplier) BİRLEŞTİRİLMEZ —
-    # PostgreSQL "FOR UPDATE cannot be applied to the nullable side of an
-    # outer join" hatası verir.  Sadece inventory satırları kilitlenir;
-    # supplier (gerekiyorsa) tüketim aşamasında lazy yüklenir.
-    lots = (
-        db.query(Inventory)
-        .filter(
-            Inventory.item_id == item.id,
-            Inventory.status == "APPROVED",
-            Inventory.quantity > 0,
-            Inventory.is_sample == False,   # noqa: E712 — numune üretimde KULLANILAMAZ (2026-08-24)
-        )
-        .order_by(Inventory.created_at.asc(), Inventory.id.asc())
-        .with_for_update()
-        .all()
-    )
-
-    if chosen_inv_id:
-        lot = next((l for l in lots if l.id == int(chosen_inv_id)), None)
-        if not lot:
-            raise _LotChoiceError(
-                f"'{item.name}' için seçilen lot bulunamadı veya stokta uygun değil."
-            )
-        if (lot.quantity or 0) + _EPS < gross_qty:
-            raise _LotChoiceError(
-                f"'{item.name}' için seçilen lot ({lot.lot_number}) yetersiz: "
-                f"{round(lot.quantity, 4)} {item.unit or ''} var, "
-                f"{round(gross_qty, 4)} {item.unit or ''} gerekiyor."
-            )
-        return [(lot, gross_qty)], 0.0
-
-    # FIFO — en eski lotlardan tüket.  Motor TEK KAYNAK: core/stock_lots.
-    # (Lotlar yukarıda zaten kilitlendi; tekrar kilitlemeye gerek yok.)
-    from core.stock_lots import plan_fifo
-    return plan_fifo(db, item, gross_qty, exclude_samples=True, lock=False)
 
 
 @router.post("/production", status_code=201)
@@ -560,102 +666,54 @@ def start_production(
         return JSONResponse(status_code=400, content={"detail": "Üretim miktarı sıfırdan büyük olmalıdır."})
 
     actor = current_user.get("full_name") or current_user.get("username") or "—"
-    multiplier = data.produced_quantity / recipe.output_quantity
-
-    # ── Brüt Girdi Hesabı ──────────────────────────────────────────────────
-    # Fire (waste) EKLEMELI çalışır: brüt_girdi = net_miktar × (1 + fire% / 100)
-    # Örnek: 50 ml hammadde + %10 fire = 55 ml stoktan düşülür.
-    # Ambalaj bileşenlerine fire uygulanmaz (reçete mantığıyla tutarlı).
-    waste_factor = 1.0 + (recipe.waste_percentage or 0.0) / 100.0
 
     # ── Seçilen etiket dili ─────────────────────────────────────────────────
     sel_lang = "EN" if (data.label_language or "").strip().upper().startswith("EN") else "TR"
     sel_lang_label = "İngilizce" if sel_lang == "EN" else "Türkçe"
 
     try:
-        # ── Önce tüm brüt miktarları hesapla ve stok kontrolü yap ──────────
-        ing_plan = []          # (ing, item, gross_qty, is_ambalaj, allocations, uncovered)
-        label_warnings = []    # seçilen dilde etiketi olmayan kalemler
-        processed_groups = set()  # aynı label_group iki kez tüketilmesin
-        # Hammadde lot/tedarikçi seçimleri — {item_id: inventory_id}
-        lot_choices = {}
-        for _k, _v in (data.ingredient_lot_choices or {}).items():
-            try:
-                lot_choices[int(_k)] = int(_v)
-            except (TypeError, ValueError):
-                continue
-        for ing in recipe.ingredients:
-            item = db.query(Item).filter(Item.id == ing.item_id).with_for_update().first()
-            if not item:
-                db.rollback()
-                return JSONResponse(status_code=404, content={"detail": f"Hammadde bulunamadı (ID: {ing.item_id})."})
-
-            # ── Etiket dil çözümü ──────────────────────────────────────────
-            # Malzeme dile özel etiketse: seçilen dile uygun kardeşe in.
-            #   • dili seçilen dile eşit → aynen kullan
-            #   • farklı → aynı label_group'ta seçilen dildeki kardeşi bul
-            #   • kardeş yok → uyar + atla (üretim durmaz)
-            #   • reçetede iki kardeş varsa ikincisini atla (çift düşmesin)
-            if item.language and item.label_group:
-                if item.label_group in processed_groups:
-                    continue
-                processed_groups.add(item.label_group)
-                if item.language != sel_lang:
-                    sibling = (
-                        db.query(Item)
-                        .filter(Item.label_group == item.label_group,
-                                Item.language == sel_lang,
-                                Item.is_active == True)
-                        .with_for_update()
-                        .first()
-                    )
-                    if not sibling:
-                        label_warnings.append(item.name)
-                        continue   # bu dilde etiket tanımlı değil — atla
-                    item = sibling
-
-            is_ambalaj = (item.category == "Ambalaj")
-            factor     = 1.0 if is_ambalaj else waste_factor   # ambalaja fire uygulanmaz
-            gross_qty  = round(ing.quantity * multiplier * factor, 6)
-
-            # ── Lot/tedarikçi tahsisi (yalnızca hammadde) ──────────────────
-            # Ambalaj/etiket toplam stoktan düşer (allocations=None).  Hammadde
-            # için seçili lot ya da FIFO planlanır; seçili lot yetersizse net hata.
-            allocations, uncovered = None, 0.0
-            if not is_ambalaj:
-                try:
-                    allocations, uncovered = _plan_lot_allocation(
-                        db, item, gross_qty, lot_choices.get(item.id)
-                    )
-                except _LotChoiceError as e:
-                    db.rollback()
-                    return JSONResponse(status_code=400, content={"detail": str(e)})
-            ing_plan.append((ing, item, gross_qty, is_ambalaj, allocations, uncovered))
-
-        for ing, item, gross_qty, is_ambalaj, _alloc, _unc in ing_plan:
-            if item.current_stock < gross_qty:
-                db.rollback()
-                fire_note = "" if is_ambalaj else f" (%{recipe.waste_percentage or 0} fire dahil)"
-                return JSONResponse(status_code=400, content={
-                    "detail": f"'{item.name}' için yeterli stok yok. "
-                              f"Gereken: {gross_qty} {item.unit}{fire_note}, "
-                              f"Mevcut: {item.current_stock} {item.unit}"
-                })
+        # ── Plan: satırlar, kaynak kartlar, lot dağıtımı, kart başına stok ──
+        # TEK KAYNAK core/production_plan.plan() — önizlemeyle aynı kod.
+        # Brüt = net × (1 + fire%/100); ambalaj/etiket fire muaf; etiket
+        # seçilen dilin kardeşine çözülür; aynı kart tek satırda birleşir.
+        # lock=True: düşülecek kartlar + hedef (id sıralı) → lotları FOR UPDATE.
+        # Üretim iptali de aynı kilit sırasını kullanır.  Hata varsa
+        # HİÇBİR ŞEY yazılmaz.
+        try:
+            pl = production_plan.plan(db, recipe, data.produced_quantity, sel_lang,
+                                      domain=domain, sources=data.ingredient_sources,
+                                      lot_choices=data.ingredient_lot_choices, lock=True)
+        except production_plan.PlanError as e:
+            db.rollback()
+            return JSONResponse(status_code=e.status, content={"detail": e.detail, "code": e.code})
+        if pl.errors:
+            first = pl.first_error()
+            payload = production_plan.preview_payload(pl)
+            db.rollback()
+            return JSONResponse(status_code=400, content={
+                "detail": first["detail"], "code": first["code"], "errors": pl.errors,
+                "lines": payload["lines"], "per_card": payload["per_card"],
+                "blockers": payload["blockers"],
+            })
+        label_warnings = list(pl.label_warnings)
 
         # ── Lot numarası şimdiden üret — tüm transaction notlarına stamp atılır
         #
-        # Hedef ürün satırı BURADA kilitlenir (eskiden çıktı yazılırken, aşağıda
-        # kilitleniyordu).  Sebep: lot sayacı bu satırda tutuluyor — kilit
-        # olmadan aynı ürünün iki eşzamanlı üretimi aynı numarayı alırdı.
-        # Kilit sırası korunuyor: malzeme item/inventory satırları yukarıda
-        # zaten kilitlendi, hedef ürün en son geliyor → deadlock riski yok.
+        # Hedef satırı planlayıcıda kaynaklarla birlikte, lotlardan ÖNCE
+        # kilitlendi.  Aynı transaction içinde yeniden almak yeni kilit
+        # sırası yaratmaz.  populate_existing ile lot sayacı ve stok güncel
+        # okunur; aynı ürünün eşzamanlı üretimleri numarayı paylaşamaz.
         import datetime as _dt
         now = _dt.datetime.utcnow()
         target_item_row = None
         if recipe.target_item_id:
             target_item_row = (db.query(Item)
-                               .filter(Item.id == recipe.target_item_id)
-                               .with_for_update().first())
+                               .filter(Item.id == recipe.target_item_id, Item.domain == domain)
+                               .with_for_update().populate_existing().first())
+            if target_item_row is None:
+                db.rollback()
+                return JSONResponse(status_code=404, content={
+                    "detail": "Hedef ürün bu panelde bulunamadı.", "code": "item_not_found"})
 
         if target_item_row is not None:
             requested_lot = lots.normalize_lot(data.lot_number)
@@ -704,6 +762,9 @@ def start_production(
             """Defter satırının dökümü (core/production_cancel bunu okur).
             İlişkiyle bağlanır → satır başına flush gerekmez."""
             sup = lot.supplier if (lot is not None and lot.supplier_id) else None
+            if sup is None and kind != "output":
+                card = pl.cards.get(item_id)
+                sup = card.supplier if card is not None and card.supplier_id else None
             pc = ProductionConsumption(
                 production_id=prod.id, kind=kind, recipe_item_id=recipe_item_id,
                 item_id=item_id, lot_number=lot_number,
@@ -716,61 +777,59 @@ def start_production(
             db.add(pc)
 
         # ── Stok düş + Output transaction kaydet ───────────────────────────
-        # NOT: item burada *çözülmüş* malzeme — etiket dil çözümü sonrası
-        # kardeş etikete inilmiş olabilir, o yüzden Transaction.item_id = item.id
-        # (ing.item_id değil — reçetedeki orijinal değil, gerçekten tüketilen).
-        for ing, item, gross_qty, is_ambalaj, allocations, uncovered in ing_plan:
-            # current_stock kaynak-of-truth: her zaman tam brüt kadar düşer.
-            item.current_stock = round(item.current_stock - gross_qty, 6)
-            kind = consumption_kind(item)            # raw | packaging | label
-            factor = 1.0 if is_ambalaj else waste_factor
-            pc_common = dict(item_id=item.id, recipe_item_id=ing.item_id, factor=factor,
-                             unit=item.unit, phase=ing.phase)
-            fire_note = (
-                f" | %{recipe.waste_percentage or 0} fire dahil, brüt girdi"
-                if not is_ambalaj and (recipe.waste_percentage or 0) > 0
-                else ""
-            )
-            base_note = (f"Üretim tüketimi — Reçete: {recipe.name}{fire_note} | "
-                         f"Dil: {sel_lang_label}")
-
-            if not allocations:
-                # Ambalaj/etiket ya da lotsuz hammadde — toplam stoktan, lot kaydı yok
-                tx = Transaction(
-                    item_id=item.id, transaction_type="Output", quantity=gross_qty,
-                    notes=f"{base_note} | Üretim Lot: {produced_lot}",
-                    performed_by=actor,
-                )
-                db.add(tx)
-                _consumption(kind, tx, quantity=gross_qty, **pc_common)
+        # Kart stoğu seçim (pick) başına TAM pay kadar düşer (current_stock
+        # kaynak-of-truth).  Output'lar `pl.segments()` sırasıyla: reçete
+        # satırı sırası, her tahsis (lot) ayrı Output — Transaction.lot_number
+        # = KAYNAK lot.  Aynı kart reçetede iki satırdaysa (ör. su A ve C
+        # fazında) her reçete satırı eskisi gibi kendi Output'unu/fazını alır.
+        # Transaction.item_id = FİİLEN düşülen kart (etikette dil kardeşi,
+        # kaynak seçiminde gruptaki diğer kart); döküm satırı reçetedeki kartı
+        # `recipe_item_id`'de ayrıca taşır.
+        # NOT SÖZLEŞMESİ: not "Üretim tüketimi — Reçete: {ad} | " ile başlar
+        # ve "Üretim Lot: {lot}" ile BİTER — core/production_cancel eski
+        # üretimi bu imzayla kurar, trace_lot damgaya düşer.  Kaynak kart
+        # reçetedekinden farklıysa " | Kaynak kart: … (reçetede: …)" araya
+        # ("Tedarikçi:"den önce) girer.
+        for ln in pl.lines:
+            for pick in ln.chosen:
+                item = pl.cards[pick.item_id]
+                item.current_stock = round(item.current_stock - pick.quantity, 6)
+        waste_pct = recipe.waste_percentage or 0
+        for seg in pl.segments():
+            ln, item = seg.line, pl.cards[seg.pick.item_id]
+            fire_note = (f" | %{waste_pct} fire dahil, brüt girdi"
+                         if not ln.is_ambalaj and waste_pct > 0 else "")
+            note = (f"Üretim tüketimi — Reçete: {recipe.name}{fire_note} | "
+                    f"Dil: {sel_lang_label}")
+            if ln.kind != "label" and item.id != ln.recipe_item_id:
+                note += (f" | Kaynak kart: {item.name} "
+                         f"(reçetede: {pl.names.get(ln.recipe_item_id, '—')})")
+            lot = seg.lot
+            if lot is not None:
+                # Hammadde — seçilen/FIFO lot
+                lot.quantity = round((lot.quantity or 0) - seg.quantity, 6)
+                sup = lot.supplier.name if lot.supplier else "—"
+                smp = " (numune)" if lot.is_sample else ""
+                note += (f" | Tedarikçi: {sup}{smp} | Kaynak Lot: {lot.lot_number} | "
+                         f"Üretim Lot: {produced_lot}")
+            elif seg.uncovered:
+                # Lot toplamı payı karşılamadı (eksik lot verisi) — artık toplam
+                # stoktan; audit bütünlüğü için yine Output (toplam = pay).
+                note += f" | (lot kaydı dışı, toplam stoktan) | Üretim Lot: {produced_lot}"
             else:
-                # Hammadde — seçilen/FIFO lot(lar)ından düş, her tahsis ayrı Output
-                # (Transaction.lot_number = KAYNAK lot → izlenebilirlikte kesin).
-                for lot, take in allocations:
-                    lot.quantity = round((lot.quantity or 0) - take, 6)
-                    sup = lot.supplier.name if lot.supplier else "—"
-                    smp = " (numune)" if lot.is_sample else ""
-                    tx = Transaction(
-                        item_id=item.id, transaction_type="Output", quantity=take,
-                        lot_number=lot.lot_number,
-                        notes=(f"{base_note} | Tedarikçi: {sup}{smp} | "
-                               f"Kaynak Lot: {lot.lot_number} | Üretim Lot: {produced_lot}"),
-                        performed_by=actor,
-                    )
-                    db.add(tx)
-                    _consumption(kind, tx, quantity=take, lot=lot,
-                                 lot_number=lot.lot_number, **pc_common)
-                # Lot toplamı brütü karşılamadıysa (eksik lot verisi) artığı toplam
-                # stoktan düş — audit bütünlüğü için yine Output yaz (toplam = brüt).
-                if uncovered > _EPS:
-                    tx = Transaction(
-                        item_id=item.id, transaction_type="Output", quantity=round(uncovered, 6),
-                        notes=(f"{base_note} | (lot kaydı dışı, toplam stoktan) | "
-                               f"Üretim Lot: {produced_lot}"),
-                        performed_by=actor,
-                    )
-                    db.add(tx)
-                    _consumption(kind, tx, quantity=round(uncovered, 6), **pc_common)
+                # Ambalaj/etiket ya da hiç lotu olmayan hammadde — toplam stoktan
+                note += f" | Üretim Lot: {produced_lot}"
+            tx = Transaction(
+                item_id=item.id, transaction_type="Output", quantity=seg.quantity,
+                lot_number=lot.lot_number if lot is not None else None,
+                notes=note, performed_by=actor,
+            )
+            db.add(tx)
+            _consumption(consumption_kind(item), tx, item_id=item.id,
+                         recipe_item_id=ln.recipe_item_id, lot=lot,
+                         lot_number=lot.lot_number if lot is not None else None,
+                         quantity=seg.quantity, factor=ln.factor, unit=item.unit,
+                         phase=seg.phase)
 
         # ── Şahit numune ayrımı ─────────────────────────────────────────────
         # Üretilen X adetin Y'si "Şahit Numune Dolabı"na (marka bazlı), kalanı
@@ -885,17 +944,27 @@ def start_production(
         #     queues exactly one notification (one per ingredient line, not one
         #     per stock unit). Snapshots primitive values now; the BackgroundTask
         #     fires after the response is sent so the user sees no extra latency.
-        for _ing, item, _gross, _amb, _al, _un in ing_plan:
-            if item.min_stock_level > 0 and item.current_stock <= item.min_stock_level:
+        #     Fiilen düşülen KART başına (bölünmüş satırda iki kart da bakılır).
+        for item in pl.cards.values():
+            if (item.min_stock_level or 0) > 0 and item.current_stock <= item.min_stock_level:
                 background_tasks.add_task(
                     notify_low_stock,
                     item.name, item.current_stock, item.min_stock_level, item.unit or "",
                 )
 
         # ── Stoktan düşülen kalem özeti — lab "ne düştü" diye sormasın ─────
-        # ing_plan = gerçekten tüketilen kalemler.  Hammadde / ambalaj ayrımı.
-        hammadde_n = sum(1 for _i, _it, _g, amb, _al, _un in ing_plan if not amb)
-        ambalaj_n  = sum(1 for _i, _it, _g, amb, _al, _un in ing_plan if amb)
+        # Tüketilen REÇETE SATIRI sayısı (eskisi gibi; aynı kart iki satırdaysa
+        # iki sayılır).  Hammadde / ambalaj ayrımı.
+        hammadde_n = sum(len(ln.parts) for ln in pl.lines if not ln.is_ambalaj)
+        ambalaj_n  = sum(len(ln.parts) for ln in pl.lines if ln.is_ambalaj)
+        substituted = [
+            {"recipe_item_id": ln.recipe_item_id,
+             "recipe_item_name": pl.names.get(ln.recipe_item_id, ""),
+             "sources": [{"item_id": p.item_id, "name": pl.names.get(p.item_id, ""),
+                          "quantity": round(p.quantity, 6)} for p in ln.chosen]}
+            for ln in pl.lines
+            if ln.kind != "label" and any(p.item_id != ln.recipe_item_id for p in ln.chosen)
+        ]
 
         msg = f"Üretim tamamlandı ({sel_lang_label}). {data.produced_quantity} birim stoğa eklendi."
         msg += f"  Stoktan düşülen: {hammadde_n} hammadde + {ambalaj_n} ambalaj/etiket kalemi."
@@ -915,6 +984,8 @@ def start_production(
             "label_warnings": label_warnings,
             "consumed_hammadde": hammadde_n,
             "consumed_ambalaj":  ambalaj_n,
+            # Reçete kartı yerine (ya da yanında) gruptaki başka karttan düşülen satırlar
+            "substituted": substituted,
             "witness_quantity": witness_qty,
             "showroom_quantity": showroom_qty,
             "cabinet": brand or "",

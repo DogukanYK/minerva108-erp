@@ -879,6 +879,19 @@ def test_phase_out_alt_stock_reduces_buy_with_caution():
     assert "HAMMADDE SEPETİ»" not in g["text"] and "«JOJOBA ESKİ» kartında stok var (3,0 kg; birimi farklı)" in g["text"]
 
 
+def test_phase_out_label_stock_does_not_cover_packaging_need():
+    bottle = it(221, "50 ML ŞİŞE", cat="Ambalaj", unit="adet", stock=2, pkg="şişe")
+    label = it(222, "50 ML ŞİŞE ÖN ETİKET", cat="Ambalaj", unit="adet", stock=50, pkg="etiket")
+    po = dict(mgroup_of={221: 7, 222: 7}, mgroup_names={7: "Şişe"}, card_supplier={222: 2},
+              supplier_status={2: "phase_out"}, supplier_names={2: "Eski tedarikçi"})
+    m = mat(compute(inputs([bottle, label], [rec(312, "Serum", [(221, 1)])], **po),
+                    req([{"recipe_id": 312, "qty": 10}])), 221)
+    assert m["kind"] == "packaging" and m["need"] == 10
+    assert m["stock"] == 2 and m["stock_phase_out"] == 0
+    assert m["buy"] == 8 and m["status"] == "to_buy"
+    assert m["phase_out_from"] == [] and "phase_out_stock" not in codes(m)
+
+
 def test_phase_out_pool_shared_between_rows_counted_once():
     res = compute(inputs(JJ, [R_JJ_KRK, R_JJ_NAT], **JJ_PO),
                   req([{"recipe_id": 301, "qty": 100}, {"recipe_id": 302, "qty": 100}]))

@@ -11,11 +11,11 @@ düşer?" sorusunun TEK KAYNAĞI.
 Bu modülden önce aynı kural iki yerde ayrı ayrı yazılıydı: gerçek üretim
 (`routers/production.py::start_production`) ve what-if simülasyonu
 (`core/production_sim.simulate`).  Satın Alma Planı üçüncü kopya olacaktı;
-bunun yerine simülasyon ve plan bu motoru kullanır.  `start_production`'a
-DOKUNULMADI (canlı stok yazan akış, lot kilitleri iç içe) — iki tarafın
-birebir aynı kaldığını `tests/test_consumption.py`'deki parite testi gerçek
-`POST /api/production` çıktısıyla kilitler.  Kural değişirse İKİSİ BİRDEN
-değişmeli, parite testi aksi halde kırılır.
+bunun yerine simülasyon ve plan bu motoru kullanır.  P2'den (08.10.2026)
+beri `start_production` da satırlarını bu motordan alır
+(`core/production_plan.plan` — kaynak kart seçimi, lot dağıtımı, kart
+başına stok kapısı onun işi).  `tests/test_consumption.py`'deki parite testi
+gerçek `POST /api/production` çıktısını yine kilitler.
 
 Kurallar (start_production ile birebir):
   • hammadde brüt = ing.quantity × qty / output × (1 + fire%/100)
@@ -241,8 +241,8 @@ def load_recipe_recs(db, recipe_ids, domain: str, *, active_only: bool = True):
             label_siblings: {label_group: {language: ItemRec}})
 
     `items` reçete kalemlerini, hedef ürünleri ve kardeş etiketleri içerir.
-    Kalem/kardeş sorgusu domain'e bakmaz — `start_production` da bakmıyor;
-    domain kapsamı reçete seviyesinde uygulanır (kalem ← reçetenin paneli).
+    Kalemler ve etiket kardeşleri aynı panelden yüklenir; aynı label_group
+    iki panelde kullanılsa bile başka panelin etiketi tüketilemez.
     Kardeşlerde aynı grup+dil için birden fazla aktif kart varsa en küçük id
     seçilir (üretimin `.first()`'ü ile aynı pratik sonuç, ama deterministik).
     """
@@ -273,7 +273,7 @@ def load_recipe_recs(db, recipe_ids, domain: str, *, active_only: bool = True):
     item_ids |= {r.target_item_id for r in recipes if r.target_item_id}
     items: Dict[int, ItemRec] = {}
     if item_ids:
-        for it in db.query(Item).filter(Item.id.in_(item_ids)).all():
+        for it in db.query(Item).filter(Item.id.in_(item_ids), Item.domain == domain).all():
             items[it.id] = item_rec(it)
 
     label_siblings: Dict[str, Dict[str, ItemRec]] = {}
@@ -281,6 +281,7 @@ def load_recipe_recs(db, recipe_ids, domain: str, *, active_only: bool = True):
     if groups:
         sibs = (db.query(Item)
                 .filter(Item.label_group.in_(groups), Item.language.isnot(None),
+                        Item.domain == domain,
                         Item.is_active == True)   # noqa: E712
                 .order_by(Item.id.asc())
                 .all())
