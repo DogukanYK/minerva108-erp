@@ -15,17 +15,30 @@
   (`--apply-prefs`); küçük satıcılar da yalnız öneridir.
 
 **Eşleştirme (yazmadan önce, `plan`):**
-  • Malzeme → aktif, bitmiş ürün OLMAYAN kart (domain cosmetics): TR-katlanmış
-    birebir ad (`name` ya da `name_tr`; tablo IMS çıktısı) → (yalnız alım
-    belgesi) notun "lab tablosu karşılığı: … (A1-08)" ipucu → `core.
-    material_groups.material_key` eşitliği.  Birden çok aday = BELİRSİZ,
-    yazılmaz.  Belgenin adı TEK karta uyuyor ama ipucu başka kartı
-    gösteriyorsa (TR/EN mükerrer kart: BERGAMOT YAĞI ↔ BERGAMOT UÇUCU YAĞI)
-    da BELİRSİZ ("ad ↔ lab tablosu ipucu çelişiyor") — yoksa (kart, firma)
-    başına tek kayıt kuralı iki karta bölünerek delinirdi.  Toz/sıvı gibi
-    ayrı form olabilecek kayıtlar (`SEPARATE_FORM`) otomatik eşlenmez.  Veri
-    dosyasındaki isteğe bağlı `elle_eslesme` (`{"kart": {"A2-01": 512},
-    "tedarikci": {"TİMAY": 45}}`) Excel incelemesinden sonra elle eşleme içindir.
+  • Malzeme → aktif, bitmiş ürün OLMAYAN kart (domain cosmetics), sırayla:
+    elle eşleme → ayrı form kartı → (yalnız alım belgesi) notun "lab tablosu
+    karşılığı: … (A1-28)" ipucundaki AYNI TEDARİKÇİLİ lab kaydının kartı
+    (belge o karta gider, öncelik kuralıyla lab satırını ezer) → TR-katlanmış
+    birebir ad (`name` ya da `name_tr`; tablo IMS çıktısı) → veri dosyasının
+    `malzeme_takma_adlari` (belge adı → IMS kart adı) → ipucu → `core.
+    material_groups.material_key` eşitliği.
+  • Birden çok aday kart (lab aynı malzemenin her tedarikçisi için AYRI kart
+    tutar), sırayla: (a) kart tedarikçisi teklifin tedarikçisiyle aynı TEK
+    kart ("tedarikçinin kendi kartı"; ada TEK kart uysa da kartın "aynı
+    malzeme" grubunda tedarikçinin TEK kartı varsa o); (b) adayların hepsi
+    aynı "aynı malzeme" grubundaysa grubun ana kartı — aktif reçetede kullanılan tek
+    kart, yoksa stoğu en yüksek (raporda "grup ana kartına bağlandı"); (c)
+    adaylardan yalnız biri aktif reçetedeyse o kart, ama eşleşme güveni
+    BELİRSİZ (Excel "Eşleşmeyenler"de doğrulanır); (d) aksi hâlde BELİRSİZ,
+    yazılmaz — Excel aday kartları (no · ad · tedarikçi · stok · reçetede mi)
+    listeler.  Belgenin adı TEK karta uyuyor ama ipucu (başka tedarikçinin
+    satırı) başka kartı gösteriyorsa da BELİRSİZ ("ad ↔ lab tablosu ipucu
+    çelişiyor").  Toz/sıvı gibi ayrı formlar (`SEPARATE_FORM`) yalnız adı
+    verilen form kartına (ALOEVERA EKSTRAKT TOZU) eşlenir; kart yoksa
+    "ayrı form".  Takma adın `lab_belirlesin` biçimi adayları listeler ama
+    birebir ad bulunsa da otomatik seçmez.  Veri dosyasındaki isteğe bağlı `elle_eslesme`
+    (`{"kart": {"A2-01": 512}, "tedarikci": {"TİMAY": 45}}`) Excel
+    incelemesinden sonra elle eşleme içindir.
   • Tedarikçi → aktif kart, `core.purchase_pricing.SupplierIndex` anahtarıyla
     (bitişik/ayrı yazım, "KİMYA" gibi jenerik kelimeler); bilinen takma adlar
     `SUPPLIER_ALIASES` (PHARMATEM → PHARMATERM, DOLAIN/DOALIN → DOALİNN …).
@@ -65,6 +78,22 @@ düzeltmeleri betikçe OTOMATİK işlenmez — veri dosyasına (fiyat /
 yanıltırdı).  Boş bırakılan belirsiz okuma, notunda "okuma belirsiz"
 etiketiyle yazılır.
 
+**Kısmi fiyat aktarımı (`--record-ids SECIM.json`):** kaynak JSON DARALTILMAZ;
+öncelik ve eşleme yine tam plandan hesaplanır.  Manifest boş olmayan bir JSON
+dizisidir: `[{"id": "C-s12-1", "item_id": 160, "supplier_id": 10}]`.
+Her nesne yalnız bu üç alanı taşır; kart/firma no pozitif tam sayı olmalı.
+Kayıt tam planda `yazilacak` kazanan değilse, yineleniyorsa, yoksa veya
+yeniden hesaplanan kart/firma no değişmişse HİÇBİR ŞEY yazılmaz.  Yalnız
+seçilen (kart, firma) çiftlerinin bu importa ait lab fiyatları silinip
+yenilenir; seçilmeyen lab fiyatları, manual ve Stok Son Durum korunur.
+`--onayli` şartı devam eder.  Bu seçenek yalnız mevcut firmaların fiyatları
+içindir; `--create-suppliers` / `--apply-prefs` ile birlikte kullanılamaz.
+Manifest E/H onayı yerine geçmez.  Manifest verilmezse eski toplu yenileme
+davranışı aynen sürer.  Onaylı Excel'de isteğe bağlı `Aktarım seçimi` sayfası
+varsa (`Kayıt`, `item_id`, `supplier_id` sütunları), fiyat yazımı için dış
+manifest ŞARTTIR ve kayıt/kart/firma kimlikleri birebir aynı olmalıdır
+(satır sırası önemsiz).  Bu metadata tercih aktarımını sınırlamaz.
+
 **Kontrol Excel'i (`--xlsx YOL`, yazmaz):** Nasıl doldurulur · Fiyatlar ·
 Eşleşmeyenler (Doğru IMS kartı) · Belirsiz okumalar (Doğru değer) · Tercih
 önerisi (Onay E/H) · Küçük satıcı önerisi (Bitirilecek E/H) · Yeni
@@ -93,6 +122,8 @@ veri dosyasına → --commit → --apply-prefs):
     venv/bin/python scripts/import_lab_price_notes_20261007.py --xlsx /tmp/lab_fiyat_kontrol.xlsx
     venv/bin/python scripts/import_lab_price_notes_20261007.py --onayli /tmp/onayli.xlsx           # kuru (onaylı)
     venv/bin/python scripts/import_lab_price_notes_20261007.py --onayli /tmp/onayli.xlsx --commit --create-suppliers
+    venv/bin/python scripts/import_lab_price_notes_20261007.py --record-ids /tmp/secim.json  # tam plandan kuru seçim
+    venv/bin/python scripts/import_lab_price_notes_20261007.py --record-ids /tmp/secim.json --onayli /tmp/onayli.xlsx --commit
     venv/bin/python scripts/import_lab_price_notes_20261007.py --apply-prefs /tmp/onayli.xlsx          # kuru
     venv/bin/python scripts/import_lab_price_notes_20261007.py --apply-prefs /tmp/onayli.xlsx --commit
 
@@ -109,6 +140,7 @@ from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from sqlalchemy import tuple_                                              # noqa: E402
 from sqlalchemy.orm import Session                                         # noqa: E402
 
 from core.audit import log_admin_event                                     # noqa: E402
@@ -121,7 +153,7 @@ from core.supplier_prices import (SOURCE_MANUAL, SOURCE_STOK_SON_DURUM,   # noqa
                                   price_unit_ok, vat_label)
 from core.suppliers import live_card_id, normalize_status                  # noqa: E402
 from database import (Item, MaterialGroup, MaterialSupplierPref,          # noqa: E402
-                      SessionLocal, Supplier, SupplierPrice)
+                      Recipe, RecipeIngredient, SessionLocal, Supplier, SupplierPrice)
 
 DATA_FILE = Path(__file__).resolve().parent / "data" / "lab_fiyat_notlari_202606.json"
 DOMAIN = "cosmetics"
@@ -161,12 +193,27 @@ SUPPLIER_ALIASES = {
     "HAMMADDESEPETI": "HAMMADDESEPETİ",
 }
 
-# Ayrı form (toz ↔ sıvı kart) — otomatik eşlenmez, lab kartı söyler.
+# Ayrı form (toz ↔ sıvı kart): kayıt → (form kartının adı, açıklama).  Sıvı
+# karta ASLA eşlenmez; adı verilen kart TEK ve kütle birimliyse (g/kg) ona
+# eşlenir, yoksa "ayrı form" kalır (lab kartı söyler).
+_TOZ_CARD = "ALOEVERA EKSTRAKT TOZU"
 SEPARATE_FORM = {
-    "A1-08-S3": "toz hali — sıvı ALEOVERA kartıyla eşleştirilmedi; toz kartı varsa lab belirtsin",
-    "C-s8-1": "ALOEVERA EXTRACT PE (toz) — sıvı ALEOVERA kartıyla eşleştirilmedi; toz kartı varsa lab belirtsin",
-    "C-s16-3": "ALOEVERA EXTRACT PE (toz) — sıvı ALEOVERA kartıyla eşleştirilmedi; toz kartı varsa lab belirtsin",
+    "A1-08-S3": (_TOZ_CARD, "toz hali — sıvı ALEOVERA kartıyla eşleştirilmez; toz kartı yoksa lab belirtsin"),
+    "C-s8-1": (_TOZ_CARD, "ALOEVERA EXTRACT PE (toz) — sıvı ALEOVERA kartıyla eşleştirilmez; toz kartı yoksa "
+                          "lab belirtsin"),
+    "C-s16-3": (_TOZ_CARD, "ALOEVERA EXTRACT PE (toz) — sıvı ALEOVERA kartıyla eşleştirilmez; toz kartı yoksa "
+                           "lab belirtsin"),
 }
+
+# Malzeme eşleşme yolları (`mat.how`) — birden çok aday kart kuralları (a)–(c)
+HOW_OWN = "tedarikçinin kendi kartı"                  # (a)
+HOW_GROUP_MAIN = "grup ana kartı"                     # (b)
+HOW_ONLY_RECIPE = "tek reçete kartı (belirsiz)"       # (c)
+HOW_HINT_SAME = "lab tablosu ipucu (aynı tedarikçi)"
+HOW_ALIAS = "takma ad"
+HOW_FORM = "ayrı form kartı"
+RULE_TEXT = {"a": "(a) tedarikçinin kendi kartı", "b": "(b) grup ana kartı",
+             "c": "(c) tek reçete kartı — güven belirsiz"}
 
 # Tercih önerisinde notların sarı seçimle çelişmesi (satır öneki → uyarı)
 PREF_CONFLICTS = {
@@ -220,6 +267,7 @@ SMALL_SELLER_NOTES = {
 
 SHEETS = ("Nasıl doldurulur", "Fiyatlar", "Eşleşmeyenler", "Belirsiz okumalar", "Tercih önerisi",
           "Küçük satıcı önerisi", "Yeni tedarikçiler")
+RECORD_MANIFEST_SHEET = "Aktarım seçimi"
 APPROVE_COL = "Onay (E/H)"
 PHASE_COL = "Bitirilecek yapılsın mı (E/H)"
 NEW_COL = "Kartı açılsın mı (E/H)"
@@ -352,12 +400,18 @@ class _Suppliers:
     def key(self, name) -> str:
         return self.ix.key(name) if name else ""
 
-    def resolve(self, doc_name) -> dict:
+    def canon_key(self, name) -> str:
+        """Bir adın (malzeme kartının tedarikçisi) teklif tedarikçileriyle aynı
+        uzaydaki anahtarı — takma ad / birleştirilmiş kart kazananı dahil
+        (ULUDAG HERBAL = ULUDAĞ AGRO, KRK GIDA(HAYAT) = KRK GIDA)."""
+        return self.resolve(name, use_overrides=False)["key"] if name else ""
+
+    def resolve(self, doc_name, use_overrides: bool = True) -> dict:
         """→ {kind: 'id'|'inactive'|'new', id, name, key, how, dupes: [aynı firmanın
         diğer aktif kartları]}.  'inactive': firmanın yalnız PASİF (silinmiş,
         birleştirilmemiş) kartı var — yeni kart AÇILMAZ, satır yazılmaz (lab
         firmayı bilerek silmiş olabilir)."""
-        ov = self.overrides.get(normalize(doc_name))
+        ov = self.overrides.get(normalize(doc_name)) if use_overrides else None
         if ov is not None:
             s = self.by_id.get(ov)
             if s is None or s.is_active is False:
@@ -421,6 +475,53 @@ class _Materials:
             for nm in (it.name, it.name_tr):
                 if nm:
                     self._names.setdefault(normalize(nm), it.id)
+        # Aktif reçetede kullanılan kartlar — (b) grup ana kartı / (c) tek reçete kartı
+        self.in_recipe = {iid for (iid,) in (db.query(RecipeIngredient.item_id)
+                                             .join(Recipe, Recipe.id == RecipeIngredient.recipe_id)
+                                             .filter(Recipe.is_active == True,       # noqa: E712
+                                                     Recipe.domain == domain).distinct())}
+        self.sup_key: Dict[int, str] = {}
+        self.sup_name: Dict[int, str] = {}
+
+    def attach_suppliers(self, sups: "_Suppliers") -> None:
+        """Kartın tedarikçisi teklif tedarikçileriyle aynı anahtar uzayında —
+        kural (a) "tedarikçinin kendi kartı" bununla karşılaştırır."""
+        for it in self.items.values():
+            s = sups.by_id.get(it.supplier_id) if it.supplier_id else None
+            if s is not None and s.name:
+                self.sup_name[it.id] = s.name
+                self.sup_key[it.id] = sups.canon_key(s.name)
+
+    def group_of(self, iid) -> Optional[int]:
+        it = self.items.get(iid)
+        gid = it.material_group_id if it is not None else None
+        return gid if gid in self.groups else None
+
+    def members(self, gid) -> List[int]:
+        return sorted(i for i, it in self.items.items() if gid and it.material_group_id == gid)
+
+    def group_own(self, cands, sup_key: str) -> List[int]:
+        """Adayların "aynı malzeme" gruplarında teklifin tedarikçisinin kartları."""
+        gids = {self.group_of(i) for i in cands} - {None}
+        return [j for g in sorted(gids) for j in self.members(g) if sup_key and self.sup_key.get(j) == sup_key]
+
+    def stock_base(self, iid) -> float:
+        """Stok g / ml cinsinden (kg, l → ×1000) — farklı birimli kartlar kıyaslansın."""
+        it = self.items.get(iid)
+        if it is None:
+            return 0.0
+        f = 1000.0 if (it.unit or "").strip().lower() in ("kg", "l", "lt") else 1.0
+        return float(it.current_stock or 0.0) * f
+
+    def cand_label(self, iid) -> str:
+        """Aday kart: 'no ad (birim) · tedarikçi · stok · reçetede mi'."""
+        it = self.items.get(iid)
+        if it is None:
+            return str(iid)
+        stock = _num_tr(round(float(it.current_stock or 0.0), 3))
+        return (f"{it.id} {it.name} ({it.unit or 'birimsiz'}) · {self.sup_name.get(iid) or 'tedarikçisiz'}"
+                f" · stok {stock} {it.unit or ''}".rstrip()
+                + f" · {'reçetede' if iid in self.in_recipe else 'reçetede değil'}")
 
     def exact(self, name) -> List[int]:
         return sorted(self.by_norm.get(normalize(name), ()))
@@ -458,60 +559,221 @@ def _hint_rows(note) -> List[str]:
 
 # ─── Plan (yazmaz) ──────────────────────────────────────────────────────────
 
-def _match_material(r: dict, mats: _Materials, row_card: Dict[str, dict],
-                    item_overrides: Dict[str, int]) -> dict:
-    """→ {status: ok|belirsiz|eslesmedi|ayri_form, item_id, how, candidates, suggestions}."""
+def _uniq(seq) -> list:
+    out: list = []
+    for x in seq:
+        if x not in out:
+            out.append(x)
+    return out
+
+
+def _material_aliases(data: dict) -> Dict[str, dict]:
+    """Veri dosyasının `malzeme_takma_adlari` → {normalize(belge adı): {names, lab}}.
+
+    Değer: "IMS KART ADI" | ["AD 1", "AD 2"] (adaylar — kurallar (a)–(d)
+    seçer) | {"adaylar": [...], "lab_belirlesin": "neden"} (adaylar
+    listelenir, OTOMATİK seçilmez — kanıt çelişkili).  "_" ile başlayan
+    anahtar açıklamadır.  Normal takma ad yalnız belgenin/tablonun adı hiçbir
+    karta birebir uymuyorsa devreye girer; `lab_belirlesin` çelişki engeli
+    birebir ad bulunsa da geçerlidir."""
+    raw = data.get("malzeme_takma_adlari") or {}
+    if not isinstance(raw, dict):
+        raise ValueError("malzeme_takma_adlari bir sözlük olmalı")
+    out: Dict[str, dict] = {}
+    for k, v in raw.items():
+        if str(k).startswith("_"):
+            continue
+        lab_ = None
+        if isinstance(v, str):
+            names = [v]
+        elif isinstance(v, list):
+            names = v
+        elif isinstance(v, dict):
+            names = v.get("adaylar") or []
+            lab_ = v.get("lab_belirlesin") or None
+        else:
+            names = []
+        names = [n for n in names if isinstance(n, str) and n.strip()]
+        if not names:
+            raise ValueError(f"malzeme_takma_adlari «{k}»: IMS kart adı yok")
+        out[normalize(k)] = {"names": names, "lab": lab_}
+    return out
+
+
+def _alias_for(name, aliases: Optional[Dict[str, dict]]) -> Optional[dict]:
+    """Takma ad — önce tam ad, sonra parantez içi atılmış ad ('XANTHAN GUM
+    (MEIUHA)' → 'XANTHAN GUM')."""
+    if not aliases:
+        return None
+    a = aliases.get(normalize(name))
+    if a is None:
+        bare = " ".join(_PAREN.sub(" ", name or "").split())
+        if bare and bare != name:
+            a = aliases.get(normalize(bare))
+    return a
+
+
+def _m(status: str, item_id: Optional[int] = None, how: Optional[str] = None, *, candidates=(),
+       suggestions=(), reason: Optional[str] = None, rule: Optional[str] = None,
+       guven: Optional[str] = None, note: Optional[str] = None) -> dict:
+    """Malzeme eşleşmesi: {status: ok|belirsiz|eslesmedi|ayri_form, item_id, how,
+    candidates, suggestions, reason, rule (a|b|c|None), guven (kesin|belirsiz),
+    note (rapora)}."""
+    return {"status": status, "item_id": item_id, "how": how, "candidates": list(candidates),
+            "suggestions": list(suggestions), "reason": reason, "rule": rule,
+            "guven": guven or ("kesin" if status == "ok" else None), "note": note}
+
+
+def _resolve_multi(cands, sup_key: str, mats: _Materials, via: str = "") -> dict:
+    """Birden çok aday kart → kurallar sırayla:
+      (a) kart tedarikçisi teklifin tedarikçisiyle aynı TEK kart (adaylarda
+          yoksa adayların TEK "aynı malzeme" grubunda tedarikçinin TEK kartı);
+      (b) adayların hepsi aynı (aktif) "aynı malzeme" grubundaysa grubun ana
+          kartı — aktif reçetede kullanılan tek kart, yoksa stoğu en yüksek
+          (birden çok reçete kartı varsa onların içinde);
+      (c) yalnız biri aktif reçetedeyse o kart — güven BELİRSİZ;
+      (d) aksi hâlde belirsiz (yazılmaz, Excel adayları listeler).
+    `via`: eşleşme yolunun öneki (takma ad, material_key) — rapora."""
+    cands = sorted(set(cands))
+    pre = f"{via} → " if via else ""
+    own = [i for i in cands if sup_key and mats.sup_key.get(i) == sup_key]
+    if len(own) == 1:
+        return _m("ok", own[0], pre + HOW_OWN, candidates=cands, rule="a")
+    gids = {mats.group_of(i) for i in cands}
+    if not own and len(gids - {None}) == 1:           # (a) adayların (tek) grubundaki kendi kartı
+        gown = mats.group_own(cands, sup_key)
+        if len(gown) == 1:
+            return _m("ok", gown[0], pre + HOW_OWN + " (aynı malzeme grubu)", candidates=_uniq(cands + gown),
+                      rule="a", note="tedarikçinin aynı 'aynı malzeme' grubundaki kendi kartı seçildi")
+    rec = [i for i in cands if i in mats.in_recipe]
+    if len(gids) == 1 and None not in gids:
+        grp = mats.groups[next(iter(gids))]
+        if len(rec) == 1:
+            pick, why = rec[0], "aktif reçetede kullanılan tek kart"
+        else:
+            pick = max(rec or cands, key=lambda i: (mats.stock_base(i), -i))
+            why = ("stoğu en yüksek reçete kartı" if rec
+                   else "stoğu en yüksek kart (hiçbiri aktif reçetede değil)")
+        whose = "tedarikçinin birden çok kartı var" if own else "tedarikçinin kendi kartı yok"
+        return _m("ok", pick, pre + HOW_GROUP_MAIN, candidates=cands, rule="b",
+                  note=f"grup ana kartına bağlandı ({whose}) — grup «{grp.name}», {why}")
+    if len(rec) == 1:
+        return _m("ok", rec[0], pre + HOW_ONLY_RECIPE, candidates=cands, rule="c", guven="belirsiz",
+                  note=(f"eşleşme BELİRSİZ — {len(cands)} aday karttan yalnız bu kart aktif reçetede; "
+                        "lab doğrulasın ('Eşleşmeyenler')"))
+    why = ("tedarikçinin " + ("birden çok kartı var" if own else "kendi kartı yok")
+           + ", adaylar tek grupta değil, aktif reçetede " + (f"{len(rec)} aday" if rec else "aday yok"))
+    return _m("belirsiz", candidates=cands, reason=f"{pre}kural (a)–(c) ayıramadı: {why}")
+
+
+def _single(iid: int, how: str, sup_key: str, mats: _Materials) -> dict:
+    """Ada (ad / takma ad / material_key) uyan TEK kart.  Kartın tedarikçisi
+    teklifinkinden farklıysa ve kartın "aynı malzeme" grubunda teklifin
+    tedarikçisinin TEK kartı varsa o kart (kural (a); lab her tedarikçiye ayrı
+    kart tutar: JAPON NANESİ UÇUCU YAGI (Doalin) ↔ JAPON NANESİ (Naturalya))."""
+    if not sup_key or mats.sup_key.get(iid) == sup_key:
+        return _m("ok", iid, how)
+    gown = mats.group_own([iid], sup_key)
+    if len(gown) == 1:
+        return _m("ok", gown[0], f"{how} → {HOW_OWN} (aynı malzeme grubu)", candidates=[iid, gown[0]],
+                  rule="a", note=(f"ad {mats.label(iid)} kartına uyuyor; tedarikçinin aynı 'aynı malzeme' "
+                                  "grubundaki kendi kartı seçildi"))
+    return _m("ok", iid, how)
+
+
+def _match_material(r: dict, mats: _Materials, a_recs: Dict[str, List[dict]],
+                    item_overrides: Dict[str, int], sup_key: str = "",
+                    aliases: Optional[Dict[str, dict]] = None) -> dict:
+    """Bir kaydın malzeme kartı (bkz. modül notu "Eşleştirme").  `a_recs`:
+    şimdiye dek eşlenmiş lab tablosu kayıtları, satır öneki → [{id, match,
+    sup_key}] (belgenin "lab tablosu karşılığı" ipucu); `sup_key`: kaydın
+    tedarikçisinin anahtarı (kural (a) + aynı tedarikçili ipucu)."""
     rid = r["id"]
     ov = item_overrides.get(rid, item_overrides.get(_row_prefix(rid)))
     if ov:
         if ov not in mats.items:
             raise ValueError(f"elle_eslesme.kart {rid} → {ov}: aktif hammadde kartı yok")
-        return {"status": "ok", "item_id": ov, "how": "elle eşleme", "candidates": [], "suggestions": []}
+        return _m("ok", ov, "elle eşleme")
     if rid in SEPARATE_FORM:
-        return {"status": "ayri_form", "item_id": None, "how": None, "candidates": [],
-                "suggestions": [], "reason": SEPARATE_FORM[rid]}
+        card, why = SEPARATE_FORM[rid]
+        hit = [i for i in mats.exact(card) if _unit_family(mats.items[i].unit) == "mass"]
+        if len(hit) == 1:
+            return _m("ok", hit[0], f"{HOW_FORM} (toz)",
+                      note=f"ayrı form: toz kartına ({card}) eşlendi — sıvı karta yazılmaz")
+        return _m("ayri_form", reason=why)
     doc = r["tur"] in DOC_TYPES or r["tur"] in REFERENCE_TYPES
     name = clean_doc_material(r["malzeme"]) if doc else r["malzeme"]
-    ex = mats.exact(name)
-    hint: List[int] = []
+    hint_recs: List[dict] = []
     if doc:
         for ref in _hint_rows(r.get("not")):
-            rc = row_card.get(ref)
-            if rc and rc.get("item_id") and rc["item_id"] not in hint:
-                hint.append(rc["item_id"])
+            for x in a_recs.get(ref, []):
+                xm = x["match"]
+                # ayrı form (toz) kaydı satırın kartı değildir — ipucu sayılmaz
+                if xm["status"] == "ok" and not (xm.get("how") or "").startswith(HOW_FORM):
+                    hint_recs.append(x)
+    hint = _uniq(x["match"]["item_id"] for x in hint_recs)
+    ex = mats.exact(name)
+    # Belge: ipucundaki AYNI TEDARİKÇİLİ lab kaydının kartı (öncelikle onu ezer)
+    same = [x for x in hint_recs if sup_key and x["sup_key"] == sup_key]
+    same_ids = _uniq(x["match"]["item_id"] for x in same)
+    if len(same_ids) == 1:
+        src = same[0]
+        sm = src["match"]
+        bits = [f"lab tablosu karşılığı {src['id']} (aynı tedarikçi) ile aynı kart — {sm['how']}"]
+        if sm.get("note"):
+            bits.append(sm["note"])
+        if ex and same_ids[0] not in ex:
+            bits.append("belgenin adı başka karta uyuyor (" + ", ".join(mats.label(i) for i in ex)
+                        + ") — ipucu esas alındı")
+        return _m("ok", same_ids[0], f"{HOW_HINT_SAME} {src['id']}", candidates=sm["candidates"],
+                  rule=sm.get("rule"), guven=sm.get("guven"), note="; ".join(bits))
+    al = _alias_for(name, aliases)
+    if al and al["lab"]:
+        cands = sorted(set(ex + hint + [i for n in al["names"] for i in mats.exact(n)]))
+        return _m("belirsiz", candidates=cands, reason=f"{HOW_ALIAS} — lab belirlesin: {al['lab']}")
     if len(ex) == 1:
-        # Ad tek karta uyuyor ama notun ipucu BAŞKA kartı gösteriyor (TR/EN
-        # mükerrer kart: BERGAMOT YAĞI ↔ BERGAMOT UÇUCU YAĞI) → belirsiz;
-        # yoksa aynı firmanın fiyatı iki karta bölünür, öncelik kuralı delinirdi.
+        # Ad tek karta uyuyor ama ipucu (başka tedarikçinin satırı) BAŞKA kartı
+        # gösteriyor (TR/EN mükerrer kart: BERGAMOT YAĞI ↔ BERGAMOT UÇUCU YAĞI)
+        # → belirsiz; yoksa aynı malzemenin fiyatı iki karta bölünürdü.
         if hint and ex[0] not in hint:
-            return {"status": "belirsiz", "item_id": None, "how": None,
-                    "candidates": ex + [h for h in hint if h not in ex], "suggestions": [],
-                    "reason": "ad ↔ lab tablosu ipucu çelişiyor"}
-        return {"status": "ok", "item_id": ex[0], "how": "ad", "candidates": [], "suggestions": []}
-    if len(ex) > 1:                                   # aynı adlı 2+ kart: ipucu ayırabilir
+            return _m("belirsiz", candidates=ex + [h for h in hint if h not in ex],
+                      reason="ad ↔ lab tablosu ipucu çelişiyor")
+        return _m("ok", ex[0], "ad") if hint else _single(ex[0], "ad", sup_key, mats)
+    if len(ex) > 1:                                   # aynı adlı 2+ kart: ipucu, sonra (a)–(d)
         both = [i for i in ex if i in hint]
         if len(both) == 1:
-            return {"status": "ok", "item_id": both[0], "how": "ad + lab tablosu ipucu",
-                    "candidates": [], "suggestions": []}
-        return {"status": "belirsiz", "item_id": None, "how": None, "candidates": ex, "suggestions": []}
-    if doc:
-        if len(hint) == 1:
-            return {"status": "ok", "item_id": hint[0], "how": "lab tablosu ipucu",
-                    "candidates": [], "suggestions": []}
+            return _m("ok", both[0], "ad + lab tablosu ipucu")
+        if hint and not both:
+            return _m("belirsiz", candidates=ex + [h for h in hint if h not in ex],
+                      reason="ad ↔ lab tablosu ipucu çelişiyor")
+        return _resolve_multi(both or ex, sup_key, mats)
+    if al:
+        cands = sorted({i for n in al["names"] for i in mats.exact(n)})
+        if cands:
+            if hint:
+                both = [i for i in cands if i in hint]
+                if len(both) == 1:
+                    return _m("ok", both[0], f"{HOW_ALIAS} + lab tablosu ipucu")
+                if not both:
+                    return _m("belirsiz", candidates=cands + [h for h in hint if h not in cands],
+                              reason=f"{HOW_ALIAS} ↔ lab tablosu ipucu çelişiyor")
+                cands = both
+            if len(cands) == 1:
+                return _m("ok", cands[0], HOW_ALIAS) if hint else _single(cands[0], HOW_ALIAS, sup_key, mats)
+            return _resolve_multi(cands, sup_key, mats, via=HOW_ALIAS)
+    if doc and len(hint) == 1:
+        return _m("ok", hint[0], "lab tablosu ipucu")
     keyed = mats.keyed(name)
     if hint:                                          # ipucu 2+ kart: anahtar ayırsın
         both = [i for i in keyed if i in hint]
         if len(both) == 1:
-            return {"status": "ok", "item_id": both[0], "how": "ipucu + material_key",
-                    "candidates": [], "suggestions": []}
-        return {"status": "belirsiz", "item_id": None, "how": None, "candidates": hint, "suggestions": []}
+            return _m("ok", both[0], "ipucu + material_key")
+        return _m("belirsiz", candidates=hint, reason="lab tablosu ipucu birden çok kart gösteriyor")
     if len(keyed) == 1:
-        return {"status": "ok", "item_id": keyed[0], "how": "material_key", "candidates": [],
-                "suggestions": []}
+        return _single(keyed[0], "material_key", sup_key, mats)
     if len(keyed) > 1:
-        return {"status": "belirsiz", "item_id": None, "how": None, "candidates": keyed, "suggestions": []}
-    return {"status": "eslesmedi", "item_id": None, "how": None, "candidates": [],
-            "suggestions": mats.suggest(name)}
+        return _resolve_multi(keyed, sup_key, mats, via="material_key")
+    return _m("eslesmedi", suggestions=mats.suggest(name))
 
 
 def _prio(r: dict) -> tuple:
@@ -550,20 +812,22 @@ def plan(db: Session, data: Optional[dict] = None, *, domain: str = DOMAIN) -> d
     sup_keys = {supplier_key(s.name) for s in sups.by_id.values() if s.name}
     sup_keys.discard("")
     mats = _Materials(db, domain, sup_keys)
+    mats.attach_suppliers(sups)
+    aliases = _material_aliases(data)
 
     # ── 1) kayıt görünümleri + malzeme/tedarikçi eşleşmesi (A önce: ipucu) ──
     recs: List[dict] = []
-    row_card: Dict[str, dict] = {}
+    a_recs: Dict[str, List[dict]] = {}
     order = sorted(range(len(recs_in)), key=lambda i: (recs_in[i]["tur"] != "lab_tablo", i))
     views: Dict[int, dict] = {}
     for i in order:
         r = recs_in[i]
         if r["tur"] not in SOURCE_BY_TYPE and r["tur"] not in REFERENCE_TYPES:
             raise ValueError(f"{r.get('id')}: bilinmeyen tür {r.get('tur')!r}")
-        m = _match_material(r, mats, row_card, item_ov)
-        if r["tur"] == "lab_tablo":
-            row_card.setdefault(_row_prefix(r["id"]), m if m["status"] == "ok" else {})
         s = sups.resolve(r.get("tedarikci"))
+        m = _match_material(r, mats, a_recs, item_ov, s["key"], aliases)
+        if r["tur"] == "lab_tablo":
+            a_recs.setdefault(_row_prefix(r["id"]), []).append({"id": r["id"], "match": m, "sup_key": s["key"]})
         views[i] = {
             "idx": i, "id": r["id"], "page": r.get("kaynak_sayfa"), "type": r["tur"],
             "source": SOURCE_BY_TYPE.get(r["tur"]), "date": _date(r.get("tarih")),
@@ -575,7 +839,7 @@ def plan(db: Session, data: Optional[dict] = None, *, domain: str = DOMAIN) -> d
             "confidence": r.get("guven") or "",
             "note": r.get("not") or "", "table_unit": r.get("birim_kart"),
             "mat": m, "item": mats.view(m.get("item_id")), "sup": s,
-            "flags": [], "overridden": [], "status": None,
+            "flags": [m["note"]] if m.get("note") else [], "overridden": [], "status": None,
         }
     recs = [views[i] for i in range(len(recs_in))]
 
@@ -654,7 +918,7 @@ def plan(db: Session, data: Optional[dict] = None, *, domain: str = DOMAIN) -> d
 
     for r in recs:
         r["write_note"] = _write_note(r)
-    cand_names = {iid: mats.label(iid) for r in recs
+    cand_names = {iid: mats.cand_label(iid) for r in recs
                   for iid in (r["mat"].get("candidates") or []) + (r["mat"].get("suggestions") or [])}
 
     new_sups = _new_suppliers(recs)
@@ -672,6 +936,13 @@ def plan(db: Session, data: Optional[dict] = None, *, domain: str = DOMAIN) -> d
         "tedarikci_eslesen": sum(1 for r in recs if r["sup"]["kind"] == "id"),
         "yeni_firma": len(new_sups),
         "okuma_belirsiz": sum(1 for r in recs if r["confidence"] == "belirsiz"),
+        # birden çok aday kartın kuralla çözülmesi (belgenin aynı tedarikçili
+        # ipucuyla devraldığı dahil) — (c) eşleşme güveni BELİRSİZ
+        "kural_a": sum(1 for r in recs if r["mat"]["status"] == "ok" and r["mat"].get("rule") == "a"),
+        "kural_b": sum(1 for r in recs if r["mat"]["status"] == "ok" and r["mat"].get("rule") == "b"),
+        "kural_c": sum(1 for r in recs if r["mat"]["status"] == "ok" and r["mat"].get("rule") == "c"),
+        "eslesme_guven_belirsiz": sum(1 for r in recs if r["mat"]["status"] == "ok"
+                                      and r["mat"].get("guven") == "belirsiz"),
     }
     for st in STATUS_TEXT:
         counts[st] = sum(1 for r in recs if r["status"] == st)
@@ -687,6 +958,10 @@ def _write_note(r: dict) -> str:
         bits.append(r["note"])
     if r["confidence"] == "belirsiz":
         bits.append("OKUMA BELİRSİZ — Excel 'Belirsiz okumalar'")
+    m = r["mat"]
+    if m["status"] == "ok" and (m.get("rule") or m.get("how") not in ("ad", "elle eşleme")):
+        bits.append(f"Kart eşleşmesi: {m['how']}"
+                    + (" — GÜVEN BELİRSİZ (lab doğrulasın)" if m.get("guven") == "belirsiz" else ""))
     if r["overridden"]:
         bits.append("Ezilen: " + "; ".join(r["overridden"]))
     return " · ".join(bits)
@@ -814,9 +1089,12 @@ def _pref_rows(db: Session, recs: List[dict], sups: _Suppliers, domain: str) -> 
                 warn.append(f"Alternatif: {why}.")
             if item is None:
                 warn.append("IMS kartı eşleşmedi — onaylansa da uygulanamaz (önce kart eşlemesi).")
-            elif kind == "nottan alternatif" and rec["item"] and rec["item"]["id"] != item["id"]:
-                warn.append(f"Belge kaydı başka karta eşlendi ({rec['item']['id']} {rec['item']['name']}); "
+            elif (kind == "nottan alternatif" and rec["item"] and rec["item"]["id"] != item["id"]
+                  and _scope_of(rec["item"]) != _scope_of(item)):
+                warn.append(f"Kayıt başka karta eşlendi ({rec['item']['id']} {rec['item']['name']}); "
                             "tercih bu lab satırının kartına yazılır.")
+            if kind == "sarı seçim" and rec["mat"].get("guven") == "belirsiz":
+                warn.append("Kart eşleşmesi BELİRSİZ (tek reçete kartı seçildi) — 'Eşleşmeyenler'de doğrulayın.")
             if rec["sup"]["kind"] == "new":
                 warn.append("Tedarikçi kartı yok — 'Yeni tedarikçiler' sayfasında bu firmaya E verilirse "
                             "kart açıldıktan sonra uygulanır.")
@@ -875,11 +1153,93 @@ def _small_rows(recs: List[dict], sups: _Suppliers) -> List[dict]:
 
 # ─── Yazım ──────────────────────────────────────────────────────────────────
 
-def _delete_lab_rows(db: Session, domain: str) -> int:
-    return (db.query(SupplierPrice)
-            .filter(SupplierPrice.domain == domain, SupplierPrice.source.in_(LAB_SOURCES),
-                    SupplierPrice.source_label.like(f"{LABEL_PREFIX}%"))
-            .delete(synchronize_session=False))
+def _record_selection(raw) -> List[dict]:
+    """Manifest biçimini doğrula; E/H onayı veya eşleme tahmini üretmez."""
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("--record-ids manifesti boş olmayan bir JSON dizisi olmalı")
+    out, seen = [], set()
+    for i, row in enumerate(raw, 1):
+        if not isinstance(row, dict) or set(row) != {"id", "item_id", "supplier_id"}:
+            raise ValueError(f"--record-ids satır {i}: yalnız id, item_id, supplier_id alanları gerekli")
+        rid = row["id"]
+        if not isinstance(rid, str) or not rid.strip():
+            raise ValueError(f"--record-ids satır {i}: kayıt id boş olmayan metin olmalı")
+        rid = rid.strip()
+        if rid in seen:
+            raise ValueError(f"--record-ids: kayıt tekrar ediyor: {rid}")
+        for field in ("item_id", "supplier_id"):
+            if type(row[field]) is not int or row[field] <= 0:
+                raise ValueError(f"--record-ids {rid}: {field} pozitif tam sayı olmalı")
+        seen.add(rid)
+        out.append({"id": rid, "item_id": row["item_id"], "supplier_id": row["supplier_id"]})
+    return out
+
+
+def load_record_selection(path) -> List[dict]:
+    """JSON manifest → [{id, item_id, supplier_id}]; bozuk/boş manifest hata."""
+    with Path(path).open(encoding="utf-8") as f:
+        return _record_selection(json.load(f))
+
+
+def _selected_price_records(p: dict, selection: Optional[List[dict]]) -> Tuple[List[dict], List[str]]:
+    """Tam plan kazananlarını seç; hiçbir kart/firma eşlemesini DEĞİŞTİRMEZ."""
+    if selection is None:
+        return [r for r in p["records"] if r["status"] == "yazilacak"], []
+    try:
+        selection = _record_selection(selection)
+    except ValueError as e:
+        return [], [str(e)]
+    by_id = {}
+    for r in p["records"]:
+        by_id.setdefault(r["id"], []).append(r)
+    selected, errors = [], []
+    for row in selection:
+        matches = by_id.get(row["id"], [])
+        if len(matches) != 1:
+            errors.append(f"--record-ids {row['id']}: kayıt tam planda "
+                          + ("yok" if not matches else "birden çok kez var"))
+            continue
+        r = matches[0]
+        if r["status"] != "yazilacak":
+            errors.append(f"--record-ids {r['id']}: yazılacak kazanan değil ({r['status']})")
+            continue
+        if (r["item"]["id"], r["sup"]["id"]) != (row["item_id"], row["supplier_id"]):
+            errors.append(f"--record-ids {r['id']}: kart/tedarikçi eşlemesi değişti "
+                          f"({row['item_id']}/{row['supplier_id']} → "
+                          f"{r['item']['id']}/{r['sup']['id']}) — tam planı yeniden inceleyin")
+            continue
+        selected.append(r)
+    return ([] if errors else selected), errors
+
+
+def _record_manifest_errors(approvals: Optional[dict], selection: Optional[List[dict]]) -> List[str]:
+    """Kısmi onaylı Excel yalnız kendi dış manifestiyle fiyat yazabilir."""
+    if approvals is None or "record_manifest" not in approvals:
+        return []
+    errors = list(approvals.get("record_manifest_errors") or [])
+    if selection is None:
+        errors.append(f"'{RECORD_MANIFEST_SHEET}' sayfalı onaylı Excel için --record-ids manifesti şart")
+        return errors
+    try:
+        expected = _record_selection(approvals["record_manifest"])
+        actual = _record_selection(selection)
+    except ValueError as e:
+        errors.append(f"'{RECORD_MANIFEST_SHEET}': {e}")
+        return errors
+    if sorted(expected, key=lambda r: r["id"]) != sorted(actual, key=lambda r: r["id"]):
+        errors.append(f"'{RECORD_MANIFEST_SHEET}' ile --record-ids kayıt/kart/tedarikçi seçimi aynı değil")
+    return errors
+
+
+def _delete_lab_rows(db: Session, domain: str, pairs: Optional[List[tuple]] = None) -> int:
+    q = (db.query(SupplierPrice)
+         .filter(SupplierPrice.domain == domain, SupplierPrice.source.in_(LAB_SOURCES),
+                 SupplierPrice.source_label.like(f"{LABEL_PREFIX}%")))
+    if pairs is not None:
+        if not pairs:
+            return 0
+        q = q.filter(tuple_(SupplierPrice.item_id, SupplierPrice.supplier_id).in_(pairs))
+    return q.delete(synchronize_session=False)
 
 
 def fix_errors(p: dict, approvals: dict, data: dict) -> List[str]:
@@ -888,7 +1248,8 @@ def fix_errors(p: dict, approvals: dict, data: dict) -> List[str]:
     veri dosyasına aktarılmamışsa hata döner (hiçbir şey yazılmasın — düzeltme
     sessizce kaybolup okunan değer yazılmasın).  Aktarılmış sayılır:
       • Doğru değer: kaydın `fiyat`ı artık o sayıya eşit;
-      • Doğru kart: `elle_eslesme.kart`ta kayıt ya da lab satırı var."""
+      • Doğru kart: `elle_eslesme.kart`ta kayıt ya da lab satırı var VE
+        seçilen kartın no/adı Excel'deki düzeltmeyle aynı."""
     by_id = {r["id"]: r for r in p["records"]}
     kart = (data.get("elle_eslesme") or {}).get("kart") or {}
     errs: List[str] = []
@@ -907,6 +1268,14 @@ def fix_errors(p: dict, approvals: dict, data: dict) -> List[str]:
                         "değer geçersizse hücreyi temizleyin")
         else:
             if f["id"] in kart or _row_prefix(f["id"]) in kart:
+                it = r.get("item")
+                v = _num(f["value"])
+                text = normalize(str(f["value"]))
+                if it is not None and ((v is not None and v == it["id"])
+                                       or text in (normalize(it["name"]), normalize(p_label(r)))):
+                    continue
+                errs.append(f"{where}: doğru kart «{f['value']}» veri dosyasındaki kartla aynı değil "
+                            f"(şu an {p_label(r)}) — 'elle_eslesme.kart'ı Excel'deki düzeltmeyle eşleştirin")
                 continue
             errs.append(f"{where}: doğru kart «{f['value']}» veri dosyasına işlenmemiş — "
                         "'elle_eslesme.kart'a kart no'sunu ekleyin; gerek yoksa hücreyi temizleyin")
@@ -936,20 +1305,28 @@ def _approved_new_suppliers(p: dict, approvals: Optional[dict]) -> Tuple[List[di
 
 
 def apply(db: Session, data: Optional[dict] = None, *, create_suppliers: bool = False,
-          approvals: Optional[dict] = None, domain: str = DOMAIN) -> dict:
+          approvals: Optional[dict] = None, domain: str = DOMAIN,
+          record_selection: Optional[List[dict]] = None) -> dict:
     """Planı kurar; `approvals` (onaylı Excel, `read_approvals`) verilirse
     Excel hataları + işlenmemiş düzeltme hücreleri (`fix_errors`) varsa
     HİÇBİR ŞEY yazmaz (`applied` False, `errors`).  `create_suppliers` ise
     yalnız "Yeni tedarikçiler"de E olan firmaların kartını açıp yeniden eşler;
     önceki lab satırlarını silip yazılacakları ekler, TEK commit; sonra özet
-    audit.  `manual` / `stok_son_durum` satırlarına dokunmaz."""
+    audit.  `record_selection` verilirse tam planın yalnız doğrulanmış
+    kazananları ve onların lab fiyat çiftleri yenilenir (firma açılmaz).
+    `manual` / `stok_son_durum` satırlarına dokunmaz."""
     data = data or load_data()
     p = plan(db, data, domain=domain)
-    errors: List[str] = []
+    selected, errors = _selected_price_records(p, record_selection)
+    if record_selection is not None:
+        p["selected_records"] = [r["id"] for r in selected]
+        if create_suppliers:
+            errors.append("--record-ids ile --create-suppliers birlikte kullanılamaz")
     if approvals is not None:
-        errors += list(approvals.get("errors") or []) + fix_errors(p, approvals, data)
+        errors += (list(approvals.get("errors") or []) + fix_errors(p, approvals, data)
+                   + _record_manifest_errors(approvals, record_selection))
     to_create: List[dict] = []
-    if create_suppliers:
+    if create_suppliers and record_selection is None:
         to_create, errs = _approved_new_suppliers(p, approvals)
         errors += errs
     if errors:
@@ -965,11 +1342,12 @@ def apply(db: Session, data: Optional[dict] = None, *, create_suppliers: bool = 
         created.append({"id": s.id, "name": s.name})
     if created:
         p = plan(db, data, domain=domain)
-    deleted = _delete_lab_rows(db, domain)
+        selected, _ = _selected_price_records(p, None)
+    pairs = ([(r["item"]["id"], r["sup"]["id"]) for r in selected]
+             if record_selection is not None else None)
+    deleted = _delete_lab_rows(db, domain, pairs)
     written = 0
-    for r in p["records"]:
-        if r["status"] != "yazilacak":
-            continue
+    for r in selected:
         sup = db.query(Supplier).filter(Supplier.id == r["sup"]["id"]).first()
         db.add(SupplierPrice(
             item_id=r["item"]["id"], supplier_id=sup.id, supplier_name=sup.name,
@@ -988,6 +1366,7 @@ def apply(db: Session, data: Optional[dict] = None, *, create_suppliers: bool = 
         details={"actor": ACTOR, "script": Path(__file__).name, "domain": domain,
                  "deleted_previous": deleted, "written": written,
                  "created_suppliers": created,
+                 **({"record_selection": record_selection} if record_selection is not None else {}),
                  "skipped": {k: c[k] for k in STATUS_TEXT if k != "yazilacak" and c.get(k)},
                  "skipped_manual": [r["id"] for r in p["records"] if r["status"] == "elle_var"]})
     p.update(applied=True, deleted=deleted, written=written, created_suppliers=created, errors=[])
@@ -1055,7 +1434,7 @@ def build_xlsx(p: dict, path) -> Path:
         for ri, row in enumerate(rows, 2):
             for ci, v in enumerate(row, 1):
                 c = ws.cell(ri, ci, v)
-                c.alignment = wrap if cols[ci - 1][1] >= 30 else top
+                c.alignment = wrap if isinstance(v, str) else top
                 if names[ci - 1] in inputs and v != NOT_APPLICABLE:
                     c.fill = input_fill
                 if names[ci - 1] in warn_cols and v:
@@ -1082,7 +1461,8 @@ def build_xlsx(p: dict, path) -> Path:
     lines = [
         ("Lab fiyat notları (07.10.2026) — kontrol listesi", True),
         (f"Kayıt: {c['kayit']} · yazılacak fiyat satırı: {c['yazilacak']} · eşleşmeyen/belirsiz/ayrı form: "
-         f"{c['malzeme_eslesmeyen']}/{c['malzeme_belirsiz']}/{c['ayri_form']} · yeni tedarikçi: "
+         f"{c['malzeme_eslesmeyen']}/{c['malzeme_belirsiz']}/{c['ayri_form']} · otomatik seçilen ama "
+         f"eşleşme güveni belirsiz: {c['eslesme_guven_belirsiz']} · yeni tedarikçi: "
          f"{c['yeni_firma']} · okuma belirsiz: {c['okuma_belirsiz']}", False),
         ("", False),
         ("Nasıl doldurulur", True),
@@ -1097,8 +1477,10 @@ def build_xlsx(p: dict, path) -> Path:
         ("2) 'Küçük satıcı önerisi' sayfası: yalnız 1 kg'lık ambalajla satan firmalar. Bu firmadan artık "
          "alınmasın ('bitirilecek — alma') diyorsanız 'Bitirilecek yapılsın mı (E/H)' sütununa E yazın. "
          "Aynı firmaya hem tercih hem bitirilecek E'si verilemez.", False),
-        ("3) 'Eşleşmeyenler' sayfası: sistemde kartı bulunamayan ya da birden çok kartla eşleşen malzemeler. "
-         "Doğru kartı biliyorsanız 'Doğru IMS kartı' sütununa kart adını/numarasını yazın.", False),
+        ("3) 'Eşleşmeyenler' sayfası: sistemde kartı bulunamayan ya da birden çok kartla eşleşen malzemeler "
+         "(adaylar: no · ad · tedarikçi · stok · reçetede mi) ve otomatik seçilen ama güveni BELİRSİZ "
+         "eşleşmeler. Doğru kartı biliyorsanız 'Doğru IMS kartı' sütununa kart adını/numarasını yazın; "
+         "otomatik seçim doğruysa boş bırakın.", False),
         ("4) 'Belirsiz okumalar' sayfası: el yazısı net okunamayan fiyatlar. Doğru değeri biliyorsanız "
          "'Doğru değer' sütununa yazın (ör. 7,15). Boş bıraktığınız satırda okunan değer, notunda "
          "'okuma belirsiz' yazarak sisteme girer.", False),
@@ -1114,6 +1496,12 @@ def build_xlsx(p: dict, path) -> Path:
         ("• Aynı kart + firma için tek fiyat tutulur: fatura/sipariş/proforma (en yeni) lab tablosundan "
          "önce gelir; ezilen değer kazanan satırın notuna yazılır.", False),
         ("• Sistemde elle girilmiş fiyatı olan kart + firma ezilmez (elle girilen kazanır).", False),
+        ("• Aynı malzemenin birden çok kartı varsa (her tedarikçiye ayrı kart): önce tedarikçinin kendi kartı; "
+         "yoksa kartlar aynı 'aynı malzeme' grubundaysa grubun ana kartı (reçetedeki / stoğu en yüksek); yoksa "
+         "adaylardan yalnız biri reçetedeyse o kart — bu son durumda 'Eşleşme güveni' BELİRSİZ yazar ve satır "
+         "'Eşleşmeyenler'de doğrulamaya gelir. Hiçbiri ayıramazsa fiyat yazılmaz, adaylar listelenir.", False),
+        ("• Fatura/sipariş/proforma, notundaki 'lab tablosu karşılığı' satırında AYNI firmanın kaydı hangi "
+         "karttaysa o karta yazılır.", False),
         ("• Pharmaterm uçucu yağ fiyatları tabloda KDV DAHİL; satın alma planı bunları net fiyatla "
          "karşılaştırır.", False),
     ]
@@ -1126,14 +1514,15 @@ def build_xlsx(p: dict, path) -> Path:
     recs = p["records"]
     # ── Fiyatlar ──
     cols = [("Kayıt", 11), ("Sayfa", 7), ("Tür", 13), ("Tarih", 11), ("Nottaki malzeme", 30),
-            ("IMS kartı (no ad birim)", 36), ("Eşleşme", 16), ("Nottaki tedarikçi", 22),
+            ("IMS kartı (no ad birim)", 36), ("Eşleşme", 30), ("Eşleşme güveni", 10), ("Nottaki tedarikçi", 22),
             ("IMS tedarikçisi", 28), ("Fiyat", 10), ("Para birimi", 9), ("Birim", 7),
             ("Ambalaj", 9), ("KDV", 8), ("KDV %", 7), ("Seçili (sarı)", 9), ("Güven", 9),
             ("Yazılacak mı / neden", 40), ("Uyarılar", 40), ("Not", 60)]
     rows = []
     for r in recs:
         rows.append([r["id"], r["page"], TYPE_TEXT[r["type"]], _dmy(r["date"]) if r["date"] else "",
-                     r["material"], p_label(r), _mat_how(r), r["supplier"], _sup_text(r["sup"]),
+                     r["material"], p_label(r), _mat_how(r), r["mat"].get("guven") or "", r["supplier"],
+                     _sup_text(r["sup"]),
                      r["price"], r["currency"], r["price_unit"], r["package"], _vat_text(r),
                      r["vat_rate"], "evet" if r["selected"] else "", r["confidence"],
                      STATUS_TEXT.get(r["status"], r["status"]), "; ".join(r["flags"]), r["write_note"]])
@@ -1149,9 +1538,14 @@ def build_xlsx(p: dict, path) -> Path:
     rows = []
     for r in recs:
         m = r["mat"]
-        if m["status"] == "ok" and r["status"] != "uyumsuz":
+        unsure = m["status"] == "ok" and m.get("guven") == "belirsiz"
+        if m["status"] == "ok" and r["status"] != "uyumsuz" and not unsure:
             continue
-        if m["status"] == "ayri_form":
+        if unsure:
+            prob = (f"Eşleşme BELİRSİZ — otomatik seçildi: {p_label(r)} · {m['how']} · yanlışsa doğru kartı "
+                    "yazın")
+            cands = ", ".join(p["cand_names"].get(i, str(i)) for i in m["candidates"])
+        elif m["status"] == "ayri_form":
             prob, cands = "Ayrı form — " + m.get("reason", ""), ""
         elif m["status"] == "belirsiz":
             prob = "Birden çok aday kart" + (f" — {m['reason']}" if m.get("reason") else "")
@@ -1239,12 +1633,14 @@ def p_label(r: dict) -> str:
 def read_approvals(path) -> dict:
     """Onaylı Excel → {prefs: {kayıt: {ok, material, supplier, row}},
     small: {kayıt: {ok, row}}, new: {YT-…: {ok, name, row}},
-    fixes: [{sheet, id, value, row}], errors: [...]}.
+    fixes: [{sheet, id, value, row}], errors: [...], isteğe bağlı
+    record_manifest: [{id, item_id, supplier_id}], record_manifest_errors: [...]}.
 
     E/H dışı onay değeri hata listesine (`_yes_no`).  Düzeltme sayfalarının
     ("Eşleşmeyenler → Doğru IMS kartı", "Belirsiz okumalar → Doğru değer")
     DOLU hücreleri `fixes`e girer — otomatik işlenmez, `fix_errors` veri
-    dosyasına aktarılıp aktarılmadığını denetler."""
+    dosyasına aktarılıp aktarılmadığını denetler.  'Aktarım seçimi' metadata'sı
+    yalnız fiyat yazımını sınırlar; hataları tercih onaylarından ayrı tutulur."""
     from openpyxl import load_workbook
     wb = load_workbook(path, data_only=True, read_only=True)
     out = {"prefs": {}, "small": {}, "new": {}, "fixes": [], "errors": []}
@@ -1305,6 +1701,29 @@ def read_approvals(path) -> dict:
                 out["errors"].append(f"'{title}' satır {n}: '{col}' dolu ama kayıt no'su yok — elle işleyin")
                 continue
             out["fixes"].append({"sheet": title, "id": str(rid), "value": v, "row": n})
+    if RECORD_MANIFEST_SHEET in wb.sheetnames:
+        out["record_manifest"] = []
+        out["record_manifest_errors"] = []
+        it = wb[RECORD_MANIFEST_SHEET].iter_rows(values_only=True)
+        head = [str(h).strip() if h is not None else "" for h in next(it, ())]
+        while head and not head[-1]:
+            head.pop()
+        if head != ["Kayıt", "item_id", "supplier_id"]:
+            out["record_manifest_errors"].append(
+                f"'{RECORD_MANIFEST_SHEET}': sütunlar Kayıt, item_id, supplier_id olmalı")
+        else:
+            raw = []
+            for row in it:
+                if not any(v is not None and str(v).strip() for v in row):
+                    continue
+                if any(v is not None and str(v).strip() for v in row[3:]):
+                    out["record_manifest_errors"].append(
+                        f"'{RECORD_MANIFEST_SHEET}': yalnız üç manifest sütunu olabilir")
+                raw.append({"id": cell(row, 0), "item_id": cell(row, 1), "supplier_id": cell(row, 2)})
+            try:
+                out["record_manifest"] = _record_selection(raw)
+            except ValueError as e:
+                out["record_manifest_errors"].append(f"'{RECORD_MANIFEST_SHEET}': {e}")
     wb.close()
     return out
 
@@ -1485,6 +1904,8 @@ def _print_plan(p: dict, *, commit: bool, create: bool) -> None:
     print(f"  Kayıt                 : {c['kayit']}")
     print(f"  Malzeme eşleşen       : {c['malzeme_eslesen']}  · bulunamayan {c['malzeme_eslesmeyen']}"
           f" · belirsiz {c['malzeme_belirsiz']} · ayrı form {c['ayri_form']}")
+    print(f"  Çok adaylı kart       : (a) kendi kartı {c['kural_a']} · (b) grup ana kartı {c['kural_b']}"
+          f" · (c) tek reçete kartı {c['kural_c']} (eşleşme güveni belirsiz: {c['eslesme_guven_belirsiz']})")
     print(f"  Tedarikçi eşleşen     : {c['tedarikci_eslesen']} kayıt · yeni firma {c['yeni_firma']}")
     print(f"  Okuma belirsiz        : {c['okuma_belirsiz']}")
     print(f"  Ezilen (öncelik)      : {c['ezildi']}  · elle fiyat var {c['elle_var']}"
@@ -1492,7 +1913,11 @@ def _print_plan(p: dict, *, commit: bool, create: bool) -> None:
     print(f"  Yazılmayan (belge)    : üstü çizili {c['cizili']} · fiyat listesi (kapsam dışı) {c['kapsam_disi']}")
     print(f"  Yeni firma bekleyen   : {c['yeni_tedarikci']} satır ({c['yeni_firma']} firma)"
           + (" — onaylı Excel'de E + --create-suppliers ile yazılır" if not create else ""))
-    print(f"  YAZILACAK satır       : {c['yazilacak']}  (silinecek önceki lab satırı: {p['existing_lab_rows']})")
+    if "selected_records" in p:
+        print(f"  YAZILACAK seçili      : {len(p['selected_records'])}  (tam plan: {c['yazilacak']}; "
+              "yalnız seçili kart/firma lab fiyatları yenilenir)")
+    else:
+        print(f"  YAZILACAK satır       : {c['yazilacak']}  (silinecek önceki lab satırı: {p['existing_lab_rows']})")
     print(f"  Tercih önerisi        : {len(p['prefs'])} satır · küçük satıcı önerisi: "
           f"{sum(1 for s in p['small'] if s['kind'] != 'bilgi')}")
     if p["new_suppliers"]:
@@ -1500,11 +1925,22 @@ def _print_plan(p: dict, *, commit: bool, create: bool) -> None:
         for ns in p["new_suppliers"]:
             print(f"    · YT-{ns['key']} {ns['name']}  ({', '.join(ns['spellings'])}) — {len(ns['records'])} "
                   f"kayıt, yazılabilir {ns['writable']}" + ("" if ns["writable"] else " → AÇILMAZ"))
+    auto = [r for r in p["records"] if r["mat"]["status"] == "ok" and r["mat"].get("rule")]
+    if auto:
+        print("\n  Çok adaylı kartta kuralla seçilenler (kural · kayıt → kart):")
+        for r in auto:
+            m = r["mat"]
+            print(f"    · {RULE_TEXT[m['rule']]} · {r['id']} {r['material']} / {r['supplier']} → {p_label(r)}"
+                  + ("" if m["how"] in (HOW_OWN, HOW_GROUP_MAIN, HOW_ONLY_RECIPE) else f" [{m['how']}]"))
     bad = [r for r in p["records"] if r["mat"]["status"] != "ok"]
     if bad:
         print("\n  Eşleşmeyen / belirsiz malzemeler:")
         for r in bad:
-            print(f"    · {r['id']} {r['material']} — {STATUS_TEXT.get(r['status'], r['status'])}")
+            m = r["mat"]
+            extra = ""
+            if m["status"] == "belirsiz" and m["candidates"]:
+                extra = " — adaylar: " + "; ".join(p["cand_names"].get(i, str(i)) for i in m["candidates"])
+            print(f"    · {r['id']} {r['material']} — {STATUS_TEXT.get(r['status'], r['status'])}{extra}")
     man = [r for r in p["records"] if r["status"] == "elle_var"]
     if man:
         print("\n  Elle fiyatı olduğu için yazılmayacaklar:")
@@ -1564,9 +2000,12 @@ def main(argv=None) -> int:
     ap.add_argument("--xlsx", metavar="YOL", help="kontrol Excel'ini yaz")
     ap.add_argument("--apply-prefs", metavar="ONAYLI_XLSX", help="onaylı Excel'den tercih + bitirilecek")
     ap.add_argument("--data", metavar="JSON", help="veri dosyası (varsayılan scripts/data/…)")
+    ap.add_argument("--record-ids", metavar="SECIM_JSON",
+                    help='kısmi fiyat manifesti: [{"id":"C-s12-1","item_id":160,"supplier_id":10}]')
     args = ap.parse_args(sys.argv[1:] if argv is None else argv)
     try:
         data = load_data(args.data)
+        record_selection = load_record_selection(args.record_ids) if args.record_ids else None
     except (OSError, ValueError) as e:
         print(f"⛔ veri dosyası okunamadı: {e}")
         return 2
@@ -1576,6 +2015,9 @@ def main(argv=None) -> int:
         return 2
     if args.create_suppliers and not args.onayli:
         print("⛔ --create-suppliers yalnız --onayli ONAYLI.xlsx ile ('Kartı açılsın mı'=E olan firmalar)")
+        return 2
+    if args.record_ids and (args.apply_prefs or args.create_suppliers):
+        print("⛔ --record-ids yalnız fiyat seçimi içindir; --apply-prefs / --create-suppliers ile kullanılamaz")
         return 2
     approvals = None
     xlsx_in = args.apply_prefs or args.onayli
@@ -1592,6 +2034,13 @@ def main(argv=None) -> int:
             _print_prefs(pp, commit=args.commit)
             return 2 if pp["errors"] else 0
         p = plan(db, data)
+        if record_selection is not None:
+            selected, errors = _selected_price_records(p, record_selection)
+            p["selected_records"] = [r["id"] for r in selected]
+            if errors:
+                p["errors"] = errors
+                _print_plan(p, commit=args.commit, create=args.create_suppliers)
+                return 2
         if args.xlsx:
             out = build_xlsx(p, args.xlsx)
             print(f"Kontrol Excel'i yazıldı: {out}")
@@ -1601,9 +2050,11 @@ def main(argv=None) -> int:
                 if waiting:
                     print("  ⚠ E onaylı yeni tedarikçi(ler) AÇILMADI (--create-suppliers yok), satırları "
                           "yazılmayacak: " + ", ".join(ns["name"] for ns in waiting))
-            p = apply(db, data, create_suppliers=args.create_suppliers, approvals=approvals)
+            p = apply(db, data, create_suppliers=args.create_suppliers, approvals=approvals,
+                      record_selection=record_selection)
         elif approvals is not None:                      # kuru, onaylı Excel denetimi
-            errs = list(approvals["errors"]) + fix_errors(p, approvals, data)
+            errs = (list(approvals["errors"]) + fix_errors(p, approvals, data)
+                    + _record_manifest_errors(approvals, record_selection))
             to_open, nerr = _approved_new_suppliers(p, approvals)
             p["errors"] = errs + nerr
             if to_open:

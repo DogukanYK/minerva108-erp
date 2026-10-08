@@ -11,6 +11,19 @@
     "tur 'fiyat_listesi' (yalnız s.11 Doalin — basılı liste + el notu 'Satın Alındı!'): fiyat YAZILMAZ (plan P1c: D yüklenmez); tercih önerisinde nottan alternatif olarak görünür.",
     "cizili: true = teklif belgede elle üstü çizili (C-s16-4 CLOVE OIL, A2-16-S2 Fındık Naturalya); yazılmaz, öncelik yarışına girmez. Alan yoksa false."
   ],
+  "malzeme_takma_adlari": {
+    "_aciklama": "Belge/tablo adı → prod IMS kart adı (08.10.2026, prod kart listesine bakılarak). Normal takma ad yalnız ad hiçbir karta birebir uymuyorsa kullanılır. Liste = sıvı/aynı malzeme adayları (betiğin (a)–(d) kuralları seçer); {adaylar, lab_belirlesin} = kanıt çelişkili, birebir ad bulunsa da OTOMATİK seçilmez (Excel 'Eşleşmeyenler'de adaylar listelenir).",
+    "Betaine 35": "BETAİN 35",
+    "XANTHAN GUM": "XHANTAN GUM",
+    "COCONUT OIL RX": "HİNDİSTAN CEVİZİ YAĞI",
+    "BERGAMOT YAĞI": "BERGAMOT UÇUCU YAĞI",
+    "Kakao Yağı (Katı)": "KAKAO BUTTER",
+    "ALEOVERA EKSTRAKTI": ["ALOE VERA EKSTRAKTI", "ALOEVERA EKSTRAKTI"],
+    "NAR ÇEKİDEĞİ YAGI": {
+      "adaylar": ["NAR ÇEKİRDEĞİ YAĞI", "NAR ÇİÇEGİ YAGI"],
+      "lab_belirlesin": "tablodaki ad NAR ÇEKİRDEĞİ YAĞI kartını (ml, stok 0) gösteriyor ama tablonun birimi (g) ve stoğu (536) NAR ÇİÇEGİ YAGI kartıyla (g, stok 536) birebir aynı"
+    }
+  },
   "kayitlar": [
     {
       "id": "A1-02-S1",
