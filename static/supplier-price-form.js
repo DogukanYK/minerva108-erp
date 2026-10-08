@@ -17,7 +17,7 @@
  *
  * API (routers/reports.py):
  *   POST /api/supplier-prices {item_id, supplier_id, unit_price, currency,
- *     price_unit, package_size?, quoted_at?, note?}  → 201 satır
+ *     price_unit, package_size?, quoted_at?, note?, vat_included?, vat_rate?}  → 201 satır
  *     409 {code:'price_exists', id} → "zaten var, güncellensin mi?" → PUT
  *   PUT  /api/supplier-prices/{id}  (kısmi) — Excel satırı düzenlenince
  *     'elle' olur, sonraki içe aktarma onu silmez.  Düzenlemedeki 409
@@ -25,6 +25,9 @@
  * Kurallar SUNUCUDADIR; burada birim seçenekleri malzemenin birim ailesine
  * göre süzülür (core/supplier_prices.price_unit_ok): adetli → adet,
  * kütle/hacim → kg | l.
+ *  • KDV (08.10.2026): "KDV" seçimi boş (= bilinmiyor, varsayılan) | hariç |
+ *    dahil + oran (%).  Dahilse oran şart; satın alma planı net fiyatla
+ *    karşılaştırır, `priceText` fiyatın yanına "(KDV %20 dahil)" yazar.
  *  • Form SAYFA İÇİNDE çizilir (Bootstrap modal içinde ikinci modal yok).
  *  • Sınıf öneki `spf-`; `btn-*` adı YASAK (Bootstrap gölgeleme tuzağı).
  *  • Defer DEĞİL — şablonlar bootstrap.bundle'dan hemen sonra yükler; inline
@@ -76,10 +79,20 @@
     var n = Number(v), d = (n !== 0 && Math.abs(n) < 1) ? 4 : 2;
     return n.toLocaleString('tr-TR', { minimumFractionDigits: d, maximumFractionDigits: d });
   }
+  // core/supplier_prices.vat_label karşılığı — KDV dahil satırın etiketi
+  function vatLabel(r) {
+    if (!r || r.vat_included !== true) return '';
+    var rate = r.vat_rate;
+    return (rate != null && rate !== '' && isFinite(Number(rate)))
+      ? 'KDV %' + Number(rate).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' dahil'
+      : 'KDV dahil';
+  }
   function priceText(r) {
     var cur = String(r.currency || '').toUpperCase();
     var sym = SYM[cur] || cur;
-    return money(r.unit_price) + (sym ? ' ' + esc(sym) : '') + (r.price_unit ? '/' + esc(r.price_unit) : '');
+    var vat = vatLabel(r);
+    return money(r.unit_price) + (sym ? ' ' + esc(sym) : '') + (r.price_unit ? '/' + esc(r.price_unit) : '') +
+      (vat ? ' <span style="font-weight:400;font-size:.85em;color:#92400e;">(' + esc(vat) + ')</span>' : '');
   }
   function fmtDate(iso) {
     var d = String(iso || '').split('-');
@@ -183,7 +196,7 @@
       '<div class="spf-box">' +
         '<p class="spf-title">' + (edit ? 'Fiyatı düzenle' : 'Fiyat ekle') + '</p>' +
         (edit && row.source !== 'manual'
-          ? '<div class="spf-warn">Excel’den gelen satır — kaydedince “elle” olur; sonraki içe aktarma bu satırı silmez.</div>'
+          ? '<div class="spf-warn">İçe aktarılan satır (' + esc(sourceText(row)) + ') — kaydedince “elle” olur; sonraki içe aktarma bu satırı silmez.</div>'
           : '') +
         '<div class="spf-grid">' +
           '<div class="spf-wide"><span class="spf-label">Malzeme</span>' +
@@ -203,6 +216,10 @@
           '<div><span class="spf-label">Fiyat birimi</span><select class="spf-input" data-f="unit"></select></div>' +
           '<div><span class="spf-label" data-f="pkglabel">Alınabilecek miktar</span><input type="number" step="any" min="0" class="spf-input" data-f="pkg" placeholder="isteğe bağlı"></div>' +
           '<div><span class="spf-label">Teklif tarihi</span><input type="date" class="spf-input" data-f="date"></div>' +
+          '<div><span class="spf-label">KDV dahil mi?</span><select class="spf-input" data-f="vat">' +
+            '<option value="">— belirtilmedi —</option><option value="0">KDV hariç</option>' +
+            '<option value="1">KDV dahil</option></select></div>' +
+          '<div><span class="spf-label">KDV oranı (%)</span><input type="number" step="any" min="0" max="100" class="spf-input" data-f="vatrate" placeholder="ör. 20"></div>' +
           '<div class="spf-wide"><span class="spf-label">Not</span><input type="text" maxlength="2000" class="spf-input" data-f="note" placeholder="ör. telefonla teyit, 25 kg bidon"></div>' +
         '</div>' +
         '<p class="spf-hint">Adet birimli malzemenin fiyatı adet başınadır; g/kg ve ml/l malzemelerde kg ya da litre başına.</p>' +
@@ -230,6 +247,8 @@
     f('pkg').value = edit && row.package_size != null ? row.package_size : '';
     f('date').value = edit ? (row.quoted_at || '') : todayIso();
     f('note').value = edit ? (row.note || '') : '';
+    f('vat').value = edit && row.vat_included === true ? '1' : edit && row.vat_included === false ? '0' : '';
+    f('vatrate').value = edit && row.vat_rate != null ? row.vat_rate : '';
     fillUnits();
 
     if (!fixedItem) {
@@ -291,6 +310,10 @@
       if (price == null || price <= 0) { toast('Birim fiyat sıfırdan büyük olmalı.'); return; }
       var pkg = num(f('pkg').value);
       if (f('pkg').value.trim() && (pkg == null || pkg <= 0)) { toast('Alınabilecek miktar sıfırdan büyük olmalı (ya da boş).'); return; }
+      var vatSel = f('vat').value;
+      var vatRate = num(f('vatrate').value);
+      if (f('vatrate').value.trim() && (vatRate == null || vatRate < 0 || vatRate > 100)) { toast('KDV oranı 0 ile 100 arasında olmalı (ya da boş).'); return; }
+      if (vatSel === '1' && vatRate == null) { toast('KDV dahil fiyat için KDV oranını yazın (ör. 20).'); return; }
       var body = {
         unit_price: price,
         currency: f('currency').value || 'USD',
@@ -298,6 +321,8 @@
         package_size: pkg,
         quoted_at: f('date').value || null,
         note: f('note').value.trim() || null,
+        vat_included: vatSel === '1' ? true : vatSel === '0' ? false : null,
+        vat_rate: vatRate,
       };
       var url, method;
       if (edit) {
@@ -344,7 +369,7 @@
 
   window.SupplierPriceForm = {
     mount: mount, unmount: unmount, unitFamily: unitFamily, priceUnitsFor: priceUnitsFor,
-    money: money, priceText: priceText, sourceText: sourceText, sourceTitle: sourceTitle,
+    money: money, priceText: priceText, vatLabel: vatLabel, sourceText: sourceText, sourceTitle: sourceTitle,
     fmtDate: fmtDate, esc: esc, fold: fold,
     // Sayfa tedarikçi/kart değiştirince önbelleği boşalt
     reset: function () { _items = null; _suppliers = null; },

@@ -274,17 +274,28 @@ def build_workbook(report: dict, title_suffix: str = "", prices: dict = None,
         for n in range(1, SUP_SLOTS + 1):
             headers += [f"TEDARİKÇİ-{n}", "Alınabilecek Miktar", "Birim Fiyat"]
     hrow(ws, headers)
+    if show_sup:
+        from core.supplier_prices import price_cell_format, vat_label
     for ri, m in enumerate(report["purchase"], 2):
         vals = [m["name"], m["category"], m["unit"], m["used"], m["current"], m["shortfall"]]
         gray_cols = set()
+        fmt_cols = {}                                 # fiyat hücresi → "#,##0.00## €/kg"
+        cmp_first = False
         if show_sup:
             plist = prices.get(m.get("item_id"), [])
+            # "en uygun" vurgusu yalnız karşılaştırılabilir grupta (para birimi
+            # / birim karışık ve kur yoksa sıra anlamsız — prices_for_items)
+            cmp_first = bool(plist) and plist[0].get("comparable", True)
             for i in range(SUP_SLOTS):
                 p = plist[i] if i < len(plist) else None
                 name = p["supplier_name"] if p else ""
+                if p and p.get("vat_included"):       # brüt fiyat — sıralama netle yapıldı
+                    name = f"{name} ({vat_label(p)})"
                 if p and p.get("inactive"):           # pasif firma: sonda, gri, etiketli
                     name = f"{name} (pasif tedarikçi)"
                     gray_cols.update(range(len(vals) + 1, len(vals) + 4))
+                if p and p.get("unit_price") is not None:
+                    fmt_cols[len(vals) + 3] = price_cell_format(p)
                 vals += [
                     name,
                     (p["package_size"] if p and p["package_size"] is not None else ""),
@@ -293,13 +304,17 @@ def build_workbook(report: dict, title_suffix: str = "", prices: dict = None,
         for ci, v in enumerate(vals, 1):
             c = ws.cell(ri, ci, v); c.border = thin
             if ci == 6: c.font = RED
-            if show_sup and ci == 7 and v and ci not in gray_cols: c.font = BLD   # en ucuz tedarikçi vurgulansın
+            if show_sup and ci == 7 and v and cmp_first and ci not in gray_cols:
+                c.font = BLD                          # en ucuz tedarikçi vurgulansın
             if ci in gray_cols: c.font = GRAY
+            if ci in fmt_cols: c.number_format = fmt_cols[ci]
     last = len(report["purchase"]) + 3
     note = "Not: 'Alınacak' = brüt gereken − mevcut. Fire zaten gerekene dahildir."
     if show_sup:
-        note += ("  Tedarikçiler en ucuzdan pahalıya sıralı (Tedarikçi-1 en uygun); "
-                 "pasife alınmış tedarikçiler sonda, gri.")
+        note += ("  Tedarikçiler en ucuzdan pahalıya sıralı (Tedarikçi-1 en uygun, kalın; para birimi "
+                 "farklıysa bugünün kuruyla karşılaştırıldı); fiyatın para birimi/birimi hücrede yazılı. "
+                 "Para birimi ya da fiyat birimi karışık ve karşılaştırılamayan satırda vurgu yok. "
+                 "Pasife alınmış tedarikçiler sonda, gri.")
     ws.cell(last, 1, note).font = Font(italic=True, color="6b7280")
     ws.freeze_panes = "A2"
     w = [40, 11, 8, 22, 14, 18]

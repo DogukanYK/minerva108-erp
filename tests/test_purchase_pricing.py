@@ -1133,3 +1133,98 @@ def test_price_source_text_matches_footnote():
     assert any(n.startswith("Fiyat kaynağı: Stok Son Durum fiyat listesi (") for n in notes_lines(res))
     res = attach(plan([it(1, "SHEA", unit="g")], [(1, 1)]), PriceInputs(offers={1: [offer(1, "X", 5.0)]}), None)
     assert mat(res, 1)["price_source"] == "Stok Son Durum — Eylül"   # etiket varsa o
+
+
+# ─── KDV (lab fiyat notları, 08.10.2026) ────────────────────────────────────
+
+def _vat_offer(item_id, sup, price, *, inc=None, rate=None, cur="EUR", sid=None):
+    return OfferRec(item_id=item_id, supplier_name=sup, supplier_id=sid, unit_price=price, package_size=25,
+                    currency=cur, price_unit="kg", source="lab_notu",
+                    source_label="Lab fiyat notları 07.10.2026 — s.2", quoted_at=date(2026, 6, 23),
+                    vat_included=inc, vat_rate=rate)
+
+
+def test_vat_included_offer_competes_on_net_price_and_amount():
+    """Pharmaterm 82,56 € KDV %20 dahil = 68,80 € net → 70 €'luk Uludağ'dan ucuz;
+    tutar net fiyatla, metinde brüt liste fiyatı + KDV etiketi."""
+    from core.purchase_pricing import offer_lines
+    res = plan([it(1, "VANİLYA UÇUCU YAĞI", unit="ml")], [(1, 10)])            # 10 l
+    pin = PriceInputs(offers={1: [_vat_offer(1, "ULUDAĞ HERBAL", 70.0),
+                                  _vat_offer(1, "PHARMATERM", 82.56, inc=True, rate=20.0)]})
+    attach(res, pin, None, currency="EUR")
+    m = mat(res, 1)
+    assert m["supplier"] == "PHARMATERM" and m["price"] == pytest.approx(68.8)
+    assert m["amount"] == round_half_up(10.0 * 68.8) == 688
+    lines = offer_lines(m, "EUR")
+    assert lines[0][1] == "b" and lines[0][0].startswith("PHARMATERM — 68,80 €/l")
+    assert "(82,56 €/kg)" in lines[0][0] and "KDV %20 dahil fiyattan düşüldü" in lines[0][0]
+    assert lines[1][0].startswith("ULUDAĞ HERBAL — 70,00 €/l") and "KDV" not in lines[1][0]
+    # Tedarikçi rehberinde KDV etiketi "neden bu firma" listesine girmez
+    chosen = res["suppliers"]["chosen"][0]
+    assert chosen["name"] == "PHARMATERM" and "reasons" not in chosen["items"][0]
+    # Firma dökümü: net fiyat + etiket
+    from core.purchase_pricing import firm_lines
+    ph = next(f for f in m["relations"]["firms"] if f["name"] == "PHARMATERM")
+    assert any("KDV %20 dahil fiyattan düşüldü" in t for t in firm_lines(ph, "EUR"))
+
+
+def test_vat_included_without_rate_uses_gross_and_says_so():
+    from core.purchase_pricing import offer_lines
+    res = plan([it(1, "X", unit="g")], [(1, 1000)])                           # 1 kg
+    pin = PriceInputs(offers={1: [_vat_offer(1, "PHARMATERM", 12.0, inc=True),
+                                  _vat_offer(1, "B", 11.0)]})
+    m = mat(attach(res, pin, None, currency="EUR"), 1)
+    assert m["supplier"] == "B" and m["price"] == 11.0                   # brüt 12 > 11
+    assert any("KDV dahil, oran yok" in t for t, _ in offer_lines(m, "EUR"))
+
+
+def test_vat_fields_empty_or_excluded_identical_to_legacy():
+    """KDV alanları boş (None) ya da "hariç" (False + oran) iken seçim, sıra,
+    tutar, metinler ve teklif sözlükleri KDV öncesiyle birebir aynı."""
+    from core.purchase_pricing import offer_lines
+
+    def run(**vat):
+        res = plan([it(1, "SHEA BUTTER", unit="g"), it(2, "Kil", unit="g")], [(1, 107.75), (2, 1)])
+        offers = [OfferRec(item_id=1, supplier_name=n, supplier_id=sid, unit_price=p, package_size=pk,
+                           currency=c, price_unit="kg", source="stok_son_durum", source_label="L",
+                           quoted_at=date(2026, 9, 1), **vat)
+                  for n, sid, p, pk, c in (("Pahalı", None, 9.0, None, "USD"), ("Fiyatsız", None, None, None, "USD"),
+                                           ("BEFCHEM", 1, 8.0, 25, "USD"), ("EURO", None, 7.0, 5, "EUR"))]
+        pin = PriceInputs(suppliers={1: _sup(1, "BEFCHEM")}, offers={1: offers})
+        return attach(res, pin, RATES)
+    legacy = run()
+    for vat in ({"vat_included": None, "vat_rate": None}, {"vat_included": False, "vat_rate": 20.0},
+                {"vat_included": None, "vat_rate": 1.0}):
+        new = run(**vat)
+        for a, b in zip(new["materials"], legacy["materials"]):
+            assert a["offers"] == b["offers"] and offer_lines(a, "USD") == offer_lines(b, "USD")
+            assert (a["supplier"], a["price"], a["amount"]) == (b["supplier"], b["price"], b["amount"])
+        assert new["pricing"] == legacy["pricing"] and new["suppliers"] == legacy["suppliers"]
+
+
+def test_vat_net_used_after_fx_and_in_xlsx_name():
+    """KDV dahil EUR teklif USD rapora: net € çevrilir; Excel T1 adında etiket."""
+    from core.purchase_plan_xlsx import _offer_name
+    res = plan([it(1, "X", unit="g")], [(1, 1000)])
+    pin = PriceInputs(offers={1: [_vat_offer(1, "PHARMATERM", 120.0, inc=True, rate=20.0)]})
+    m = mat(attach(res, pin, RATES, currency="USD"), 1)
+    assert m["price"] == pytest.approx(100.0 * 44.0 / 40.0)               # 100 € net → 110 $
+    assert m["offers"][0]["orig_price"] == 120.0                          # brüt liste fiyatı
+    assert _offer_name(m["offers"][0]) == "PHARMATERM (KDV %20 dahil fiyattan düşüldü)"
+
+
+def test_load_price_inputs_carries_vat(db_session):
+    from database import Item, SupplierPrice
+    i1 = Item(name="VANİLYA", category="Hammadde", unit="ml", domain="cosmetics")
+    db_session.add(i1)
+    db_session.flush()
+    db_session.add_all([
+        SupplierPrice(item_id=i1.id, supplier_name="PHARMATERM", unit_price=82.56, currency="EUR",
+                      price_unit="kg", vat_included=True, vat_rate=20.0, source="lab_notu", domain="cosmetics"),
+        SupplierPrice(item_id=i1.id, supplier_name="ULUDAĞ", unit_price=47.58, currency="EUR",
+                      price_unit="kg", domain="cosmetics"),
+    ])
+    db_session.commit()
+    pin = load_price_inputs(db_session, [i1.id], "cosmetics")
+    got = {o.supplier_name: (o.vat_included, o.vat_rate) for o in pin.offers[i1.id]}
+    assert got == {"PHARMATERM": (True, 20.0), "ULUDAĞ": (None, None)}

@@ -744,6 +744,41 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   bayat önbellek → sabit yedek, uyarılı; `today_rates()` / `convert()`, testlerde
   fetcher enjekte edilir — ağa çıkılmaz); `b2b.get_currency_rates` aynı yanıtı
   veren ince sarmalayıcıdır.
+  **KDV** (08.10.2026): `supplier_prices.vat_included` (NULL = bilinmiyor,
+  False = hariç, True = KDV DAHİL brüt) + `vat_rate` (%; migration
+  `d8f0b2c4e6a9` + `init_db` alter_safe). Karşılaştırma/tutar NET fiyatla
+  (`supplier_prices.net_unit_price`): satın alma planı seçimi + tutarı, Raporlar
+  paneli sırası, `prices_for_items`. KDV dahil satır her yerde etiketli
+  (`vat_label` → "KDV %20 dahil"; planda "… fiyattan düşüldü", parantezde brüt).
+  Elle fiyat formu/uçları alanları opsiyonel taşır; dahilse oran zorunlu (400).
+  İki alan boşken her çıktı eskisiyle birebir aynı (testli).
+  **Lab fiyat notları** (`scripts/import_lab_price_notes_20261007.py`, veri
+  `scripts/data/lab_fiyat_notlari_202606.json`): kuru varsayılan; `--xlsx`
+  kontrol Excel'i (Songül Hanım'ın onayı) · `--onayli ONAYLI.xlsx --commit
+  [--create-suppliers]` (onaylı Excel'siz `--commit` ÇALIŞMAZ) `source`
+  lab_notu|proforma|fatura|siparis, `source_label` "Lab fiyat notları
+  07.10.2026 — s.N" önekli satırları yeniden yazar (idempotent; manual /
+  stok_son_durum'a dokunmaz, aynı firmanın elle fiyatı varsa yazmaz; (kart,
+  firma) başına tek kayıt, en yeni belge > lab tablosu; `cizili: true` belge
+  satırı ve `tur: fiyat_listesi` (s.11 Doalin — plan: D yüklenmez) yazılmaz,
+  yarışmaz; belgenin adı ↔ "lab tablosu karşılığı" ipucu farklı karttaysa
+  belirsiz) · `--apply-prefs ONAYLI.xlsx [--commit]` yalnız E onaylı sarı
+  seçimleri `material_supplier_prefs`'e, E onaylı küçük satıcıları
+  `phase_out`'a yazar — otomatik tercih/bitirme YOK.  Onay hücreleri YALNIZ
+  E/H ("X", "✓" hata; Excel listesi `showErrorMessage` ile reddeder); yeni
+  firma kartı yalnız "Yeni tedarikçiler"de E ise açılır; "Doğru değer" /
+  "Doğru IMS kartı" düzeltmeleri OTOMATİK işlenmez — veri dosyasına (fiyat /
+  `elle_eslesme.kart`) aktarılmadan iki adım da hiçbir şey yazmaz; aynı
+  firmaya tercih + bitirilecek E'si (ya da zaten bitirilecek firmaya tercih)
+  hatadır.
+  `import_prices` (Stok Son Durum) lab satırlarını silmez; aynı firmanın Excel
+  satırını yalnız ELLE (`manual`) satır engeller — lab + Stok Son Durum yan yana kalır.
+  **Para birimi karışık malzeme** (lab notları EUR/TRY + Stok Son Durum USD):
+  `prices_for_items(..., rates=today_rates_or_none)` (Excel uçları) sıralamayı
+  net fiyatın USD karşılığıyla yapar (kur yalnız karışık malzeme varsa, bir
+  kez); kur yoksa ham sıra + `comparable: False` → Üretim Planı Excel'i
+  Tedarikçi-1'i kalın göstermez.  Fiyat hücreleri sayı kalır, biçimi para
+  birimi/birimi gösterir (`price_cell_format` → `#,##0.00## €/kg`).
 
 ### Timezone
 

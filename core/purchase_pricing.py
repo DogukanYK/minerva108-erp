@@ -50,6 +50,10 @@ Kurallar:
     (`status="equivalent"`) olarak yazılır.  Kural kapalıyken yüklenmez.
   • Tutar = round_half_up(alınacak × birim fiyat) — Excel ROUND ile aynı
     (Python `round` bankacı yuvarlaması yapar, .5'te Excel'den sapardı).
+  • KDV (08.10.2026): KDV DAHİL teklif (`vat_included` + `vat_rate`) NET
+    fiyatıyla yarışır ve tutara girer (`supplier_prices.net_unit_price`);
+    teklif "KDV %20 dahil fiyattan düşüldü" etiketi taşır, `orig_price` brüt
+    liste fiyatıdır.  KDV alanları boşken seçim, sıra ve tutar eskisiyle aynı.
   • İlişkiler: stok kartında yazan (`Item.supplier_id`), son alım (numune ve
     numuneden çevrilen lotlar HARİÇ), numune gönderen.  AppSetting
     `purchase_plan.skip_suppliers` listesi (BİLİNMEYEN / MİNERVA / NUMUNE
@@ -78,7 +82,8 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict, List, Optional, Set, Tuple
 
 from core.purchase_plan import LotRec, SAMPLE_CONVERTED_MARK, _amount_near, alnum_fold, clean_text, tr_num
-from core.supplier_prices import LITRE_KG_NOTE, SOURCE_MANUAL, firm_keys, price_per_purchase_unit
+from core.supplier_prices import (LITRE_KG_NOTE, SOURCE_MANUAL, firm_keys, net_unit_price,
+                                  price_per_purchase_unit, vat_label)
 
 CFG_SKIP_SUPPLIERS = "purchase_plan.skip_suppliers"
 DEFAULT_SKIP_SUPPLIERS = ("BİLİNMEYEN", "MİNERVA", "NUMUNE GÖNDERİM")
@@ -129,6 +134,8 @@ class OfferRec:
     source: Optional[str] = None
     source_label: Optional[str] = None
     quoted_at: Optional[date] = None
+    vat_included: Optional[bool] = None      # None = bilinmiyor · True = fiyat KDV dahil (brüt)
+    vat_rate: Optional[float] = None         # yüzde
 
 
 @dataclass(frozen=True)
@@ -320,7 +327,7 @@ def unpriced_offer_text(o: dict) -> str:
     why = (o.get("note") or "").strip() or "fiyat yazılmamış"
     if why[:1].isupper() and why[1:2].islower():       # "Fiyat birimi" → "fiyat birimi"; "USD …" kalır
         why = {"I": "ı", "İ": "i"}.get(why[0], why[0].lower()) + why[1:]
-    tags, blocked = offer_tags(o)                      # tercih / eşdeğer kart / bitirilecek
+    tags, blocked = offer_tags(o, vat=False)           # tercih / eşdeğer kart / bitirilecek
     return _with_tags(f"{o.get('name') or '—'} — fiyat listesinde, {why}", tags, blocked)
 
 
@@ -437,7 +444,8 @@ def load_price_inputs(db, item_ids_incl_members, domain: str, extra_item_ids=(),
                 item_id=sp.item_id, supplier_name=name, supplier_id=sp.supplier_id,
                 unit_price=sp.unit_price, package_size=sp.package_size,
                 currency=(sp.currency or "USD"), price_unit=sp.price_unit, source=sp.source,
-                source_label=sp.source_label, quoted_at=sp.quoted_at))
+                source_label=sp.source_label, quoted_at=sp.quoted_at,
+                vat_included=sp.vat_included, vat_rate=sp.vat_rate))
     for iid, sid in (db.query(Item.id, Item.supplier_id)
                      .filter(Item.id.in_(rel_ids), Item.domain == domain,
                              Item.supplier_id.isnot(None)).all()):
@@ -758,7 +766,8 @@ def _relations(m: dict, ri: _RelIndex) -> dict:
                             "currency": o.get("currency"), "package": o.get("package"),
                             "note": o.get("note"), "quoted_at": o.get("quoted_at"),
                             "source_label": o.get("source_label"), "via_name": o.get("via_name"),
-                            "status": o.get("status"), "eligible": o.get("eligible", True)})
+                            "status": o.get("status"), "eligible": o.get("eligible", True),
+                            **({"vat_label": o["vat_label"]} if o.get("vat_label") else {})})
     firm_list = []
     for f in firms.values():
         for tmp in ("_p_at", "_i_at", "_seen"):
@@ -928,10 +937,21 @@ def _offer_status(o: dict, rp: dict, sc: _StatusCtx, skip: Set[str], pin: PriceI
             o.update(status="preferred", pref="supplier", tier=(1, 0))
 
 
-def offer_tags(o: dict, best: Optional[dict] = None) -> Tuple[List[str], Optional[str]]:
+def vat_tag(o: dict) -> Optional[str]:
+    """KDV dahil teklifin etiketi: "KDV %20 dahil fiyattan düşüldü" (net
+    kullanıldı) / "KDV dahil, oran yok" (brüt kullanıldı) — diğerlerinde None."""
+    lbl = o.get("vat_label")
+    if not lbl:
+        return None
+    return f"{lbl} fiyattan düşüldü" if "%" in lbl else f"{lbl}, oran yok"
+
+
+def offer_tags(o: dict, best: Optional[dict] = None, *, vat: bool = True) -> Tuple[List[str], Optional[str]]:
     """Teklif satırının ekleri → (parantez içi etiketler, engel metni).
     Etiketler: "tercih" (malzeme tercihi; 2+ sırada "tercih 2. sıra"),
-    "tercih edilen firma", "eşdeğer kart «X»", seçilenden farklı uygun fiyatlı
+    "tercih edilen firma", "eşdeğer kart «X»", KDV dahil teklifte
+    "KDV %20 dahil fiyattan düşüldü" (`vat=False` ile atlanır — tedarikçi
+    rehberinin "neden bu firma" listesi), seçilenden farklı uygun fiyatlı
     teklifte "daha pahalı" / "daha ucuz".  Engel: "bitirilecek, alma" /
     "bu malzemede alma" / "atlanacaklar listesinde" (gri, seçilmez).
     Eşdeğer kartın bilgi teklifi (`status="equivalent"`) engelsiz gridir —
@@ -944,6 +964,9 @@ def offer_tags(o: dict, best: Optional[dict] = None) -> Tuple[List[str], Optiona
         tags.append("tercih edilen firma")
     if o.get("via_name"):
         tags.append(f"eşdeğer kart «{o['via_name']}»")
+    vt = vat_tag(o) if vat else None
+    if vt:
+        tags.append(vt)
     blocked = OFFER_BLOCKED_TEXT.get(o.get("status")) if o.get("eligible") is False else None
     if (best is not None and o is not best and not blocked and o.get("price") is not None
             and best.get("price") is not None):
@@ -953,7 +976,9 @@ def offer_tags(o: dict, best: Optional[dict] = None) -> Tuple[List[str], Optiona
 
 def offer_text(o: dict, cur: str) -> str:
     """'BEFCHEM — 8,00 $/kg · 25 kg'lık ambalaj (2,50 €/kg)' — fiyatlı teklif
-    gövdesi (etiketsiz); önizleme / PDF / Excel ortak."""
+    gövdesi (etiketsiz); önizleme / PDF / Excel ortak.  Parantez içi listedeki
+    asıl fiyattır: para birimi farklıysa ya da teklif KDV dahilse (gövdedeki
+    fiyat net, parantezdeki brüt — etiketi `offer_tags`)."""
     from core.purchase_plan_pdf import PKG_SUFFIX, _qty
     sym = CURRENCY_SYMBOL.get(cur, cur)
     unit = UNIT_TEXT.get(o.get("price_unit"), o.get("price_unit") or "")
@@ -961,7 +986,8 @@ def offer_text(o: dict, cur: str) -> str:
     if o.get("package"):
         pu = o.get("orig_price_unit") or o.get("price_unit") or "kg"
         t += f" · {_qty(o['package'])} {PKG_SUFFIX.get(pu, pu)} ambalaj"
-    if o.get("orig_currency") and o["orig_currency"] != cur and o.get("orig_price") is not None:
+    if (o.get("orig_currency") and o.get("orig_price") is not None
+            and (o["orig_currency"] != cur or o.get("vat_label"))):
         osym = CURRENCY_SYMBOL.get(o["orig_currency"], o["orig_currency"])
         ou = UNIT_TEXT.get(o.get("orig_price_unit"), o.get("orig_price_unit") or unit)
         t += f" ({price_text(o['orig_price'])} {osym}/{ou})"
@@ -1027,7 +1053,10 @@ def _price_row(m: dict, pin: PriceInputs, rates, currency: str, round_to_package
             if o.source != SOURCE_MANUAL and firm_keys(o.supplier_id, o.supplier_name) & manual:
                 continue
             name = _offer_name(o, pin)
-            price = o.unit_price if (o.unit_price is not None and o.unit_price > 0) else None
+            # KDV dahil teklif NET fiyatıyla yarışır ve tutara girer; KDV
+            # alanları boşken net = liste fiyatı (eski davranış birebir).
+            net = net_unit_price(o)
+            price = net if (net is not None and net > 0) else None
             conv, pu, note = price_per_purchase_unit(
                 {"unit_price": price, "price_unit": o.price_unit}, unit)
             ocur = (o.currency or "USD").upper()
@@ -1044,7 +1073,8 @@ def _price_row(m: dict, pin: PriceInputs, rates, currency: str, round_to_package
             if dkey in seen:
                 continue
             seen.add(dkey)
-            offers.append({"name": name, "supplier_key": k, "supplier_id": o.supplier_id,
+            vat = {"vat_label": vat_label(o)} if o.vat_included is True else {}
+            offers.append({**vat, "name": name, "supplier_key": k, "supplier_id": o.supplier_id,
                            "item_id": o.item_id, "price": conv, "price_unit": pu,
                            "orig_price": o.unit_price, "orig_currency": ocur,
                            "orig_price_unit": o.price_unit, "package": o.package_size,
@@ -1251,7 +1281,7 @@ def supplier_directory(result: dict, pin: PriceInputs, skip: Optional[Set[str]] 
                "price": m["price"], "price_unit": m["price_unit"], "amount": m["amount"]}
         best = next((o for o in m.get("offers") or [] if o.get("eligible", True) and o.get("price") is not None),
                     None)
-        tags = offer_tags(best)[0] if best else []
+        tags = offer_tags(best, vat=False)[0] if best else []
         if tags:                                   # "tercih", "eşdeğer kart «X»"
             row["reasons"] = tags
         b["items"].append(row)
@@ -1503,6 +1533,8 @@ def firm_lines(f: dict, currency: str = "USD") -> List[str]:
                  f"{UNIT_TEXT.get(o.get('price_unit'), o.get('price_unit') or '')}")
         else:
             t = "fiyat listesinde (fiyatsız)"
+        if o.get("price") is not None and vat_tag(o):
+            t += f" ({vat_tag(o)})"
         if o.get("via_name"):
             t += f" (eşdeğer kart «{o['via_name']}»)"
         if o.get("eligible") is False and o.get("status") in OFFER_BLOCKED_TEXT:

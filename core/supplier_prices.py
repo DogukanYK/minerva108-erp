@@ -9,10 +9,14 @@ Akış:
                                   girilen `manual` satır korunur)
   • price_unit_ok / serialize_price → elle fiyat uçları (routers/reports.py)
   • prices_for_items(db, …)     → rapor için malzeme başına (ucuzdan) tedarikçi listesi
-                                  (pasif firmanın teklifi sonda, `inactive` işaretli)
+                                  (pasif firmanın teklifi sonda, `inactive` işaretli;
+                                  para birimi karışıksa bugünün kuruyla sıralı,
+                                  `comparable` = "Tedarikçi-1 en uygun" denebilir mi)
+  • price_cell_format(offer)    → Excel fiyat hücresinin sayı biçimi ("#,##0.00## €/kg")
   • firm_keys / inactive_firm_check → "aynı firma" ve "pasif firma" kuralları
                                   (satın alma planı `core.purchase_pricing` de kullanır)
   • price_per_purchase_unit(…)  → fiyatı malzemenin alım birimine (kg / l / adet) çevirir
+  • net_unit_price / vat_label  → KDV dahil fiyatın neti + "KDV dahil" etiketi
 
 Fiyat temeli (2026-10): Stok Son Durum listesi **USD / kg**. Eskiden para birimi
 kolonu model varsayılanıyla 'TRY' yazılıyor, birim hiç tutulmuyordu — panel her
@@ -20,6 +24,11 @@ fiyatı "₺" gösteriyordu. Artık her satır `currency` + `price_unit` (kg|l|a
 `source` / `source_label` / `quoted_at` taşır; adet birimli malzemenin fiyatı
 DAİMA adet başınadır (`default_price_unit`). Eski satırlar `database.
 _backfill_supplier_price_units()` ile bir kez USD/kg(adet) olarak işaretlendi.
+
+KDV (08.10.2026): `vat_included` (NULL = bilinmiyor, False = hariç, True =
+dahil) + `vat_rate` (yüzde).  Karşılaştırma ve tutar NET fiyatla yapılır
+(`net_unit_price`); KDV dahil satır her gösterimde "KDV dahil" etiketi taşır.
+İki alan da boşken her hesap eskisiyle birebir aynıdır.
 
 Beklenen Excel düzeni (Işık Hanım'ın dosyası):
   A Malzeme · B Kategori · C Birim · D Toplam Gereken · E Mevcut Stok · F ALINACAK
@@ -58,6 +67,7 @@ SOURCE_STOK_SON_DURUM = "stok_son_durum"
 # İçe aktarma bu satırları SİLMEZ ve aynı firmanın teklifini üstüne yazmaz.
 SOURCE_MANUAL = "manual"
 SOURCE_LABEL_MAX = 120
+VAT_RATE_MAX = 100.0
 
 # Malzeme birimi aileleri (Item.unit: g/kg/ml/lt/adet/kutu/rulo …).  Ağırlık ve
 # hacim dışındaki her birim SAYILAN birimdir → fiyatı adet başına.
@@ -214,7 +224,8 @@ def import_prices(db: Session, rows: List[dict], domain: str, *,
     Silme YALNIZ `source` stok_son_durum ya da boş (eski) satırlarda; lab'ın
     elle girdiği `manual` satır korunur (`kept_manual`) ve aynı firmanın Excel
     teklifi o malzemeye YAZILMAZ (`skipped_manual`) — aynı firma iki kez
-    görünmesin, elle girilen değer ezilmesin.
+    görünmesin, elle girilen değer ezilmesin.  Lab fiyat notlarının satırları
+    (lab_notu | proforma | fatura | siparis) silinmez ve engellemez.
     Her satır `currency` + `price_unit` + kaynak bilgisiyle yazılır; adet
     birimli malzemeler `price_unit`'ten bağımsız olarak 'adet' alır.
     `price_unit` listenin ağırlık/hacim temelidir → yalnız `LIST_PRICE_UNITS`
@@ -270,9 +281,14 @@ def import_prices(db: Session, rows: List[dict], domain: str, *,
             SupplierPrice.item_id == it.id, SupplierPrice.domain == domain,
             or_(SupplierPrice.source == SOURCE_STOK_SON_DURUM, SupplierPrice.source.is_(None)),
         ).delete(synchronize_session=False)
+        # Yalnız ELLE satır aynı firmanın Excel teklifini engeller; lab fiyat
+        # notlarından gelen satırlar (lab_notu / proforma / fatura / siparis)
+        # da korunur ama engellemez — ikisi de listede kalır (08.10.2026 öncesi
+        # bu kaynaklar yoktu: eski veride davranış aynı).
         manual_keys = set()
         for m in (db.query(SupplierPrice)
-                  .filter(SupplierPrice.item_id == it.id, SupplierPrice.domain == domain).all()):
+                  .filter(SupplierPrice.item_id == it.id, SupplierPrice.domain == domain,
+                          SupplierPrice.source == SOURCE_MANUAL).all()):
             kept_manual += 1
             manual_keys |= firm_keys(m.supplier_id, m.supplier_name)
         for s in row["suppliers"]:
@@ -314,17 +330,31 @@ def import_prices(db: Session, rows: List[dict], domain: str, *,
     }
 
 
-def prices_for_items(db: Session, item_ids: List[int], domain: str, limit: int = 3) -> dict:
+def prices_for_items(db: Session, item_ids: List[int], domain: str, limit: int = 3,
+                     rates=None) -> dict:
     """Rapor için: { item_id: [ {supplier_name, package_size, unit_price,
-    currency, price_unit, source_label, quoted_at}, … ] }.
+    currency, price_unit, source_label, quoted_at, inactive, vat_included,
+    vat_rate, comparable}, … ] }.
 
-    Her malzeme için fiyatı OLAN tedarikçiler ucuzdan pahalıya; fiyatı olmayanlar
-    (None) sona. En çok `limit` tedarikçi.  Bir firmanın elle girilmiş
+    Her malzeme için fiyatı OLAN tedarikçiler ucuzdan pahalıya (KDV dahil
+    satır net fiyatıyla — `net_unit_price`); fiyatı olmayanlar (None) sona.
+    En çok `limit` tedarikçi.  Bir firmanın elle girilmiş
     (`manual`) satırı varsa aynı firmanın Excel satırı listeye girmez —
     yoksa aynı firma iki sütun kaplar ve 3. tedarikçi kesilirdi (`firm_keys`).
     PASİF firmanın teklifi (`inactive_firm_check`) en uygun sayılmaz: aktif
     tekliflerden SONRA gelir ve `inactive: True` taşır (Excel'de gri
     "pasif tedarikçi") — lab'ın sildiği firma Tedarikçi-1 olarak önerilmesin.
+
+    **Para birimi karışık malzeme** (ör. Uludağ 1,88 €, Pharmaterm 250 ₺/kg):
+    ham sayılar karşılaştırılamaz — 250 ₺ en pahalı görünür, ilk 3'te kalacak
+    asıl ucuz teklif kesilebilirdi.  `rates` (`core.fx.Rates` ya da onu döndüren
+    argümansız fonksiyon — yalnız karışık malzeme varsa BİR KEZ çağrılır, ağ
+    isteği gereksiz yere yapılmaz) verilirse sıralama net fiyatın USD
+    karşılığıyla yapılır (satın alma planı gibi).  Kur yoksa eski (ham) sıra
+    korunur.  Her satırın `comparable` alanı: aktif fiyatlı teklifler aynı
+    fiyat biriminde (kg / l / adet) VE (aynı para biriminde ya da kurla
+    çevrilmiş) ise True — Excel "Tedarikçi-1 en uygun" vurgusunu yalnız o
+    zaman yapar.
     """
     if not item_ids:
         return {}
@@ -351,12 +381,74 @@ def prices_for_items(db: Session, item_ids: List[int], domain: str, limit: int =
             "source_label": sp.source_label,
             "quoted_at": sp.quoted_at,
             "inactive": is_inactive(sp),
+            "vat_included": sp.vat_included,
+            "vat_rate": sp.vat_rate,
         })
+    fx = {"done": False, "rates": None}
+
+    def get_rates():
+        if not fx["done"]:
+            fx["done"] = True
+            try:
+                fx["rates"] = rates() if callable(rates) else rates
+            except Exception:                         # kur alınamadı → ham sıra
+                fx["rates"] = None
+        return fx["rates"]
+
     for iid, lst in out.items():
+        live = [x for x in lst if x["unit_price"] is not None and not x["inactive"]]
+        curs = {_price_currency(x) for x in live}
+        units = {u for u in ((x["price_unit"] or "").strip().lower() for x in live) if u}
+        keys = {id(x): net_unit_price(x) for x in lst if x["unit_price"] is not None}
+        converted = False
+        if len(curs) > 1:
+            r = get_rates()
+            if r is not None:
+                from core.fx import convert
+                try:
+                    keys = {id(x): convert(net_unit_price(x), _price_currency(x), "USD", r)
+                            for x in lst if x["unit_price"] is not None}
+                    converted = True
+                except (ValueError, TypeError):           # bilinmeyen para birimi → ham sıra
+                    pass
+        comparable = len(units) <= 1 and (len(curs) <= 1 or converted)
+        # KDV dahil satır NET fiyatıyla yarışır (boş KDV'de net = fiyat → eski sıra)
         lst.sort(key=lambda x: (x["inactive"], x["unit_price"] is None,
-                                x["unit_price"] if x["unit_price"] is not None else 0.0))
+                                keys[id(x)] if x["unit_price"] is not None else 0.0))
+        for x in lst:
+            x["comparable"] = comparable
         out[iid] = lst[:limit]
     return out
+
+
+def _price_currency(offer) -> str:
+    """Teklifin para birimi kodu (boş eski satır → 'USD', Stok Son Durum temeli)."""
+    return (str(_offer_get(offer, "currency") or "USD")).strip().upper()
+
+
+def today_rates_or_none():
+    """Bugünün kuru (`core.fx.today_rates`) ya da alınamazsa None — rapor
+    uçları `prices_for_items(..., rates=today_rates_or_none)` ile TEMBEL verir
+    (yalnız para birimi karışık malzemede çağrılır)."""
+    try:
+        from core.fx import today_rates
+        return today_rates()
+    except Exception:
+        return None
+
+
+_CELL_SYM = {"USD": "$", "EUR": "€", "TRY": "₺"}
+
+
+def price_cell_format(offer) -> str:
+    """Excel fiyat hücresinin sayı biçimi: değer SAYI kalır, para birimi ve
+    fiyat birimi görünür ("#,##0.00## €/kg").  Para birimi yoksa düz sayı."""
+    cur = (str(_offer_get(offer, "currency") or "")).strip().upper()
+    if not cur:
+        return "#,##0.00##"
+    unit = (str(_offer_get(offer, "price_unit") or "")).strip().lower()
+    txt = _CELL_SYM.get(cur, cur) + (f"/{unit}" if unit else "")
+    return '#,##0.00##" ' + txt.replace('"', "") + '"'
 
 
 def _offer_get(offer, key):
@@ -393,6 +485,43 @@ def price_per_purchase_unit(offer, item_unit) -> Tuple[Optional[float], str, Opt
         f"uyuşmuyor — fiyat kullanılmadı")
 
 
+def _vat_rate(offer) -> Optional[float]:
+    """Geçerli KDV oranı (0–100, sonlu) ya da None."""
+    import math
+    r = _offer_get(offer, "vat_rate")
+    try:
+        r = float(r)
+    except (TypeError, ValueError):
+        return None
+    return r if math.isfinite(r) and 0.0 <= r <= VAT_RATE_MAX else None
+
+
+def net_unit_price(offer):
+    """Teklifin KDV HARİÇ birim fiyatı — karşılaştırma ve tutar bununla yapılır.
+
+    `vat_included` True VE geçerli oran varsa `fiyat / (1 + oran/100)`;
+    aksi hâlde fiyat OLDUĞU GİBİ döner (KDV hariç, bilinmiyor ya da dahil ama
+    oran yok — oran yoksa net hesaplanamaz, brüt kullanılır).  Teklif dict'i
+    ya da SupplierPrice/OfferRec nesnesi."""
+    price = _offer_get(offer, "unit_price")
+    if price is None or _offer_get(offer, "vat_included") is not True:
+        return price
+    rate = _vat_rate(offer)
+    if rate is None:
+        return price
+    return float(price) / (1.0 + rate / 100.0)
+
+
+def vat_label(offer) -> Optional[str]:
+    """KDV dahil satırın kısa etiketi ("KDV %20 dahil" / "KDV dahil") — diğer
+    satırlarda None.  Raporlar paneli, Excel çıktıları ve satın alma planı
+    aynı metni kullanır."""
+    if _offer_get(offer, "vat_included") is not True:
+        return None
+    rate = _vat_rate(offer)
+    return f"KDV %{rate:g} dahil" if rate is not None else "KDV dahil"
+
+
 def serialize_price(sp, item=None, supplier_status: Optional[str] = None,
                     supplier_inactive: bool = False) -> dict:
     """Fiyat satırının uç yanıtı — GET /api/supplier-prices (grup içi satır),
@@ -414,6 +543,8 @@ def serialize_price(sp, item=None, supplier_status: Optional[str] = None,
         "source_label": sp.source_label,
         "quoted_at": sp.quoted_at.isoformat() if sp.quoted_at else None,
         "note": sp.note,
+        "vat_included": sp.vat_included,
+        "vat_rate": sp.vat_rate,
         "created_by": sp.created_by,
         "updated_by": sp.updated_by,
         "updated_at": to_tr(sp.updated_at).strftime("%d.%m.%Y %H:%M") if sp.updated_at else "",

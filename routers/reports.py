@@ -432,7 +432,7 @@ def stock_gaps_export(
     uçucu yağları, yalnız istediği ambalajları ya da ikisini birlikte tek
     Excel'de alabilsin diye (10.09.2026 talebi)."""
     from core.stock_gaps import assemble, build_workbook, render_pdf, export_filename
-    from core.supplier_prices import prices_for_items
+    from core.supplier_prices import prices_for_items, today_rates_or_none
     from core.delivery_note import content_disposition
     statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
     picked = None
@@ -452,7 +452,8 @@ def stock_gaps_export(
             media = "application/pdf"
         else:
             order_ids = [r["item_id"] for r in report["rows"] if r.get("order")]
-            prices = prices_for_items(db, order_ids, domain)
+            # para birimi karışık malzemede bugünün kuruyla sıralı (kur tembel)
+            prices = prices_for_items(db, order_ids, domain, rates=today_rates_or_none)
             content = build_workbook(report, prices=prices)
             media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     except Exception:
@@ -601,12 +602,12 @@ def production_plan_export(
 ):
     """Aynı senaryoyu Excel olarak indir (Satın Alma tedarikçi/fiyatla + Reçetesiz Ürünler sayfası)."""
     from core.production_sim import simulate, build_workbook, list_recipeless_products
-    from core.supplier_prices import prices_for_items
+    from core.supplier_prices import prices_for_items, today_rates_or_none
     rep = simulate(db, data.recipe_ids, data.quantity, data.language or "TR", domain)
     if not rep["materials"]:
         return JSONResponse(status_code=400, content={"detail": "Seçilen ürünlerde malzeme bulunamadı."})
     purchase_ids = [m["item_id"] for m in rep["purchase"] if m.get("item_id")]
-    prices = prices_for_items(db, purchase_ids, domain)
+    prices = prices_for_items(db, purchase_ids, domain, rates=today_rates_or_none)   # kur tembel
     recipeless = list_recipeless_products(db, domain)
     try:
         content = build_workbook(rep, title_suffix=f"{rep['summary']['products']} ürün × {int(data.quantity)}",
@@ -693,8 +694,10 @@ def list_supplier_prices(
     """Malzemeye göre gruplu tedarikçi fiyat listesi (görüntüleme paneli).
     Satır şekli `core.supplier_prices.serialize_price` (+ kaynak, kim, not,
     firma durumu).  Pasif firmanın satırı (`inactive_firm_check`) grubun
-    sonunda, `supplier_inactive: true` — panel "en ucuz" saymaz, gri rozet."""
-    from core.supplier_prices import inactive_firm_check, serialize_price
+    sonunda, `supplier_inactive: true` — panel "en ucuz" saymaz, gri rozet.
+    KDV dahil satır NET fiyatıyla sıralanır (`net_unit_price`; KDV boşken
+    net = fiyat → eski sıra), panel fiyatın yanına "KDV dahil" yazar."""
+    from core.supplier_prices import inactive_firm_check, net_unit_price, serialize_price
     rows = db.query(SupplierPrice).filter(SupplierPrice.domain == domain).all()
     is_inactive = inactive_firm_check(db, domain, rows)
     item_ids = {r.item_id for r in rows}
@@ -717,7 +720,7 @@ def list_supplier_prices(
     out = sorted(groups.values(), key=lambda g: (g["material"] or "").lower())
     for g in out:
         g["suppliers"].sort(key=lambda s: (s["supplier_inactive"], s["unit_price"] is None,
-                                           s["unit_price"] or 0.0))
+                                           net_unit_price(s) or 0.0))
     return {"items": out, "total_items": len(out), "total_prices": len(rows)}
 
 
@@ -731,6 +734,9 @@ class SupplierPriceIn(BaseModel):
     quoted_at: Optional[str] = Field(None, max_length=20)
     note: Optional[str] = Field(None, max_length=2000)
     source_label: Optional[str] = Field(None, max_length=120)
+    # KDV — boş = bilinmiyor (eski davranış); dahilse oran zorunlu
+    vat_included: Optional[bool] = None
+    vat_rate: Optional[float] = None
 
 
 class SupplierPriceUpdate(BaseModel):
@@ -742,6 +748,8 @@ class SupplierPriceUpdate(BaseModel):
     quoted_at: Optional[str] = Field(None, max_length=20)
     note: Optional[str] = Field(None, max_length=2000)
     source_label: Optional[str] = Field(None, max_length=120)
+    vat_included: Optional[bool] = None
+    vat_rate: Optional[float] = None
 
 
 def _sp_bad(msg: str, code: int = 400) -> JSONResponse:
@@ -794,7 +802,22 @@ def _sp_clean(fields: dict, item: Item):
         out["note"] = (fields["note"] or "").strip() or None
     if "source_label" in fields:
         out["source_label"] = SP.clean_name(fields["source_label"])
+    if "vat_included" in fields:
+        out["vat_included"] = fields["vat_included"]          # None | True | False (pydantic doğruladı)
+    if "vat_rate" in fields:
+        v = fields["vat_rate"]
+        if v is not None and (not _sp_finite(v) or not 0 <= float(v) <= SP.VAT_RATE_MAX):
+            return None, _sp_bad("KDV oranı 0 ile 100 arasında olmalı (ya da boş).")
+        out["vat_rate"] = float(v) if v is not None else None
     return out, None
+
+
+def _sp_vat_ok(vat_included, vat_rate) -> Optional[JSONResponse]:
+    """KDV dahil fiyatta oran şart — yoksa net hesaplanamaz, karşılaştırma
+    brüt fiyatla yapılırdı.  Satırın SON hâline uygulanır (PUT kısmi)."""
+    if vat_included is True and vat_rate is None:
+        return _sp_bad("KDV dahil fiyat için KDV oranını yazın (ör. 20).")
+    return None
 
 
 def _sp_supplier(db: Session, domain: str, supplier_id: int):
@@ -823,7 +846,8 @@ def _sp_audit_view(sp: SupplierPrice) -> dict:
     return {"item_id": sp.item_id, "supplier_id": sp.supplier_id, "supplier_name": sp.supplier_name,
             "unit_price": sp.unit_price, "currency": sp.currency, "price_unit": sp.price_unit,
             "package_size": sp.package_size, "source": sp.source, "source_label": sp.source_label,
-            "quoted_at": sp.quoted_at.isoformat() if sp.quoted_at else None, "note": sp.note}
+            "quoted_at": sp.quoted_at.isoformat() if sp.quoted_at else None, "note": sp.note,
+            "vat_included": sp.vat_included, "vat_rate": sp.vat_rate}
 
 
 @router.post("/supplier-prices", status_code=201)
@@ -838,7 +862,8 @@ def create_supplier_price(
     tedarikçi aktif panelde ve aktif olmalı; fiyat birimi malzemenin birim
     ailesine uymalı (adetli → adet, kütle/hacim → kg|l).  Aynı (malzeme,
     tedarikçi, fiyat birimi) satırı varsa 409 `{code: 'price_exists', id}` —
-    arayüz o satırı düzenlemeyi önerir."""
+    arayüz o satırı düzenlemeyi önerir.  KDV isteğe bağlı: `vat_included`
+    (boş = bilinmiyor) + `vat_rate` (0–100); KDV dahilse oran zorunlu (400)."""
     from core.supplier_prices import SOURCE_MANUAL, serialize_price
     item = (db.query(Item)
             .filter(Item.id == data.item_id, Item.domain == domain,
@@ -849,6 +874,9 @@ def create_supplier_price(
     if err:
         return err
     vals, err = _sp_clean(data.model_dump(), item)
+    if err:
+        return err
+    err = _sp_vat_ok(vals.get("vat_included"), vals.get("vat_rate"))
     if err:
         return err
     dup = _sp_duplicate(db, domain, item.id, sup.id, vals["price_unit"])
@@ -882,7 +910,8 @@ def update_supplier_price(
     """Fiyat satırını kısmen düzenle (yalnız gönderilen alanlar).  Excel'den
     gelen satır düzenlenince `source='manual'` olur — sonraki içe aktarma onu
     silmesin — ve eski liste etiketi (`source_label`) düşer; `updated_by`
-    yazılır.  Audit: değişen alanlar eski → yeni."""
+    yazılır.  KDV alanları da kısmi; satırın son hâli "KDV dahil + oran yok"
+    olamaz (400).  Audit: değişen alanlar eski → yeni."""
     from core.supplier_prices import SOURCE_MANUAL, serialize_price
     sp = (db.query(SupplierPrice)
           .filter(SupplierPrice.id == price_id, SupplierPrice.domain == domain).first())
@@ -902,6 +931,9 @@ def update_supplier_price(
                 return err
         fields.pop("supplier_id")
     vals, err = _sp_clean(fields, item)
+    if err:
+        return err
+    err = _sp_vat_ok(vals.get("vat_included", sp.vat_included), vals.get("vat_rate", sp.vat_rate))
     if err:
         return err
     if sup is not None:

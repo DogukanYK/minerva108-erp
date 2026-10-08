@@ -10,6 +10,7 @@ raporunu otomatik dolduran modülün testleri.
 """
 import io
 
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 
@@ -674,3 +675,218 @@ def test_edited_import_row_drops_stale_list_label(authed_client: TestClient, db_
     assert r.json()["source_label"] == "Telefon teklifi"
     r = authed_client.put(f"/api/supplier-prices/{sp.id}", headers=_H, json={"unit_price": 23.0})
     assert r.json()["source_label"] == "Telefon teklifi"          # zaten elle: etiketine dokunulmaz
+
+
+# ─── KDV (lab fiyat notları, 08.10.2026) ────────────────────────────────────
+
+def test_net_unit_price_and_vat_label():
+    from core.supplier_prices import net_unit_price, vat_label
+    assert net_unit_price({"unit_price": 82.56, "vat_included": True, "vat_rate": 20}) == pytest.approx(68.8)
+    assert vat_label({"unit_price": 82.56, "vat_included": True, "vat_rate": 20}) == "KDV %20 dahil"
+    # Boş / hariç / oransız / geçersiz oran → fiyat AYNEN (tip bile değişmez)
+    for o in ({"unit_price": 5}, {"unit_price": 5, "vat_included": False, "vat_rate": 20},
+              {"unit_price": 5, "vat_included": True}, {"unit_price": 5, "vat_included": True, "vat_rate": 150},
+              {"unit_price": 5, "vat_included": True, "vat_rate": float("nan")}):
+        assert net_unit_price(o) == 5 and type(net_unit_price(o)) is int
+    assert net_unit_price({"unit_price": None, "vat_included": True, "vat_rate": 20}) is None
+    assert vat_label({"unit_price": 5, "vat_included": True}) == "KDV dahil"
+    assert vat_label({"unit_price": 5, "vat_included": False, "vat_rate": 20}) is None
+    sp = SupplierPrice(unit_price=12.0, vat_included=True, vat_rate=1.0)      # nesne de olur
+    assert net_unit_price(sp) == pytest.approx(12.0 / 1.01) and vat_label(sp) == "KDV %1 dahil"
+
+
+def test_prices_for_items_sorts_by_net_and_carries_vat(db_session):
+    from core.supplier_prices import prices_for_items
+    _seed_unit_items(db_session)
+    argan = db_session.query(Item).filter(Item.name == "ARGAN YAĞI").first()
+    db_session.add_all([
+        SupplierPrice(item_id=argan.id, supplier_name="BRÜT", unit_price=12.0, vat_included=True, vat_rate=20,
+                      domain="cosmetics"),                                         # net 10
+        SupplierPrice(item_id=argan.id, supplier_name="NET", unit_price=11.0, domain="cosmetics"),
+    ])
+    db_session.commit()
+    lst = prices_for_items(db_session, [argan.id], "cosmetics")[argan.id]
+    assert [s["supplier_name"] for s in lst] == ["BRÜT", "NET"]
+    assert lst[0]["vat_included"] is True and lst[0]["vat_rate"] == 20 and lst[1]["vat_included"] is None
+
+
+def test_manual_price_vat_fields_api(authed_client: TestClient, db_session):
+    _seed_unit_items(db_session)
+    items, sups = _ids(db_session)
+    base = {"item_id": items["ARGAN YAĞI"], "supplier_id": sups["NATURALYA"], "unit_price": 12.0,
+            "currency": "EUR", "price_unit": "kg"}
+    # KDV dahil + oran yok → 400; oran aralık dışı → 400
+    assert authed_client.post("/api/supplier-prices", headers=_H,
+                              json={**base, "vat_included": True}).status_code == 400
+    for bad in (-1, 101, "abc"):
+        r = authed_client.post("/api/supplier-prices", headers=_H, json={**base, "vat_rate": bad})
+        assert r.status_code in (400, 422), bad
+    r = authed_client.post("/api/supplier-prices", headers=_H,
+                           json={**base, "vat_included": True, "vat_rate": 20})
+    assert r.status_code == 201, r.text
+    row = r.json()
+    assert row["vat_included"] is True and row["vat_rate"] == 20.0
+    pid = row["id"]
+    # Kısmi PUT: yalnız oranı silmek "dahil + oran yok" bırakır → 400
+    assert authed_client.put(f"/api/supplier-prices/{pid}", headers=_H,
+                             json={"vat_rate": None}).status_code == 400
+    r = authed_client.put(f"/api/supplier-prices/{pid}", headers=_H, json={"vat_included": False})
+    assert r.status_code == 200 and r.json()["vat_included"] is False and r.json()["vat_rate"] == 20.0
+    r = authed_client.put(f"/api/supplier-prices/{pid}", headers=_H, json={"vat_included": None, "vat_rate": None})
+    assert r.status_code == 200 and r.json()["vat_included"] is None and r.json()["vat_rate"] is None
+    # Alanlar gönderilmezse boş kalır (eski davranış) — başka malzemede
+    r = authed_client.post("/api/supplier-prices", headers=_H,
+                           json={**base, "item_id": items["GÜL SUYU"], "price_unit": "l"})
+    assert r.status_code == 201 and r.json()["vat_included"] is None and r.json()["vat_rate"] is None
+    # Audit: KDV değişikliği eski → yeni
+    db_session.expire_all()
+    upd = (db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "supplier_prices.update")
+           .order_by(AdminAuditLog.id).all())
+    assert json.loads(upd[0].details)["changes"]["vat_included"] == {"eski": True, "yeni": False}
+
+
+def test_supplier_price_panel_sorts_by_net(authed_client: TestClient, db_session):
+    _seed_unit_items(db_session)
+    items, sups = _ids(db_session)
+    db_session.add_all([
+        SupplierPrice(item_id=items["ARGAN YAĞI"], supplier_name="NET", unit_price=11.0, currency="EUR",
+                      price_unit="kg", domain="cosmetics"),
+        SupplierPrice(item_id=items["ARGAN YAĞI"], supplier_id=sups["NATURALYA"], supplier_name="NATURALYA",
+                      unit_price=12.0, currency="EUR", price_unit="kg", vat_included=True, vat_rate=20,
+                      source="lab_notu", source_label="Lab fiyat notları 07.10.2026 — s.1", domain="cosmetics"),
+    ])
+    db_session.commit()
+    sups_out = authed_client.get("/api/supplier-prices").json()["items"][0]["suppliers"]
+    assert [s["supplier_name"] for s in sups_out] == ["NATURALYA", "NET"]
+    assert sups_out[0]["vat_included"] is True and sups_out[0]["vat_rate"] == 20
+
+
+def test_excel_exports_label_vat_included_supplier():
+    """Üretim stok analizi Excel'i: KDV dahil satırın adı etiketli, fiyat brüt."""
+    import openpyxl
+    from core.production_sim import build_workbook
+    rep = {"summary": {"products": 1, "quantity": 250, "total_units": 250, "language": "TR",
+                       "materials": 1, "short_count": 1, "ok_count": 0, "total_raw": 1.0},
+           "materials": [], "producible": [],
+           "purchase": [{"item_id": 7, "name": "VANİLYA", "category": "Hammadde",
+                         "unit": "ml", "used": 100, "current": 10, "shortfall": 90}],
+           "skipped_labels": []}
+    prices = {7: [{"supplier_name": "PHARMATERM", "package_size": 25, "unit_price": 82.56,
+                   "vat_included": True, "vat_rate": 20},
+                  {"supplier_name": "ULUDAĞ", "package_size": 25, "unit_price": 70.0}]}
+    ws = openpyxl.load_workbook(io.BytesIO(build_workbook(rep, "x", prices=prices)))["Satın Alma Listesi"]
+    row2 = [c.value for c in ws[2]]
+    assert "PHARMATERM (KDV %20 dahil)" in row2 and 82.56 in row2 and "ULUDAĞ" in row2
+
+
+def test_import_keeps_lab_note_rows_and_still_writes_same_firm(db_session):
+    """Stok Son Durum içe aktarma lab notu satırını silmez; aynı firmanın Excel
+    satırını yalnız ELLE satır engeller (lab satırı engellemez)."""
+    from core.supplier_prices import import_prices
+    _seed_unit_items(db_session)
+    items, sups = _ids(db_session)
+    lab_row = SupplierPrice(item_id=items["ARGAN YAĞI"], supplier_id=sups["NATURALYA"], supplier_name="NATURALYA",
+                            unit_price=25.8, currency="EUR", price_unit="kg", source="lab_notu",
+                            source_label="Lab fiyat notları 07.10.2026 — s.1", domain="cosmetics")
+    db_session.add(lab_row)
+    db_session.commit()
+    summary = import_prices(db_session, [{"material": "ARGAN YAĞI",
+                                          "suppliers": [{"name": "NATURALYA", "package": 25, "price": 28.0}]}],
+                            "cosmetics")
+    assert summary["prices_inserted"] == 1 and summary["kept_manual"] == 0 and summary["skipped_manual"] == 0
+    db_session.expire_all()
+    got = sorted((p.source, p.unit_price) for p in db_session.query(SupplierPrice).all())
+    assert got == [("lab_notu", 25.8), ("stok_son_durum", 28.0)]
+
+
+# ─── Para birimi karışık malzeme (08.10.2026, lab notları EUR/TRY) ───────────
+# Ham fiyatı kur çevirmeden sıralamak 250 ₺/kg'ı (≈5 €) en pahalı gösteriyor,
+# ilk 3'te kalacak ucuz teklifi kesebiliyordu; Excel de "Tedarikçi-1 en uygun"
+# diyordu.
+
+def _mixed_case(db):
+    """Lavanta: Uludağ 1,88 €, BEFCHEM 9 €, Pharmaterm 250 ₺/kg (≈5,3 €), Stok
+    Son Durum 12 $ — dört teklif, limit 3."""
+    _seed_unit_items(db)
+    items, _sups = _ids(db)
+    iid = items["ARGAN YAĞI"]
+    db.add_all([
+        SupplierPrice(item_id=iid, supplier_name="ULUDAĞ", unit_price=1.88, currency="EUR", price_unit="kg",
+                      domain="cosmetics"),
+        SupplierPrice(item_id=iid, supplier_name="BEFCHEM", unit_price=9.0, currency="EUR", price_unit="kg",
+                      domain="cosmetics"),
+        SupplierPrice(item_id=iid, supplier_name="PHARMATERM", unit_price=250.0, currency="TRY", price_unit="kg",
+                      domain="cosmetics"),
+        SupplierPrice(item_id=iid, supplier_name="ESKİ LİSTE", unit_price=12.0, currency="USD", price_unit="kg",
+                      domain="cosmetics"),
+    ])
+    db.commit()
+    return iid
+
+
+def _rates():
+    from core.fx import Rates
+    return Rates(try_per={"USD": 40.0, "EUR": 47.0, "TRY": 1.0}, source="test", as_of=None,
+                 stale=False, warning=None)
+
+
+def test_prices_for_items_mixed_currency_sorted_with_rates_lazily(db_session):
+    from core.supplier_prices import prices_for_items
+    iid = _mixed_case(db_session)
+    calls = []
+
+    def lazy():
+        calls.append(1)
+        return _rates()
+
+    lst = prices_for_items(db_session, [iid], "cosmetics", rates=lazy)[iid]
+    # 1,88 € = 2,21 $ · 250 ₺ = 6,25 $ · 9 € = 10,58 $ · 12 $ → kesilen ESKİ LİSTE
+    assert [s["supplier_name"] for s in lst] == ["ULUDAĞ", "PHARMATERM", "BEFCHEM"]
+    assert all(s["comparable"] for s in lst) and calls == [1]
+    # Tek para birimli malzemede kur hiç istenmez
+    calls.clear()
+    other = Item(name="TEK", sku="SKU-TEK", category="Hammadde", unit="g", domain="cosmetics")
+    db_session.add(other)
+    db_session.flush()
+    db_session.add(SupplierPrice(item_id=other.id, supplier_name="A", unit_price=3.0, currency="EUR",
+                                 price_unit="kg", domain="cosmetics"))
+    db_session.commit()
+    assert prices_for_items(db_session, [other.id], "cosmetics", rates=lazy)[other.id][0]["comparable"]
+    assert calls == []
+
+
+def test_prices_for_items_mixed_currency_without_rates_not_comparable(db_session):
+    from core.supplier_prices import prices_for_items
+    iid = _mixed_case(db_session)
+    for rates in (None, lambda: None):
+        lst = prices_for_items(db_session, [iid], "cosmetics", rates=rates)[iid]
+        assert [s["supplier_name"] for s in lst] == ["ULUDAĞ", "BEFCHEM", "ESKİ LİSTE"]   # ham sıra (eski)
+        assert not any(s["comparable"] for s in lst)
+
+
+def test_excel_price_cells_show_currency_and_skip_cheapest_claim_when_mixed():
+    """Fiyat hücresi sayı kalır ama biçimi para birimi/birimi gösterir;
+    karşılaştırılamayan grupta Tedarikçi-1 kalın değil."""
+    import openpyxl
+    from core.production_sim import build_workbook
+    from core.supplier_prices import price_cell_format
+    rep = {"summary": {"products": 1, "quantity": 250, "total_units": 250, "language": "TR",
+                       "materials": 2, "short_count": 2, "ok_count": 0, "total_raw": 1.0},
+           "materials": [], "producible": [],
+           "purchase": [{"item_id": 1, "name": "LAVANTA", "category": "Hammadde", "unit": "g", "used": 100,
+                         "current": 10, "shortfall": 90},
+                        {"item_id": 2, "name": "SUSAM", "category": "Hammadde", "unit": "g", "used": 100,
+                         "current": 10, "shortfall": 90}],
+           "skipped_labels": []}
+    prices = {1: [{"supplier_name": "ULUDAĞ", "package_size": 25, "unit_price": 1.88, "currency": "EUR",
+                   "price_unit": "kg", "comparable": False},
+                  {"supplier_name": "PHARMATERM", "package_size": 5, "unit_price": 250.0, "currency": "TRY",
+                   "price_unit": "kg", "comparable": False}],
+              2: [{"supplier_name": "KRK", "package_size": 5, "unit_price": 7.0, "currency": "EUR",
+                   "price_unit": "kg", "comparable": True}]}
+    ws = openpyxl.load_workbook(io.BytesIO(build_workbook(rep, "x", prices=prices)))["Satın Alma Listesi"]
+    assert ws.cell(2, 7).value == "ULUDAĞ" and not ws.cell(2, 7).font.bold
+    assert ws.cell(3, 7).value == "KRK" and ws.cell(3, 7).font.bold
+    assert ws.cell(2, 9).value == 1.88 and ws.cell(2, 9).number_format == '#,##0.00##" €/kg"'
+    assert ws.cell(2, 12).value == 250.0 and "₺/kg" in ws.cell(2, 12).number_format
+    assert price_cell_format({"unit_price": 3}) == "#,##0.00##"

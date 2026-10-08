@@ -258,6 +258,11 @@ class SupplierPrice(Base):
     `created_by`/`updated_by`.  Excel içe aktarma YALNIZ `stok_son_durum` (ya
     da kaynağı boş eski) satırları değiştirir; elle satır korunur.  Düzenlenen
     içe aktarılmış satır da 'manual' olur — sonraki import onu silmesin.
+
+    Lab fiyat notları (08.10.2026, `scripts/import_lab_price_notes_20261007.py`):
+    `source` lab_notu | proforma | fatura | siparis, `source_label` "Lab fiyat
+    notları 07.10.2026 — s.N"; betik yalnız bu önekli satırları yeniden yazar.
+    `vat_included` / `vat_rate` KDV bilgisidir (NULL = bilinmiyor).
     """
     __tablename__ = "supplier_prices"
 
@@ -269,7 +274,7 @@ class SupplierPrice(Base):
     unit_price = Column(Float, nullable=True)            # birim fiyat
     currency = Column(String(8), default="TRY")
     price_unit = Column(String(8), nullable=True)        # fiyatın temeli: kg / l / adet
-    source = Column(String(30), nullable=True)           # stok_son_durum / manual
+    source = Column(String(30), nullable=True)           # stok_son_durum / manual / lab_notu / proforma / fatura / siparis
     source_label = Column(String(120), nullable=True)    # ör. "Stok Son Durum — Eylül 2026"
     quoted_at = Column(Date, nullable=True)              # teklif/liste tarihi
     note = Column(Text, nullable=True)
@@ -279,6 +284,12 @@ class SupplierPrice(Base):
     # Elle girilen/düzenlenen satırın kişisi (içe aktarılan satırda boş).
     created_by = Column(String(100), nullable=True)
     updated_by = Column(String(100), nullable=True)
+    # KDV (08.10.2026): `vat_included` NULL = bilinmiyor (eski satırlar, Stok
+    # Son Durum), False = KDV hariç, True = fiyat KDV DAHİL brüt.  `vat_rate`
+    # yüzde (20 = %20).  Satın alma karşılaştırması net fiyatla yapılır
+    # (`core.supplier_prices.net_unit_price`); ikisi de boşken davranış eskisi.
+    vat_included = Column(Boolean, nullable=True)
+    vat_rate = Column(Float, nullable=True)
 
     item = relationship("Item", foreign_keys=[item_id])
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
@@ -2890,6 +2901,10 @@ def init_db():
             "ALTER TABLE supplier_prices ADD COLUMN updated_by VARCHAR(100)",
             # Birleştirilen kartın kazananı (takma ad) — migration c4e6a8b0d2f5.
             "ALTER TABLE suppliers ADD COLUMN merged_into_id INTEGER REFERENCES suppliers(id)",
+            # Tedarikçi fiyatının KDV bilgisi (lab fiyat notları, 08.10.2026) —
+            # migration d8f0b2c4e6a9; NULL = bilinmiyor, eski davranış.
+            "ALTER TABLE supplier_prices ADD COLUMN vat_included BOOLEAN",
+            "ALTER TABLE supplier_prices ADD COLUMN vat_rate DOUBLE PRECISION",
         ):
             alter_safe(stmt)
 

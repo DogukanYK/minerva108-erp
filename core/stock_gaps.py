@@ -417,15 +417,21 @@ def build_workbook(report: dict, prices: Optional[dict] = None) -> bytes:
                 vals = [r["name"], o["quantity"] or "", o["unit"], o["expected_date"] or "",
                         o["note"] or "", o["ordered_by"] or ""]
                 gray_cols = set()
+                fmt_cols = {}                            # fiyat hücresi → "#,##0.00## ₺/kg"
                 if show_sup:
+                    from core.supplier_prices import price_cell_format, vat_label
                     plist = prices.get(r["item_id"], [])
                     for n in range(SUP_SLOTS):
                         if n < len(plist):
                             p = plist[n]
                             name = p["supplier_name"]
+                            if p.get("vat_included"):    # brüt fiyat — sıralama netle yapıldı
+                                name = f"{name} ({vat_label(p)})"
                             if p.get("inactive"):        # pasif firma: sonda, gri, etiketli
                                 name = f"{name} (pasif tedarikçi)"
                                 gray_cols.update(range(len(vals) + 1, len(vals) + 4))
+                            if p.get("unit_price"):
+                                fmt_cols[len(vals) + 3] = price_cell_format(p)
                             vals += [name, p["package_size"] or "", p["unit_price"] or ""]
                         else:
                             vals += ["", "", ""]
@@ -433,6 +439,8 @@ def build_workbook(report: dict, prices: Optional[dict] = None) -> bytes:
                     c = ws.cell(ri, ci, v); c.border = thin
                     if ci in gray_cols:
                         c.font = GRAY
+                    if ci in fmt_cols:
+                        c.number_format = fmt_cols[ci]
                 ri += 1
             ri += 1
     widths(ws, [30, 10, 8, 12, 30, 16] + ([16, 16, 12] * SUP_SLOTS if show_sup else []))
