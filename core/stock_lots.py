@@ -340,6 +340,12 @@ def absorb_row(db: Session, row: Inventory, twin: Inventory, *, item_id: int) ->
     twin.updated_at = datetime.utcnow()
     n = redirect_analysis_rows(db, row.id, item_id=item_id, to_inventory_id=twin.id)
     redirect_production_rows(db, row.id, twin.id)
+    # Fason kabı kaynak lotuna FK ile bağlı; silinen satır yerine ikizi gösterir.
+    # Kabın kaynak snapshot'ı (lot/tedarikçi/SKT) değişmez — sevk zamanı
+    # doğrulaması fark varsa yeniden teknik hazırlık ister.
+    from database import OutsourcingContainer
+    (db.query(OutsourcingContainer).filter(OutsourcingContainer.inventory_id == row.id)
+     .update({OutsourcingContainer.inventory_id: twin.id}, synchronize_session=False))
     db.flush()                                   # bağlar silmeden önce yazılsın
     db.delete(row)
     return n

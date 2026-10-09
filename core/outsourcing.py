@@ -19,7 +19,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from sqlalchemy.orm import Session
 
 from core.consumption import expand_recipe, load_recipe_recs
-from core.stock_lots import lot_kind
+from core.stock_lots import draw_down, lot_kind
 from database import (AdminAuditLog, Inventory, Item, Recipe, Transaction, User,
     OutsourcingPartner, OutsourcingMaterialCode, OutsourcingJob,
     OutsourcingPacketRevision, OutsourcingApproval, OutsourcingContainer,
@@ -395,6 +395,18 @@ def create_container(db, domain, actor, job_id, data):
     expiry = _eligible_lot(inv, item, domain, raw=mat["kind"] == "raw") if inv_id else ""
     if mat["kind"] == "raw" and inv is None:
         fail("Hammadde için kaynak lot seçimi zorunlu.", "source_lot_required")
+    if inv is not None:
+        # Aynı lota bağlı, henüz gönderilmemiş (bu ve başka açık işlerdeki) kaplar
+        # lotun güncel miktarını aşamaz — üç onaydan sonra sevkte patlamasın.
+        bound = sum(float(q or 0) for (q,) in db.query(OutsourcingContainer.quantity)
+                    .join(OutsourcingJob, OutsourcingJob.id == OutsourcingContainer.job_id)
+                    .filter(OutsourcingContainer.inventory_id == inv.id,
+                            OutsourcingContainer.is_active == True,                 # noqa: E712
+                            OutsourcingContainer.dispatched_quantity <= EPS,
+                            ~OutsourcingJob.status.in_(("CANCELLED", "CLOSED"))))
+        if bound + qty > float(inv.quantity or 0) + EPS:
+            fail("Kaynak lotta bu kap için yeterli miktar yok (hazırlanmış kaplar dahil).",
+                 "insufficient_lot", 409)
     source = {"item_id": item.id, "unit": mat["unit"], "supplier_id": inv.supplier_id if inv else item.supplier_id,
               "lot_number": inv.lot_number if inv else None}
     row = OutsourcingContainer(job_id=job.id, material_code_id=mat["code_id"], item_id=item.id,
@@ -546,15 +558,27 @@ def dispatch(db, domain, actor, job_id, data):
     shipment = OutsourcingShipment(job_id=job.id, revision=job.revision,
         packet_hash=_packet(db, job)[0].packet_hash, operation_id=op.id, dispatched_by=_actor(actor)[0])
     db.add(shipment); db.flush()
-    for c in selected:
+    # Lot bağlı kaplar önce: seçilen lot düşülür ve flush edilir; lotsuz kaplar
+    # (ambalaj/etiket) ardından FIFO ile lot satırlarından düşülür — yalnız
+    # current_stock'u düşmek lot tablosunu defterden koparırdı (09.09.2026 lot
+    # kayması).  Defter yine kap başına TEK Output (ShipmentLine sözleşmesi).
+    for c in sorted(selected, key=lambda row: (row.inventory_id is None, row.id)):
         item, inv = cards[c.item_id], inventories.get(c.inventory_id)
         item.current_stock = round(float(item.current_stock or 0) - c.quantity, 6)
+        lot_number, lot_note = (inv.lot_number if inv else None), ""
         if inv is not None:
             inv.quantity = round(float(inv.quantity or 0) - c.quantity, 6)
             inv.updated_at = datetime.utcnow()
-        tx = Transaction(item_id=item.id, lot_number=inv.lot_number if inv else None,
+            db.flush()
+        else:
+            touched, _uncovered = draw_down(db, item, c.quantity)
+            if len(touched) == 1 and touched[0][0] != "—":
+                lot_number = touched[0][0]
+            elif touched:
+                lot_note = " | Lotlar: " + ", ".join(f"{lot} ({qty:g})" for lot, qty in touched)
+        tx = Transaction(item_id=item.id, lot_number=lot_number,
             transaction_type="Output", quantity=c.quantity, performed_by=_actor(actor)[1],
-            notes=f"Fason sevk — FS-{job.id} | Paket r{job.revision} | Kap {c.container_uid}")
+            notes=f"Fason sevk — FS-{job.id} | Paket r{job.revision} | Kap {c.container_uid}{lot_note}")
         db.add(tx); db.flush()
         db.add(OutsourcingShipmentLine(shipment_id=shipment.id, container_id=c.id,
                                        transaction_id=tx.id, quantity=c.quantity))
@@ -614,15 +638,23 @@ def record_consumption(db, domain, actor, job_id, data):
     return job
 
 
-def _new_receipt(db, job, op, *, item_id, kind, qty, stock_unit, external_lot, expiry="", container=None):
+def _new_receipt(db, job, op, *, item_id, kind, qty, stock_unit, external_lot, expiry="", container=None,
+                 received_by="—"):
     receipt = OutsourcingReceipt(job_id=job.id, operation_id=op.id, container_id=container.id if container else None,
         item_id=item_id, kind=kind, quantity=qty, unit=stock_unit, external_lot=external_lot)
     db.add(receipt); db.flush()
     # Separate physical receipts never upsert into source/other QC lots.
-    inv = Inventory(item_id=item_id, lot_number=f"FS-{job.id}-R{receipt.id}", quantity=qty,
+    # Kullanılmamış iade özgün lot no + tedarikçiyi taşır (kabın dondurulmuş
+    # snapshot'ından; kaynak satır sonradan değişse/silinse de) — izlenebilirlik
+    # sevk Output'u ile iade Input'unu aynı lot altında gösterir.  Satır yine
+    # AYRI: outsourcing_receipt_id normal lotla birleşmeyi engeller.
+    source = json.loads(container.source_snapshot) if container is not None else {}
+    lot_number = (source.get("lot_number") if kind == "return" else None) or f"FS-{job.id}-R{receipt.id}"
+    inv = Inventory(item_id=item_id, lot_number=lot_number, quantity=qty,
+        supplier_id=source.get("supplier_id") if kind == "return" else None,
         location="Fason Şahit Karantina" if kind == "finished_sample" else "Fason Karantina",
-        status="QUARANTINE", qc_required=True, is_sample=kind == "finished_sample",
-        expiry_date=expiry or None, domain=job.domain, received_by=str(op.actor_id),
+        status="QUARANTINE", qc_required=True, is_sample=False,
+        expiry_date=expiry or None, domain=job.domain, received_by=received_by[:50],
         outsourcing_receipt_id=receipt.id)
     db.add(inv); db.flush()
     return receipt
@@ -639,7 +671,8 @@ def receive_returns(db, domain, actor, job_id, data):
         if qty > _outstanding(c) + EPS:
             fail("Fiziksel iade dış bakiyeyi aşamaz.", "over_external_balance", 409)
         _new_receipt(db, job, op, item_id=c.item_id, kind="return", qty=qty, stock_unit=c.unit,
-                     external_lot=c.external_lot, expiry=c.expiry_date, container=c)
+                     external_lot=c.external_lot, expiry=c.expiry_date, container=c,
+                     received_by=_actor(actor)[1])
         c.returned_quantity = round(c.returned_quantity + qty, 6)
         db.add(OutsourcingMovement(job_id=job.id, operation_id=op.id, container_id=c.id,
                                    kind="return", quantity=qty, unit=c.unit))
@@ -673,10 +706,12 @@ def receive_finished(db, domain, actor, job_id, data):
         fail("Mamul SKT'si geçmiş.", "expired_lot")
     if qty - sample > EPS:
         _new_receipt(db, job, op, item_id=item.id, kind="finished", qty=round(qty - sample, 6),
-                     stock_unit=job.unit, external_lot=external_lot, expiry=expiry)
+                     stock_unit=job.unit, external_lot=external_lot, expiry=expiry,
+                     received_by=_actor(actor)[1])
     if sample > 0:
         _new_receipt(db, job, op, item_id=item.id, kind="finished_sample", qty=sample,
-                     stock_unit=job.unit, external_lot=external_lot, expiry=expiry)
+                     stock_unit=job.unit, external_lot=external_lot, expiry=expiry,
+                     received_by=_actor(actor)[1])
     job.status = "RECONCILING"
     _audit(db, actor, "receipts", job.id, {"operation_id": op.id, "quantity": qty, "sample_quantity": sample})
     return job
@@ -701,8 +736,7 @@ def approve_receipt(db, inv, actor, decision=None):
     decision = decision or inv.status
     if (not receipt or not job or not item or receipt.item_id != inv.item_id or
             item.domain != job.domain or inv.domain != job.domain or unit(item.unit) != receipt.unit or
-            abs(float(inv.quantity or 0) - receipt.quantity) > EPS or
-            bool(inv.is_sample) != (receipt.kind == "finished_sample")):
+            abs(float(inv.quantity or 0) - receipt.quantity) > EPS or inv.is_sample):
         fail("Fason kabulünün kart/lot/miktar/panel bağı bozulmuş.", "receipt_source_mismatch", 409)
     if decision not in ("APPROVED", "REJECTED"):
         fail("QC kararı geçersiz.", "invalid_qc_decision")
@@ -716,7 +750,8 @@ def approve_receipt(db, inv, actor, decision=None):
         actor_name = _actor(actor)[1]
     else:
         actor_name = str(actor or "—")[:100]
-    if decision == "APPROVED" and not inv.is_sample:
+    witness = receipt.kind == "finished_sample"
+    if decision == "APPROVED" and not witness:
         tx = Transaction(item_id=item.id, lot_number=inv.lot_number, transaction_type="Input",
             quantity=receipt.quantity, performed_by=actor_name,
             notes=f"{'Fason iade' if receipt.kind == 'return' else 'Fason kabul'} — FS-{job.id} | Kabul #{receipt.id}")
@@ -724,7 +759,12 @@ def approve_receipt(db, inv, actor, decision=None):
         receipt.input_transaction_id = tx.id
         item.current_stock = round(float(item.current_stock or 0) + receipt.quantity, 6)
     receipt.status, receipt.qc_at, receipt.qc_by = decision, datetime.utcnow(), actor_name
-    inv.status, inv.qc_required = decision, False
+    # Şahit numune `is_sample` DEĞİLDİR (o bayrak alternatif tedarikçi numunesi
+    # demek: numune listesi, "stoğa çevir", Numune Analizi kaynağı).  Onaylı
+    # şahit RETAINED kalır — her stok havuzu yalnız APPROVED lot kullandığından
+    # FIFO/teslimat/üretim ona dokunmaz; Input yazılmadığı için stokta da yok.
+    inv.status = "RETAINED" if witness and decision == "APPROVED" else decision
+    inv.qc_required = False
     db.add(AdminAuditLog(actor_name=actor_name, action="outsourcing.receipt_qc", target_type="outsourcing_receipt",
         target_id=receipt.id, details=_json({"job_id": job.id, "decision": decision,
                                           "input_transaction_id": receipt.input_transaction_id})))
@@ -770,3 +810,246 @@ def cancel_job(db, domain, actor, job_id, data):
     job.status, job.cancel_reason, job.closed_at = "CANCELLED", reason, datetime.utcnow()
     _audit(db, actor, "cancel", job.id, {"operation_id": op.id, "reason": reason, "auto_return": False})
     return job
+
+
+# ─── Read models ─────────────────────────────────────────────────────────────
+# İç ekran (detail) ile dış belge (external_packet) AYRI kurulur.  Dış paket
+# yalnız dondurulmuş paket sürümündeki izin listesi alanlarından oluşur; kart
+# adı/SKU/tedarikçi/kaynak lot/spec metni hiçbir koşulda girmez.  İç detayda
+# gerçek eşleştirme (kart adı, spec, kaynak lot) yalnız `mapping` yetkisiyle döner.
+
+TERMINAL = ("CLOSED", "CANCELLED")
+_STATUS_LABEL = {"QUARANTINE": "Kalite kontrol bekliyor", "APPROVED": "Onaylandı",
+                 "REJECTED": "Reddedildi", "MIXED": "Kısmen sonuçlandı"}
+
+
+def _when(value):
+    from database import to_tr
+    return to_tr(value).strftime("%d.%m.%Y %H:%M") if value else ""
+
+
+def _code_map(snap):
+    return {m["code_id"]: m["code"] for m in snap.get("materials", [])}
+
+
+def _shipments(db, job, snap):
+    frozen = {c["id"]: c for c in snap.get("containers", [])}
+    codes = _code_map(snap)
+    rows = db.query(OutsourcingShipment).filter_by(job_id=job.id).order_by(OutsourcingShipment.id).all()
+    result = []
+    for index, shipment in enumerate(rows, 1):
+        lines = db.query(OutsourcingShipmentLine).filter_by(shipment_id=shipment.id) \
+            .order_by(OutsourcingShipmentLine.id).all()
+        containers = []
+        for line in lines:
+            c = frozen.get(line.container_id, {})
+            containers.append({"container_uid": c.get("container_uid"), "code": codes.get(c.get("code_id")),
+                               "external_lot": c.get("external_lot"), "quantity": line.quantity,
+                               "unit": c.get("unit"), "expiry_date": c.get("expiry_date") or ""})
+        result.append({"id": shipment.id, "reference": f"FS-{job.id}-S{index}",
+                       "dispatched_at": _when(shipment.dispatched_at), "containers": containers})
+    return result
+
+
+def _balance(db, job):
+    codes = {c.id: c.code for c in db.query(OutsourcingMaterialCode).join(
+        OutsourcingContainer, OutsourcingContainer.material_code_id == OutsourcingMaterialCode.id)
+        .filter(OutsourcingContainer.job_id == job.id)}
+    return [{"container_id": c.id, "container_uid": c.container_uid, "code": codes.get(c.material_code_id),
+             "unit": c.unit, "dispatched": c.dispatched_quantity, "consumed": c.consumed_quantity,
+             "waste": c.waste_quantity, "returned": c.returned_quantity, "outstanding": _outstanding(c)}
+            for c in _containers(db, job) if c.dispatched_quantity > EPS]
+
+
+def external_packet(db, job, *, require_approval=True):
+    """Dış üreticiye giden tek veri kaynağı (PDF'ler + ekrandaki kodlu önizleme)."""
+    approved = _approved(db, job)
+    if require_approval and not approved:
+        fail("Kodlu belgeler üç atanmış hesap onayından sonra üretilir.", "approval_required", 409)
+    _, snap = _packet(db, job)
+    codes = _code_map(snap)
+    partner = db.query(OutsourcingPartner).filter_by(id=job.partner_id).first()
+    materials = [{"code": m["code"], "kind": m["kind"], "phase": m.get("phase") or "",
+                  "parts": [{"phase": p.get("phase") or "", "quantity": p.get("quantity")}
+                            for p in m.get("parts") or []],
+                  "quantity": m["quantity"], "dispatch_quantity": m.get("dispatch_quantity", m["quantity"]),
+                  "unit": m["unit"], "safety_instructions": m.get("safety_instructions") or ""}
+                 for m in snap.get("materials", [])]
+    containers = [{"container_uid": c["container_uid"], "code": codes.get(c["code_id"]),
+                   "external_lot": c["external_lot"], "quantity": c["quantity"], "unit": c["unit"],
+                   "expiry_date": c.get("expiry_date") or ""} for c in snap.get("containers", [])]
+    balance = [{k: row[k] for k in ("container_uid", "code", "unit", "dispatched", "consumed",
+                                    "waste", "returned", "outstanding")} for row in _balance(db, job)]
+    shipments = [{k: s[k] for k in ("reference", "dispatched_at", "containers")}
+                 for s in _shipments(db, job, snap)]
+    return {"approved": approved, "job_reference": f"FS-{job.id}",
+            "partner_reference": partner.name if partner else "",
+            "revision": job.revision, "product_name": snap.get("external_product_name") or "",
+            "quantity": snap.get("quantity"), "unit": snap.get("unit"),
+            "label_language": snap.get("label_language") or "",
+            "instructions": snap.get("external_notes") or "", "materials": materials,
+            "containers": containers, "shipments": shipments, "balance": balance}
+
+
+def job_summary(db, job, partner_names=None):
+    packet = db.query(OutsourcingPacketRevision).filter_by(job_id=job.id, revision=job.revision).first()
+    if partner_names is None:
+        partner = db.query(OutsourcingPartner).filter_by(id=job.partner_id).first()
+        partner_name = partner.name if partner else ""
+    else:
+        partner_name = partner_names.get(job.partner_id, "")
+    return {"id": job.id, "reference": f"FS-{job.id}", "partner_id": job.partner_id,
+            "partner_name": partner_name, "external_product_name": job.external_product_name,
+            "quantity": job.quantity, "unit": job.unit, "label_language": job.label_language,
+            "revision": job.revision, "status": job.status,
+            "packet_hash": packet.packet_hash if packet else None,
+            "approver_ids": {r: getattr(job, r + "_user_id") for r in ROLES},
+            "created_at": _when(job.created_at), "frozen_at": _when(job.frozen_at),
+            "closed_at": _when(job.closed_at), "cancel_reason": job.cancel_reason or ""}
+
+
+def _receipt_rows(db, job):
+    rows = db.query(OutsourcingReceipt).filter_by(job_id=job.id).order_by(OutsourcingReceipt.id).all()
+    finished, returns = {}, []
+    for r in rows:
+        if r.kind == "return":
+            returns.append({"id": r.id, "kind": "return", "container_id": r.container_id,
+                            "external_lot": r.external_lot, "quantity": r.quantity, "unit": r.unit,
+                            "status": r.status, "status_label": _STATUS_LABEL.get(r.status, r.status)})
+            continue
+        group = finished.setdefault(r.operation_id, {"kind": "finished", "operation_id": r.operation_id,
+            "external_lot": r.external_lot, "quantity": 0.0, "sample_quantity": 0.0,
+            "saleable_quantity": 0.0, "unit": r.unit, "statuses": set()})
+        group["quantity"] = round(group["quantity"] + r.quantity, 6)
+        key = "sample_quantity" if r.kind == "finished_sample" else "saleable_quantity"
+        group[key] = round(group[key] + r.quantity, 6)
+        group["statuses"].add(r.status)
+    result = []
+    for group in finished.values():
+        statuses = group.pop("statuses")
+        status = statuses.pop() if len(statuses) == 1 else "MIXED"
+        group.update(status=status, status_label=_STATUS_LABEL.get(status, status))
+        result.append(group)
+    return result + returns
+
+
+def job_detail(db, job, *, user_id, permissions):
+    """İç ekran DTO'su.  `permissions` = kullanıcının outsourcing yetki sözlüğü."""
+    _, snap = _packet(db, job)
+    can_map = bool(permissions.get("mapping"))
+    codes = {c.id: c for c in db.query(OutsourcingMaterialCode).filter(
+        OutsourcingMaterialCode.id.in_([m["code_id"] for m in snap.get("materials", [])] or [0]))}
+    items = {i.id: i for i in db.query(Item).filter(
+        Item.id.in_([m["item_id"] for m in snap.get("materials", [])] or [0]))}
+    materials = []
+    for m in snap.get("materials", []):
+        row = {"code_id": m["code_id"], "code": m["code"], "kind": m["kind"], "phase": m.get("phase") or "",
+               "parts": m.get("parts") or [], "quantity": m["quantity"],
+               "dispatch_quantity": m.get("dispatch_quantity", m["quantity"]), "unit": m["unit"]}
+        if can_map:
+            item, code = items.get(m["item_id"]), codes.get(m["code_id"])
+            row.update(item_id=m["item_id"], item_name=item.name if item else "",
+                       specification=code.specification if code else m.get("specification", ""))
+        materials.append(row)
+    code_text = {c.id: c.code for c in codes.values()}
+    containers = []
+    for c in _containers(db, job):
+        row = {"id": c.id, "container_uid": c.container_uid, "code": code_text.get(c.material_code_id),
+               "code_id": c.material_code_id, "quantity": c.quantity, "unit": c.unit,
+               "expiry_date": c.expiry_date or "", "dispatched": c.dispatched_quantity > EPS}
+        if can_map:
+            row["source_lot_number"] = c.source_lot_number or ""
+        containers.append(row)
+    approvals = [{"role": a.role, "user_id": a.user_id, "approved_at": _when(a.approved_at)}
+                 for a in _approvals(db, job)]
+    approved = _approved(db, job)
+    terminal = job.status in TERMINAL
+    my_roles = [r for r in ROLES if getattr(job, r + "_user_id") == user_id]
+    done = {a["role"] for a in approvals}
+    can_approve = (not terminal and not job.frozen_at and any(r not in done for r in my_roles)
+                   and ("technical" in done or "technical" in my_roles))
+    undispatched = any(not c["dispatched"] for c in containers)
+    actions = {"edit": not terminal and not job.frozen_at, "approve": can_approve,
+               "dispatch": not terminal and approved and undispatched,
+               "record": not terminal and bool(job.frozen_at),
+               "close": not terminal and bool(job.frozen_at), "cancel": not terminal,
+               "documents": approved}
+    return {"job": job_summary(db, job), "actions": actions, "materials": materials,
+            "containers": containers, "approvals": approvals, "balance": _balance(db, job),
+            "receipts": _receipt_rows(db, job),
+            "shipments": [{"id": s["id"], "reference": s["reference"], "dispatched_at": s["dispatched_at"]}
+                          for s in _shipments(db, job, snap)],
+            "external_packet": external_packet(db, job, require_approval=False)}
+
+
+def list_jobs(db, domain):
+    jobs = db.query(OutsourcingJob).filter_by(domain=domain).order_by(OutsourcingJob.id.desc()).limit(200).all()
+    names = {p.id: p.name for p in db.query(OutsourcingPartner).filter_by(domain=domain)}
+    return [job_summary(db, j, names) for j in jobs]
+
+
+def eligible_lots(db, domain):
+    """Kap hazırlığında seçilebilecek kaynak lotlar — `_eligible_lot` ile aynı kural."""
+    today = date.today()
+    rows = (db.query(Inventory, Item).join(Item, Item.id == Inventory.item_id)
+            .filter(Inventory.domain == domain, Inventory.status == "APPROVED",
+                    Inventory.qc_required == False, Inventory.is_sample == False,   # noqa: E712
+                    Inventory.outsourcing_receipt_id.is_(None), Inventory.quantity > EPS,
+                    Item.is_active == True)                                          # noqa: E712
+            .order_by(Item.name, Inventory.created_at, Inventory.id).all())
+    result = []
+    for inv, item in rows:
+        if lot_kind(item.category) == "finished":
+            continue
+        try:
+            expiry = _expiry(inv.expiry_date)
+        except OutsourcingError:
+            continue
+        if expiry and date.fromisoformat(expiry) < today:
+            continue
+        result.append({"id": inv.id, "item_id": item.id, "lot_number": inv.lot_number or "",
+                       "quantity": inv.quantity, "unit": item.unit or "", "expiry_date": expiry})
+    return result
+
+
+def bootstrap(db, domain, permissions):
+    partners = db.query(OutsourcingPartner).filter_by(domain=domain, is_active=True) \
+        .order_by(OutsourcingPartner.name).all()
+    recipes = (db.query(Recipe).join(Item, Item.id == Recipe.target_item_id)
+               .filter(Recipe.domain == domain, Recipe.is_active == True,       # noqa: E712
+                       Item.is_active == True).order_by(Recipe.name).all())      # noqa: E712
+    approvers = (db.query(User).filter(User.is_active == True,                   # noqa: E712
+                                       User.role.in_(("LabLead", "SuperAdmin", "Manager")))
+                 .order_by(User.full_name, User.username).all())
+    data = {"permissions": dict(permissions),
+            "partners": [{"id": p.id, "name": p.name, "contact": p.contact or ""} for p in partners],
+            "recipes": [{"id": r.id, "name": r.name} for r in recipes],
+            "approvers": [{"id": u.id, "username": u.username, "full_name": u.full_name or "",
+                           "role": u.role} for u in approvers]}
+    if permissions.get("mapping"):
+        names = {p.id: p.name for p in partners}
+        items = (db.query(Item).filter(Item.domain == domain, Item.is_active == True)  # noqa: E712
+                 .order_by(Item.name).all())
+        data["items"] = [{"id": i.id, "name": i.name, "unit": i.unit or ""} for i in items
+                         if lot_kind(i.category) != "finished"]
+        item_names = {i.id: i.name for i in items}
+        codes = db.query(OutsourcingMaterialCode).filter_by(domain=domain).order_by(OutsourcingMaterialCode.code).all()
+        data["material_codes"] = [{"id": c.id, "partner_id": c.partner_id, "partner_name": names.get(c.partner_id, ""),
+                                   "code": c.code, "item_id": c.item_id, "item_name": item_names.get(c.item_id, ""),
+                                   "specification": c.specification, "unit": c.unit, "kind": c.kind,
+                                   "verified": bool(c.verified_at)} for c in codes]
+        data["lots"] = eligible_lots(db, domain)
+    return data
+
+
+def public_preview(result, permissions):
+    """`preview` çıktısı — gerçek kart adı/spec yalnız mapping yetkisiyle."""
+    if permissions.get("mapping"):
+        return result
+    materials = []
+    for m in result["materials"]:
+        row = {k: v for k, v in m.items() if k not in ("item_name",)}
+        row["material_codes"] = [{k: v for k, v in c.items() if k != "specification"}
+                                 for c in m.get("material_codes", [])]
+        materials.append(row)
+    return {**result, "materials": materials}

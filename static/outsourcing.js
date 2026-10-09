@@ -7,7 +7,7 @@
     previewEpoch: 0, preview: null, previewBody: null, previewTimer: null, busy: false, action: null, approval: null };
   const STATUS = { DRAFT: 'Hazırlanıyor', PREPARED: 'Onay bekliyor', PENDING: 'Onay bekliyor', TECH_APPROVED: 'Teknik onay tamamlandı',
     APPROVED: 'Gönderime hazır', DISPATCHED: 'Fason üretimde', IN_PROGRESS: 'Fason üretimde',
-    PARTIALLY_DISPATCHED: 'Etaplı gönderiliyor', RECEIVED: 'Kalite kontrol bekliyor',
+    PARTIALLY_DISPATCHED: 'Etaplı gönderiliyor', RECONCILING: 'Tüketim / geri kabul', RECEIVED: 'Kalite kontrol bekliyor',
     QC_PENDING: 'Kalite kontrol bekliyor', CLOSED: 'Tamamlandı', CANCELLED: 'İptal edildi' };
   const ROLE_LABEL = { technical: 'Teknik onay', owner: 'İş sahibi onayı', manager: 'Yönetici onayı' };
   const $ = id => document.getElementById(id);
@@ -115,8 +115,8 @@
     const query = $('osSearch').value.trim().toLocaleLowerCase('tr-TR');
     const jobs = state.jobs.filter(j => [reference(j), j.partner_name, j.external_product_name].join(' ').toLocaleLowerCase('tr-TR').includes(query));
     const open = state.jobs.filter(j => !['CLOSED', 'CANCELLED'].includes(String(j.status).toUpperCase()));
-    const counts = [open.length, open.filter(j => ['DRAFT', 'PREPARED', 'PENDING'].includes(String(j.status).toUpperCase())).length,
-      open.filter(j => ['DISPATCHED', 'PARTIALLY_DISPATCHED', 'IN_PROGRESS'].includes(String(j.status).toUpperCase())).length,
+    const counts = [open.length, open.filter(j => ['DRAFT', 'PREPARED', 'PENDING', 'TECH_APPROVED', 'APPROVED'].includes(String(j.status).toUpperCase())).length,
+      open.filter(j => ['DISPATCHED', 'PARTIALLY_DISPATCHED', 'IN_PROGRESS', 'RECONCILING'].includes(String(j.status).toUpperCase())).length,
       state.jobs.filter(j => String(j.status).toUpperCase() === 'CLOSED').length];
     $('osStats').innerHTML = ['Açık iş', 'Hazırlık / onay', 'Fason üretimde', 'Tamamlanan iş'].map((label, i) =>
       `<div class="os-stat"><strong>${counts[i]}</strong><span>${label}</span></div>`).join('');
@@ -182,7 +182,9 @@
   function renderContainers(d) {
     const rows = d.containers || [];
     if (!rows.length) return '<div class="os-empty">Henüz kap hazırlanmadı.</div>';
-    return `<div class="os-card-head" style="padding:.8rem 0;border:0"><h3 class="os-section-title" style="margin:0">Hazırlanan kaplar</h3><button class="os-b os-b-sm" type="button" data-os-action="scan"><i class="bi bi-qr-code-scan"></i>Kap tara</button></div><div class="os-table-wrap"><table class="os-table"><thead><tr><th>Kap</th><th>Kod</th><th class="num">Hazırlanan</th><th>Durum</th></tr></thead><tbody>${rows.map(c => `<tr><td class="os-code">${esc(c.container_uid)}</td><td class="os-code">${esc(c.code)}</td><td class="num">${fmt(c.quantity)} ${esc(c.unit)}</td><td>${c.dispatched ? 'Gönderildi' : 'Hazır'}</td></tr>`).join('')}</tbody></table></div>`;
+    // Gönderilmemiş kap taslaktan kaldırılabilir (paket sürümü artar, onaylar yenilenir).
+    const canVoid = allowed('edit', 'manage') && can('mapping');
+    return `<div class="os-card-head" style="padding:.8rem 0;border:0"><h3 class="os-section-title" style="margin:0">Hazırlanan kaplar</h3><button class="os-b os-b-sm" type="button" data-os-action="scan"><i class="bi bi-qr-code-scan"></i>Kap tara</button></div><div class="os-table-wrap"><table class="os-table"><thead><tr><th>Kap</th><th>Kod</th><th class="num">Hazırlanan</th><th>Durum</th>${canVoid ? '<th></th>' : ''}</tr></thead><tbody>${rows.map(c => `<tr><td class="os-code">${esc(c.container_uid)}</td><td class="os-code">${esc(c.code)}</td><td class="num">${fmt(c.quantity)} ${esc(c.unit)}</td><td>${c.dispatched ? 'Gönderildi' : 'Hazır'}</td>${canVoid ? `<td>${c.dispatched ? '' : `<button type="button" class="os-b os-b-sm" data-os-void="${Number(c.id)}" title="Kabı taslaktan kaldır"><i class="bi bi-x-lg"></i>Kaldır</button>`}</td>` : ''}</tr>`).join('')}</tbody></table></div>`;
   }
   function renderShipments(d) {
     return (d.shipments || []).map((s, i) => `<div class="os-kv"><span>${i + 1}. gönderim</span><span>${esc(s.dispatched_at || s.created_at || '')}</span></div>`).join('') || '<p class="os-muted">Henüz gönderim yok.</p>';
@@ -374,6 +376,12 @@
     const route = kind === 'container' ? 'containers' : kind;
     await mutate(`/jobs/${context.jobId}/${route}`, payload, 'osActionModal');
   }
+  async function voidContainer(containerId) {
+    const d = state.detail;
+    if (!d || state.busy || !positiveId(containerId) || !allowed('edit', 'manage') || !can('mapping')) return;
+    if (!window.confirm('Bu kap taslaktan kaldırılsın mı? Paket sürümü değişir; verilen onaylar yenilenmelidir.')) return;
+    await mutate(`/jobs/${Number(d.job.id)}/containers/${containerId}/void`, {});
+  }
   function openApproval() {
     if (!allowed('approve', 'approve') || state.busy) return;
     const job = state.detail.job;
@@ -394,7 +402,11 @@
   $('osRefresh').addEventListener('click', () => { if (!state.busy) reload().catch(error => pageError(error.message)); });
   $('osNewJob')?.addEventListener('click', newJob);
   $('osJobsHost').addEventListener('click', event => { const button = event.target.closest('[data-os-open]'); if (button) openJob(Number(button.dataset.osOpen)); });
-  $('osJobDetail').addEventListener('click', event => { const button = event.target.closest('[data-os-action]'); if (button) openAction(button.dataset.osAction); });
+  $('osJobDetail').addEventListener('click', event => {
+    const voidButton = event.target.closest('[data-os-void]');
+    if (voidButton) { voidContainer(Number(voidButton.dataset.osVoid)); return; }
+    const button = event.target.closest('[data-os-action]'); if (button) openAction(button.dataset.osAction);
+  });
   ['osJobPartner', 'osJobRecipe', 'osJobQuantity', 'osJobLanguage'].forEach(id => $(id).addEventListener('input', schedulePreview));
   $('osPrepareForm').addEventListener('submit', prepareJob);
   $('osActionForm').addEventListener('submit', submitAction);

@@ -480,6 +480,67 @@ vakası: Naturalya numuneleri KRK/İpeda ana kartlarında durduğu için çevirm
 oraya yazdı; 758 kartı elle +20 + çevirme +20 ile çift sayıldı
 (`scripts/fix_numune_double_count_20261006.py`).
 
+**Kodlu fason üretim** (`/outsourcing`; `routers/outsourcing.py`, motor
+`core/outsourcing.py`, PDF `core/outsourcing_documents.py`, rapor ayrımı
+`core/outsourcing_reporting.py`, yetki backfill `core/outsourcing_access.py`, UI
+`templates/outsourcing.html` + `static/outsourcing.js`; spec
+`docs/superpowers/specs/2026-10-09-kodlu-fason-uretim-design.md`, 09.10.2026).
+Dış üreticiye YALNIZ kodlu föy/etiket/sevk listesi/rapor PDF'i gider (portal yok);
+gerçek malzeme ↔ kod eşleştirmesi (kart adı, spec, kaynak lot) yalnız
+`outsourcing.mapping` ile döner. **Domain-scoped**; RBAC `outsourcing`
+(`view/manage/mapping/approve/dispatch/record`; Manager + LabLead varsayılan;
+Distributor yetki verilse bile 403 — `require_internal_user`). Akış: firma →
+üreticiye özel kalıcı kod (kart + spec sha256; ad değişikliği kodu değiştirmez,
+grup eşdeğerliği otomatik kabul EDİLMEZ) → iş (reçete × adet; `preview` =
+`expand_recipe` + `production_plan._build_lines`, fire hammaddede, ambalaj/etiket
+muaf; `dispatch_quantities` sevk fazlası tartım hedefinden ayrı) → kaplar (kap =
+tek kaynak lot + tek dolum; hammaddede lot ZORUNLU ve APPROVED/QC'siz/numune
+değil/SKT dolu-geçerli; hazırlıkta lot kapasitesi açık işlerin gönderilmemiş
+kaplarıyla birlikte denetlenir) → her değişiklik yeni paket sürümü
+(`outsourcing_packet_revisions` snapshot + hash) → **üç ayrı hesap onayı**
+(technical=LabLead ÖNCE, owner=SuperAdmin, manager=Manager; `revision` +
+`packet_hash` eşleşmeli; B2B'nin aksine çizilen imza / şifre YOK) → etaplı sevk
+(`idempotency_key`; kap başına TEK `Output`, not öneki `Fason sevk`,
+`OutsourcingShipmentLine.transaction_id`; lotsuz kap `stock_lots.draw_down` ile FIFO
+lot düşer) → ilk sevkten sonra paket/kap DONAR → dış tüketim/fire
+(`OutsourcingMovement`; yerel stok TEKRAR düşmez; g↔kg, ml↔l kesin, kg↔l YOK) →
+fiziksel iade + mamul kabul (`quantity` toplam, `sample_quantity` şahit alt kümesi)
+**ayrı karantina lotlarına** (`status='QUARANTINE'`, `inventory.outsourcing_receipt_id`;
+iade özgün lot no + tedarikçiyi taşır, mamul `FS-{iş}-R{kabul}`) → QC → kapanış
+(`gönderilen = tüketim + fire + iade`, dış bakiye 0, tüm QC kararları verilmiş).
+İptal otomatik stok iadesi DEĞİLDİR (sevk sonrası bakiye sıfırlanmadan iptal yok).
+**TUZAK — QUARANTINE→APPROVED legacy dalı `Input` YAZMAZ** (yalnız
+`current_stock +=` + bilgi amaçlı `QC Approval`; aylık rekonstrüksiyon onu saymaz).
+Bu yüzden iki QC ucu (`/qc/process`, `/inventory/{id}/qc-approve`) önce
+`core.outsourcing.approve_receipt` çağırır: fason lotuysa TEK gerçek `Input` (not
+`Fason kabul` / `Fason iade`) + `current_stock +=` + `receipt.input_transaction_id`
+yazar ve legacy dalı atlatır; red stok yazmaz. **Fason şahidi `is_sample`
+DEĞİLDİR** (o bayrak alternatif tedarikçi numunesi: numune listesi, "stoğa çevir",
+Numune Analizi kaynağı — şahit oraya düşerse satılabilir stoğa çevrilebilirdi);
+onaylı şahit `RETAINED` olur, `Input` yazılmaz, hiçbir APPROVED havuzuna girmez.
+`OutsourcingError` jenerik 500 değil `{detail, code}` döner. Normal mal kabul upsert'i, `find_twin` ve lot taşıma fason satırlarını
+dışlar; bekleyen fason lotuna elle düzeltme 400. **TUZAK — FK döngüsü**
+`inventory → outsourcing_receipts → outsourcing_containers → inventory` KAP
+kenarından kırılır (`OutsourcingContainer.inventory_id` `use_alter=True`, ad
+`fk_outsourcing_container_inventory`). `inventory` tarafına use_alter KOYMA: eski
+şemalı test DB'sinde `drop_all` olmayan kısıtı düşürmeye çalışıp her testi
+patlatır (ChatGPT devralmasında yaşandı). `stock_lots.absorb_row` lotu silerken
+bağlı kapları ikize yönlendirir; kart silme fason kodu/işi olan kartı arşivler.
+Prod'a: tablolar `create_all`, `inventory.outsourcing_receipt_id` + adlı FK
+`init_db` alter_safe (migration `e3f5a7c9b1d2` kayıt için). Raporlar: top-usage ve
+aylık rapor sevk Output'larını tüketim saymaz (`transfer_transaction_ids`), fiilî
+tüketim + fireyi `movement_totals`'tan ekler; aylık raporda ayrı "Fason Sevki
+(transfer)" bölümü; `compute_stock_at` değişmez. Motor `log_admin_event`
+KULLANMAZ (içeride commit eder) — `AdminAuditLog` transaction içinde eklenir,
+router tek commit. Yetki: `outsourcing_access.backfill_permissions` override'lı
+kullanıcılara kategoriyi YETKİSİZ ekler (sentinel `backfill.perm.outsourcing.v1`);
+Işık'ın onayı `scripts/grant_outsourcing_isik_20261009.py [--commit]` (kuru
+varsayılan, yalnız `view`+`approve`). İlk gerçek firma/ürün belli değil — canlıya
+örnek veri yazma. Testler `tests/test_outsourcing.py` (motor),
+`tests/test_outsourcing_api.py` (HTTP + QC + eşzamanlılık + rapor/defter),
+`tests/test_outsourcing_documents.py` (PDF gizliliği); etiket 100×70 mm, QR yalnız
+`container_uid` (reportlab `QrCodeWidget`, cv2 ile çözüldüğü doğrulandı).
+
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +
 low-stock alerts + CRM task reminders), `scheduler.py` (APScheduler — daily 08:00 CRM

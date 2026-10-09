@@ -231,7 +231,10 @@ class Inventory(Base):
     # yazmadığı için çevrilmiş numunenin tek izi budur.
     sample_converted_at = Column(DateTime, nullable=True)
     # Fason kabulleri normal mal kabulünden izole; stok yalnız QC'de post edilir.
-    outsourcing_receipt_id = Column(Integer, ForeignKey("outsourcing_receipts.id", use_alter=True,
+    # FK döngüsü (inventory → outsourcing_receipts → outsourcing_containers →
+    # inventory) KAPTAN kırılır (OutsourcingContainer.inventory_id use_alter):
+    # eski şemalı test DB'sinde drop_all var olmayan kısıtı düşürmeye çalışmasın.
+    outsourcing_receipt_id = Column(Integer, ForeignKey("outsourcing_receipts.id",
                                      name="fk_inventory_outsourcing_receipt"),
                                      nullable=True, unique=True)
 
@@ -859,7 +862,8 @@ class OutsourcingContainer(Base):
     id = Column(Integer, primary_key=True)
     job_id = Column(Integer, ForeignKey("outsourcing_jobs.id"), nullable=False, index=True)
     material_code_id = Column(Integer, ForeignKey("outsourcing_material_codes.id"), nullable=False)
-    inventory_id = Column(Integer, ForeignKey("inventory.id"), nullable=True)
+    inventory_id = Column(Integer, ForeignKey("inventory.id", use_alter=True,
+                                              name="fk_outsourcing_container_inventory"), nullable=True)
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
     container_uid = Column(String(48), nullable=False, unique=True)
     external_lot = Column(String(48), nullable=False, unique=True)
@@ -3087,6 +3091,13 @@ def init_db():
             # migration d8f0b2c4e6a9; NULL = bilinmiyor, eski davranış.
             "ALTER TABLE supplier_prices ADD COLUMN vat_included BOOLEAN",
             "ALTER TABLE supplier_prices ADD COLUMN vat_rate DOUBLE PRECISION",
+            # Kodlu fason üretim (migration e3f5a7c9b1d2): fason karantina lotu
+            # kendi kabul kaydına bağlı; normal mal kabul upsert'i ve find_twin
+            # bu lotlarla birleşmez, stok yalnız QC onayında post edilir.
+            # outsourcing_* tabloları create_all ile gelir (yukarıda).
+            "ALTER TABLE inventory ADD COLUMN outsourcing_receipt_id INTEGER UNIQUE",
+            "ALTER TABLE inventory ADD CONSTRAINT fk_inventory_outsourcing_receipt "
+            "FOREIGN KEY (outsourcing_receipt_id) REFERENCES outsourcing_receipts(id)",
         ):
             alter_safe(stmt)
 
@@ -3134,6 +3145,19 @@ def init_db():
     # sebeple override'lı kullanıcılara rol varsayılanı — sentinel'li, bir kez.
     try:
         _backfill_perm_suppliers()
+    except Exception:
+        pass
+
+    # Yeni `outsourcing.*` kategorisi — override'lı kullanıcılara kategori
+    # YETKİSİZ eklenir (kimseye sessizce fason yetkisi verilmez; Işık'ın onay
+    # yetkisi scripts/grant_outsourcing_isik_20261009.py ile) — sentinel'li.
+    try:
+        from core.outsourcing_access import backfill_permissions
+        _db = SessionLocal()
+        try:
+            backfill_permissions(_db)
+        finally:
+            _db.close()
     except Exception:
         pass
 

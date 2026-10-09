@@ -26,6 +26,7 @@ from core import lots
 from core.audit import log_admin_event
 from core import production_plan
 from core.production_cancel import CancelError, apply_cancel, cancelled_view
+from core.outsourcing import OutsourcingError, approve_receipt
 from core.production_cancel import preview as cancel_preview
 from core.brands import cabinet_location, cabinet_of
 from core.permissions import require_internal_user, require_permission
@@ -1082,7 +1083,6 @@ def process_qc(
         #   QUARANTINE + REJECTED → stok henüz eklenmemiş, hiçbir şey yapma
         #   qc_required (PROD)  + APPROVED → stok zaten üretimde eklendi, hiçbir şey yapma
         #   qc_required (PROD)  + REJECTED → stok üretimde eklendi, geri al + Adjustment audit
-        from core.outsourcing import approve_receipt
         fason_handled = approve_receipt(db, inv, actor, decision=data.status)
         if not fason_handled and was_quarantine and data.status == "APPROVED" and item:
             item.current_stock = round((item.current_stock or 0) + inv.quantity, 6)
@@ -1115,6 +1115,10 @@ def process_qc(
         db.commit()
         label = "Onaylandı" if data.status == "APPROVED" else "Reddedildi"
         return {"message": f"Lot #{inv.lot_number} başarıyla {label}."}
+    except OutsourcingError as exc:
+        # Fason kabul bağı bozuksa jenerik 500 değil, sebebi söyleyen yanıt
+        db.rollback()
+        return JSONResponse(status_code=exc.status, content={"detail": exc.detail, "code": exc.code})
     except Exception:
         db.rollback()
         return JSONResponse(status_code=500, content={"detail": "QC işlemi sırasında hata oluştu."})
@@ -1185,7 +1189,6 @@ def qc_approve_form(
         #   QUARANTINE + REJECTED → stok henüz yok, hiçbir şey
         #   qc_required (PROD) + APPROVED → stok zaten var, hiçbir şey
         #   qc_required (PROD) + REJECTED → stok geri al + Adjustment audit
-        from core.outsourcing import approve_receipt
         fason_handled = approve_receipt(db, inv, actor, decision=data.status)
         if not fason_handled and was_quarantine and data.status == "APPROVED" and approved_item:
             approved_item.current_stock = round((approved_item.current_stock or 0) + inv.quantity, 6)
@@ -1220,6 +1223,9 @@ def qc_approve_form(
         db.commit()
         return {"message": f"Lot #{inv.lot_number} QC formu kaydedildi — {label}."}
 
+    except OutsourcingError as exc:
+        db.rollback()
+        return JSONResponse(status_code=exc.status, content={"detail": exc.detail, "code": exc.code})
     except Exception:
         db.rollback()
         return JSONResponse(status_code=500, content={"detail": "QC işlemi sırasında hata oluştu."})

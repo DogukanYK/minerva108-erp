@@ -25,6 +25,7 @@ PAGES = [
     "/receiving",
     "/recipes",
     "/production",
+    "/outsourcing",
     "/qc",
     "/stocks",
     "/ledger",

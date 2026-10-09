@@ -614,6 +614,7 @@
         'REJECTED':   ['status-rejected',   'Reddedildi ✗'],
         'QUARANTINE': ['status-quarantine', 'Karantina'],
         'CANCELLED':  ['status-cancelled',  'İptal edildi'],
+        'RETAINED':   ['status-approved',   'Şahit (saklamada)'],
       };
       const [cls, label] = map[status] || ['status-quarantine', status || '—'];
       return `<span class="status-badge ${cls}">${escHtml(label)}</span>`;

@@ -815,6 +815,16 @@ def _item_has_audit(db: Session, item_id: int) -> bool:
         return True
     if db.query(MaterialSupplierPref.id).filter(MaterialSupplierPref.item_id == item_id).first():
         return True
+    # Fason malzeme kodu / iş hedefi / kap / kabul — hepsi FK ile karta bakar;
+    # yalnız kod tanımlanmış (hiç hareket görmemiş) kart da hard-delete'te 500 verirdi.
+    from database import (OutsourcingContainer, OutsourcingJob, OutsourcingMaterialCode,
+                          OutsourcingReceipt)
+    for model, column in ((OutsourcingMaterialCode, OutsourcingMaterialCode.item_id),
+                          (OutsourcingJob, OutsourcingJob.target_item_id),
+                          (OutsourcingContainer, OutsourcingContainer.item_id),
+                          (OutsourcingReceipt, OutsourcingReceipt.item_id)):
+        if db.query(model.id).filter(column == item_id).first():
+            return True
     return False
 
 
@@ -1543,12 +1553,13 @@ def adjust_stock(
         #     hedef değere düşür/yükselt. Yoksa sadece item-level düzeltme.
         lot_note = ""
         if data.lot_number:
-            inv = (
-                db.query(Inventory)
-                .filter(Inventory.item_id == data.item_id, Inventory.lot_number == data.lot_number)
-                .with_for_update()
-                .first()
-            )
+            # Aynı kart + lot no'da fason karantina satırı da olabilir — önce
+            # normal satır; yalnız o yoksa fason satırı (QC bitmişse düzeltilebilir).
+            lot_q = db.query(Inventory).filter(Inventory.item_id == data.item_id,
+                                               Inventory.lot_number == data.lot_number)
+            inv = (lot_q.filter(Inventory.outsourcing_receipt_id.is_(None))
+                   .order_by(Inventory.id).with_for_update().first()
+                   or lot_q.order_by(Inventory.id).with_for_update().first())
             if inv:
                 if inv.outsourcing_receipt_id and (inv.status == "QUARANTINE" or inv.qc_required):
                     db.rollback()
