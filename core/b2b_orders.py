@@ -43,11 +43,12 @@ from datetime import date, datetime
 
 from sqlalchemy import func
 
-from core import lots, production_plan, production_run, stock_lots
+from core import bank_accounts, lots, production_plan, production_run, proforma_template, stock_lots
+from core.consumption import parse_ml
 from core.stock_lots import lot_kind
 from database import (AdminAuditLog, B2BOrder, B2BOrderBatch, B2BOrderBatchReturn,
                       B2BOrderPayment, B2BOrderPurchaseLine, B2BOrderRevision,
-                      B2BOrderSignature, BankProfile, BankRule, Inventory, Item,
+                      B2BOrderSignature, Inventory, Item,
                       ProductionConsumption, ProductionHistory, Quotation, QuotationItem,
                       Recipe, RecipeIngredient, Transaction, User, to_tr)
 
@@ -213,47 +214,52 @@ def _valid_signature(db, order):
             .order_by(B2BOrderSignature.id.desc()).first())
 
 
-# ─── Banka ───────────────────────────────────────────────────────────────────
-
-def _iban(profile, currency):
-    return {"USD": profile.iban_usd, "EUR": profile.iban_eur, "TRY": profile.iban_try}.get(
-        (currency or "").upper())
-
-
-def bank_snapshot(profile, currency):
-    if profile is None:
-        return None
-    return {"id": profile.id, "label": profile.label, "bank_name": profile.bank_name,
-            "branch": profile.branch or "", "swift": profile.swift or "",
-            "account_holder": profile.account_holder, "currency": (currency or "").upper(),
-            "iban": _iban(profile, currency) or ""}
-
+# ─── Banka + proforma şartları (core/bank_accounts, core/proforma_template) ──
 
 def suggest_bank(db, country, currency):
-    """Ülke + para birimi kuralı → banka profili (yoksa ülkeden bağımsız '*' kuralı)."""
-    cur = (currency or "").upper()
-    for key in (_fold(country), "*"):
-        if not key:
-            continue
-        rule = db.query(BankRule).filter(BankRule.country == key, BankRule.currency == cur).first()
-        if rule:
-            prof = db.query(BankProfile).filter_by(id=rule.bank_profile_id, is_active=True).first()
-            if prof:
-                return prof
-    return None
+    return bank_accounts.suggest_bank(db, country, currency)
 
 
-def _bank(db, bank_profile_id, currency, *, required=False):
-    if not bank_profile_id:
-        if required:
-            fail("Proforma için banka hesabı seçilmeli.", "bank_required")
-        return None
-    prof = db.query(BankProfile).filter_by(id=bank_profile_id, is_active=True).first()
-    if prof is None:
-        fail("Banka profili bulunamadı.", "invalid_bank")
-    if not _iban(prof, currency):
-        fail(f"Seçilen bankada {currency} IBAN'ı tanımlı değil.", "bank_currency_missing")
-    return prof
+def _resolve_banks(db, ids):
+    """Siparişe 0–3 banka; seçim boş olabilir (imzadan önce en az bir banka şart)."""
+    try:
+        return bank_accounts.resolve_banks(db, ids, required=False)
+    except bank_accounts.BankSelectionError as exc:
+        fail(exc.detail, exc.code)
+
+
+def _order_bank_ids(order):
+    return bank_accounts.parse_ids(order.bank_profile_ids) or (
+        [order.bank_profile_id] if order.bank_profile_id else [])
+
+
+def _set_banks(order, banks):
+    ids = [b.id for b in banks]
+    order.bank_profile_ids = bank_accounts.dump_ids(ids)
+    order.bank_profile_id = ids[0] if ids else None
+
+
+def _clean_terms(data):
+    try:
+        return proforma_template.clean_terms(data)
+    except ValueError as exc:
+        fail(str(exc), "invalid_terms")
+
+
+def _stored_terms(raw):
+    try:
+        val = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        val = {}
+    return val if isinstance(val, dict) else {}
+
+
+def snapshot_banks(com):
+    """İmzalı ticari sürümün bankaları — eski tek-banka sürümleri (`bank`) dahil."""
+    banks = com.get("banks")
+    if banks is None:
+        banks = [com["bank"]] if com.get("bank") else []
+    return [b for b in banks if b]
 
 
 # ─── Ticari içerik ───────────────────────────────────────────────────────────
@@ -271,6 +277,7 @@ def _lines(db, quotation, domain):
         if lot_kind(item.category) != "finished":
             fail(f"Yalnız bitmiş ürün sipariş edilebilir: {item.name}.", "invalid_item")
         out.append({"item_id": item.id, "name": line.item_name_snapshot or item.name,
+                    "weight_ml": parse_ml(item.variation_name, line.item_name_snapshot, item.name),
                     "unit": item.unit or "adet", "quantity": round(float(line.quantity), 6),
                     "unit_price": round(float(line.unit_price_foreign), 6),
                     "line_total": _money(line.line_total)})
@@ -279,8 +286,13 @@ def _lines(db, quotation, domain):
     return out
 
 
-def commercial_snapshot(db, order, quotation, bank_profile=None):
+def commercial_snapshot(db, order, quotation):
+    """Ticari sürüm: müşteri, satırlar (+ ml), tutarlar, şartlar, SEÇİLEN bankalar."""
     cur = (quotation.currency or "TRY").upper()
+    banks = [bank_accounts.bank_snapshot(b, cur) for b in _resolve_banks(db, _order_bank_ids(order))]
+    terms = proforma_template.merged_terms(
+        _stored_terms(order.proforma_terms),
+        proforma_template.payment_terms_text(order.payment_terms, order.advance_percent))
     return {
         "quotation_id": quotation.id, "quote_number": quotation.quote_number,
         "customer": {"name": quotation.customer_name, "contact": quotation.customer_contact or "",
@@ -295,7 +307,9 @@ def commercial_snapshot(db, order, quotation, bank_profile=None):
         "label_language": order.label_language,
         "target_date": order.target_date.isoformat() if order.target_date else None,
         "payment_terms": order.payment_terms, "advance_percent": order.advance_percent,
-        "bank": bank_snapshot(bank_profile, cur),
+        "bank": banks[0] if banks else None,
+        "banks": banks,
+        "terms": terms,
         "lines": _lines(db, quotation, order.domain),
     }
 
@@ -370,31 +384,42 @@ def convert_quotation(db, domain, actor, quotation_id, data):
         fail("Siparişi açan kişi yönetim onayını kendisi veremez.", "four_eyes", 400)
     terms, pct = _terms(data)
     cur = (q.currency or "TRY").upper()
-    bank = _bank(db, data.get("bank_profile_id"), cur) if data.get("bank_profile_id") else \
-        suggest_bank(db, q.customer_country, cur)
+    # Banka seçimi: istekte → teklifte saklı → ülke kuralı / varsayılan bankalar
+    explicit = data.get("bank_profile_ids") is not None or bool(data.get("bank_profile_id"))
+    if data.get("bank_profile_ids") is not None:
+        ids = bank_accounts.parse_ids(data["bank_profile_ids"])
+    elif data.get("bank_profile_id"):
+        ids = [int(data["bank_profile_id"])]
+    else:
+        ids = bank_accounts.parse_ids(q.bank_profile_ids) or bank_accounts.default_bank_ids(
+            db, q.customer_country, cur)
+    banks = _resolve_banks(db, ids)
+    # Şartlar: teklifte saklı olanın üstüne istekte gelen alanlar
+    proforma_terms = _clean_terms({**_stored_terms(q.proforma_terms), **(data.get("terms") or {})})
     order = B2BOrder(quotation_id=q.id, domain=domain, status="SUBMITTED",
                      label_language=_language(data.get("label_language")),
                      target_date=_target_date(data.get("target_date")),
                      payment_terms=terms, advance_percent=pct,
-                     bank_profile_id=bank.id if bank else None, owner_user_id=uid,
+                     proforma_terms=_json(proforma_terms), owner_user_id=uid,
                      technical_user_id=tech.id, signer_user_id=signer.id,
                      commercial_revision=1, technical_revision=0)
+    _set_banks(order, banks)
     db.add(order)
     db.flush()
     q.status = "ORDER"
-    snap = commercial_snapshot(db, order, q, bank)
+    snap = commercial_snapshot(db, order, q)
     db.add(B2BOrderRevision(order_id=order.id, kind="commercial", revision=1, snapshot=_json(snap),
                             snapshot_hash=_hash(snap), created_by=_actor(actor)[1]))
     db.flush()
     _audit(db, actor, "convert", order.id, {"quotation_id": q.id, "commercial_revision": 1,
-                                            "bank_suggested": bool(bank and not data.get("bank_profile_id"))})
+                                            "bank_ids": [b.id for b in banks],
+                                            "bank_suggested": bool(banks and not explicit)})
     return order
 
 
 def _new_commercial(db, order, quotation, actor, *, technical_changed):
     """Yeni ticari sürüm → onaylar yenilenir (adet/ürün/dil değiştiyse teknik de)."""
-    bank = _bank(db, order.bank_profile_id, quotation.currency) if order.bank_profile_id else None
-    snap = commercial_snapshot(db, order, quotation, bank)
+    snap = commercial_snapshot(db, order, quotation)
     order.commercial_revision += 1
     db.add(B2BOrderRevision(order_id=order.id, kind="commercial", revision=order.commercial_revision,
                             snapshot=_json(snap), snapshot_hash=_hash(snap),
@@ -451,13 +476,15 @@ def revise_commercial(db, domain, actor, order_id, data):
         order.label_language = _language(data["label_language"])
     if "target_date" in data:
         order.target_date = _target_date(data.get("target_date"))
-    if "bank_profile_id" in data:
-        order.bank_profile_id = _bank(db, data["bank_profile_id"], q.currency).id \
-            if data["bank_profile_id"] else None
+    if data.get("bank_profile_ids") is not None:
+        _set_banks(order, _resolve_banks(db, data["bank_profile_ids"]))
+    elif "bank_profile_id" in data:                                  # eski tek-banka gövdesi
+        _set_banks(order, _resolve_banks(db, [data["bank_profile_id"]] if data["bank_profile_id"] else []))
+    if data.get("terms") is not None:                                # kısmi gövde: diğer alanlar korunur
+        order.proforma_terms = _json(_clean_terms({**_stored_terms(order.proforma_terms), **data["terms"]}))
     db.flush()
     _recompute_totals(q)
-    after = commercial_snapshot(db, order, q, _bank(db, order.bank_profile_id, q.currency)
-                                if order.bank_profile_id else None)
+    after = commercial_snapshot(db, order, q)
     if _hash(after) == _hash(before):
         fail("Değişiklik yok.", "no_change")
     technical_changed = _scope(after) != _scope(before)
@@ -506,6 +533,21 @@ def recipe_fingerprint(db, recipe):
                   "output": round(float(recipe.output_quantity or 1), 6),
                   "lines": sorted([r.item_id, round(float(r.quantity or 0), 6), r.unit or "", r.phase or ""]
                                   for r in rows)})
+
+
+def recipe_view(db, recipe):
+    """Reçete bileşimi — teknik değerlendirmede snapshot'a yazılır (iç teknik föy
+    onaylanan içeriği basar; reçete sonradan değişse de föy değişmez)."""
+    rows = (db.query(RecipeIngredient, Item).outerjoin(Item, Item.id == RecipeIngredient.item_id)
+            .filter(RecipeIngredient.recipe_id == recipe.id).order_by(RecipeIngredient.id).all())
+    return {"id": recipe.id, "name": recipe.name,
+            "output_quantity": round(float(recipe.output_quantity or 1), 6),
+            "output_unit": recipe.output_unit or "", "waste_percentage": round(float(recipe.waste_percentage or 0), 6),
+            "ingredients": [{"item_id": ri.item_id, "name": it.name if it else f"#{ri.item_id}",
+                             "category": (it.category if it else "") or "",
+                             "quantity": round(float(ri.quantity or 0), 6),
+                             "unit": ri.unit or (it.unit if it else "") or "", "phase": ri.phase or ""}
+                            for ri, it in rows]}
 
 
 def _recipe_changed(db, line):
@@ -590,6 +632,7 @@ def technical_review(db, domain, actor, order_id, data):
                       "ordered": l["quantity"], "use_stock": use, "produce": produce,
                       "recipe_id": recipe_id, "recipe_name": recipe_name,
                       "recipe_hash": recipe_fingerprint(db, chosen) if recipe_id else None,
+                      "recipe": recipe_view(db, chosen) if recipe_id else None,
                       "released_stock_at_review": round(released, 6)})
     materials, plan_warnings = _shortages(db, domain, order.label_language,
                                           [l for l in lines if l["produce"] > EPS])
@@ -718,8 +761,8 @@ def sign(db, domain, actor, order_id, data, *, ip=None, user_agent=None):
             int(data.get("technical_revision", 0)) != order.technical_revision or
             data.get("document_hash") != expected):
         fail("Onaylanan belge değişti; son sürümü yeniden açın.", "revision_stale", 409)
-    if not com.get("bank") or not com["bank"].get("iban"):
-        fail("Proforma için banka hesabı seçilip ticari sürüme işlenmeli.", "bank_required", 409)
+    if not snapshot_banks(com):
+        fail("Proforma için en az bir banka hesabı seçilip ticari sürüme işlenmeli.", "bank_required", 409)
     png, digest = _signature_png(data.get("signature"))
     uid, name = _actor(actor)
     db.add(B2BOrderSignature(order_id=order.id, role="management", user_id=uid, signer_name=name,
@@ -807,24 +850,16 @@ def _line_progress(db, order, tech):
     return out
 
 
-def _expiry(lot):
-    text = (lot.expiry_date or "").strip()
-    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-    return None
-
-
 def strict_lot_ok(lot, today=None):
     """Sipariş partisinin hammadde havuzu: lot no'lu, APPROVED, QC'si bitmiş,
     numune değil, SKT'si okunur ve geçmemiş.  FIFO bu koşulu sağlamayan lotu
-    hiç görmez (production_plan `lot_filter`)."""
-    exp = _expiry(lot)
+    hiç görmez (production_plan `lot_filter`).  SKT eksik / okunamayan / geçmiş
+    lotlar İzlenebilirlik → "SKT sorunu olan lotlar" raporunda listelenir ve
+    orada düzeltilir (core/expiry_report — aynı ayrıştırıcı ve aynı "bugün")."""
+    exp = lots.parse_expiry(lot.expiry_date)
     return bool((lot.lot_number or "").strip() and (lot.status or "") == "APPROVED"
                 and not lot.qc_required and not lot.is_sample
-                and exp is not None and exp >= (today or date.today()))
+                and exp is not None and exp >= (today or lots.expiry_today()))
 
 
 def _check_strict_lots(pl):
@@ -832,7 +867,7 @@ def _check_strict_lots(pl):
     `uncovered`'dır ve parti BAŞLAMAZ (lot kaydı dışı düşüm yok).  Seçilen
     lotlar FIFO'da zaten süzüldü; burada yeniden denetlenir (savunma)."""
     problems = []
-    today = date.today()
+    today = lots.expiry_today()
     for seg in pl.segments():
         if seg.line.kind != "raw":
             continue
@@ -1317,6 +1352,8 @@ def order_detail(db, order, *, user, show_prices):
                   "payment_terms": order.payment_terms,
                   "payment_terms_label": PAYMENT_TERMS.get(order.payment_terms, order.payment_terms),
                   "advance_percent": order.advance_percent, "owner_user_id": order.owner_user_id,
+                  "bank_profile_ids": _order_bank_ids(order),
+                  "proforma_terms": {**proforma_template.DEFAULT_TERMS, **_stored_terms(order.proforma_terms)},
                   "technical_user_id": order.technical_user_id, "signer_user_id": order.signer_user_id,
                   "commercial_revision": order.commercial_revision,
                   "technical_revision": order.technical_revision,
@@ -1341,8 +1378,12 @@ def order_detail(db, order, *, user, show_prices):
         "shipment": ready, "actions": actions,
     }
     if show_prices:
-        detail["commercial"] = {k: com[k] for k in ("currency", "subtotal", "tax_percentage", "tax_amount",
-                                                    "shipping", "total", "notes", "valid_days", "bank")}
+        detail["commercial"] = {k: com.get(k) for k in ("currency", "subtotal", "tax_percentage", "tax_amount",
+                                                        "shipping", "total", "notes", "valid_days")}
+        detail["commercial"]["banks"] = snapshot_banks(com)
+        detail["commercial"]["bank"] = (detail["commercial"]["banks"] or [None])[0]
+        detail["commercial"]["terms"] = com.get("terms") or proforma_template.merged_terms(
+            {}, proforma_template.payment_terms_text(com.get("payment_terms"), com.get("advance_percent")))
         detail["payment"].update(gate)
         detail["payments"] = [{"id": p.id, "amount": p.amount, "currency": p.currency,
                                "received_on": p.received_on.isoformat() if p.received_on else None,
@@ -1354,6 +1395,7 @@ def order_detail(db, order, *, user, show_prices):
             detail["signature"]["image"] = "data:image/png;base64," + sig.signature_png
     else:
         # Teknik görünüm: banka ve satış fiyatları yok; malzeme alım tutarları da gizli.
+        detail["order"].pop("bank_profile_ids", None)
         if detail["technical"]:
             detail["technical"]["materials"] = [{k: v for k, v in m.items() if k not in ("price", "amount")}
                                                 for m in detail["technical"]["materials"]]

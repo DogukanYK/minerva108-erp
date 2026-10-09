@@ -19,6 +19,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from sqlalchemy.orm import Session
 
 from core.consumption import expand_recipe, load_recipe_recs
+from core.lots import parse_expiry
 from core.stock_lots import draw_down, lot_kind
 from database import (AdminAuditLog, Inventory, Item, Recipe, Transaction, User,
     OutsourcingPartner, OutsourcingMaterialCode, OutsourcingJob,
@@ -101,11 +102,9 @@ def _expiry(value, *, required=False):
         if required:
             fail("Hammadde lotunun geçerli SKT bilgisi gerekli.", "expiry_required")
         return ""
-    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
-        try:
-            return datetime.strptime(text, fmt).date().isoformat()
-        except ValueError:
-            pass
+    parsed = parse_expiry(text)
+    if parsed is not None:
+        return parsed.isoformat()
     fail("SKT YYYY-MM-DD veya GG.AA.YYYY olmalıdır.", "invalid_expiry")
 
 

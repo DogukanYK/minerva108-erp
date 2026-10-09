@@ -59,9 +59,10 @@ def scan_expiring_lots() -> None:
     and dispatch a single summary alert. Robust against malformed
     expiry_date strings (skipped silently) — never crashes the scheduler.
     """
+    from core.lots import expiry_today, parse_expiry
     db = SessionLocal()
     try:
-        today = datetime.utcnow().date()
+        today = expiry_today()
         rows = (
             db.query(Inventory)
             .filter(
@@ -74,11 +75,11 @@ def scan_expiring_lots() -> None:
 
         expiring: list[dict] = []
         for r in rows:
-            try:
-                exp = datetime.strptime(r.expiry_date, "%Y-%m-%d").date()
-            except (ValueError, TypeError):
-                # Legacy / malformed expiry strings — log once if we want to
-                # but don't pollute the alert summary with noise.
+            # Ortak ayrıştırıcı (YYYY-MM-DD · GG.AA.YYYY · GG/AA/YYYY).  Okunamayan
+            # metin burada atlanır — İzlenebilirlik "SKT sorunu olan lotlar"
+            # raporunda listelenir ve oradan düzeltilir.
+            exp = parse_expiry(r.expiry_date)
+            if exp is None:
                 continue
             days_left = (exp - today).days
             if 0 <= days_left <= EXPIRY_WATCH_DAYS:

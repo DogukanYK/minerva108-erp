@@ -256,6 +256,19 @@
                   <div style="flex:2;"><label class="lbl">Ülke</label><input type="text" id="pCountry" class="ipt" placeholder="ülke"></div>
                   <div style="flex:1;"><label class="lbl">Para Birimi</label><select id="pCurrency" class="ipt"><option>USD</option><option>EUR</option><option>TRY</option></select></div>
                 </div>
+                <!-- Proforma şartları (boş alan → şablon varsayılanı) + 1–3 banka hesabı -->
+                <div style="display:flex;flex-wrap:wrap;gap:0.6rem;margin-top:0.5rem;">
+                  <div style="flex:1 1 9rem;"><label class="lbl" for="pTransport">Transportation</label><input type="text" id="pTransport" class="ipt" maxlength="120"></div>
+                  <div style="flex:1 1 9rem;"><label class="lbl" for="pPayment">Payment terms</label><input type="text" id="pPayment" class="ipt" maxlength="120"></div>
+                  <div style="flex:1 1 9rem;"><label class="lbl" for="pShipment">Shipment</label><input type="text" id="pShipment" class="ipt" maxlength="120"></div>
+                  <div style="flex:1 1 9rem;"><label class="lbl" for="pDelivery">Type of delivery</label><input type="text" id="pDelivery" class="ipt" maxlength="120"></div>
+                  <div style="flex:0 1 6rem;"><label class="lbl" for="pDays">Yükleme (gün)</label><input type="number" id="pDays" class="ipt" min="0" max="365" step="1" placeholder="____"></div>
+                </div>
+                <div style="margin-top:0.5rem;">
+                  <label class="lbl">Proformadaki banka hesapları (en fazla 3)</label>
+                  <div id="pBanks" style="display:flex;flex-wrap:wrap;gap:0.3rem 1rem;font-size:0.84rem;"></div>
+                  <div id="pBankHint" style="font-size:0.72rem;color:#9ca3af;"></div>
+                </div>
                 <div style="font-size:0.72rem;color:#9ca3af;margin-top:0.4rem;">Her ürünün birim fiyatı ve ağırlığı (ml) aşağıdaki "Teslim Edilecekler" tablosundan girilir.</div>
               </div>
               <div style="margin-bottom:0.9rem;">
@@ -464,9 +477,70 @@
     }
 
     function isProforma(){ return document.getElementById('rType').value === 'proforma'; }
+
+    /* ── Proforma: şartlar + banka seçimi (ortak şablon, core/proforma_template) ── */
+    const P_TERMS = {transportation:'pTransport', payment:'pPayment', shipment:'pShipment', delivery_type:'pDelivery', loading_days:'pDays'};
+    let _pBanks=[], _pBankSel=[], _pBankTouched=false, _pDefaultTerms={}, _pBankTimer=null, _pBanksLoaded=false;
+    async function loadProformaBanks(applyDefaults){
+      const qs=new URLSearchParams({country:document.getElementById('pCountry').value.trim(), currency:document.getElementById('pCurrency').value});
+      try{
+        const r=await fetch('/api/bank-profiles?'+qs,{cache:'no-store'});
+        if(!r.ok) throw new Error();
+        const d=await r.json();
+        _pBanks=d.banks||[]; _pDefaultTerms=d.default_terms||{};
+        const known=id=>_pBanks.some(b=>b.id===id);
+        if(!_pBanksLoaded){ setProformaTerms(null); _pBanksLoaded=true; }
+        _pBankSel = (applyDefaults && !_pBankTouched) ? (d.default_ids||[]).filter(known) : _pBankSel.filter(known);
+      }catch(e){ _pBanks=[]; }
+      renderProformaBanks();
+    }
+    function setProformaTerms(t){
+      Object.entries(P_TERMS).forEach(([k,id])=>{
+        const v=(t&&t[k]!=null&&t[k]!=='')?t[k]:(k==='loading_days'?'':(_pDefaultTerms[k]||''));
+        document.getElementById(id).value=v;
+      });
+    }
+    function proformaTermsPayload(){
+      const out={};
+      Object.entries(P_TERMS).forEach(([k,id])=>{
+        const v=(document.getElementById(id).value||'').trim();
+        out[k]= k==='loading_days' ? (v===''?null:Number(v)) : (v||null);
+      });
+      return out;
+    }
+    function renderProformaBanks(){
+      const host=document.getElementById('pBanks'), hint=document.getElementById('pBankHint');
+      if(!_pBanks.length){ host.innerHTML='<span class="muted">Tanımlı banka hesabı yok — B2B Siparişleri → Banka hesapları.</span>'; hint.textContent=''; return; }
+      const ccy=b=>[['USD','iban_usd'],['EUR','iban_eur'],['TRY','iban_try'],['RUB','iban_rub']].filter(([,f])=>b[f]).map(([c])=>c).join(' · ');
+      host.innerHTML=_pBanks.map(b=>{
+        const i=_pBankSel.indexOf(b.id);
+        return `<label style="display:inline-flex;gap:0.3rem;align-items:center;cursor:pointer;"><input type="checkbox" data-pbank="${Number(b.id)}" ${i>=0?'checked':''}>${i>=0?`<b>${i+1}.</b>`:''} ${esc(b.label)} <span class="muted" style="font-size:0.72rem;">(${esc(ccy(b))})</span></label>`;
+      }).join('');
+      host.querySelectorAll('input[data-pbank]').forEach(cb=>cb.addEventListener('change',()=>{
+        const id=Number(cb.dataset.pbank);
+        if(cb.checked){
+          if(_pBankSel.length>=3){ cb.checked=false; showToast('Proformaya en fazla 3 banka basılabilir.'); return; }
+          _pBankSel.push(id);
+        } else _pBankSel=_pBankSel.filter(x=>x!==id);
+        _pBankTouched=true; renderProformaBanks();
+      }));
+      hint.textContent=_pBankTouched?'Elle seçildi — sıra proformadaki sütun sırasıdır.':'Ülke + para birimi kuralına (yoksa varsayılan bankalara) göre önerildi.';
+    }
+    function scheduleProformaBanks(){
+      if(_pBankTouched) return;
+      clearTimeout(_pBankTimer); _pBankTimer=setTimeout(()=>loadProformaBanks(true),400);
+    }
+    function resetProformaFields(){ _pBankTouched=false; setProformaTerms(null); loadProformaBanks(true); }
+    document.getElementById('pCountry').addEventListener('input', scheduleProformaBanks);
+    document.getElementById('pCurrency').addEventListener('change', scheduleProformaBanks);
+    function bankLabels(ids){
+      return (ids||[]).map(id=>(_pBanks.find(b=>b.id===id)||{}).label||('#'+id)).join(', ');
+    }
+
     function onTypeChange(){
       const pf=isProforma();
       document.getElementById('proformaFields').style.display = pf?'block':'none';
+      if(pf && !_pBanksLoaded) loadProformaBanks(true);
       const t=document.getElementById('completeBtnText'); if(t) t.textContent = pf?'Proformayı Onaya Gönder':'Teslimatı Tamamla';
       renderCart();
     }
@@ -549,6 +623,7 @@
       } else {
         const noPrice=_cart.find(c=>!(parseFloat(c.unit_price)>0));
         if(noPrice){ showToast(`"${noPrice.name}" için birim fiyat girin.`); return; }
+        if(_pBanks.length && !_pBankSel.length){ showToast('Proformaya basılacak en az bir banka hesabı seçin.'); return; }
       }
       const btn=document.getElementById('completeBtn'); btn.disabled=true; btn.innerHTML='<i class="bi bi-hourglass-split"></i> İşleniyor…';
       const payload={
@@ -567,6 +642,8 @@
         payload.customer_address=document.getElementById('pAddress').value.trim();
         payload.customer_country=document.getElementById('pCountry').value.trim();
         payload.currency=document.getElementById('pCurrency').value;
+        payload.bank_profile_ids=_pBankSel.slice();
+        payload.proforma_terms=proformaTermsPayload();
       }
       try{
         // Taslak düzenleme: yeni kayıt değil, mevcut sevkiyatı GÜNCELLE (PUT) — stok dokunulmaz.
@@ -589,6 +666,7 @@
         else { showResult(d, pf); showToast(pf?'Proforma oluşturuldu — onaya gönderildi.':'Teslimat kaydedildi, stok düşüldü.','success'); }
         _cart=[]; renderCart();
         ['rName','rOrg','rPhone','rNote','pAddress','pCountry'].forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
+        if(pf) resetProformaFields();
         const jobs=[loadItems(), loadHistory()];
         if(ship) jobs.push(loadShipPending());
         else if(typeof loadPending==='function') jobs.push(loadPending());
@@ -882,6 +960,7 @@
               <div style="font-weight:700;color:#92750e;">${total.toLocaleString('tr-TR',{minimumFractionDigits:2})} ${cur}</div>
             </div>
             <div style="margin:0.5rem 0;">${lines}</div>
+            ${p.proforma_terms?`<div class="muted" style="font-size:0.76rem;margin-bottom:0.4rem;">Şartlar: ${esc(p.proforma_terms.transportation)} · ${esc(p.proforma_terms.payment)} · ${esc(p.proforma_terms.shipment)} · ${esc(p.proforma_terms.delivery_type)} · yükleme ${p.proforma_terms.loading_days==null?'—':esc(p.proforma_terms.loading_days)+' gün'}<br>Bankalar: ${(p.bank_profile_ids||[]).length?esc(bankLabels(p.bank_profile_ids)):'ülke kuralı / varsayılan'}</div>`:''}
             <div style="display:flex;gap:0.5rem;">
               <button class="btn-g" style="flex:0 0 auto;padding:0.4rem 0.9rem;" onclick="approveProforma(${p.id})"><i class="bi bi-check2-circle"></i> Onayla</button>
               <button class="btn-o" style="flex:0 0 auto;padding:0.4rem 0.9rem;color:#b91c1c;border-color:#fca5a5;" onclick="rejectProforma(${p.id})"><i class="bi bi-x-circle"></i> Reddet</button>
@@ -923,7 +1002,7 @@
       if(!window.CAN_DISPATCH){ document.getElementById('completeBtn').disabled=true; }
       await loadItems();
       await loadHistory();
-      if(window.IS_SUPERADMIN) loadPending();
+      if(window.IS_SUPERADMIN){ await loadProformaBanks(true); loadPending(); }
       focusScan();
     })();
   </script>

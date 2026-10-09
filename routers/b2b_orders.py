@@ -24,7 +24,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core import b2b_orders as b2b
+from core import bank_accounts, proforma_template
 from core.b2b_proforma import proforma_filename, render_order_proforma
+from core.b2b_technical_sheet import render_technical_sheet, sheet_doc, technical_sheet_filename
+from core.proforma_template import ProformaTermsIn
 from core.delivery_note import content_disposition
 from core.domain import active_domain
 from core.notifications import notify_b2b_step
@@ -41,7 +44,9 @@ class ConvertBody(BaseModel):
     target_date: Optional[str] = Field(None, max_length=20)
     payment_terms: str = Field("prepaid", max_length=12)
     advance_percent: Optional[float] = None
-    bank_profile_id: Optional[int] = None
+    bank_profile_id: Optional[int] = None                     # eski tek-banka gövdesi
+    bank_profile_ids: Optional[List[int]] = Field(None, max_length=10)
+    terms: Optional[ProformaTermsIn] = None
     technical_user_id: int
     signer_user_id: int
 
@@ -69,7 +74,9 @@ class ReviseBody(BaseModel):
     advance_percent: Optional[float] = None
     label_language: Optional[str] = Field(None, max_length=8)
     target_date: Optional[str] = Field(None, max_length=20)
-    bank_profile_id: Optional[int] = None
+    bank_profile_id: Optional[int] = None                     # eski tek-banka gövdesi
+    bank_profile_ids: Optional[List[int]] = Field(None, max_length=10)
+    terms: Optional[ProformaTermsIn] = None
 
 
 class ReassignBody(BaseModel):
@@ -151,7 +158,10 @@ class BankBody(BaseModel):
     iban_usd: Optional[str] = Field(None, max_length=40)
     iban_eur: Optional[str] = Field(None, max_length=40)
     iban_try: Optional[str] = Field(None, max_length=40)
+    iban_rub: Optional[str] = Field(None, max_length=40)
     is_active: bool = True
+    is_default: bool = False
+    sort_order: Optional[int] = None
 
 
 class BankRuleBody(BaseModel):
@@ -255,11 +265,11 @@ def bootstrap(db: Session = Depends(get_db), actor: dict = Depends(_perm("view")
             "technical_users": who("tech_review"), "signers": who("sign"),
             "payment_terms": b2b.PAYMENT_TERMS}
     if show:
-        data["banks"] = [{"id": b.id, "label": b.label, "bank_name": b.bank_name, "branch": b.branch or "",
-                          "swift": b.swift or "", "account_holder": b.account_holder,
-                          "iban_usd": b.iban_usd or "", "iban_eur": b.iban_eur or "",
-                          "iban_try": b.iban_try or "", "is_active": b.is_active}
+        data["banks"] = [bank_accounts.profile_view(b)
                          for b in db.query(BankProfile).order_by(BankProfile.sort_order, BankProfile.id)]
+        data["max_banks"] = bank_accounts.MAX_BANKS
+        data["default_terms"] = dict(proforma_template.DEFAULT_TERMS)
+        data["account_holder"] = proforma_template.COMPANY["account_holder"]
         data["bank_rules"] = [{"id": r.id, "country": r.country, "currency": r.currency,
                                "bank_profile_id": r.bank_profile_id}
                               for r in db.query(BankRule).order_by(BankRule.country, BankRule.currency)]
@@ -307,6 +317,25 @@ def proforma(order_id: int, db: Session = Depends(get_db), actor: dict = Depends
         "Cache-Control": "no-store"})
 
 
+@router.get("/{order_id}/technical-sheet")
+def technical_sheet(order_id: int, db: Session = Depends(get_db), actor: dict = Depends(_perm("view")),
+                    domain: str = Depends(active_domain)):
+    """İç teknik föy (müşteriye gönderilmez) — reçete, ihtiyaç, alım, partiler,
+    kaynak lotlar.  Satış fiyatı / banka YOK; alım tutarı yalnız b2b.view ile."""
+    user = _user(db, actor)
+    show = _show_prices(user)
+    try:
+        order = b2b._order(db, order_id, domain)
+        detail = b2b.order_detail(db, order, user=user, show_prices=show)
+    except b2b.B2BError as exc:
+        return _error(exc)
+    doc = sheet_doc(db, order, detail, show_prices=show,
+                    generated_by=(user.full_name or user.username) if user else "")
+    return Response(content=render_technical_sheet(doc), media_type="application/pdf", headers={
+        "Content-Disposition": content_disposition(technical_sheet_filename(doc["reference"]), inline=True),
+        "Cache-Control": "no-store"})
+
+
 # ─── Ticari adımlar ──────────────────────────────────────────────────────────
 
 @router.post("/from-quotation/{quotation_id}")
@@ -316,7 +345,9 @@ def convert(quotation_id: int, body: ConvertBody, background: BackgroundTasks,
     if not _show_prices(_user(db, actor)):
         return JSONResponse(status_code=403, content={"detail": "Teklif ticari bilgidir (b2b.view).",
                                                       "code": "forbidden"})
-    order = _run(db, b2b.convert_quotation, db, domain, actor, quotation_id, body.model_dump())
+    data = body.model_dump()
+    data["terms"] = body.terms.model_dump(exclude_unset=True) if body.terms is not None else None
+    order = _run(db, b2b.convert_quotation, db, domain, actor, quotation_id, data)
     if isinstance(order, Response):
         return order
     return _respond(db, background, actor, domain, order, order.id)
@@ -487,15 +518,47 @@ def _bank_guard(db, actor):
     return None
 
 
+_BANK_FIELDS = ("label", "bank_name", "branch", "swift", "account_holder", "iban_usd", "iban_eur",
+                "iban_try", "iban_rub", "is_active", "is_default", "sort_order")
+
+
+def _bank_values(body, row=None):
+    """Gövde → kolon değerleri (boşluklar kırpılır, boş metin NULL).  Güncellemede
+    yalnız gönderilen alanlar yazılır — eski istemci `iban_rub` / `is_default`
+    göndermeden kaydederse onları silmez.  Sonuçta etiket, banka adı, hesap sahibi
+    ve en az bir IBAN şart (IBAN'sız profil proformaya basılamaz)."""
+    data = body.model_dump(exclude_unset=row is not None)
+    out = {}
+    for key in _BANK_FIELDS:
+        if key in data:
+            val = data[key]
+            out[key] = (val.strip() or None) if isinstance(val, str) else val
+    if "sort_order" in out and out["sort_order"] is None:
+        out.pop("sort_order")
+    merged = {k: getattr(row, k) for k in _BANK_FIELDS} if row is not None else {}
+    merged.update(out)
+    if not (merged.get("label") and merged.get("bank_name") and merged.get("account_holder")):
+        return JSONResponse(status_code=400, content={"detail": "Etiket, banka adı ve hesap sahibi gerekli.",
+                                                      "code": "bank_fields_required"})
+    if not any(merged.get(f) for _, f, _ in bank_accounts.IBAN_FIELDS):
+        return JSONResponse(status_code=400, content={"detail": "En az bir IBAN (USD / EUR / TRY / RUB) girin.",
+                                                      "code": "bank_iban_missing"})
+    return out
+
+
 @router.post("/banks")
 def create_bank(body: BankBody, db: Session = Depends(get_db), actor: dict = Depends(_perm("manage"))):
     denied = _bank_guard(db, actor)
     if denied:
         return denied
-    row = BankProfile(**body.model_dump())
+    values = _bank_values(body)
+    if isinstance(values, Response):
+        return values
+    row = BankProfile(**values)
     db.add(row)
     db.flush()
-    b2b._audit(db, actor, "bank_create", None, {"bank_profile_id": row.id})
+    b2b._audit(db, actor, "bank_create", None, {"bank_profile_id": row.id,
+                                               **{k: v for k, v in values.items() if v not in (None, "")}})
     db.commit()
     return {"ok": True, "id": row.id}
 
@@ -506,14 +569,22 @@ def update_bank(bank_id: int, body: BankBody, db: Session = Depends(get_db),
     denied = _bank_guard(db, actor)
     if denied:
         return denied
-    row = db.query(BankProfile).filter(BankProfile.id == bank_id).first()
+    row = db.query(BankProfile).filter(BankProfile.id == bank_id).with_for_update().first()
     if row is None:
         return JSONResponse(status_code=404, content={"detail": "Banka profili bulunamadı."})
-    for key, value in body.model_dump().items():
-        setattr(row, key, value)
-    b2b._audit(db, actor, "bank_update", None, {"bank_profile_id": row.id})
+    values = _bank_values(body, row)
+    if isinstance(values, Response):
+        return values
+    # IBAN değişikliği dolandırıcılık yüzeyidir → audit eski → yeni değeri tutar.
+    changes = {}
+    for key, value in values.items():
+        if getattr(row, key) != value:
+            changes[key] = [getattr(row, key), value]
+            setattr(row, key, value)
+    if changes:
+        b2b._audit(db, actor, "bank_update", None, {"bank_profile_id": row.id, "changes": changes})
     db.commit()
-    return {"ok": True, "id": row.id}
+    return {"ok": True, "id": row.id, "changed": sorted(changes)}
 
 
 @router.post("/bank-rules")

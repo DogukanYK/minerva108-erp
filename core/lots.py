@@ -24,13 +24,35 @@ Aynı ürünün iki eşzamanlı üretimi böylece sıraya girer.  (Bu kilit, bug
 "aynı saniyede iki üretim = aynı PRD- lotu" hatasını da kapatır.)
 """
 import re
+from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import and_, not_, or_
 from sqlalchemy.orm import Session
 
 from core.brands import lot_code
-from database import B2BOrderBatch, Inventory, Item, ProductionHistory, to_tr
+from database import B2BOrderBatch, Inventory, Item, ProductionHistory, to_tr, tr_now
+
+# ─── Lot SKT'si (Inventory.expiry_date metin) — TEK ayrıştırıcı ─────────────
+# B2B sıkı havuzu, fason sevk, SKT kontrol raporu ve "Yaklaşan SKT" aynı
+# biçimleri okur.  Okunamayan metin None'dır (geçerli SKT SAYILMAZ).
+EXPIRY_FORMATS = ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y")
+
+
+def parse_expiry(text) -> Optional[date]:
+    text = str(text or "").strip()
+    for fmt in EXPIRY_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def expiry_today() -> date:
+    """SKT karşılaştırmasının "bugün"ü — TR yerel takvim günü (sunucu UTC)."""
+    return tr_now().date()
+
 
 LOT_SEQ_PAD = 3          # MNR006 — dolgusuz istenirse 0 yapmak yeterli
 _MAX_LOT_LEN = 100       # ProductionHistory.lot_number / Inventory.lot_number

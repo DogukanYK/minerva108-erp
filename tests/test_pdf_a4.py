@@ -33,7 +33,7 @@ def test_delivery_note_is_a4_on_letterhead():
     assert _all_pages_a4(render_delivery_pdf(view))
 
 
-def test_proforma_is_a4_on_letterhead():
+def test_proforma_is_a4():
     from core.proforma_invoice import render_proforma_pdf
     view = {
         "document_no": "PRF-2026-00001", "recipient_name": "Test", "recipient_org": "ACME GmbH",
@@ -58,15 +58,16 @@ def _proforma_view(n):
 
 
 def _full_scale_pages(view) -> int:
-    """Hiç küçültmeden (scale=1.0) kaç sayfa olurdu."""
+    """Hiç küçültmeden (scale=1.0) kaç sayfa olurdu — proforma şablonunun
+    kendi kenarlarıyla (core/proforma_template.render_proforma: 6/5.6/6/6 mm)."""
     from io import BytesIO
     from reportlab.platypus import SimpleDocTemplate
     from reportlab.lib.units import mm
     from core.proforma_invoice import _proforma_story
     from core.delivery_note import _A4_PT, _count_pages
     buf = BytesIO()
-    SimpleDocTemplate(buf, pagesize=_A4_PT, leftMargin=20 * mm, rightMargin=20 * mm,
-                      topMargin=48 * mm, bottomMargin=40 * mm).build(_proforma_story(view, 1.0))
+    SimpleDocTemplate(buf, pagesize=_A4_PT, leftMargin=6 * mm, rightMargin=5.6 * mm,
+                      topMargin=6 * mm, bottomMargin=6 * mm).build(_proforma_story(view, 1.0))
     return _count_pages(buf.getvalue())
 
 

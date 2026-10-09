@@ -1,6 +1,6 @@
 # Minerva IMS — Kodlu fason üretim
 
-Durum: Kullanıcı 9 Ekim 2026 tarihinde uygulama talimatı verdi; uygulama kısmen başladı, kullanım limiti sırasında yarım kaldı. Kullanıcının son talimatıyla çalışma durduruldu ve Claude'a devralma için kaydedildi. Commit, migration veya canlı geçiş yapılmadı. Bekletilen B2B planından bağımsızdır.
+Durum: Uygulandı ve canlıda — 09.10.2026, commit `929f891` (`./deploy.sh`, test kapısı 1468 geçti); Işık'ın `outsourcing.view` + `approve` yetkisi `scripts/grant_outsourcing_isik_20261009.py --commit` ile yazıldı. Devralma öncesi durum: uygulama kısmen başlamış, kullanım limiti sırasında yarım kalmıştı (bkz. `2026-10-09-claude-devralma-notlari.md`). Güncel sözleşme: `CLAUDE.md` → "Kodlu fason üretim".
 
 Bu belgeyi okumak tek başına yeniden uygulama veya canlı geçiş talimatı değildir. Kullanıcının seçtiği plan için sonraki açık devam talimatı beklenecek.
 

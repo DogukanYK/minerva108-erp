@@ -412,6 +412,11 @@ class Delivery(Base):
     # Çok-bacaklı takip (yurtdışı: yerel TR → global → varış yereli). JSON liste:
     # [{"label": "Yerel (TR)", "carrier": "Yurtiçi", "tracking_no": "..."}]
     tracking_legs = Column(Text, nullable=True)
+    # Proforma şablonu (core/proforma_template): basılacak banka profilleri (JSON
+    # id listesi, sıralı, 1–3) + şartlar (JSON: transportation/payment/shipment/
+    # delivery_type/loading_days).  NULL → varsayılan bankalar + şablon şartları.
+    bank_profile_ids = Column(Text, nullable=True)
+    proforma_terms = Column(Text, nullable=True)
 
     items = relationship("DeliveryItem", back_populates="delivery",
                          cascade="all, delete-orphan")
@@ -629,6 +634,11 @@ class Quotation(Base):
     rejected_by    = Column(String(50), nullable=True)
     reject_reason  = Column(Text,       nullable=True)
 
+    # Proforma şablonu: basılacak bankalar (JSON id listesi) + şartlar (JSON).
+    # Siparişe dönüştürülürken B2B siparişine taşınır.
+    bank_profile_ids = Column(Text, nullable=True)
+    proforma_terms   = Column(Text, nullable=True)
+
     items = relationship(
         "QuotationItem",
         back_populates="quotation",
@@ -679,8 +689,12 @@ class BankProfile(Base):
     iban_usd = Column(String(40), nullable=True)
     iban_eur = Column(String(40), nullable=True)
     iban_try = Column(String(40), nullable=True)
+    iban_rub = Column(String(40), nullable=True)          # ör. Emlak Bank — Rusya ödemeleri
     sort_order = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, nullable=False, default=True)
+    # Ülke kuralı yoksa proformada önceden seçili gelen bankalar (şablon: Kuveyt
+    # Türk + Vakıfbank).
+    is_default = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
@@ -708,7 +722,9 @@ class B2BOrder(Base):
     target_date = Column(Date, nullable=True)
     payment_terms = Column(String(12), nullable=False, default="prepaid")   # prepaid|advance|net
     advance_percent = Column(Float, nullable=True)
-    bank_profile_id = Column(Integer, ForeignKey("bank_profiles.id"), nullable=True)
+    bank_profile_id = Column(Integer, ForeignKey("bank_profiles.id"), nullable=True)   # ilk banka (geriye uyum)
+    bank_profile_ids = Column(Text, nullable=True)        # JSON sıralı id listesi (1–3)
+    proforma_terms = Column(Text, nullable=True)          # JSON şartlar (core/proforma_template)
     owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     technical_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     signer_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
@@ -3108,11 +3124,19 @@ _SEED_BANK_PROFILES = (
          branch="151 YENIKOY", swift="ISBKTRIS",
          iban_usd="TR37 0006 4000 0021 1510 5912 99", iban_eur="TR53 0006 4000 0021 1510 5913 02",
          sort_order=2),
-    dict(label="Vakıfbank — Tarabya", bank_name="TURKİYE VAKIFLAR BANKASI T.A.O.",
+    dict(label="Vakıfbank — Tarabya", bank_name="TÜRKİYE VAKIFLAR BANKASI T.A.O.",
          branch="1106 TARABYA", swift="TVBATR2A",
          iban_usd="TR36 0001 5001 5804 8023 3113 21", iban_eur="TR85 0001 5001 5804 8023 3113 12",
-         sort_order=3),
+         iban_try="TR82 0001 5001 5800 7322 5156 62", sort_order=3),
 )
+
+# Beğenilen proforma şablonundaki (Proforma_Sablon_Bos, 09.10.2026) Vakıfbank
+# TRY hesabı — eski tohumda yoktu; aynı hesabın USD IBAN'ıyla eşleşen profile
+# boşsa yazılır.  Eski tohumdaki "TURKİYE" yazımı da (elle değiştirilmediyse)
+# şablondaki "TÜRKİYE"ye düzeltilir.
+_VAKIF_USD_IBAN = "TR360001500158048023311321"
+_VAKIF_TRY_IBAN = "TR82 0001 5001 5800 7322 5156 62"
+_VAKIF_OLD_NAME, _VAKIF_NAME = "TURKİYE VAKIFLAR BANKASI T.A.O.", "TÜRKİYE VAKIFLAR BANKASI T.A.O."
 
 
 def _seed_bank_profiles():
@@ -3125,6 +3149,37 @@ def _seed_bank_profiles():
             for row in _SEED_BANK_PROFILES:
                 db.add(BankProfile(account_holder="MİNERVA 108 YÖNETİM & DANIŞMANLIK A.Ş.", **row))
         db.add(AppSetting(key=SENTINEL, value=str(len(_SEED_BANK_PROFILES))))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+def _backfill_bank_defaults():
+    """Proforma şablonu: ülke kuralı olmayan belgede ÖNCEDEN SEÇİLİ bankalar
+    şablondaki iki hesaptır (Kuveyt Türk + Vakıfbank).  BİR KEZ (sentinel); daha
+    önce varsayılan işaretlenmiş profil varsa bayraklara dokunmaz.  Aynı sentinel
+    şablondaki Vakıfbank TRY IBAN'ını (boşsa) tamamlar ve tohumdaki "TURKİYE"
+    yazımını düzeltir."""
+    SENTINEL = "backfill.bank_defaults.v1"
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter(AppSetting.key == SENTINEL).first():
+            return
+        marked = 0
+        has_default = db.query(BankProfile.id).filter(BankProfile.is_default == True).first()  # noqa: E712
+        for b in db.query(BankProfile).filter(BankProfile.is_active == True).all():           # noqa: E712
+            name = (b.bank_name or "").upper()
+            if not has_default and ("KUVEYT" in name or "VAKIF" in name):
+                b.is_default = True
+                marked += 1
+            if (b.iban_usd or "").replace(" ", "").upper() == _VAKIF_USD_IBAN:
+                if not b.iban_try:
+                    b.iban_try = _VAKIF_TRY_IBAN
+                if b.bank_name == _VAKIF_OLD_NAME:
+                    b.bank_name = _VAKIF_NAME
+        db.add(AppSetting(key=SENTINEL, value=str(marked)))
         db.commit()
     except Exception:
         db.rollback()
@@ -3395,6 +3450,17 @@ def init_db():
             "ALTER TABLE inventory ADD COLUMN outsourcing_receipt_id INTEGER UNIQUE",
             "ALTER TABLE inventory ADD CONSTRAINT fk_inventory_outsourcing_receipt "
             "FOREIGN KEY (outsourcing_receipt_id) REFERENCES outsourcing_receipts(id)",
+            # Proforma şablonu (migration a6c8e0b2d4f7): banka profilinde RUB IBAN +
+            # varsayılan bayrağı; teklif / B2B siparişi / teslimat proformasında
+            # belge başına banka seçimi ve şartlar (JSON).
+            "ALTER TABLE bank_profiles ADD COLUMN iban_rub VARCHAR(40)",
+            "ALTER TABLE bank_profiles ADD COLUMN is_default BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE b2b_orders ADD COLUMN bank_profile_ids TEXT",
+            "ALTER TABLE b2b_orders ADD COLUMN proforma_terms TEXT",
+            "ALTER TABLE quotations ADD COLUMN bank_profile_ids TEXT",
+            "ALTER TABLE quotations ADD COLUMN proforma_terms TEXT",
+            "ALTER TABLE deliveries ADD COLUMN bank_profile_ids TEXT",
+            "ALTER TABLE deliveries ADD COLUMN proforma_terms TEXT",
         ):
             alter_safe(stmt)
 
@@ -3466,6 +3532,10 @@ def init_db():
         pass
     try:
         _seed_bank_profiles()
+    except Exception:
+        pass
+    try:
+        _backfill_bank_defaults()
     except Exception:
         pass
 

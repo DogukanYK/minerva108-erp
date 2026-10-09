@@ -13,6 +13,8 @@
   <script>
     window.PERMS = {{ permissions | tojson }};
     window.DOMAIN = {{ domain | tojson }};
+    // Proforma şablonu (firma, sabit notlar, varsayılan şartlar) — core/proforma_template
+    window.PROFORMA = {{ proforma | tojson }};
     window.can = function (category, action) {
       const cat = window.PERMS && window.PERMS[category];
       return !!(cat && cat[action]);
@@ -489,145 +491,60 @@
     @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
     /* ══════════════════════════════════════════════════════════════════
-       PDF-FAITHFUL PROFORMA  (mirrors PROFORMA boş.pdf 1:1)
+       PROFORMA ÖNİZLEMESİ — beğenilen boş şablon (Proforma_Sablon_Bos,
+       09.10.2026).  Sunucu PDF'i (core/proforma_template) ile aynı düzen:
+       logo + firma, kutulu başlık, alt çizgili müşteri bloğu, NO'lu 24 satır,
+       gri başlık, kalın şartlar (teslim satırı #9A3412), 1–3 banka sütunu.
     ══════════════════════════════════════════════════════════════════ */
-    .pdf-top {
-      display: grid; grid-template-columns: 1fr auto 1fr;
-      align-items: start; gap: 1rem;
-      padding: 0.5rem 0 1.25rem;
-    }
-    .pdf-top-spacer { /* left-side spacer balances the date block on the right */ }
-    .pdf-brand-center {
-      text-align: center;
-      grid-column: 2;
-    }
-    .pdf-logo {
-      max-height: 80px; max-width: 180px; object-fit: contain;
-      margin: 0 auto 0.6rem; display: block;
-    }
-    .pdf-co-name {
-      font-weight: 700; font-size: 0.92rem; color: #1f2937; margin-bottom: 4px;
-    }
-    .pdf-co-line {
-      font-size: 0.78rem; color: #374151; line-height: 1.35;
-    }
-    .pdf-co-line a { color: #1d4ed8; text-decoration: none; }
-    .pdf-date-block {
-      grid-column: 3; justify-self: end; text-align: right;
-      font-size: 0.84rem; color: #1f2937;
-      border: 1.5px solid #1f2937; padding: 0.3rem 0.7rem;
-      align-self: end; margin-bottom: 4px;
-    }
-    .pdf-quote-no {
-      font-size: 0.7rem; color: #6b7280; margin-top: 3px; font-weight: 400;
-    }
-
-    /* Title bar — full-width black border */
-    .pdf-title-bar {
-      border: 1.5px solid #1f2937;
-      padding: 0.4rem 0.6rem;
-      text-align: center;
-      font-weight: 700; font-size: 0.92rem;
-      letter-spacing: 0.04em;
-      margin-bottom: 0.85rem;
-    }
-
-    /* Customer info — 4-line stacked */
-    .pdf-customer { font-size: 0.84rem; line-height: 1.55; margin-bottom: 1rem; }
-    .pdf-customer strong { color: #1f2937; }
-    .pdf-customer span { color: #374151; }
-
-    /* Items table */
-    table.pdf-items {
-      width: 100%; border-collapse: collapse; margin-bottom: 0;
-      font-size: 0.78rem; border: 1px solid #1f2937;
-    }
-    table.pdf-items th {
-      background: #ffffff; color: #1f2937;
-      padding: 0.45rem 0.55rem;
-      border: 1px solid #1f2937;
-      font-size: 0.72rem; font-weight: 700; line-height: 1.25;
-      text-align: center; vertical-align: middle;
-    }
-    table.pdf-items th .th-tr {
-      font-weight: 600; color: #374151; font-style: italic;
-    }
-    table.pdf-items th.col-name { text-align: center; }
-    table.pdf-items th.num     { width: 16%; }
-    table.pdf-items td {
-      padding: 0.32rem 0.55rem;
-      border: 1px solid #c7c7c7;
-      font-size: 0.78rem; color: #1f2937;
-      vertical-align: middle;
-    }
-    table.pdf-items td.col-name { font-weight: 500; }
-    table.pdf-items td.num {
-      text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;
-    }
-    table.pdf-items tr.empty-row td {
-      padding: 1rem; text-align: center; color: #9ca3af; font-style: italic;
-    }
-    table.pdf-items tfoot td {
-      border-color: #1f2937;
-      font-weight: 700;
-    }
-    .pdf-total-label { text-align: right; padding-right: 0.85rem; }
-    .pdf-total-amount { font-size: 0.92rem; }
-
-    /* Bottom 2-col grid */
-    .pdf-bottom {
-      display: grid;
-      grid-template-columns: 1fr 1.25fr;
-      gap: 1.25rem;
-      margin-top: 0.85rem;
-    }
-    .pdf-bottom-left {
-      font-size: 0.78rem; color: #1f2937; line-height: 1.5;
-    }
-    .pdf-bottom-left .pdf-line { margin-bottom: 2px; }
-    .pdf-bottom-left strong { color: #1f2937; }
-    .pdf-italic { font-style: italic; color: #4b5563; margin-top: 4px; font-size: 0.74rem; }
-    .pdf-signoff { margin-top: 1rem; font-size: 0.84rem; }
-    .pdf-signoff-dept {
-      font-weight: 700; color: #1f2937; letter-spacing: 0.04em; margin-top: 2px;
-    }
-
-    /* Bank info table on the right */
-    .pdf-bottom-right { font-size: 0.7rem; }
-    table.pdf-bank {
-      width: 100%; border-collapse: collapse;
-      border: 1.5px solid #1f2937;
-    }
-    table.pdf-bank th, table.pdf-bank td {
-      border: 1px solid #1f2937;
-      padding: 3px 6px;
-      font-size: 0.68rem;
-      vertical-align: middle;
-      color: #1f2937;
-    }
-    table.pdf-bank .pdf-bank-title {
-      background: #1f2937; color: #ffffff;
-      text-align: center; font-size: 0.78rem; padding: 4px 6px;
-      letter-spacing: 0.06em;
-    }
-    table.pdf-bank .pdf-bank-owner td:first-child { font-weight: 700; background: #f7f7f7; }
-    table.pdf-bank .pdf-bank-numhdr td {
-      text-align: center; font-weight: 700; background: #f7f7f7;
-    }
-    table.pdf-bank td.lbl {
-      font-weight: 700; white-space: nowrap; background: #f7f7f7;
-      width: 24%;
-    }
-
-    /* Sample stamp at bottom-right */
-    .pdf-sample-stamp {
-      margin-top: 0.85rem;
-      text-align: center;
-      border: 1.5px solid #1f2937;
-      padding: 0.35rem 0.6rem;
-      font-weight: 700; font-size: 0.76rem;
-      letter-spacing: 0.06em;
-    }
+    .invoice-doc.pf { font-family: Arial, 'Liberation Sans', Helvetica, sans-serif; color: #000; font-size: 0.82rem; }
+    .pf-head { display: flex; gap: 1.4rem; align-items: flex-start; margin-bottom: 0.6rem; }
+    .pf-logo { width: 23%; max-width: 190px; height: auto; flex: none; }
+    .pf-co { font-size: 0.78rem; line-height: 1.3; }
+    .pf-co-name { font-weight: 700; font-size: 0.9rem; }
+    .pf-phones { display: grid; grid-template-columns: minmax(0, 16em) auto; column-gap: 1rem; }
+    .pf-title { border: 1.5px solid #000; text-align: center; font-weight: 700; font-size: 1.2rem;
+                padding: 0.15rem 0.4rem 0.3rem; margin-bottom: 0.6rem; }
+    table.pf-cust { width: 100%; border-collapse: collapse; margin-bottom: 0.7rem; table-layout: fixed; }
+    table.pf-cust th { font-weight: 700; white-space: nowrap; padding: 0.15rem 0.4rem 0.1rem 0;
+                       text-align: left; vertical-align: bottom; }
+    table.pf-cust td { border-bottom: 1px solid #000; padding: 0.15rem 0.3rem 0.1rem; vertical-align: bottom; }
+    table.pf-cust td.gap { border: none; }
+    table.pf-items tfoot td.lbl { white-space: nowrap; }
+    table.pf-items { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    /* Dış çerçeve yalnız başlık + satırlarda (TOTAL satırının solundaki boş hücreler çerçevesiz, PDF'teki gibi) */
+    table.pf-items thead th { border-top: 1.5px solid #000; }
+    table.pf-items thead th:first-child, table.pf-items tbody td:first-child { border-left: 1.5px solid #000; }
+    table.pf-items thead th:last-child, table.pf-items tbody td:last-child { border-right: 1.5px solid #000; }
+    table.pf-items tbody tr:last-child td { border-bottom: 1.5px solid #000; }
+    table.pf-items tfoot td:last-child { border-right: 1.5px solid #000; }
+    table.pf-items tfoot tr:last-child td:not(.blank) { border-bottom: 1.5px solid #000; }
+    table.pf-items th { background: #D9D9D9; border: 1px solid #000; font-weight: 700; font-size: 0.72rem;
+                        line-height: 1.15; text-align: center; vertical-align: middle; padding: 0.25rem 0.15rem; }
+    table.pf-items td { border: 1px solid #000; padding: 0.1rem 0.35rem; height: 1.5em; vertical-align: middle;
+                        font-size: 0.8rem; overflow-wrap: anywhere; }
+    table.pf-items td.c { text-align: center; }
+    table.pf-items td.r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    table.pf-items td.b { font-weight: 700; }
+    table.pf-items tfoot td { font-weight: 700; font-size: 0.84rem; }
+    table.pf-items tfoot td.blank { border: none; }
+    table.pf-items tfoot tr:first-child td:not(.blank) { border-top: 1.5px solid #000; }
+    .pf-terms { margin: 0.5rem 0 0.5rem 0.5rem; line-height: 1.35; font-size: 0.78rem; }
+    .pf-terms .t { font-weight: 700; }
+    .pf-terms .time { font-weight: 700; color: #9A3412; font-size: 0.82rem; }
+    table.pf-bank { width: 100%; border-collapse: collapse; border: 1.5px solid #000; table-layout: fixed;
+                    font-size: 0.74rem; }
+    table.pf-bank td { border: 1px solid #000; padding: 0.12rem 0.35rem; vertical-align: middle; overflow-wrap: anywhere; }
+    table.pf-bank td.ttl { background: #D9D9D9; text-align: center; font-weight: 700; font-size: 0.86rem; }
+    table.pf-bank td.lbl { font-weight: 700; white-space: nowrap; }
+    table.pf-bank td.num { text-align: center; font-weight: 700; font-size: 0.86rem; }
+    table.pf-bank td.own { font-weight: 700; }
+    .pf-bank-empty { border: 1px dashed #b45309; color: #b45309; padding: 0.4rem 0.6rem; font-size: 0.78rem; }
+    .pf-close { margin: 0.4rem 0 0 0.5rem; }
+    /* Yapılandırıcı: proforma bankaları */
+    .pf-bank-picks { display: flex; flex-wrap: wrap; gap: 0.45rem 1.1rem; font-size: 0.84rem; }
+    .pf-bank-picks label { display: inline-flex; gap: 0.35rem; align-items: center; cursor: pointer; }
+    .pf-bank-picks .ccy { color: #6b7280; font-size: 0.74rem; }
+    .pf-bank-hint { font-size: 0.74rem; color: #6b7280; margin-top: 0.3rem; }
 
     /* ══════════════════════════════════════════════════════════════════
        PRINT — render only the invoice; tighten margins so it fits A4.
@@ -641,10 +558,12 @@
       .content-inner { padding: 0 !important; }
       .invoice-doc {
         box-shadow: none !important; border-radius: 0 !important;
-        padding: 0.8cm 1cm !important; margin: 0 !important;
+        padding: 6mm 5.6mm 6mm 6mm !important; margin: 0 !important;
         max-width: 100% !important;
       }
-      table.pdf-items thead, table.pdf-bank thead { display: table-header-group; }
+      .pf-noprint { display: none !important; }
+      table.pf-items th, table.pf-bank td.ttl { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      table.pf-items thead { display: table-header-group; }
       tr { page-break-inside: avoid; }
       @page { size: A4 portrait; margin: 0; }
     }
@@ -871,11 +790,48 @@
                 <input type="number" class="form-control" id="quoteShipping" value="0" min="0" step="0.01" placeholder="0.00" />
               </div>
               <div class="col-12 col-md-6">
-                <label class="form-label-sm">Notlar / Şartlar</label>
-                <input type="text" class="form-control" id="quoteNotes"
-                       value="Payment Terms: 100% IN ADVANCE · Type of Delivery: EX-FACTORY · Time of Delivery: 2 months after receiving payment · Shipment: BY SEA / BY AIR · Transportation: EXCLUDING. These prices are calculated for partial loading. Above prices are valid for only this offer." />
+                <label class="form-label-sm">Not (proformada NOTE satırı)</label>
+                <input type="text" class="form-control" id="quoteNotes" maxlength="2000"
+                       placeholder="İsteğe bağlı — şartlar aşağıdaki Proforma bölümünde" />
               </div>
 
+            </div>
+          </div>
+        </div>
+
+        <!-- Proforma şartları + banka hesapları (sunucu PDF'i ve siparişe dönüştürme de kullanır) -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title-icon icon-navy"><i class="bi bi-bank"></i></span>
+            <h2 class="panel-title">Proforma Şartları &amp; Banka Hesapları</h2>
+          </div>
+          <div class="panel-body">
+            <div class="row g-3">
+              <div class="col-6 col-md-3">
+                <label class="form-label-sm" for="pfTransportation">Transportation</label>
+                <input type="text" class="form-control" id="pfTransportation" maxlength="120" />
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label-sm" for="pfPayment">Payment terms</label>
+                <input type="text" class="form-control" id="pfPayment" maxlength="120" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label-sm" for="pfShipment">Shipment</label>
+                <input type="text" class="form-control" id="pfShipment" maxlength="120" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label-sm" for="pfDeliveryType">Type of delivery</label>
+                <input type="text" class="form-control" id="pfDeliveryType" maxlength="120" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label-sm" for="pfLoadingDays">Yükleme (gün)</label>
+                <input type="number" class="form-control" id="pfLoadingDays" min="0" max="365" step="1" placeholder="____" />
+              </div>
+              <div class="col-12">
+                <label class="form-label-sm">Proformaya basılacak banka hesapları (en fazla {{ proforma.max_banks }})</label>
+                <div id="pfBankHost" class="pf-bank-picks">Yükleniyor…</div>
+                <div class="pf-bank-hint" id="pfBankHint"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -901,133 +857,44 @@
       </div>
       <!-- /builder-section -->
 
-      <!-- ════════════════ INVOICE PREVIEW (PDF-faithful, printable) ════════════════ -->
-      <!-- Layout mirrors /Users/dogukan/Downloads/PROFORMA boş.pdf 1:1.            -->
-      <!-- Static company / bank info is hard-coded; only customer + items + date    -->
-      <!-- come from the form (data-bind IDs preserved for the existing JS).         -->
-      <div class="invoice-doc" id="invoiceDoc">
-
-        <!-- ── TOP: centered logo + company info, DATE on right ────────────── -->
-        <div class="pdf-top">
-          <div class="pdf-top-spacer"></div>
-          <div class="pdf-brand-center">
-            <img src="/static/images/logo_full.png" class="pdf-logo" alt="Minerva 108 Cosmetics" />
-            <div class="pdf-co-name">MİNERVA 108 YÖNETİM &amp; DANIŞMANLIK ANONİM ŞİRKETİ</div>
-            <div class="pdf-co-line">Kireçburnu Mah. Raif Bey Sk. No:8/A Sarıyer İstanbul Türkiye</div>
-            <div class="pdf-co-line">Tel: +90 212 299 2070</div>
-            <div class="pdf-co-line">Tel: +90 542 471 74 19</div>
-            <div class="pdf-co-line">Tel: +90 544 910 49 19</div>
-            <div class="pdf-co-line">Tel: +90 544 510 45 49</div>
-            <div class="pdf-co-line"><a href="https://www.minerva108cosmetics.com">www.minerva108cosmetics.com</a></div>
-            <div class="pdf-co-line"><a href="mailto:info@minerva108cosmetics.com">info@minerva108cosmetics.com</a></div>
-          </div>
-          <div class="pdf-date-block">
-            <strong>DATE:</strong> <span id="invDate">—</span>
-            <div class="pdf-quote-no">Quote: <span id="invQuoteNumber">—</span></div>
+      <!-- ════════════════ PROFORMA ÖNİZLEMESİ (yazdırılabilir) ════════════════ -->
+      <!-- Düzen: beğenilen boş şablon (Proforma_Sablon_Bos, 09.10.2026) — sunucu    -->
+      <!-- PDF'iyle (core/proforma_template) aynı; firma bilgisi oradan gelir.      -->
+      <div class="invoice-doc pf" id="invoiceDoc">
+        <div class="pf-head">
+          <img src="/static/images/proforma_logo.png" class="pf-logo" alt="Minerva 108 Cosmetics" />
+          <div class="pf-co">
+            <div class="pf-co-name">{{ proforma.company.name }}</div>
+            <div>{{ proforma.company.address }}</div>
+            <div class="pf-phones">{% for ph in proforma.company.phones %}<span>{{ ph }}</span>{% endfor %}</div>
+            {% for w in proforma.company.web %}<div>{{ w }}</div>{% endfor %}
           </div>
         </div>
-
-        <!-- ── Title bar ─────────────────────────────────────────────────── -->
-        <div class="pdf-title-bar">PROFORMA INVOICE / PROFORMA FATURA</div>
-
-        <!-- ── Customer info ─────────────────────────────────────────────── -->
-        <div class="pdf-customer">
-          <div><strong>COMPANY NAME / ŞİRKET ADI:</strong> <span id="invCustName">—</span></div>
-          <div><strong>ADDRESS / ADRES:</strong> <span id="invCustAddr"></span></div>
-          <div><strong>COUNTRY / ÜLKE:</strong> <span id="invCustCountry"></span></div>
-          <div><strong>TEL/FAX:</strong> <span id="invCustTelFax"></span></div>
-        </div>
-
-        <!-- ── Items table ───────────────────────────────────────────────── -->
-        <table class="pdf-items">
-          <thead>
-            <tr>
-              <th class="col-name">PRODUCT NAME<br><span class="th-tr">ÜRÜN ADI</span></th>
-              <th class="num">WEIGHT / AĞIRLIK<br><span class="th-tr">(ml)</span></th>
-              <th class="num">PIECES<br><span class="th-tr">ADET</span></th>
-              <th class="num">UNIT PRICE<br><span class="th-tr">BİRİM FİYATI</span></th>
-              <th class="num">TOTAL PRICE<br><span class="th-tr">TOTAL TUTAR</span></th>
-            </tr>
-          </thead>
-          <tbody id="invItemsBody">
-            <tr class="empty-row"><td colspan="5">Kalem eklenince burada görünecek.</td></tr>
-          </tbody>
-          <tfoot id="invTotalRow">
-            <tr>
-              <td colspan="4" class="pdf-total-label">TOTAL</td>
-              <td class="num pdf-total-amount" id="invTotal">—</td>
-            </tr>
-          </tfoot>
+        <div class="pf-title">PROFORMA INVOICE / PROFORMA FATURA</div>
+        <table class="pf-cust">
+          <colgroup><col style="width:29.2%"><col style="width:35.3%"><col style="width:2%">
+                    <col style="width:11.1%"><col style="width:22.4%"></colgroup>
+          <tr><th>COMPANY NAME / ŞİRKET ADI:</th><td id="invCustName"></td><td class="gap"></td>
+              <th>DATE:</th><td id="invDate"></td></tr>
+          <tr><th>ADDRESS / ADRES:</th><td id="invCustAddr"></td><td class="gap"></td>
+              <th>TEL/FAX:</th><td id="invCustTelFax"></td></tr>
+          <tr><th>COUNTRY / ÜLKE:</th><td id="invCustCountry"></td><td class="gap"></td>
+              <th>NO:</th><td id="invQuoteNumber"></td></tr>
         </table>
-
-        <!-- ── BOTTOM: 2-column block (terms left, bank info right) ─────── -->
-        <div class="pdf-bottom">
-
-          <div class="pdf-bottom-left">
-            <div class="pdf-line"><strong>TRANSPORTATION:</strong> EXCLUDING</div>
-            <div class="pdf-line"><strong>PAYMENT TERMS:</strong> % 100 IN ADVANCE</div>
-            <div class="pdf-line"><strong>SHIPMENT:</strong> - BY SEA - BY AİR</div>
-            <div class="pdf-line"><strong>TYPE OF DELIVERY:</strong> EX-FACTORY</div>
-            <div class="pdf-line"><strong>TIME OF DELIVERY:</strong> 2 MONTHS AFTER RECEIVING PAYMENT</div>
-            <div class="pdf-italic">These prices are calculated for partial loading.</div>
-            <div class="pdf-line">If you need any further details or informations, do not hesitate to contact us.</div>
-            <div class="pdf-italic">* Above prices are valid for only this offer, not valid for our general price list.</div>
-            <div class="pdf-signoff">
-              <div>Best Regards.</div>
-              <div class="pdf-signoff-dept">EXPORT-SALES DEPARTMENT</div>
-            </div>
-          </div>
-
-          <div class="pdf-bottom-right">
-            <table class="pdf-bank">
-              <thead>
-                <tr><th colspan="4" class="pdf-bank-title">BANK ACCOUNT INFO</th></tr>
-                <tr class="pdf-bank-owner">
-                  <td class="lbl">ACCOUNT OWNER:</td>
-                  <td colspan="3">MİNERVA 108 YÖNETİM &amp; DANIŞMANLIK A.Ş.</td>
-                </tr>
-                <tr class="pdf-bank-numhdr">
-                  <td></td><td>1</td><td>2</td><td>3</td>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td class="lbl">BANK:</td>
-                  <td>KUVEYT TÜRK KATILIM BANKASI</td>
-                  <td>TÜRKİYE İŞ BANKASI A.Ş.</td>
-                  <td>TURKİYE VAKIFLAR BANKASI T.A.O.</td>
-                </tr>
-                <tr>
-                  <td class="lbl">BRANCH:</td>
-                  <td>214 LEVENT - SANAYİ</td>
-                  <td>151 YENIKOY</td>
-                  <td>1106 TARABYA</td>
-                </tr>
-                <tr>
-                  <td class="lbl">SWIFT CODE:</td>
-                  <td>KTEFTRISXXX</td>
-                  <td>ISBKTRIS</td>
-                  <td>TVBATR2A</td>
-                </tr>
-                <tr>
-                  <td class="lbl">USD IBAN NO:</td>
-                  <td>TR090020500009096875200101</td>
-                  <td>TR37 0006 4000 0021 1510 5912 99</td>
-                  <td>TR36 0001 5001 5804 8023 3113 21</td>
-                </tr>
-                <tr>
-                  <td class="lbl">EURO IBAN NO:</td>
-                  <td>TR790020500009096875200102</td>
-                  <td>TR53 0006 4000 0021 1510 5913 02</td>
-                  <td>TR85 0001 5001 5804 8023 3113 12</td>
-                </tr>
-              </tbody>
-            </table>
-            <div class="pdf-sample-stamp">SAMPLE NO COMMERCIAL VALUE</div>
-          </div>
-
-        </div>
-
+        <table class="pf-items">
+          <colgroup><col style="width:3.93%"><col style="width:52.17%"><col style="width:8.62%">
+                    <col style="width:9.07%"><col style="width:12.65%"><col style="width:13.56%"></colgroup>
+          <thead><tr>
+            <th>NO</th><th>PRODUCT NAME<br>ÜRÜN ADI</th><th>WEIGHT / AĞIRLIK<br>(ml)</th><th>PIECES<br>ADET</th>
+            <th>UNIT PRICE<br>BİRİM FİYATI<span class="pf-cur"></span></th>
+            <th>TOTAL PRICE<br>TOPLAM TUTAR<span class="pf-cur"></span></th>
+          </tr></thead>
+          <tbody id="invItemsBody"></tbody>
+          <tfoot id="invTotals"></tfoot>
+        </table>
+        <div class="pf-terms" id="invTerms"></div>
+        <div id="invBanks"></div>
+        <div class="pf-close">Best Regards.</div>
       </div>
       <!-- /invoice-doc -->
 
@@ -1347,70 +1214,193 @@
       return lines;
     }
 
-    /* ── Helpers for the PDF-faithful preview ── */
-    function _weightOf(item) {
-      // Pull the numeric weight (e.g. "200" from "200ml" / "200 ML" / "10 G")
-      const src = item.variation_name || item.unit || '';
-      const m = String(src).match(/(\d+(?:[.,]\d+)?)/);
-      return m ? m[1].replace(',', '.') : '';
+    /* ── Proforma önizlemesi — sunucu PDF'iyle (core/proforma_template) aynı kurallar ── */
+    const PF = window.PROFORMA || {};
+    const PF_TERM_INPUTS = { transportation: 'pfTransportation', payment: 'pfPayment', shipment: 'pfShipment',
+                             delivery_type: 'pfDeliveryType', loading_days: 'pfLoadingDays' };
+    const PF_IBANS = [['USD', 'iban_usd', 'USD IBAN NO:'], ['EUR', 'iban_eur', 'EURO IBAN NO:'],
+                      ['TRY', 'iban_try', 'TRY IBAN NO:'], ['RUB', 'iban_rub', 'RUB IBAN NO:']];
+    let PF_BANKS = [];            // aktif + IBAN'lı profiller (/api/bank-profiles)
+    let PF_BANK_SEL = [];         // seçili id'ler — sıra = proformadaki sütun sırası
+    let PF_BANK_TOUCHED = false;  // elle seçildiyse ülke/para birimi değişince öneri ezmez
+    let _pfBankTimer = null;
+
+    // core.consumption.parse_ml ile aynı: '50ml', '100 ML' → 50 / 100 (ilk eşleşen metin)
+    function _weightOf(item, name) {
+      for (const t of [item.variation_name, name, item.name]) {
+        const m = String(t || '').match(/(\d+(?:[.,]\d+)?)\s*ml/i);
+        if (m) return _pfNum(m[1].replace(',', '.'));
+      }
+      return '';
+    }
+    function _pfNum(v) {
+      const f = Number(v);
+      if (v === null || v === undefined || v === '' || !isFinite(f)) return '';
+      return Number.isInteger(f) ? String(f) : String(+f.toPrecision(6));
+    }
+    function _pfAmount(v) {
+      const f = Number(v);
+      return isFinite(f) ? f.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+    }
+    function _pfPrintableNotes(text) {
+      const t = String(text || '').split(/\s+/).filter(Boolean).join(' ');
+      return t === PF.legacy_notes ? '' : t;
+    }
+    // Kaydedilecek şartlar: boş alan → sunucuda şablon varsayılanı
+    function pfTermsPayload() {
+      const out = {};
+      for (const [k, id] of Object.entries(PF_TERM_INPUTS)) {
+        const v = (document.getElementById(id).value || '').trim();
+        out[k] = k === 'loading_days' ? (v === '' ? null : Number(v)) : (v || null);
+      }
+      return out;
+    }
+    function pfTermsView() {
+      const d = PF.default_terms || {}, raw = pfTermsPayload(), out = {};
+      for (const k of Object.keys(PF_TERM_INPUTS)) out[k] = raw[k] != null ? raw[k] : (d[k] != null ? d[k] : null);
+      return out;
+    }
+    function pfSetTerms(t) {
+      const d = PF.default_terms || {};
+      for (const [k, id] of Object.entries(PF_TERM_INPUTS)) {
+        const v = (t && t[k] !== undefined && t[k] !== null && t[k] !== '') ? t[k] : (k === 'loading_days' ? '' : (d[k] || ''));
+        document.getElementById(id).value = v;
+      }
+    }
+    async function pfLoadBanks(applyDefaults) {
+      const qs = new URLSearchParams({ country: document.getElementById('custCountry').value.trim(), currency: CURRENCY });
+      try {
+        const r = await fetch('/api/bank-profiles?' + qs, { credentials: 'same-origin', cache: 'no-store' });
+        if (!r.ok) throw new Error('bank-profiles');
+        const data = await r.json();
+        PF_BANKS = data.banks || [];
+        const known = id => PF_BANKS.some(b => b.id === id);
+        if (applyDefaults && !PF_BANK_TOUCHED) PF_BANK_SEL = (data.default_ids || []).filter(known);
+        else PF_BANK_SEL = PF_BANK_SEL.filter(known);
+      } catch (_e) {
+        PF_BANKS = [];
+      }
+      pfRenderBankPicks();
+      renderInvoice();
+    }
+    function pfScheduleDefaults() {
+      if (PF_BANK_TOUCHED) return;
+      clearTimeout(_pfBankTimer);
+      _pfBankTimer = setTimeout(() => pfLoadBanks(true), 400);
+    }
+    function pfRenderBankPicks() {
+      const host = document.getElementById('pfBankHost');
+      const hint = document.getElementById('pfBankHint');
+      if (!PF_BANKS.length) {
+        host.innerHTML = '<span class="pf-bank-hint">Tanımlı banka hesabı yok — B2B Siparişleri → Banka hesapları sekmesinden eklenir.</span>';
+        hint.textContent = '';
+        return;
+      }
+      host.innerHTML = PF_BANKS.map(b => {
+        const ccys = PF_IBANS.filter(([, f]) => b[f]).map(([c]) => c).join(' · ');
+        const idx = PF_BANK_SEL.indexOf(b.id);
+        return `<label><input type="checkbox" class="form-check-input" data-bank="${Number(b.id)}" ${idx >= 0 ? 'checked' : ''}>`
+          + `${idx >= 0 ? `<b>${idx + 1}.</b>` : ''} ${escHtml(b.label)} <span class="ccy">(${escHtml(ccys)})</span></label>`;
+      }).join('');
+      host.querySelectorAll('input[data-bank]').forEach(cb => cb.addEventListener('change', () => {
+        const id = Number(cb.dataset.bank);
+        if (cb.checked) {
+          if (PF_BANK_SEL.length >= (PF.max_banks || 3)) {
+            cb.checked = false;
+            showToast(`Proformaya en fazla ${PF.max_banks || 3} banka basılabilir.`);
+            return;
+          }
+          PF_BANK_SEL.push(id);
+        } else {
+          PF_BANK_SEL = PF_BANK_SEL.filter(x => x !== id);
+        }
+        PF_BANK_TOUCHED = true;
+        pfRenderBankPicks();
+        renderInvoice();
+      }));
+      hint.textContent = PF_BANK_TOUCHED
+        ? 'Elle seçildi — sıra proformadaki sütun sırasıdır.'
+        : 'Ülke + para birimi kuralına (yoksa varsayılan bankalara) göre önerildi.';
     }
 
-    /* ── Render invoice preview (PDF-faithful layout) ── */
+    /* ── Render invoice preview (template layout) ── */
     function renderInvoice() {
-      // Header meta — only DATE and a small Quote No are shown (mirrors PDF)
-      document.getElementById('invQuoteNumber').textContent = document.getElementById('quoteNumber').value || '—';
-      const date = document.getElementById('quoteDate').value;
+      const $ = id => document.getElementById(id);
+      $('invQuoteNumber').textContent = $('quoteNumber').value || '';
+      const date = $('quoteDate').value;
       const dateObj = date ? new Date(date) : new Date();
-      const fmtD = d => d.toLocaleDateString('tr-TR');
-      document.getElementById('invDate').textContent = fmtD(dateObj);
+      $('invDate').textContent = dateObj.toLocaleDateString('tr-TR');
 
-      // Customer block — split into the PDF's 4 stacked lines
-      const company = document.getElementById('custCompany').value.trim();
-      const address = document.getElementById('custAddress').value.trim();
-      const country = document.getElementById('custCountry').value.trim();
-      const phone   = document.getElementById('custPhone').value.trim();
-      const email   = document.getElementById('custEmail').value.trim();
-      const vat     = document.getElementById('custVat').value.trim();
+      const phone = $('custPhone').value.trim(), email = $('custEmail').value.trim(), vat = $('custVat').value.trim();
+      $('invCustName').textContent    = $('custCompany').value.trim();
+      $('invCustAddr').textContent    = $('custAddress').value.trim();
+      $('invCustCountry').textContent = $('custCountry').value.trim();
+      $('invCustTelFax').textContent  = [phone, email, vat ? 'VAT: ' + vat : ''].filter(Boolean).join(' · ');
+      document.querySelectorAll('#invoiceDoc .pf-cur').forEach(el => { el.innerHTML = `<br>(${escHtml(CURRENCY)})`; });
 
-      document.getElementById('invCustName').textContent    = company || '—';
-      document.getElementById('invCustAddr').textContent    = address || '';
-      document.getElementById('invCustCountry').textContent = country || '';
-      // TEL/FAX line — combine phone + email so the PDF's TEL/FAX field is useful
-      const telFax = [phone, email, vat ? 'VAT: ' + vat : ''].filter(Boolean).join(' · ');
-      document.getElementById('invCustTelFax').textContent  = telFax || '';
-
-      // Items — PDF columns: NAME / WEIGHT (ml) / PIECES / UNIT / TOTAL
       const lines = gatherLines();
-      const tbody = document.getElementById('invItemsBody');
-      const tfoot = document.getElementById('invTotalRow');
-      if (!lines.length) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="5">Kalem eklenince burada görünecek.</td></tr>`;
-        tfoot.style.display = 'none';
-      } else {
-        tfoot.style.display = '';
-        tbody.innerHTML = lines.map(l => {
-          const item = allItems.find(i => i.id === l.item_id) || {};
-          const weight = _weightOf(item);
-          return `
-          <tr>
-            <td class="col-name">${escHtml(l.name)}</td>
-            <td class="num">${weight}</td>
-            <td class="num">${l.qty}</td>
-            <td class="num">${fmtMoney(l.price, CURRENCY)}</td>
-            <td>${fmtMoney(l.total, CURRENCY)}</td>
-          </tr>`;
-        }).join('');
-      }
-
-      // Totals — PDF only shows a single TOTAL row in the table footer.
-      // We still respect Shipping + VAT inputs from the form (added to grand total).
       const subtotal = lines.reduce((s, l) => s + l.total, 0);
-      const shipping = parseFloat(document.getElementById('quoteShipping').value) || 0;
-      const taxPct   = parseFloat(document.getElementById('quoteTaxPct').value)   || 0;
+      const shipping = parseFloat($('quoteShipping').value) || 0;
+      const taxPct   = parseFloat($('quoteTaxPct').value)   || 0;
       const taxAmt   = (subtotal + shipping) * (taxPct / 100);
       const grand    = subtotal + shipping + taxAmt;
+      const notes    = _pfPrintableNotes($('quoteNotes').value);
+      const banks    = PF_BANK_SEL.map(id => PF_BANKS.find(b => b.id === id)).filter(Boolean);
+      const hasRub   = banks.some(b => b.iban_rub);
 
-      document.getElementById('invTotal').textContent = fmtMoney(grand, CURRENCY);
+      // 24 numaralı satır; ek bloklar kadar eksiltilir ki tek sayfada kalsın (PDF'le aynı)
+      const ROWS = PF.rows || 24;
+      const extra = (shipping ? 1 : 0) + (taxPct ? 1 : 0) + ((shipping || taxPct) ? 1 : 0) + (hasRub ? 1 : 0) + (notes ? 2 : 0);
+      const rowsTotal = lines.length <= ROWS ? Math.max(lines.length, ROWS - extra) : lines.length;
+      let pieces = 0, body = '';
+      for (let i = 0; i < rowsTotal; i++) {
+        const l = lines[i];
+        if (!l) { body += `<tr><td class="c">${i + 1}</td><td></td><td></td><td></td><td></td><td></td></tr>`; continue; }
+        pieces += Number(l.qty) || 0;
+        const item = allItems.find(it => it.id === l.item_id) || {};
+        body += `<tr><td class="c">${i + 1}</td><td>${escHtml(l.full_name || l.name)}</td>`
+          + `<td class="c">${_weightOf(item, l.full_name || l.name)}</td><td class="c">${_pfNum(l.qty)}</td>`
+          + `<td class="r">${_pfAmount(l.price)}</td><td class="r b">${_pfAmount(l.total)}</td></tr>`;
+      }
+      $('invItemsBody').innerHTML = body;
+
+      let foot = `<tr><td class="blank" colspan="3"></td><td class="c">${pieces ? _pfNum(pieces) : ''}</td>`
+        + `<td class="r">TOTAL</td><td class="r">${_pfAmount(subtotal)}</td></tr>`;
+      // Ek satırların etiketi AĞIRLIK + ADET + BİRİM FİYAT sütunlarına yayılır (PDF'teki gibi)
+      const extraRow = (label, amt) => `<tr><td class="blank" colspan="2"></td><td class="r lbl" colspan="3">${label}</td><td class="r">${_pfAmount(amt)}</td></tr>`;
+      if (shipping) foot += extraRow('FREIGHT / NAVLUN', shipping);
+      if (taxPct)   foot += extraRow(`VAT / KDV %${_pfNum(taxPct)}`, taxAmt);
+      if (shipping || taxPct) foot += extraRow('GRAND TOTAL / GENEL TOPLAM', grand);
+      $('invTotals').innerHTML = foot;
+
+      const t = pfTermsView();
+      const days = (t.loading_days === null || t.loading_days === '') ? '____' : _pfNum(t.loading_days);
+      $('invTerms').innerHTML =
+          `<div class="t">TRANSPORTATION: ${escHtml(t.transportation || '')}</div>`
+        + `<div class="t">PAYMENT TERMS: ${escHtml(t.payment || '')}</div>`
+        + `<div class="t">SHIPMENT: ${escHtml(t.shipment || '')}</div>`
+        + `<div class="t">TYPE OF DELIVERY: ${escHtml(t.delivery_type || '')}</div>`
+        + `<div class="time">TIME OF DELIVERY: LOADING WITHIN ${escHtml(days)} DAYS AFTER THE PAYMENT IS RECEIVED IN OUR ACCOUNT</div>`
+        + (PF.notes || []).map(n => `<div>${escHtml(n)}</div>`).join('')
+        + (notes ? `<div>NOTE: ${escHtml(notes)}</div>` : '');
+
+      const bankHost = $('invBanks');
+      if (!banks.length) {
+        bankHost.innerHTML = '<div class="pf-bank-empty pf-noprint">Proformada banka hesabı seçili değil — yukarıdaki “Proforma Şartları &amp; Banka Hesapları” bölümünden en az bir banka seçin.</div>';
+        return;
+      }
+      const n = banks.length;
+      const holders = [...new Set(banks.map(b => b.account_holder || (PF.company || {}).account_holder || ''))];
+      let h = `<table class="pf-bank"><colgroup><col style="width:17.6%">${'<col>'.repeat(n)}</colgroup>`
+        + `<tr><td class="ttl" colspan="${n + 1}">BANK ACCOUNT INFO</td></tr>`;
+      h += holders.length === 1
+        ? `<tr><td class="lbl">ACCOUNT OWNER:</td><td class="own" colspan="${n}">${escHtml(holders[0])}</td></tr>`
+        : `<tr><td class="lbl">ACCOUNT OWNER:</td>${banks.map(b => `<td class="own">${escHtml(b.account_holder || '')}</td>`).join('')}</tr>`;
+      h += `<tr><td></td>${banks.map((_, i) => `<td class="num">${i + 1}</td>`).join('')}</tr>`;
+      const rows = [['BANK:', 'bank_name'], ['BRANCH:', 'branch'], ['SWIFT CODE:', 'swift']]
+        .concat(PF_IBANS.filter(([c]) => c !== 'RUB' || hasRub).map(([, f, lbl]) => [lbl, f]));
+      h += rows.map(([lbl, f]) => `<tr><td class="lbl">${lbl}</td>${banks.map(b => `<td>${escHtml(b[f] || '')}</td>`).join('')}</tr>`).join('');
+      bankHost.innerHTML = h + '</table>';
     }
 
     /* ── Currency segmented control ── */
@@ -1426,6 +1416,7 @@
           updateLineRow(tr);
         });
         renderInvoice();
+        pfScheduleDefaults();
       });
     });
 
@@ -1435,9 +1426,12 @@
       'custCompany', 'custContact', 'custAddress', 'custCountry',
       'custVat', 'custEmail', 'custPhone',
       'quoteTaxPct', 'quoteShipping', 'quoteNotes',
+      'pfTransportation', 'pfPayment', 'pfShipment', 'pfDeliveryType', 'pfLoadingDays',
     ].forEach(id => {
       document.getElementById(id).addEventListener('input', renderInvoice);
     });
+    // Ülke değişince banka kuralı yeniden önerilir (elle seçim yapılmadıysa)
+    document.getElementById('custCountry').addEventListener('input', pfScheduleDefaults);
 
     /* ── Add Row button ── */
     document.getElementById('addLineBtn').addEventListener('click', addLineRow);
@@ -1465,6 +1459,7 @@
         `<div class="empty-line-row" id="emptyLines">Henüz kalem yok. Yukarıdaki <strong>Kalem Ekle</strong> butonu ile başlayın.</div>`;
       lineRowCount = 0;
       initDefaults();
+      pfResetProforma();
       renderInvoice();
     });
 
@@ -1521,7 +1516,15 @@
         `<div class="empty-line-row" id="emptyLines">Henüz kalem yok. Yukarıdaki <strong>Kalem Ekle</strong> butonu ile başlayın.</div>`;
       lineRowCount = 0;
       initDefaults();
+      pfResetProforma();
       renderInvoice();
+    }
+
+    function pfResetProforma() {
+      document.getElementById('quoteNotes').value = '';
+      pfSetTerms(null);
+      PF_BANK_TOUCHED = false;
+      pfLoadBanks(true);
     }
 
     /* ── Load saved quotes from API ── */
@@ -1620,6 +1623,9 @@
              <i class="bi bi-clipboard2-check"></i> Siparişe dönüştür
            </button>`
         : '';
+      const pdfBtn = `<a class="btn-row-action btn-row-view" href="/api/quotations/${Number(q.id)}/proforma" target="_blank" rel="noopener" title="Proforma PDF (sunucu şablonu)">
+                        <i class="bi bi-file-earmark-pdf"></i> PDF
+                      </a>`;
       const deleteBtn = isDraft
         ? `<button class="btn-row-action btn-row-delete" onclick="deleteQuote(${q.id}, '${escHtml(q.quote_number)}')" title="Taslağı sil">
              <i class="bi bi-trash3"></i>
@@ -1642,7 +1648,7 @@
           </td>
           <td style="text-align:right;">
             <div class="saved-quotes-actions" style="justify-content:flex-end;">
-              ${viewBtn}${convertBtn}${confirmBtn}${rejectBtn}${deleteBtn}
+              ${viewBtn}${pdfBtn}${convertBtn}${confirmBtn}${rejectBtn}${deleteBtn}
             </div>
           </td>
         </tr>`;
@@ -1733,6 +1739,12 @@
       lineRowCount = 0;
       (q.items || []).forEach(line => addLineRow(line));
 
+      // Proforma şartları + bankalar (seçim yoksa ülke kuralı / varsayılan önerilir)
+      pfSetTerms(q.proforma_terms || null);
+      PF_BANK_SEL = (q.bank_profile_ids || []).slice();
+      PF_BANK_TOUCHED = PF_BANK_SEL.length > 0;
+      pfLoadBanks(!PF_BANK_TOUCHED);
+
       renderInvoice();
     }
 
@@ -1746,6 +1758,9 @@
       if (!quoteNumber)         { showToast('Teklif numarası boş bırakılamaz.'); return; }
       if (!customer)            { showToast('Müşteri / Şirket adı zorunludur.'); return; }
       if (!lines.length)        { showToast('En az bir kalem eklemelisiniz.'); return; }
+      if (PF_BANKS.length && !PF_BANK_SEL.length) {
+        showToast('Proformaya basılacak en az bir banka hesabı seçin.'); return;
+      }
 
       // Compute totals (mirror of renderInvoice math)
       const subtotal = lines.reduce((s, l) => s + l.total, 0);
@@ -1774,6 +1789,8 @@
 
         notes:      document.getElementById('quoteNotes').value.trim() || null,
         valid_days: parseInt(document.getElementById('quoteValidDays').value) || 30,
+        bank_profile_ids: PF_BANK_SEL.slice(),
+        proforma_terms:   pfTermsPayload(),
 
         items: lines.map(l => {
           // Resolve TRY cost snapshot for margin reporting
@@ -1825,12 +1842,22 @@
     async function openConvertQuote(quoteId) {
       const q = savedQuotes.find(x => x.id === quoteId);
       if (!q) return;
+      let full, bankData;
       try {
         if (!B2B_BOOT) {
           const r = await fetch('/api/b2b-orders/bootstrap', { credentials: 'same-origin', cache: 'no-store' });
           if (!r.ok) throw new Error('B2B ayarları alınamadı.');
           B2B_BOOT = await r.json();
         }
+        // Teklifte saklı banka seçimi + şartlar; yoksa ülke kuralı / varsayılan bankalar
+        const [rq, rb] = await Promise.all([
+          fetch(`/api/quotations/${Number(quoteId)}`, { credentials: 'same-origin', cache: 'no-store' }),
+          fetch('/api/bank-profiles?' + new URLSearchParams({ country: q.customer_country || '', currency: q.currency || '' }),
+                { credentials: 'same-origin', cache: 'no-store' }),
+        ]);
+        if (!rq.ok || !rb.ok) throw new Error('Teklif / banka bilgisi alınamadı.');
+        full = await rq.json();
+        bankData = await rb.json();
       } catch (e) { showToast(e.message); return; }
       let host = document.getElementById('b2ConvertModal');
       if (!host) {
@@ -1839,7 +1866,16 @@
         document.body.appendChild(host.firstElementChild);
       }
       const opt = (rows, sel) => rows.map(([v, t]) => `<option value="${escHtml(String(v))}" ${String(v) === String(sel) ? 'selected' : ''}>${escHtml(t)}</option>`).join('');
-      const banks = (B2B_BOOT.banks || []).filter(b => b.is_active).map(b => [b.id, b.label]);
+      const bankRows = bankData.banks || [];
+      const known = id => bankRows.some(b => b.id === id);
+      let picked = (full.bank_profile_ids || []).filter(known);
+      if (!picked.length) picked = (bankData.default_ids || []).filter(known);
+      const terms = full.proforma_terms || bankData.default_terms || {};
+      const ccyOf = b => PF_IBANS.filter(([, f]) => b[f]).map(([c]) => c).join(' · ');
+      const bankChecks = bankRows.length
+        ? bankRows.map(b => `<label style="display:inline-flex;gap:.35rem;align-items:center;margin-right:1rem;"><input type="checkbox" class="form-check-input b2c-bank" value="${Number(b.id)}" ${picked.includes(b.id) ? 'checked' : ''}> ${escHtml(b.label)} <span style="color:#6b7280;font-size:.74rem;">(${escHtml(ccyOf(b))})</span></label>`).join('')
+        : '<span style="color:#b45309;font-size:.8rem;">Tanımlı banka hesabı yok — B2B Siparişleri → Banka hesapları.</span>';
+      const tv = k => escHtml(terms[k] == null ? '' : String(terms[k]));
       // Varsayılan teknik sorumlu: açan kişi / SuperAdmin değil (laboratuvar)
       const techUsers = B2B_BOOT.technical_users || [];
       const techDefault = (techUsers.find(u => u.id !== B2B_BOOT.me && u.role !== 'SuperAdmin') || techUsers[0] || {}).id;
@@ -1848,7 +1884,11 @@
         <div class="row g-2">
           <div class="col-md-4"><label class="form-label">Etiket dili</label><select class="form-select" id="b2cLang">${opt([['EN', 'İngilizce'], ['TR', 'Türkçe']], 'EN')}</select></div>
           <div class="col-md-4"><label class="form-label">Hedef tarih</label><input type="date" class="form-control" id="b2cTarget"></div>
-          <div class="col-md-4"><label class="form-label">Banka hesabı</label><select class="form-select" id="b2cBank"><option value="">Ülke kuralına göre öner</option>${opt(banks, '')}</select></div>
+          <div class="col-md-4"><label class="form-label">Yükleme (gün)</label><input type="number" min="0" max="365" step="1" class="form-control" id="b2cDays" placeholder="____" value="${tv('loading_days')}"></div>
+          <div class="col-12"><label class="form-label">Proformadaki banka hesapları (en fazla ${Number(B2B_BOOT.max_banks || 3)})</label><div>${bankChecks}</div></div>
+          <div class="col-md-4"><label class="form-label">Transportation</label><input class="form-control" id="b2cTransport" maxlength="120" value="${tv('transportation')}"></div>
+          <div class="col-md-4"><label class="form-label">Shipment</label><input class="form-control" id="b2cShipment" maxlength="120" value="${tv('shipment')}"></div>
+          <div class="col-md-4"><label class="form-label">Type of delivery</label><input class="form-control" id="b2cDelivery" maxlength="120" value="${tv('delivery_type')}"></div>
           <div class="col-md-8"><label class="form-label">Ödeme koşulu</label><select class="form-select" id="b2cTerms">${opt(Object.entries(B2B_BOOT.payment_terms || {}), 'prepaid')}</select></div>
           <div class="col-md-4"><label class="form-label">Avans %</label><input type="number" min="1" max="99" class="form-control" id="b2cAdvance" placeholder="yalnız avansta"></div>
           <div class="col-md-6"><label class="form-label">Teknik değerlendirme</label><select class="form-select" id="b2cTech">${opt(techUsers.map(u => [u.id, u.name]), techDefault)}</select></div>
@@ -1858,12 +1898,23 @@
       const btn = document.getElementById('b2ConvertSubmit');
       btn.onclick = async () => {
         const terms = document.getElementById('b2cTerms').value;
+        const bankIds = [...document.querySelectorAll('#b2ConvertBody .b2c-bank:checked')].map(cb => Number(cb.value));
+        const maxBanks = Number(B2B_BOOT.max_banks || 3);
+        if (bankIds.length > maxBanks) { showToast(`Proformaya en fazla ${maxBanks} banka basılabilir.`); return; }
+        if (bankRows.length && !bankIds.length) { showToast('Proformaya basılacak en az bir banka hesabı seçin.'); return; }
+        const days = document.getElementById('b2cDays').value.trim();
         const body = {
           label_language: document.getElementById('b2cLang').value,
           target_date: document.getElementById('b2cTarget').value || null,
           payment_terms: terms,
           advance_percent: terms === 'advance' ? Number(document.getElementById('b2cAdvance').value) : null,
-          bank_profile_id: Number(document.getElementById('b2cBank').value) || null,
+          bank_profile_ids: bankIds,
+          terms: {
+            transportation: document.getElementById('b2cTransport').value.trim() || null,
+            shipment: document.getElementById('b2cShipment').value.trim() || null,
+            delivery_type: document.getElementById('b2cDelivery').value.trim() || null,
+            loading_days: days === '' ? null : Number(days),
+          },
           technical_user_id: Number(document.getElementById('b2cTech').value),
           signer_user_id: Number(document.getElementById('b2cSigner').value),
         };
@@ -1948,7 +1999,8 @@
     /* ── Init ── */
     (async function init() {
       initDefaults();
-      await Promise.all([loadRates(), loadProducts(), loadSavedQuotes()]);
+      pfSetTerms(null);
+      await Promise.all([loadRates(), loadProducts(), loadSavedQuotes(), pfLoadBanks(true)]);
       renderInvoice();
     })();
   </script>

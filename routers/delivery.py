@@ -16,7 +16,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import get_db, to_tr, tr_now, Item, Transaction, Delivery, DeliveryItem
+from core import bank_accounts, proforma_template
 from core.permissions import require_permission
+from core.proforma_template import ProformaTermsIn
 from core.stock_lots import consume as _lot_consume
 from core.auth import require_role
 from core.domain import active_domain
@@ -71,6 +73,9 @@ class DeliveryCreate(BaseModel):
     customer_address: Optional[str] = Field(None, max_length=2000)
     customer_country: Optional[str] = Field(None, max_length=100)
     currency: str = Field("USD", max_length=3)
+    # Proformaya basılacak 1–3 banka (boş → ülke kuralı / varsayılan bankalar) + şartlar
+    bank_profile_ids: Optional[List[int]] = Field(None, max_length=10)
+    proforma_terms: Optional[ProformaTermsIn] = None
     items: List[DeliveryLine]
 
 
@@ -169,6 +174,16 @@ def build_delivery(db: Session, data: DeliveryCreate, actor: str, domain: str) -
     if doc_lang not in ("TR", "EN"):
         doc_lang = "TR"
     currency = (data.currency or "USD").upper()[:3]
+    bank_ids = terms = None
+    if is_proforma:
+        try:
+            bank_ids = [b.id for b in bank_accounts.resolve_banks(db, data.bank_profile_ids, required=False)]
+            if data.proforma_terms is not None:
+                terms = proforma_template.clean_terms(data.proforma_terms.model_dump(), with_payment=True)
+        except bank_accounts.BankSelectionError as e:
+            raise DeliveryError(e.detail)
+        except ValueError as e:
+            raise DeliveryError(str(e))
 
     # Aynı ürün birden çok satırda gelirse miktarı birleştir; fiyat/ağırlık son değer (proforma)
     qty_by_item: dict = {}
@@ -217,6 +232,8 @@ def build_delivery(db: Session, data: DeliveryCreate, actor: str, domain: str) -
         customer_address=((data.customer_address or "").strip() or None) if is_proforma else None,
         customer_country=((data.customer_country or "").strip() or None) if is_proforma else None,
         currency=currency if is_proforma else None,
+        bank_profile_ids=bank_accounts.dump_ids(bank_ids) if bank_ids else None,
+        proforma_terms=json.dumps(terms, ensure_ascii=False) if terms is not None else None,
     )
     db.add(d)
     db.flush()   # id almak için
@@ -272,6 +289,15 @@ def create_delivery(
             "status": d.status, "delivery_type": dtype}
 
 
+def _proforma_terms(d) -> dict:
+    try:
+        stored = json.loads(d.proforma_terms) if d.proforma_terms else {}
+    except (TypeError, ValueError):
+        stored = {}
+    stored = stored if isinstance(stored, dict) else {}
+    return proforma_template.merged_terms(stored, stored.get("payment"))
+
+
 def _view(d) -> dict:
     return {
         "id": d.id,
@@ -290,6 +316,8 @@ def _view(d) -> dict:
         "customer_address": d.customer_address,
         "customer_country": d.customer_country,
         "currency": d.currency or "USD",
+        "bank_profile_ids": bank_accounts.parse_ids(d.bank_profile_ids),
+        "proforma_terms": _proforma_terms(d) if d.delivery_type == "proforma" else None,
         "approved_by": d.approved_by,
         "approved_at": to_tr(d.approved_at).strftime("%d.%m.%Y %H:%M") if d.approved_at else None,
         "reject_reason": d.reject_reason,
@@ -631,8 +659,12 @@ def proforma_document(
                             content={"detail": "Proforma yalnızca onaylandıktan sonra indirilebilir."})
     from core.proforma_invoice import render_proforma_pdf, proforma_filename
     from core.delivery_note import content_disposition
+    view = _view(d)
+    cur = (d.currency or "USD").upper()
+    view["banks"] = [bank_accounts.bank_snapshot(b, cur) for b in
+                     bank_accounts.banks_for_document(db, d.bank_profile_ids, d.customer_country, cur)]
     try:
-        content = render_proforma_pdf(_view(d))
+        content = render_proforma_pdf(view)
     except Exception:
         return JSONResponse(status_code=500, content={"detail": "Proforma üretilemedi."})
     fname = proforma_filename(d.document_no, d.recipient_org or d.recipient_name)

@@ -456,6 +456,116 @@ def test_revision_reapproval_and_signed_proforma_is_frozen(world):
          400, "no_change")
 
 
+def test_multi_bank_terms_signature_under_best_regards_and_bank_change_resets_only_signature(world):
+    """Proforma şablonu: siparişte 1–3 banka + düzenlenebilir şartlar; banka/şart
+    değişikliği yalnız imzayı yeniler; imzalı proforma seçilen bankaları (RUB dahil),
+    şartları ve imzacıyı "Best Regards." altında basar."""
+    w = world
+    db = w["db"]
+    banks = {b.bank_name: b for b in db.query(BankProfile)}
+    kuveyt = next(b for n, b in banks.items() if "KUVEYT" in n)
+    vakif = next(b for n, b in banks.items() if "VAKIF" in n)
+    emlak = _ok(w["signer"].post(f"{API}/banks", headers=HDR, json={
+        "label": "Emlak — Rusya", "bank_name": "EMLAK KATILIM BANKASI", "account_holder": "MİNERVA 108",
+        "iban_rub": "TR000000000000000000000077"}))["id"]
+    qid = _quote(w, [(w["cream"], 10, 5.0)], country="Russia")
+    d = _convert(w, qid, bank_profile_id=None, bank_profile_ids=[vakif.id, kuveyt.id],
+                 terms={"loading_days": 30, "payment": "yok sayılır"})
+    oid = d["order"]["id"]
+    assert [b["id"] for b in d["commercial"]["banks"]] == [vakif.id, kuveyt.id]
+    assert d["order"]["bank_profile_ids"] == [vakif.id, kuveyt.id]
+    assert d["commercial"]["terms"]["loading_days"] == 30
+    assert d["commercial"]["terms"]["payment"] == "% 100 IN ADVANCE"      # ödeme koşulundan
+    assert d["commercial"]["terms"]["transportation"] == "EXCLUDING"
+    # Teknik görünüm banka seçimini de görmez
+    assert "bank_profile_ids" not in _ok(w["labtech"].get(f"{API}/{oid}"))["order"]
+    _ok(_review(w, oid, [{"item_id": w["cream"].id, "use_stock_quantity": 0}]))
+    signed = _ok(_sign(w, oid))
+    text = " ".join(p.extract_text() or "" for p in
+                    PdfReader(BytesIO(w["signer"].get(f"{API}/{oid}/proforma").content)).pages)
+    flat = "".join(text.split())
+    assert "Best Regards." in text and signed["signature"]["signer_name"] in text
+    assert text.index("Best Regards.") < text.index(signed["signature"]["signer_name"])
+    assert "LOADING WITHIN 30 DAYS" in text and "RUBIBANNO" not in flat
+    assert flat.index("TÜRKİYEVAKIFLAR") < flat.index("KUVEYTTÜRK")
+
+    # Banka + kısmi şart değişikliği → kapsam aynı: yalnız imza yenilenir, diğer şartlar korunur
+    o = _ok(w["owner"].get(f"{API}/{oid}"))["order"]
+    d = _ok(w["owner"].post(f"{API}/{oid}/revise", headers=HDR, json={
+        "commercial_revision": o["commercial_revision"], "bank_profile_ids": [emlak],
+        "terms": {"transportation": "INCLUDING"}}))
+    assert d["order"]["status"] == "TECH_REVIEWED" and d["signature"] is None
+    assert d["commercial"]["terms"]["transportation"] == "INCLUDING"
+    assert d["commercial"]["terms"]["loading_days"] == 30
+    for bad, code in (({"bank_profile_ids": [kuveyt.id, vakif.id, emlak, 999]}, "too_many_banks"),
+                      ({"terms": {"loading_days": 999}}, "invalid_terms")):
+        _err(w["owner"].post(f"{API}/{oid}/revise", headers=HDR,
+                             json={"commercial_revision": d["order"]["commercial_revision"], **bad}), 400, code)
+    _ok(_sign(w, oid))
+    flat = "".join(" ".join(p.extract_text() or "" for p in PdfReader(BytesIO(
+        w["signer"].get(f"{API}/{oid}/proforma").content)).pages).split())
+    assert "RUBIBANNO" in flat and "TR000000000000000000000077" in flat and "KUVEYT" not in flat
+    assert "TRANSPORTATION:INCLUDING" in flat
+
+    # Bankasız sipariş imzalanamaz (proformaya basılacak hesap yok)
+    qid = _quote(w, [(w["cream"], 2, 5.0)])
+    oid2 = _convert(w, qid, bank_profile_id=None, bank_profile_ids=[])["order"]["id"]
+    _ok(_review(w, oid2, [{"item_id": w["cream"].id, "use_stock_quantity": 0}]))
+    _err(_sign(w, oid2), 409, "bank_required")
+
+
+def test_internal_technical_sheet_recipe_lots_without_sales_prices_or_banks(world):
+    """İç teknik föy: onaylanan reçete bileşimi (teknik snapshot), malzeme ihtiyacı,
+    parti tüketimi kaynak lot + tedarikçiyle; satış fiyatı ve banka YOK; alım
+    tutarı yalnız b2b.view; reçete sonradan değişirse uyarı; eski snapshot'ta
+    güncel reçete notla."""
+    w = world
+    db = w["db"]
+    oid = _approved_order(w, lines=[(w["cream"], 10, 7.77)])
+    _ok(_pay(w, oid, 77.7))
+    _ok(_prepare(w, oid))
+    _ok(_start(w, oid, w["cream"], 4))
+    batch = db.query(B2BOrderBatch).one()
+
+    def sheet(who):
+        r = w[who].get(f"{API}/{oid}/technical-sheet")
+        assert r.status_code == 200 and r.headers["content-type"] == "application/pdf", r.text
+        assert "Teknik_Foy_" in r.headers["content-disposition"]
+        return " ".join(p.extract_text() or "" for p in PdfReader(BytesIO(r.content)).pages)
+    text = sheet("signer")
+    flat = "".join(text.split())
+    assert "İÇ BELGE" in text and "müşteriye gönderilmez" in text
+    assert "Sentetik Krem Reçetesi" in text and "Sentetik Baz Yağ" in text
+    assert "HM-B2B-1" in text and "Sentetik Tedarikçi B2B" in text and batch.lot_number in text
+    assert "Alım tutarı" in text                                       # b2b.view → alım tutarı görünür
+    assert "7,77" not in text and "7.77" not in text and "77,70" not in flat   # satış fiyatı / toplam YOK
+    assert "KUVEYT" not in flat and "IBAN" not in flat                 # banka YOK
+    labtech = sheet("labtech")                                         # teknik görünüm
+    assert "Alım tutarı" not in labtech and "HM-B2B-1" in labtech
+
+    # Onaylı reçete sonradan değişirse föy uyarır (parti başlatılamaz)
+    ing = db.query(RecipeIngredient).filter_by(recipe_id=w["cream_recipe"].id, item_id=w["raw"].id).one()
+    ing.quantity = 12
+    db.commit()
+    assert "reçete teknik değerlendirmeden sonra değişti" in sheet("tech")
+    # Bugünden önceki teknik sürüm (bileşimsiz) → güncel reçete, notla
+    from database import B2BOrderRevision
+    row = db.query(B2BOrderRevision).filter_by(order_id=oid, kind="technical").order_by(
+        B2BOrderRevision.revision.desc()).first()
+    snap = json.loads(row.snapshot)
+    for line in snap["lines"]:
+        line.pop("recipe", None)
+    row.snapshot = json.dumps(snap)
+    db.commit()
+    assert "güncel reçete gösteriliyor" in sheet("tech")
+    # Bayi / başka panel erişemez
+    _user(db, "b2b_dist_sheet", "Distributor", {"b2b_orders": {"view": True}})
+    assert _login("b2b_dist_sheet").get(f"{API}/{oid}/technical-sheet").status_code == 403
+    db.query(B2BOrder).filter_by(id=oid).update({"domain": "supplement"})
+    db.commit()
+    assert w["tech"].get(f"{API}/{oid}/technical-sheet").status_code == 404
+
+
 def test_sign_requires_assigned_signer_password_and_drawn_signature(world):
     w = world
     db = w["db"]

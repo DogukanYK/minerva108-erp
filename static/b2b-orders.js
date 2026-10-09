@@ -47,6 +47,14 @@
     return `<span class="os-badge os-badge-${kind}">${esc(label || status)}</span>`;
   }
   const allowed = a => !!(state.detail && state.detail.actions && state.detail.actions[a]);
+  const IBANS = [['USD', 'iban_usd'], ['EUR', 'iban_eur'], ['TRY', 'iban_try'], ['RUB', 'iban_rub']];
+  const ibanCcys = b => IBANS.filter(([, f]) => b[f]).map(([c]) => c).join(' · ');
+  const bankNames = banks => (banks || []).map(b => b.label || b.bank_name).join(', ');
+  function termsText(t) {
+    if (!t) return '';
+    const days = t.loading_days == null || t.loading_days === '' ? '—' : `${fmt(t.loading_days)} gün`;
+    return `${esc(t.transportation)} · ${esc(t.payment || '')} · ${esc(t.shipment)} · ${esc(t.delivery_type)} · yükleme ${days}`;
+  }
 
   // ─── Liste ────────────────────────────────────────────────────────────────
   function renderStats() {
@@ -97,7 +105,7 @@
     const cust = d.customer || {};
     const lineHead = `<tr><th>Ürün</th><th class="num">Sipariş</th>${show ? '<th class="num">Birim fiyat</th><th class="num">Tutar</th>' : ''}<th class="num">Stoktan</th><th class="num">Üretilecek</th><th>Reçete</th><th class="num">Üretilen (müşteri)</th><th class="num">Şahit</th><th class="num">Açık parti</th><th class="num">Sevke uygun stok</th></tr>`;
     const lineRows = d.lines.map(l => `<tr><td><strong>${esc(l.name)}</strong></td><td class="num">${fmt(l.quantity)} ${esc(l.unit)}</td>${show ? `<td class="num">${money(l.unit_price, d.commercial.currency)}</td><td class="num">${money(l.line_total, d.commercial.currency)}</td>` : ''}<td class="num">${fmt(l.use_stock)}</td><td class="num">${fmt(l.produce)}</td><td>${esc(l.recipe_name || '—')}${l.recipe_changed ? ' <span class="b2-bad">(reçete değişti — yeniden değerlendirin)</span>' : ''}</td><td class="num">${fmt(l.customer_quantity)}</td><td class="num">${fmt(l.witness)}</td><td class="num">${fmt(l.started)}</td><td class="num">${fmt(l.released_stock)}</td></tr>`).join('');
-    const commercial = show ? `<div class="os-meta"><div><span class="os-muted">Ara toplam</span><br>${money(d.commercial.subtotal, d.commercial.currency)}</div><div><span class="os-muted">Kargo</span><br>${money(d.commercial.shipping, d.commercial.currency)}</div><div><span class="os-muted">KDV %${fmt(d.commercial.tax_percentage)}</span><br>${money(d.commercial.tax_amount, d.commercial.currency)}</div><div><span class="os-muted">Genel toplam</span><br><strong>${money(d.commercial.total, d.commercial.currency)}</strong></div></div><p class="os-muted" style="margin-top:.6rem">Ödeme: ${esc(o.payment_terms_label)}${o.payment_terms === 'advance' ? ` (%${fmt(o.advance_percent)})` : ''} · Banka: ${d.commercial.bank ? `${esc(d.commercial.bank.label)} · ${esc(d.commercial.bank.iban)}` : '<span class="b2-bad">seçilmedi</span>'}</p>` : '<p class="os-muted">Teknik görünüm: satış fiyatları ve banka bilgisi gösterilmez.</p>';
+    const commercial = show ? `<div class="os-meta"><div><span class="os-muted">Ara toplam</span><br>${money(d.commercial.subtotal, d.commercial.currency)}</div><div><span class="os-muted">Kargo</span><br>${money(d.commercial.shipping, d.commercial.currency)}</div><div><span class="os-muted">KDV %${fmt(d.commercial.tax_percentage)}</span><br>${money(d.commercial.tax_amount, d.commercial.currency)}</div><div><span class="os-muted">Genel toplam</span><br><strong>${money(d.commercial.total, d.commercial.currency)}</strong></div></div><p class="os-muted" style="margin-top:.6rem">Ödeme: ${esc(o.payment_terms_label)}${o.payment_terms === 'advance' ? ` (%${fmt(o.advance_percent)})` : ''} · Bankalar: ${(d.commercial.banks || []).length ? esc(bankNames(d.commercial.banks)) : '<span class="b2-bad">seçilmedi — imzadan önce ticari revizyonla seçin</span>'}</p><p class="os-muted">Proforma şartları: ${termsText(d.commercial.terms)}</p>` : '<p class="os-muted">Teknik görünüm: satış fiyatları ve banka bilgisi gösterilmez.</p>';
     const tech = d.technical;
     const techBody = tech ? `${tech.stale ? '<div class="os-notice os-notice-danger">Ticari sürüm değişti — teknik değerlendirme yenilenmeli.</div>' : ''}<p class="os-muted">Sürüm ${tech.revision} · ${esc(tech.created_by)} · ${esc(tech.created_at)}</p>${tech.note ? `<p>${esc(tech.note)}</p>` : ''}${(tech.warnings || []).map(w => `<div class="os-notice">${esc(w)}</div>`).join('')}<h3 class="os-section-title">Malzeme ihtiyacı ve eksikler</h3><div class="os-table-wrap"><table class="os-table"><thead><tr><th>Malzeme</th><th class="num">İhtiyaç</th><th class="num">Stok</th><th class="num">Alınacak</th><th>Önerilen tedarikçi</th>${show ? '<th class="num">Tutar</th>' : ''}</tr></thead><tbody>${(tech.materials || []).map(m => `<tr><td>${esc(m.name)}</td><td class="num">${fmt(m.need)} ${esc(m.unit)}</td><td class="num">${fmt(m.stock)}</td><td class="num ${m.buy > 0 ? 'b2-bad' : 'b2-ok'}">${fmt(m.buy)}</td><td>${esc(m.supplier || '—')}</td>${show ? `<td class="num">${m.amount == null ? '—' : fmt(m.amount)}</td>` : ''}</tr>`).join('') || '<tr><td colspan="6" class="os-muted">Üretilecek satır yok.</td></tr>'}</tbody></table></div>` : '<p class="os-muted">Teknik değerlendirme henüz yapılmadı.</p>';
     const sig = d.signature;
@@ -110,6 +118,7 @@
     const ship = d.shipment;
     const shipBody = o.status === 'SHIPPED' ? `<p class="b2-ok"><i class="bi bi-truck"></i> ${esc(o.shipped_by)} · ${esc(o.shipped_at)} — teslimat kaydı #${Number(o.delivery_id)}</p>` : ship ? `${ship.problems.length ? `<ul class="b2-bad">${ship.problems.map(p => `<li>${esc(p)}</li>`).join('')}</ul>` : '<p class="b2-ok">Sevkiyata hazır.</p>'}` : '<p class="os-muted">Sevkiyat yönetim onayından sonra.</p>';
     const tools = [allowed('proforma') ? `<a class="os-b" href="${API}/${Number(o.id)}/proforma" target="_blank" rel="noopener"><i class="bi bi-file-earmark-pdf"></i>Proforma</a>` : '',
+      `<a class="os-b" href="${API}/${Number(o.id)}/technical-sheet" target="_blank" rel="noopener" title="İç belge — müşteriye gönderilmez"><i class="bi bi-file-earmark-medical"></i>İç teknik föy</a>`,
       allowed('reassign') ? btn('reassign', 'Sorumlular') : '', allowed('cancel') ? `<button type="button" class="os-b os-b-danger" data-b2-action="cancel">Siparişi iptal et</button>` : '',
       `<button type="button" class="os-b" data-b2-action="refresh"><i class="bi bi-arrow-clockwise"></i>Yenile</button>`].join('');
     $('b2Detail').innerHTML = `<div class="os-detail-head"><div><h2>${esc(o.reference)} · ${esc(cust.name)}</h2><span class="os-muted">${esc(cust.country)} · Ticari r${o.commercial_revision} · Teknik r${o.technical_revision} · Etiket ${esc(o.label_language)}${o.target_date ? ` · Hedef ${esc(o.target_date)}` : ''}</span></div><div class="os-tools">${badge(o.status, o.status_label)}${tools}</div></div>${steps}${next}${o.cancel_reason ? `<div class="os-notice os-notice-danger">İptal: ${esc(o.cancel_reason)}</div>` : ''}
@@ -142,7 +151,7 @@
     } else if (kind === 'sign') {
       title = 'Yönetim onayı — şifre ve imza'; submit = 'İmzala ve onayla';
       const c = d.commercial || {};
-      html = `<div class="os-notice">${esc(o.reference)} · ${esc(d.customer.name)} · Genel toplam ${money(c.total, c.currency)} · Ticari r${o.commercial_revision} / Teknik r${o.technical_revision} · Banka ${esc(c.bank ? c.bank.label : '—')}<br><span class="os-muted">Belge özeti ${esc((o.document_hash || '').slice(0, 16))}…</span></div><p class="os-muted">Onay; siparişi, eksik alım listesini ve üretim planını kapsar. Şifreniz saklanmaz; yanlış denemeler giriş kilidine sayılır.</p><label class="os-label">İmzanızı çizin</label><canvas id="b2Pad" class="b2-sign-pad" width="900" height="240"></canvas><button type="button" class="os-b os-b-sm" id="b2PadClear" style="margin:.4rem 0 1rem">Temizle</button>${field('b2Password', 'Şifreniz', 'password', 'autocomplete="current-password" required')}<label class="os-check" style="margin-top:1rem"><input type="checkbox" id="b2SignConfirm" required /><span>Gösterilen sürümü inceledim ve kendi hesabımla onaylıyorum.</span></label>`;
+      html = `<div class="os-notice">${esc(o.reference)} · ${esc(d.customer.name)} · Genel toplam ${money(c.total, c.currency)} · Ticari r${o.commercial_revision} / Teknik r${o.technical_revision} · Bankalar ${esc(bankNames(c.banks) || '—')}<br><span class="os-muted">Belge özeti ${esc((o.document_hash || '').slice(0, 16))}…</span></div><p class="os-muted">Onay; siparişi, eksik alım listesini ve üretim planını kapsar. Şifreniz saklanmaz; yanlış denemeler giriş kilidine sayılır.</p><label class="os-label">İmzanızı çizin</label><canvas id="b2Pad" class="b2-sign-pad" width="900" height="240"></canvas><button type="button" class="os-b os-b-sm" id="b2PadClear" style="margin:.4rem 0 1rem">Temizle</button>${field('b2Password', 'Şifreniz', 'password', 'autocomplete="current-password" required')}<label class="os-check" style="margin-top:1rem"><input type="checkbox" id="b2SignConfirm" required /><span>Gösterilen sürümü inceledim ve kendi hesabımla onaylıyorum.</span></label>`;
     } else if (kind === 'payment') {
       title = 'Ödeme kaydet';
       html = `<div class="os-grid">${field('b2PayAmount', `Tutar (${esc(d.commercial.currency)})`, 'number', 'min="0.01" step="0.01" required')}${field('b2PayDate', 'Ödeme tarihi', 'date')}${field('b2PayRef', 'Referans / dekont no', 'text', 'maxlength="150"')}</div>`;
@@ -179,11 +188,23 @@
     } else if (kind === 'revise') {
       title = 'Ticari revizyon'; submit = 'Yeni ticari sürüm kaydet';
       const c = d.commercial;
-      html = `<div class="os-notice">Ürün, adet veya etiket dili değişirse teknik ve yönetim onayı; yalnız fiyat/şart/banka değişirse yönetim onayı yenilenir.</div><div class="os-table-wrap"><table class="os-table"><thead><tr><th>Ürün</th><th>Adet</th><th>Birim fiyat (${esc(c.currency)})</th></tr></thead><tbody>${d.lines.map(l => `<tr data-b2-rev="${Number(l.item_id)}"><td>${esc(l.name)}</td><td><input class="os-input" type="number" min="0.000001" step="any" data-b2-qty value="${Number(l.quantity)}" /></td><td><input class="os-input" type="number" min="0" step="any" data-b2-price value="${Number(l.unit_price)}" /></td></tr>`).join('')}</tbody></table></div><div class="os-grid">${select('b2Terms', 'Ödeme koşulu', Object.entries(state.boot.payment_terms), o.payment_terms)}${field('b2Advance', 'Avans %', 'number', 'min="1" max="99" step="any"', o.advance_percent || '')}${select('b2Bank', 'Banka', [['', 'Seçin'], ...(state.boot.banks || []).filter(b => b.is_active).map(b => [b.id, b.label])], c.bank ? c.bank.id : '')}${select('b2Lang', 'Etiket dili', [['EN', 'İngilizce'], ['TR', 'Türkçe']], o.label_language)}${field('b2Target', 'Hedef tarih', 'date', '', o.target_date || '')}${field('b2Shipping', 'Kargo tutarı', 'number', 'min="0" step="any"', c.shipping)}${field('b2Tax', 'KDV %', 'number', 'min="0" max="100" step="any"', c.tax_percentage)}</div>`;
+      html = `<div class="os-notice">Ürün, adet veya etiket dili değişirse teknik ve yönetim onayı; yalnız fiyat/şart/banka değişirse yönetim onayı yenilenir.</div><div class="os-table-wrap"><table class="os-table"><thead><tr><th>Ürün</th><th>Adet</th><th>Birim fiyat (${esc(c.currency)})</th></tr></thead><tbody>${d.lines.map(l => `<tr data-b2-rev="${Number(l.item_id)}"><td>${esc(l.name)}</td><td><input class="os-input" type="number" min="0.000001" step="any" data-b2-qty value="${Number(l.quantity)}" /></td><td><input class="os-input" type="number" min="0" step="any" data-b2-price value="${Number(l.unit_price)}" /></td></tr>`).join('')}</tbody></table></div><div class="os-grid">${select('b2Terms', 'Ödeme koşulu', Object.entries(state.boot.payment_terms), o.payment_terms)}${field('b2Advance', 'Avans %', 'number', 'min="1" max="99" step="any"', o.advance_percent || '')}${select('b2Lang', 'Etiket dili', [['EN', 'İngilizce'], ['TR', 'Türkçe']], o.label_language)}${field('b2Target', 'Hedef tarih', 'date', '', o.target_date || '')}${field('b2Shipping', 'Kargo tutarı', 'number', 'min="0" step="any"', c.shipping)}${field('b2Tax', 'KDV %', 'number', 'min="0" max="100" step="any"', c.tax_percentage)}</div>${bankPicker(o.bank_profile_ids || [])}${termsFields(o.proforma_terms || {})}`;
     }
     $('b2ActionTitle').textContent = title; $('b2ActionFields').innerHTML = html; $('b2ActionSubmit').textContent = submit;
     bootstrap.Modal.getOrCreateInstance($('b2ActionModal')).show();
     if (kind === 'sign') setupPad();
+  }
+
+  // Proforma bankaları (1–3, sıra = sütun sırası) + şartlar — revizyon modali
+  function bankPicker(selected) {
+    const rows = (state.boot.banks || []).filter(b => b.is_active && ibanCcys(b));
+    if (!rows.length) return '<p class="os-muted" style="margin-top:1rem">Tanımlı aktif banka hesabı yok — Banka hesapları sekmesinden ekleyin.</p>';
+    const max = Number(state.boot.max_banks || 3);
+    return `<label class="os-label" style="margin-top:1rem">Proformadaki banka hesapları (en fazla ${max})</label><div style="display:flex;flex-wrap:wrap;gap:.4rem 1.2rem">${rows.map(b => `<label class="os-check"><input type="checkbox" data-b2-bank="${Number(b.id)}" ${selected.includes(b.id) ? 'checked' : ''} /><span>${esc(b.label)} <span class="os-muted">(${esc(ibanCcys(b))})</span></span></label>`).join('')}</div>`;
+  }
+  function termsFields(t) {
+    const v = k => (t[k] == null ? '' : t[k]);
+    return `<div class="os-grid" style="margin-top:1rem">${field('b2TTransport', 'Transportation', 'text', 'maxlength="120"', v('transportation'))}${field('b2TShipment', 'Shipment', 'text', 'maxlength="120"', v('shipment'))}${field('b2TDelivery', 'Type of delivery', 'text', 'maxlength="120"', v('delivery_type'))}${field('b2TDays', 'Yükleme (gün)', 'number', 'min="0" max="365" step="1" placeholder="____"', v('loading_days'))}</div><p class="os-muted">Payment terms satırı ödeme koşulundan yazılır.</p>`;
   }
 
   // ─── İmza tuvali ──────────────────────────────────────────────────────────
@@ -202,6 +223,7 @@
   async function submitAction(ev) {
     ev.preventDefault();
     const a = state.action; const d = state.detail;
+    if (a && a.kind === 'bank') { if (!state.busy) await submitBank(); return; }
     if (!a || !d || state.busy || d.order.id !== a.orderId) return;
     const o = d.order; const base = `/${Number(o.id)}`;
     let path = ''; let body = {};
@@ -242,8 +264,14 @@
       path = '/reassign'; body = { technical_user_id: num('b2Tech'), signer_user_id: num('b2Signer') };
     } else if (a.kind === 'revise') {
       path = '/revise';
+      const bankIds = [...document.querySelectorAll('[data-b2-bank]:checked')].map(x => Number(x.dataset.b2Bank));
+      if (bankIds.length > Number(state.boot.max_banks || 3)) { notify(`Proformaya en fazla ${Number(state.boot.max_banks || 3)} banka basılabilir.`, true); return; }
+      const keepOrder = (o.bank_profile_ids || []).filter(id => bankIds.includes(id));
       body = { commercial_revision: o.commercial_revision, payment_terms: val('b2Terms'),
-        advance_percent: val('b2Advance') ? num('b2Advance') : null, bank_profile_id: num('b2Bank') || null,
+        advance_percent: val('b2Advance') ? num('b2Advance') : null,
+        bank_profile_ids: keepOrder.concat(bankIds.filter(id => !keepOrder.includes(id))),
+        terms: { transportation: val('b2TTransport') || null, shipment: val('b2TShipment') || null,
+          delivery_type: val('b2TDelivery') || null, loading_days: val('b2TDays') === '' ? null : num('b2TDays') },
         label_language: val('b2Lang'), target_date: val('b2Target') || null, shipping_amount: num('b2Shipping'),
         tax_percentage: num('b2Tax'),
         lines: [...document.querySelectorAll('[data-b2-rev]')].map(r => ({ item_id: Number(r.dataset.b2Rev),
@@ -268,13 +296,42 @@
   function renderBanks() {
     if (!$('b2BanksHost') || !state.boot || !state.boot.banks) return;
     const banks = state.boot.banks;
-    $('b2BanksHost').innerHTML = `<div class="os-table-wrap"><table class="os-table"><thead><tr><th>Hesap</th><th>Banka / şube</th><th>SWIFT</th><th>USD IBAN</th><th>EUR IBAN</th><th>TRY IBAN</th><th>Durum</th></tr></thead><tbody>${banks.map(b => `<tr><td><strong>${esc(b.label)}</strong></td><td>${esc(b.bank_name)}<div class="os-muted">${esc(b.branch)}</div></td><td class="os-code">${esc(b.swift)}</td><td class="os-code">${esc(b.iban_usd || '—')}</td><td class="os-code">${esc(b.iban_eur || '—')}</td><td class="os-code">${esc(b.iban_try || '—')}</td><td>${b.is_active ? 'Aktif' : 'Pasif'}</td></tr>`).join('')}</tbody></table></div>`;
+    $('b2BanksHost').innerHTML = `<div class="os-tools" style="margin-bottom:.6rem"><button type="button" class="os-b os-b-main" data-b2-bank-edit="new"><i class="bi bi-plus-lg"></i>Banka hesabı ekle</button></div><div class="os-table-wrap"><table class="os-table"><thead><tr><th>Hesap</th><th>Banka / şube</th><th>SWIFT</th><th>USD IBAN</th><th>EUR IBAN</th><th>TRY IBAN</th><th>RUB IBAN</th><th>Durum</th><th></th></tr></thead><tbody>${banks.map(b => `<tr><td><strong>${esc(b.label)}</strong></td><td>${esc(b.bank_name)}<div class="os-muted">${esc(b.branch)}</div></td><td class="os-code">${esc(b.swift)}</td><td class="os-code">${esc(b.iban_usd || '—')}</td><td class="os-code">${esc(b.iban_eur || '—')}</td><td class="os-code">${esc(b.iban_try || '—')}</td><td class="os-code">${esc(b.iban_rub || '—')}</td><td>${b.is_active ? 'Aktif' : 'Pasif'}${b.is_default ? '<div class="os-muted">varsayılan</div>' : ''}</td><td><button type="button" class="os-b os-b-sm" data-b2-bank-edit="${Number(b.id)}">Düzenle</button></td></tr>`).join('')}</tbody></table></div>`;
     const sel = $('b2RuleBank');
     if (sel) sel.innerHTML = banks.filter(b => b.is_active).map(b => `<option value="${Number(b.id)}">${esc(b.label)}</option>`).join('');
     const name = id => (banks.find(b => b.id === id) || {}).label || '—';
     $('b2RulesHost').innerHTML = (state.boot.bank_rules || []).length ? `<table class="os-table"><thead><tr><th>Ülke</th><th>Para birimi</th><th>Banka</th><th></th></tr></thead><tbody>${state.boot.bank_rules.map(r => `<tr><td>${esc(r.country)}</td><td>${esc(r.currency)}</td><td>${esc(name(r.bank_profile_id))}</td><td><button type="button" class="os-b os-b-sm" data-b2-rule-del="${Number(r.id)}">Sil</button></td></tr>`).join('')}</tbody></table>` : '<div class="os-empty">Kural yok — siparişe dönüştürürken banka elle seçilir.</div>';
   }
   async function refreshBoot() { state.boot = await request('/bootstrap'); renderBanks(); }
+
+  function openBankForm(id) {
+    const b = id === 'new' ? null : (state.boot.banks || []).find(x => x.id === Number(id));
+    if (id !== 'new' && !b) return;
+    const v = k => (b ? b[k] : '');
+    state.action = { kind: 'bank', id: b ? b.id : null, orderId: null };
+    $('b2ActionTitle').textContent = b ? `Banka hesabı — ${b.label}` : 'Yeni banka hesabı';
+    $('b2ActionSubmit').textContent = 'Kaydet';
+    $('b2ActionFields').innerHTML = `<div class="os-notice">IBAN değişiklikleri eski → yeni değeriyle denetim kaydına yazılır. Proformaya en az bir IBAN'ı olan aktif hesap basılabilir; RUB IBAN satırı yalnız seçilen bankada varsa çıkar.</div><div class="os-grid">${field('b2BkLabel', 'Kısa ad (seçim listesinde)', 'text', 'maxlength="80" required', v('label'))}${field('b2BkName', 'Banka adı (proformada)', 'text', 'maxlength="150" required', v('bank_name'))}${field('b2BkBranch', 'Şube', 'text', 'maxlength="150"', v('branch'))}${field('b2BkSwift', 'SWIFT', 'text', 'maxlength="20"', v('swift'))}${field('b2BkHolder', 'Hesap sahibi', 'text', 'maxlength="200" required', b ? b.account_holder : (state.boot.account_holder || ''))}${field('b2BkOrder', 'Sıra', 'number', 'step="1"', b ? b.sort_order : '')}${field('b2BkUsd', 'USD IBAN', 'text', 'maxlength="40"', v('iban_usd'))}${field('b2BkEur', 'EUR IBAN', 'text', 'maxlength="40"', v('iban_eur'))}${field('b2BkTry', 'TRY IBAN', 'text', 'maxlength="40"', v('iban_try'))}${field('b2BkRub', 'RUB IBAN', 'text', 'maxlength="40"', v('iban_rub'))}</div><label class="os-check" style="margin-top:1rem"><input type="checkbox" id="b2BkActive" ${!b || b.is_active ? 'checked' : ''} /><span>Aktif</span></label><label class="os-check"><input type="checkbox" id="b2BkDefault" ${b && b.is_default ? 'checked' : ''} /><span>Varsayılan — ülke kuralı yoksa proformada önceden seçili gelir</span></label>`;
+    bootstrap.Modal.getOrCreateInstance($('b2ActionModal')).show();
+  }
+  async function submitBank() {
+    const a = state.action;
+    const val = id => ($(id) ? $(id).value.trim() : '');
+    const body = { label: val('b2BkLabel'), bank_name: val('b2BkName'), branch: val('b2BkBranch') || null,
+      swift: val('b2BkSwift') || null, account_holder: val('b2BkHolder'), iban_usd: val('b2BkUsd') || null,
+      iban_eur: val('b2BkEur') || null, iban_try: val('b2BkTry') || null, iban_rub: val('b2BkRub') || null,
+      is_active: $('b2BkActive').checked, is_default: $('b2BkDefault').checked,
+      sort_order: val('b2BkOrder') === '' ? null : Number(val('b2BkOrder')) };
+    if (!body.label || !body.bank_name || !body.account_holder) { notify('Kısa ad, banka adı ve hesap sahibi gerekli.', true); return; }
+    if (!(body.iban_usd || body.iban_eur || body.iban_try || body.iban_rub)) { notify('En az bir IBAN girin.', true); return; }
+    state.busy = true; $('b2ActionSubmit').disabled = true;
+    try {
+      await request(a.id ? `/banks/${Number(a.id)}` : '/banks', body, a.id ? 'PUT' : 'POST');
+      bootstrap.Modal.getInstance($('b2ActionModal'))?.hide();
+      await refreshBoot(); notify('Banka hesabı kaydedildi.');
+    } catch (e) { notify(e.message, true); }
+    finally { state.busy = false; $('b2ActionSubmit').disabled = false; }
+  }
 
   // ─── Olaylar ──────────────────────────────────────────────────────────────
   document.querySelectorAll('[data-b2-tab]').forEach(b => b.addEventListener('click', () => {
@@ -292,6 +349,9 @@
     e.preventDefault();
     try { await request('/bank-rules', { country: $('b2RuleCountry').value.trim(), currency: $('b2RuleCurrency').value, bank_profile_id: Number($('b2RuleBank').value) }); await refreshBoot(); notify('Kural kaydedildi.'); }
     catch (err) { notify(err.message, true); }
+  });
+  $('b2BanksHost')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-b2-bank-edit]'); if (b && !state.busy) openBankForm(b.dataset.b2BankEdit);
   });
   $('b2RulesHost')?.addEventListener('click', async e => {
     const b = e.target.closest('[data-b2-rule-del]'); if (!b) return;

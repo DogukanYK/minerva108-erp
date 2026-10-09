@@ -6,8 +6,8 @@ Kayıt: 9 Ekim 2026, Türkiye saati.
 
 Kullanıcı iki planı Markdown olarak istedi; aktif çalışmanın devamını değil, kayıt/devralma belgesini talep etti. Geliştirme durduruldu. Bu not ve ekli planlar kendi başına uygulama/deploy izni değildir; daha sonraki açık kullanıcı talimatına göre yalnız seçilen plana devam edilecek.
 
-1. **B2B siparişinden onay, proforma ve üretime geçiş:** Önceden onaylandı, kullanıcı özellikle “başlama, kaydet, sonra söyleyeceğim” dedi. Uygulama HİÇ başlamadı ve hâlâ bekliyor.
-2. **Kodlu fason üretim:** Onaylandı ve kısmen uygulanmaya başladı; ajanların kullanım limiti bitti, ardından kullanıcı kayıt/devralma istedi. Yerel kod yarım, canlıya aktarılmadı. Bu plan B2B planına bağımlı değil.
+1. **B2B siparişinden onay, proforma ve üretime geçiş:** Önceden onaylandı, kullanıcı özellikle “başlama, kaydet, sonra söyleyeceğim” dedi. Uygulama HİÇ başlamadı ve hâlâ bekliyor. → **SONUÇ (09.10.2026):** Claude tarafından uygulandı, canlıda (`246d48d`).
+2. **Kodlu fason üretim:** Onaylandı ve kısmen uygulanmaya başladı; ajanların kullanım limiti bitti, ardından kullanıcı kayıt/devralma istedi. Yerel kod yarım, canlıya aktarılmadı. Bu plan B2B planına bağımlı değil. → **SONUÇ (09.10.2026):** Claude devraldı, tamamlandı, canlıda (`929f891`).
 
 **Onayları karıştırma:** B2B planında Işık'ın şifre doğrulaması ve çizilen imzası var. Fason planında üç kişinin kendi hesabından onayı var; şifre tekrar doğrulama ve çizilen imza YOK.
 

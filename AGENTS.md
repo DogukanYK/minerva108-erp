@@ -210,11 +210,16 @@ dil + (ürün, adet)). İmza (ticari, teknik) sürüm çiftine + `document_hash`
 router sırası: atama/aşama (yan etkisiz) → şifre `verify_password_step_up` (giriş kilit
 sayaçlarını PAYLAŞIR, sayaç kendi commit'iyle yazılır; 5 hata → 15 dk) → çizilen imza
 PNG'si (≤300 KB, ölçü denetimli). Şifre SAKLANMAZ. Proforma sunucu PDF'i
-(`render_order_proforma`, antetli, autofit) İMZALI ticari snapshot'tan basılır —
-banka profili/teklif sonradan değişse de aynı belge. Banka: `bank_profiles`
-(quotations.html'deki 3 hesap `_seed_bank_profiles` ile BİR kez, sentinel
-`seed.bank_profiles.v1` — silinen geri gelmez) + `bank_rules` (katlanmış ülke + para
-birimi, `*` = tüm ülkeler) dönüşümde öneri; kural yoksa elle seçim. Ödeme koşulu
+(`render_order_proforma` → ortak proforma şablonu, aşağıda) İMZALI ticari snapshot'tan
+basılır — banka profili/teklif sonradan değişse de aynı belge; imza "Best Regards."
+altında. Banka: `bank_profiles` (`_seed_bank_profiles` ile BİR kez, sentinel
+`seed.bank_profiles.v1` — silinen geri gelmez); siparişte 1–3 banka + şartlar
+(bkz. Proforma şablonu). **İç teknik föy** `GET /api/b2b-orders/{id}/technical-sheet`
+(`core/b2b_technical_sheet.py`, `b2b_orders.view`; "İÇ BELGE — müşteriye
+gönderilmez"): satırlar, ONAYLANAN reçete bileşimi (teknik snapshot `lines[].recipe`;
+09.10.2026 öncesi sürümde güncel reçete + not; reçete sonradan değiştiyse uyarı),
+ihtiyaç/eksik, alım satırları, partiler + kaynak lot/tedarikçi, onay ve ödeme
+kapıları — satış fiyatı ve banka YOK, alım tutarı yalnız `b2b.view`. Ödeme koşulu
 `prepaid` (üretim için %100) / `advance` (%X üretim, tamamı sevkten önce) / `net`
 (ödeme durdurmaz); ödeme proforma para biriminde.
 **İki aşamalı parti** — `core/production_run.py` = `start_production`'ın tüketim ve
@@ -249,6 +254,48 @@ view ← `b2b.view|production.view`. Prod'a: tablolar `create_all` (migration
 transaction içinde); kilit sırası sipariş → kart → lot. Nav linki
 `scripts/add_b2b_orders_nav.py` (idempotent, Fason linkinin altı). Testler
 `tests/test_b2b_orders.py`.
+
+**Proforma şablonu + belge başına banka seçimi** (09.10.2026; beğenilen boş şablon
+`Proforma_Sablon_Bos`). TEK çizici `core/proforma_template.py` (`render_proforma(doc)`;
+logo `static/images/proforma_logo.png`, `COMPANY`, `DEFAULT_TERMS`, `STANDARD_NOTES`;
+font depodaki Liberation Sans — `core/fonts/`, Arial ile birebir ölçülü, SIL OFL 1.1 —
+Mac, test ve sunucu aynı çıktıyı verir, sunucuya font kurmak gerekmez):
+B2B sipariş proforması (`core/b2b_proforma.py` adaptör), Teslimat proforması PRF-
+(`core/proforma_invoice.py` adaptör — antetli kâğıt artık KULLANILMAZ) ve kayıtlı teklif
+PDF'i (`GET /api/quotations/{id}/proforma`, `b2b.view` + panel). Teklifler sayfasının
+HTML önizlemesi aynı düzeni CSS ile çizer; firma/notlar/varsayılan şartlar sayfa
+route'undan `proforma` bağlamıyla gelir (iki kopya YOK). ≤24 kalem: numaralı boş
+satırlarla tek sayfa TAM BOY — ek bloklar (navlun/KDV, RUB, not, imza, 3. banka)
+sığmazsa önce boş satır eksilir (`_rows_that_fit` yüksekliği ölçer), kalemler de
+sığmazsa `render_autofit` küçültür/sayfalar. Şartlar belge başına (`proforma_terms`
+JSON: transportation / shipment / delivery_type / loading_days [+ payment]); boş alan
+şablon varsayılanı; B2B'de PAYMENT TERMS ödeme koşulundan (`payment_terms_text`),
+teklif/teslimatta serbest metin. Teklif formunun eski varsayılan "Notlar / Şartlar"
+metni NOTE olarak tekrar basılmaz (`printable_notes` — ödeme satırıyla çelişmesin).
+**Banka seçimi** `core/bank_accounts.py`: belge başına 1–3 profil (`bank_profile_ids`
+JSON — `b2b_orders` / `quotations` / `deliveries`), aktif + en az bir IBAN, sıra =
+sütun sırası; öneri = ülke + para birimi kuralı (`bank_rules`, `*` = tüm ülkeler),
+yoksa `is_default` bankalar (Kuveyt Türk + Vakıfbank — `_backfill_bank_defaults`,
+sentinel `backfill.bank_defaults.v1`; şablondaki Vakıfbank TRY IBAN'ı ve "TÜRKİYE"
+yazımı da). Fiyat USD/EUR/TRY kalır; `iban_rub` (ör. Emlak Bank — Rusya ödemeleri)
+satırı YALNIZ seçili bankada RUB varsa basılır. Seçim listesi `GET /api/bank-profiles
+?country=&currency=` (`b2b.view` | `inventory.adjust`, iç kullanıcı); yönetim B2B →
+Banka hesapları (`POST/PUT /api/b2b-orders/banks`; PUT KISMİ — gönderilmeyen alan
+korunur; IBAN değişikliği eski → yeni audit'li). Şema: migration `a6c8e0b2d4f7` +
+`init_db` alter_safe. Testler `tests/test_proforma_template.py`.
+
+**SKT kontrol raporu** (İzlenebilirlik → "SKT sorunu olan lotlar"; `core/expiry_report.py`).
+B2B partisi (`strict_lot_ok`) ve fason sevk SKT'si eksik / okunamayan / geçmiş
+hammadde lotunu KULLANMAZ; rapor bunları listeler (`GET /api/traceability/
+expiry-issues?scope=recipes|all` + `/export` Excel; `inventory.view`, panel): numune
+olmayan, miktarı > 0, APPROVED/QUARANTINE, Ambalaj dışı aktif kart lotları;
+`recipes` = aktif reçetede geçen kartlar. Düzeltme `PATCH /api/inventory/lots/{id}/
+expiry` (`inventory.adjust`, panel; ISO saklar, eski → yeni `inventory.lot_expiry`
+audit; numune/fason lotu 400; stok ve defter DEĞİŞMEZ). SKT ayrıştırıcı TEK:
+`core/lots.parse_expiry` (YYYY-MM-DD · GG.AA.YYYY · GG/AA/YYYY) + `expiry_today()`
+(TR takvim günü) — B2B havuzu, fason, rapor, "Yaklaşan SKT" ve günlük SKT taraması
+aynısını kullanır (rapordaki karar = havuzdaki karar). Sayfa `tr-datetime.js` yükler
+(tarih girişi gg.aa.yyyy). Testler `tests/test_expiry_report.py`.
 
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +

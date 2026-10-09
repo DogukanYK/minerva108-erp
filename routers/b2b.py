@@ -7,17 +7,22 @@
 """
 B2B router — quotations workflow + TCMB currency rates.
 """
+import json
+
 from fastapi import APIRouter, Depends, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
-from database import get_db, Item, Transaction, Quotation, QuotationItem, to_tr
-from core.permissions import require_permission
+from database import get_db, BankProfile, Item, Transaction, Quotation, QuotationItem, to_tr
+from core.permissions import require_internal_user, require_permission
 from core.notifications import notify_low_stock
 from core.domain import active_domain
-from core import fx
+from core import bank_accounts, fx, proforma_template
+from core.consumption import parse_ml
+from core.delivery_note import content_disposition
+from core.proforma_template import ProformaTermsIn
 
 router = APIRouter(prefix="/api", tags=["b2b"])
 
@@ -80,6 +85,11 @@ class QuotationCreateRequest(BaseModel):
     notes:      Optional[str] = Field(None, max_length=2000)
     valid_days: int           = Field(30,   ge=1, le=365)
 
+    # Proformaya basılacak bankalar (1–3; boş → ülke kuralı / varsayılan bankalar)
+    # ve şartlar — siparişe dönüştürmede B2B siparişine taşınır.
+    bank_profile_ids: Optional[List[int]] = Field(None, max_length=10)
+    proforma_terms:   Optional[ProformaTermsIn] = None
+
     # En fazla 500 satırlık teklif — operasyonel olarak makul, payload DoS önler
     items: List[QuotationLineRequest] = Field(..., min_length=1, max_length=500)
 
@@ -109,6 +119,20 @@ def _serialize_quotation_summary(q: Quotation) -> dict:
     }
 
 
+def _stored_json(raw) -> dict:
+    try:
+        val = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        val = {}
+    return val if isinstance(val, dict) else {}
+
+
+def _quotation_terms(q: Quotation) -> dict:
+    """Saklı şartlar + şablon varsayılanları (ödeme satırı serbest metin)."""
+    stored = _stored_json(q.proforma_terms)
+    return proforma_template.merged_terms(stored, stored.get("payment"))
+
+
 def _serialize_quotation_full(q: Quotation) -> dict:
     return {
         **_serialize_quotation_summary(q),
@@ -124,6 +148,8 @@ def _serialize_quotation_full(q: Quotation) -> dict:
         "shipping_amount":  q.shipping_amount,
         "notes":            q.notes,
         "valid_days":       q.valid_days,
+        "bank_profile_ids": bank_accounts.parse_ids(q.bank_profile_ids),
+        "proforma_terms":   _quotation_terms(q),
         "items": [
             {
                 "id":                 i.id,
@@ -162,6 +188,15 @@ def create_quotation(
         })
 
     try:
+        banks = bank_accounts.resolve_banks(db, data.bank_profile_ids, required=False)
+        terms = (proforma_template.clean_terms(data.proforma_terms.model_dump(), with_payment=True)
+                 if data.proforma_terms is not None else None)
+    except bank_accounts.BankSelectionError as exc:
+        return JSONResponse(status_code=400, content={"detail": exc.detail, "code": exc.code})
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"detail": str(exc), "code": "invalid_terms"})
+
+    try:
         q = Quotation(
             quote_number=data.quote_number.strip(),
             customer_name=data.customer_name.strip(),
@@ -180,6 +215,8 @@ def create_quotation(
             total_amount=data.total_amount,
             notes=data.notes,
             valid_days=data.valid_days,
+            bank_profile_ids=bank_accounts.dump_ids([b.id for b in banks]),
+            proforma_terms=(json.dumps(terms, ensure_ascii=False) if terms is not None else None),
             status="DRAFT",
             domain=domain,                     # Faz 3 — aktif panel
             created_by=actor,
@@ -231,6 +268,66 @@ def get_quotation(quote_id: int, db: Session = Depends(get_db), _: dict = Depend
     if not q:
         return JSONResponse(status_code=404, content={"detail": "Teklif bulunamadı."})
     return _serialize_quotation_full(q)
+
+
+def quotation_proforma_doc(db: Session, q: Quotation) -> dict:
+    """Teklif → ortak proforma çizicisinin sözleşmesi (imzasız).  Bankalar
+    teklifte saklı seçim, yoksa ülke kuralı / varsayılan bankalar."""
+    cur = (q.currency or "TRY").upper()
+    banks = bank_accounts.banks_for_document(db, q.bank_profile_ids, q.customer_country, cur)
+    lines = []
+    for i in sorted(q.items, key=lambda r: r.id):
+        item = i.item
+        name = i.item_name_snapshot or (item.name if item else "")
+        lines.append({"name": name,
+                      "weight_ml": parse_ml(item.variation_name if item else None, name,
+                                            item.name if item else None),
+                      "quantity": i.quantity, "unit_price": i.unit_price_foreign, "line_total": i.line_total})
+    return {
+        "number": q.quote_number,
+        "date": to_tr(q.created_at).strftime("%d.%m.%Y") if q.created_at else "",
+        "currency": cur, "notes": q.notes or "",
+        "customer": {"name": q.customer_name, "address": q.customer_address, "country": q.customer_country,
+                     "phone": " · ".join(x for x in (q.customer_phone, q.customer_email,
+                                                     f"VAT: {q.customer_vat}" if q.customer_vat else "") if x)},
+        "lines": lines,
+        "totals": {"subtotal": q.subtotal_amount, "shipping": q.shipping_amount,
+                   "tax_percentage": q.tax_percentage, "tax_amount": q.tax_amount, "total": q.total_amount},
+        "terms": _quotation_terms(q),
+        "banks": [bank_accounts.bank_snapshot(b, cur) for b in banks],
+        "signature": None,
+    }
+
+
+@router.get("/quotations/{quote_id}/proforma")
+def quotation_proforma(quote_id: int, db: Session = Depends(get_db),
+                       _: dict = Depends(require_permission("b2b", "view")),
+                       domain: str = Depends(active_domain)):
+    """Kayıtlı teklifin proforma PDF'i — B2B siparişi ve teslimatla aynı şablon."""
+    q = db.query(Quotation).filter(Quotation.id == quote_id, Quotation.domain == domain).first()
+    if not q:
+        return JSONResponse(status_code=404, content={"detail": "Teklif bulunamadı."})
+    pdf = proforma_template.render_proforma(quotation_proforma_doc(db, q))
+    return Response(content=pdf, media_type="application/pdf", headers={
+        "Content-Disposition": content_disposition(
+            proforma_template.proforma_filename(q.quote_number, q.customer_name), inline=True),
+        "Cache-Control": "no-store"})
+
+
+@router.get("/bank-profiles")
+def bank_profiles(country: Optional[str] = None, currency: Optional[str] = None,
+                  db: Session = Depends(get_db),
+                  _: dict = Depends(require_internal_user(("b2b", "view"), ("inventory", "adjust")))):
+    """Proforma banka seçimi (teklif, teslimat PRF-) — aktif profiller + bu
+    ülke / para birimi için önerilen seçim + şablon şartları.  Profil yönetimi
+    B2B Siparişleri → Banka hesapları sekmesinde."""
+    rows = (db.query(BankProfile).filter(BankProfile.is_active == True)            # noqa: E712
+            .order_by(BankProfile.sort_order, BankProfile.id).all())
+    return {"banks": [bank_accounts.profile_view(b) for b in rows if bank_accounts.has_iban(b)],
+            "default_ids": bank_accounts.default_bank_ids(db, country, currency),
+            "max_banks": bank_accounts.MAX_BANKS,
+            "default_terms": proforma_template.default_terms(),
+            "company": proforma_template.COMPANY}
 
 
 @router.post("/quotations/{quote_id}/confirm")

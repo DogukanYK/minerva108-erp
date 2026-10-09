@@ -2,9 +2,9 @@
 
 **Kayıt tarihi:** 9 Ekim 2026 (Türkiye).
 
-**Durum:** Kullanıcı tarafından onaylanan plan kaydedildi. Uygulama başlamadı.
+**Durum:** Uygulandı ve canlıda — 09.10.2026, commit `246d48d` (`./deploy.sh`, test kapısı 1483 geçti). Aynı gün (Faz 7) beğenilen proforma şablonu + belge başına 1–3 banka (RUB IBAN dahil) ve düzenlenebilir şartlar, §2'deki iç teknik föy (`GET /api/b2b-orders/{id}/technical-sheet`) ve SKT kontrol raporu eklendi. Ayrıntılı ve güncel sözleşme: `CLAUDE.md` → "B2B sipariş akışı", "Proforma şablonu", "SKT kontrol raporu".
 
-**Devam koşulu:** Doğukan'ın 9 Ekim 2026 tarihli son talimatı: “dur başlama bu planı kaydet bir yere sana sonra söyleyeceğim o zaman implement edersin sırada başka bir iki şey daha var çünkü”. Bu belgeyi okumak uygulamayı başlatma talimatı değildir; geliştirme, migration ve canlı geçiş için kullanıcının daha sonraki açık devam talimatı beklenecek.
+**Devam koşulu (tarihçe):** Plan 9 Ekim 2026'da "başlama, kaydet" talimatıyla bekletilmişti; kullanıcı aynı gün devam talimatı verdi ve plan uygulandı.
 
 ---
 

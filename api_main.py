@@ -809,7 +809,19 @@ def quotations_page(request: Request, db: Session = Depends(get_db)):
     user = _resolve_active_user(payload, db)
     if not _user_can(user, "b2b", "view"):
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("quotations.html", _page_ctx(request, payload, user))
+    from core import bank_accounts, proforma_template
+    ctx = _page_ctx(request, payload, user)
+    # Önizleme sunucu PDF'iyle aynı şablon — firma bilgisi, sabit notlar ve
+    # varsayılan şartlar tek kaynaktan (core/proforma_template).
+    ctx["proforma"] = {
+        "company": proforma_template.COMPANY,
+        "notes": proforma_template.STANDARD_NOTES,
+        "legacy_notes": proforma_template.LEGACY_DEFAULT_NOTES,
+        "default_terms": proforma_template.default_terms(),
+        "rows": proforma_template.TEMPLATE_ROWS,
+        "max_banks": bank_accounts.MAX_BANKS,
+    }
+    return templates.TemplateResponse("quotations.html", ctx)
 
 
 @app.get("/admin", response_class=HTMLResponse)

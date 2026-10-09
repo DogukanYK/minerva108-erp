@@ -2786,11 +2786,12 @@ def trace_lot(lot_number: str, item_id: Optional[int] = None, db: Session = Depe
 @router.get("/traceability/expiring")
 def list_expiring(db: Session = Depends(get_db), _: dict = Depends(require_internal_user(("inventory", "view"))),
                   domain: str = Depends(active_domain)):
-    """All APPROVED inventory lots expiring within the next 60 days, sorted most-urgent first."""
-    from datetime import datetime as _dt, timedelta
+    """All APPROVED inventory lots expiring within the next 60 days, sorted most-urgent first.
+    SKT ortak ayrıştırıcıyla okunur (core/lots.parse_expiry); okunamayanlar
+    "SKT sorunu olan lotlar" raporundadır (/traceability/expiry-issues)."""
+    from core.lots import expiry_today, parse_expiry
 
-    today  = _dt.utcnow().date()
-    cutoff = today + timedelta(days=60)
+    today = expiry_today()
 
     rows = (
         db.query(Inventory)
@@ -2805,9 +2806,8 @@ def list_expiring(db: Session = Depends(get_db), _: dict = Depends(require_inter
 
     result = []
     for r in rows:
-        try:
-            exp_date = _dt.strptime(r.expiry_date, "%Y-%m-%d").date()
-        except (ValueError, TypeError):
+        exp_date = parse_expiry(r.expiry_date)
+        if exp_date is None:
             continue
         days_left = (exp_date - today).days
         if days_left < 0 or days_left > 60:
@@ -2828,6 +2828,86 @@ def list_expiring(db: Session = Depends(get_db), _: dict = Depends(require_inter
 
     result.sort(key=lambda x: x["days_left"])
     return result
+
+
+# ─── SKT kontrol raporu + lot SKT düzeltme (09.10.2026) ─────────────────────
+# B2B sipariş partisi ve fason sevk SKT'si eksik / okunamayan / geçmiş hammadde
+# lotunu kullanmaz; lab bu lotları görüp burada düzeltir (core/expiry_report).
+
+@router.get("/traceability/expiry-issues")
+def expiry_issues_report(scope: str = "recipes", db: Session = Depends(get_db),
+                         _: dict = Depends(require_internal_user(("inventory", "view"))),
+                         domain: str = Depends(active_domain)):
+    from core import expiry_report
+    return expiry_report.expiry_issues(db, domain, scope)
+
+
+@router.get("/traceability/expiry-issues/export")
+def expiry_issues_export(scope: str = "recipes", db: Session = Depends(get_db),
+                         _: dict = Depends(require_internal_user(("inventory", "view"))),
+                         domain: str = Depends(active_domain)):
+    import io
+    from core import expiry_report
+    from core.delivery_note import content_disposition
+    from core.domain import domain_label
+    data = expiry_report.expiry_issues(db, domain, scope)
+    content = expiry_report.build_workbook(data, domain_label(domain))
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": content_disposition(f"SKT_kontrol_{data['today']}.xlsx"),
+                 "Cache-Control": "no-store"})
+
+
+class LotExpiryBody(BaseModel):
+    expiry_date: str = Field(..., min_length=8, max_length=20)     # YYYY-MM-DD · GG.AA.YYYY
+    note: Optional[str] = Field(None, max_length=200)
+
+
+@router.patch("/inventory/lots/{inventory_id}/expiry")
+def set_lot_expiry(inventory_id: int, data: LotExpiryBody, request: Request,
+                   db: Session = Depends(get_db),
+                   current_user: dict = Depends(require_internal_user(("inventory", "adjust"))),
+                   domain: str = Depends(active_domain)):
+    """Lotun SKT'sini düzelt — yalnız APPROVED / QC bekleyen normal lot (numune ve
+    fason kabul lotu hariç).  ISO olarak saklanır; eski → yeni değer audit'li.
+    Stok ve defter DEĞİŞMEZ."""
+    import json
+    from core import expiry_report
+    from core.lots import expiry_today, parse_expiry
+    from database import AdminAuditLog
+    exp = parse_expiry(data.expiry_date)
+    if exp is None or not 2000 <= exp.year <= 2100:
+        return JSONResponse(status_code=400, content={
+            "detail": "SKT YYYY-AA-GG ya da GG.AA.YYYY biçiminde geçerli bir tarih olmalı.",
+            "code": "invalid_expiry"})
+    lot = db.query(Inventory).filter(Inventory.id == inventory_id).with_for_update().first()
+    if not lot or lot.domain != domain:
+        return JSONResponse(status_code=404, content={"detail": "Lot bulunamadı."})
+    if not expiry_report.editable(lot):
+        return JSONResponse(status_code=400, content={
+            "detail": ("Fason kabul lotunun SKT'si fason kaydından gelir." if lot.outsourcing_receipt_id
+                       else "Bu lotun SKT'si buradan düzenlenemez (numune / onaylı ya da QC bekleyen değil)."),
+            "code": "not_editable"})
+    old, new = lot.expiry_date or "", exp.isoformat()
+    if old == new:
+        return {"ok": True, "changed": False, "id": lot.id, "expiry_date": new}
+    lot.expiry_date = new
+    lot.updated_at = datetime.utcnow()
+    item = db.query(Item).filter(Item.id == lot.item_id).first()
+    db.add(AdminAuditLog(
+        actor_id=int(current_user.get("sub", 0)) or None,
+        actor_name=(current_user.get("full_name") or current_user.get("username") or "—")[:100],
+        action="inventory.lot_expiry", target_type="inventory", target_id=lot.id,
+        target_name=((item.name if item else "") + f" · {lot.lot_number or ''}")[:150],
+        details=json.dumps({"item_id": lot.item_id, "lot_number": lot.lot_number, "old": old, "new": new,
+                            "note": (data.note or "").strip() or None}, ensure_ascii=False),
+        ip_address=((request.client.host if request.client else None) or "—")[:64],
+        user_agent=(request.headers.get("user-agent", "") or "")[:255]))
+    db.commit()
+    issue, _ = expiry_report.lot_issue(lot, expiry_today())
+    return {"ok": True, "changed": True, "id": lot.id, "expiry_date": new, "previous": old,
+            "issue": issue}
 
 
 # ─── User-specific audit feed (Phase 8 / Bug 5) ─────────────────────────────

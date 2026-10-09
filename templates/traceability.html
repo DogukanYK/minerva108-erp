@@ -327,6 +327,23 @@
       background: #f3f4f6; padding: 1px 6px; border-radius: 4px;
     }
 
+    /* ══ SKT SORUNU OLAN LOTLAR ══ */
+    .skt-tools { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+    .skt-tools select, .skt-row input[type=date] {
+      border: 1px solid #e5e0d6; border-radius: 8px; padding: 0.3rem 0.5rem; font-size: 0.8rem; background: #fff;
+    }
+    .skt-count { font-size: 0.74rem; font-weight: 700; padding: 2px 9px; border-radius: 20px; }
+    .skt-expired    { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+    .skt-missing    { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+    .skt-unreadable { background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; }
+    .skt-row .skt-fix { display: flex; gap: 0.35rem; align-items: center; }
+    .skt-save { border: none; border-radius: 8px; padding: 0.3rem 0.65rem; font-size: 0.78rem; font-weight: 600;
+                background: var(--navy); color: #fff; cursor: pointer; }
+    .skt-save:disabled { opacity: 0.55; cursor: not-allowed; }
+    .skt-recipes { font-size: 0.72rem; color: #6b7280; max-width: 260px; }
+    .skt-xlsx { font-size: 0.78rem; font-weight: 600; color: var(--navy); text-decoration: none;
+                border: 1px solid #e5e0d6; border-radius: 8px; padding: 0.3rem 0.65rem; }
+
     /* ══ TOAST ══ */
     #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
     .toast-msg { min-width: 260px; max-width: 360px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
@@ -342,6 +359,8 @@
   <script src="/static/undo-watch.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
+  <!-- SKT düzeltme + denetim tarih filtreleri: TR gg.aa.yyyy (value daima ISO) -->
+  <script src="/static/tr-datetime.js?v=1" defer></script>
 </head>
 <body>
 
@@ -561,6 +580,35 @@
         </div>
         <!-- /right -->
 
+      </div>
+
+      <!-- ── SKT sorunu olan lotlar (B2B partisi / fason sevk bu lotları kullanmaz) ── -->
+      <div class="panel-card" id="sktIssuesCard">
+        <div class="panel-header" style="flex-wrap:wrap;">
+          <span class="panel-title-icon icon-red"><i class="bi bi-calendar-x"></i></span>
+          <h2 class="panel-title">SKT sorunu olan lotlar</h2>
+          <div class="skt-tools">
+            <span id="sktCounts"></span>
+            <select id="sktScope" aria-label="Kapsam">
+              <option value="recipes">Reçetelerde geçen hammaddeler</option>
+              <option value="all">Tüm hammaddeler</option>
+            </select>
+            <select id="sktIssue" aria-label="Sorun türü">
+              <option value="">Tüm sorunlar</option>
+              <option value="expired">SKT geçmiş</option>
+              <option value="missing">SKT girilmemiş</option>
+              <option value="unreadable">SKT okunamıyor</option>
+            </select>
+            <a class="skt-xlsx" id="sktExcel" href="/api/traceability/expiry-issues/export?scope=recipes"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+          </div>
+        </div>
+        <div style="padding:0.55rem 1.3rem;font-size:0.76rem;color:#6b7280;border-bottom:1px solid #f0ece4;">
+          B2B sipariş partisi ve fason sevk, SKT'si girilmemiş / okunamayan / geçmiş hammadde lotunu kullanmaz.
+          Doğru SKT'yi girip kaydedin (stok değişmez, değişiklik denetim kaydına yazılır).
+        </div>
+        <div id="sktIssuesBody">
+          <div class="empty-state" style="padding:2rem 1rem;"><p class="empty-state-sub">Yükleniyor…</p></div>
+        </div>
       </div>
 
     </div>
@@ -1176,8 +1224,89 @@
       populateAuditUsers();
     }
 
+    /* ── SKT sorunu olan lotlar ── */
+    let SKT = { rows: [], summary: {} };
+    async function loadExpiryIssues() {
+      const body = document.getElementById('sktIssuesBody');
+      const scope = document.getElementById('sktScope').value;
+      document.getElementById('sktExcel').href = `/api/traceability/expiry-issues/export?scope=${encodeURIComponent(scope)}`;
+      try {
+        const res = await fetch(`/api/traceability/expiry-issues?scope=${encodeURIComponent(scope)}`, { cache: 'no-store' });
+        if (!res.ok) throw new Error();
+        SKT = await res.json();
+        renderExpiryIssues();
+      } catch {
+        body.innerHTML = `<div class="empty-state" style="padding:2rem 1rem;"><i class="bi bi-exclamation-circle" style="color:#ef4444;"></i>
+          <p class="empty-state-sub">SKT kontrol listesi yüklenemedi.</p></div>`;
+      }
+    }
+    function renderExpiryIssues() {
+      const body = document.getElementById('sktIssuesBody');
+      const s = SKT.summary || {};
+      document.getElementById('sktCounts').innerHTML = s.total
+        ? `<span class="skt-count skt-expired">Geçmiş ${Number(s.expired || 0)}</span> <span class="skt-count skt-missing">Girilmemiş ${Number(s.missing || 0)}</span> <span class="skt-count skt-unreadable">Okunamayan ${Number(s.unreadable || 0)}</span>`
+        : '';
+      const filter = document.getElementById('sktIssue').value;
+      const rows = (SKT.rows || []).filter(r => !filter || r.issue === filter);
+      if (!rows.length) {
+        body.innerHTML = `<div class="empty-state" style="padding:2rem 1rem;">
+          <i class="bi bi-shield-check" style="color:#22c55e;font-size:1.8rem;"></i>
+          <p class="empty-state-title" style="font-size:0.88rem;">SKT sorunu yok</p>
+          <p class="empty-state-sub">Bu kapsamdaki hammadde lotlarının SKT'si girilmiş, okunur ve geçerli.</p></div>`;
+        return;
+      }
+      const canFix = window.can && window.can('inventory', 'adjust');
+      body.innerHTML = `<div style="overflow-x:auto;"><table class="exp-table"><thead><tr>
+          <th>Malzeme / Lot</th><th>Tedarikçi</th><th style="text-align:right;">Miktar</th><th>Kayıtlı SKT</th><th>Sorun</th><th>Reçeteler</th>${canFix ? '<th>Doğru SKT</th>' : ''}
+        </tr></thead><tbody>${rows.map(r => {
+          const more = r.recipe_count > r.recipes.length ? ` +${r.recipe_count - r.recipes.length}` : '';
+          const issue = `<span class="skt-count skt-${escHtml(r.issue)}">${escHtml(r.issue_label)}${r.days_expired ? ` · ${Number(r.days_expired)} gün` : ''}</span>${r.qc_pending ? '<div style="font-size:0.7rem;color:#b45309;margin-top:2px;">QC bekliyor</div>' : ''}`;
+          const fix = !canFix ? '' : `<td>${r.editable
+            ? `<div class="skt-fix"><input type="date" data-skt-date="${Number(r.id)}" value="${escHtml(r.expiry_iso || '')}" aria-label="Doğru SKT"><button type="button" class="skt-save" data-skt-save="${Number(r.id)}">Kaydet</button></div>`
+            : '<span style="font-size:0.72rem;color:#9ca3af;">Fason kaydından</span>'}</td>`;
+          return `<tr class="skt-row" data-skt-row="${Number(r.id)}">
+            <td><div style="font-weight:600;color:#1f2937;">${escHtml(r.item_name)}</div>
+                <div style="margin-top:2px;"><span class="exp-lot" style="cursor:pointer;" data-skt-trace="${escHtml(r.lot_number)}">${escHtml(r.lot_number || '—')}</span>
+                <span style="font-size:0.7rem;color:#9ca3af;">${escHtml(r.received_at)}</span></div></td>
+            <td style="font-size:0.8rem;">${escHtml(r.supplier || '—')}</td>
+            <td style="text-align:right;white-space:nowrap;">${Number(r.quantity).toLocaleString('tr-TR', { maximumFractionDigits: 3 })} ${escHtml(r.unit)}</td>
+            <td style="white-space:nowrap;">${escHtml(r.expiry_date || '—')}</td>
+            <td>${issue}</td>
+            <td class="skt-recipes">${escHtml(r.recipes.join(', ') || '—')}${escHtml(more)}</td>${fix}
+          </tr>`;
+        }).join('')}</tbody></table></div>`;
+    }
+    async function saveLotExpiry(id) {
+      const input = document.querySelector(`[data-skt-date="${id}"]`);
+      const btn = document.querySelector(`[data-skt-save="${id}"]`);
+      if (!input || !input.value) { showToast('Önce doğru SKT tarihini seçin.'); return; }
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/inventory/lots/${id}/expiry`, { method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiry_date: input.value }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showToast(typeof data.detail === 'string' ? data.detail : 'SKT kaydedilemedi.'); return; }
+        showToast(data.changed ? (data.issue === 'expired' ? 'SKT kaydedildi — lotun SKT\'si geçmiş.' : 'SKT kaydedildi.') : 'SKT zaten bu tarih.', 'success');
+        await Promise.all([loadExpiryIssues(), loadExpiring()]);
+      } catch { showToast('Sunucuya bağlanılamadı.'); }
+      finally { btn.disabled = false; }
+    }
+    document.getElementById('sktScope').addEventListener('change', loadExpiryIssues);
+    document.getElementById('sktIssue').addEventListener('change', renderExpiryIssues);
+    document.getElementById('sktIssuesBody').addEventListener('click', e => {
+      const save = e.target.closest('[data-skt-save]');
+      if (save) { saveLotExpiry(Number(save.dataset.sktSave)); return; }
+      const trace = e.target.closest('[data-skt-trace]');
+      if (trace && trace.dataset.sktTrace) {
+        document.getElementById('lotSearchInput').value = trace.dataset.sktTrace;
+        searchLot();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    });
+
     /* ── Init ── */
     loadExpiring();
+    loadExpiryIssues();
   </script>
 
 </body>
