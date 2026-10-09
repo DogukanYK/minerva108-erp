@@ -1035,7 +1035,7 @@ def list_quarantine(db: Session = Depends(get_db), domain: str = Depends(active_
             "status":       r.status,
             "qc_required":  r.qc_required,
             # 'source' = "Üretim" veya "Mal Kabul" — UI bunu rozetle gösterebilir
-            "source":       "Üretim" if r.qc_required else "Mal Kabul",
+            "source":       "Fason" if r.outsourcing_receipt_id else ("Üretim" if r.qc_required else "Mal Kabul"),
             "created_at":   to_tr(r.created_at).strftime("%d.%m.%Y") if r.created_at else "",
         }
         for r in rows
@@ -1048,12 +1048,16 @@ def process_qc(
     data: QCActionRequest,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("qc", "approve")),
+    domain: str = Depends(active_domain),
 ):
     if data.status not in ("APPROVED", "REJECTED"):
         return JSONResponse(status_code=400, content={"detail": "Geçersiz statü. 'APPROVED' veya 'REJECTED' olmalıdır."})
 
     inv, item = _lock_lot_for_qc(db, inventory_id)
     if not inv:
+        db.rollback()
+        return JSONResponse(status_code=404, content={"detail": "Envanter kaydı bulunamadı."})
+    if inv.outsourcing_receipt_id and (inv.domain or "cosmetics") != domain:
         db.rollback()
         return JSONResponse(status_code=404, content={"detail": "Envanter kaydı bulunamadı."})
     # Hem mal kabul karantinası hem de üretim qc_required lot'ları işlenebilir
@@ -1078,9 +1082,11 @@ def process_qc(
         #   QUARANTINE + REJECTED → stok henüz eklenmemiş, hiçbir şey yapma
         #   qc_required (PROD)  + APPROVED → stok zaten üretimde eklendi, hiçbir şey yapma
         #   qc_required (PROD)  + REJECTED → stok üretimde eklendi, geri al + Adjustment audit
-        if was_quarantine and data.status == "APPROVED" and item:
+        from core.outsourcing import approve_receipt
+        fason_handled = approve_receipt(db, inv, actor, decision=data.status)
+        if not fason_handled and was_quarantine and data.status == "APPROVED" and item:
             item.current_stock = round((item.current_stock or 0) + inv.quantity, 6)
-        elif not was_quarantine and data.status == "REJECTED" and item:
+        elif not fason_handled and not was_quarantine and data.status == "REJECTED" and item:
             item.current_stock = round((item.current_stock or 0) - inv.quantity, 6)
             db.add(Transaction(
                 item_id=inv.item_id,
@@ -1120,6 +1126,7 @@ def qc_approve_form(
     data: QCFormRequest,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("qc", "approve")),
+    domain: str = Depends(active_domain),
 ):
     """
     Digital QC form endpoint — the ONLY approved path to change a lot from
@@ -1134,6 +1141,9 @@ def qc_approve_form(
 
     inv, approved_item = _lock_lot_for_qc(db, inventory_id)
     if not inv:
+        db.rollback()
+        return JSONResponse(status_code=404, content={"detail": "Envanter kaydı bulunamadı."})
+    if inv.outsourcing_receipt_id and (inv.domain or "cosmetics") != domain:
         db.rollback()
         return JSONResponse(status_code=404, content={"detail": "Envanter kaydı bulunamadı."})
     # Hem mal kabul karantinası hem üretim qc_required lot'ları işlenebilir
@@ -1175,9 +1185,11 @@ def qc_approve_form(
         #   QUARANTINE + REJECTED → stok henüz yok, hiçbir şey
         #   qc_required (PROD) + APPROVED → stok zaten var, hiçbir şey
         #   qc_required (PROD) + REJECTED → stok geri al + Adjustment audit
-        if was_quarantine and data.status == "APPROVED" and approved_item:
+        from core.outsourcing import approve_receipt
+        fason_handled = approve_receipt(db, inv, actor, decision=data.status)
+        if not fason_handled and was_quarantine and data.status == "APPROVED" and approved_item:
             approved_item.current_stock = round((approved_item.current_stock or 0) + inv.quantity, 6)
-        elif not was_quarantine and data.status == "REJECTED" and approved_item:
+        elif not fason_handled and not was_quarantine and data.status == "REJECTED" and approved_item:
             approved_item.current_stock = round((approved_item.current_stock or 0) - inv.quantity, 6)
             db.add(Transaction(
                 item_id=inv.item_id,

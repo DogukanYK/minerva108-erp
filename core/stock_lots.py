@@ -267,6 +267,7 @@ def find_twin(db: Session, item_id: int, lot_number: str, *, is_sample: bool,
     anahtarı (item_id, lot_number, is_sample) ile aynı."""
     q = db.query(Inventory).filter(Inventory.item_id == item_id,
                                    Inventory.lot_number == lot_number,
+                                   Inventory.outsourcing_receipt_id.is_(None),
                                    Inventory.is_sample == bool(is_sample))
     if exclude_id:
         q = q.filter(Inventory.id != exclude_id)
@@ -391,6 +392,8 @@ def move_lot(
         raise LotMoveError(400, problem)
     if target.id == source.id:
         raise LotMoveError(400, "Lot zaten bu kartta.")
+    if lot.outsourcing_receipt_id:
+        raise LotMoveError(400, "Fason kabul lotunun kaynak kartı değiştirilemez; fason kabul kaydı üzerinden izlenir.")
     if (lot.status or APPROVED) != APPROVED or lot.qc_required:
         raise LotMoveError(400, "QC kararı bekleyen lot taşınamaz.")
     if db.query(RetentionSample.id).filter(RetentionSample.inventory_id == lot.id).first():

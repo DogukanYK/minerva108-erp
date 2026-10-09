@@ -230,6 +230,10 @@ class Inventory(Base):
     # Numune stoğa çevrildiği an.  "Yalnız lotu bağla" (link_only) Transaction
     # yazmadığı için çevrilmiş numunenin tek izi budur.
     sample_converted_at = Column(DateTime, nullable=True)
+    # Fason kabulleri normal mal kabulünden izole; stok yalnız QC'de post edilir.
+    outsourcing_receipt_id = Column(Integer, ForeignKey("outsourcing_receipts.id", use_alter=True,
+                                     name="fk_inventory_outsourcing_receipt"),
+                                     nullable=True, unique=True)
 
     item = relationship("Item", foreign_keys=[item_id])
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
@@ -759,6 +763,184 @@ class ProductionConsumption(Base):
     transaction = relationship("Transaction", foreign_keys=[transaction_id])
     cancel_transaction = relationship("Transaction", foreign_keys=[cancel_transaction_id])
     inventory = relationship("Inventory", foreign_keys=[inventory_id])
+
+
+class OutsourcingPartner(Base):
+    __tablename__ = "outsourcing_partners"
+    id = Column(Integer, primary_key=True)
+    domain = Column(String(20), nullable=False, index=True)
+    name = Column(String(150), nullable=False)
+    contact = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    __table_args__ = (UniqueConstraint("domain", "name", name="uq_outsourcing_partner_name"),)
+
+
+class OutsourcingMaterialCode(Base):
+    __tablename__ = "outsourcing_material_codes"
+    id = Column(Integer, primary_key=True)
+    domain = Column(String(20), nullable=False, index=True)
+    partner_id = Column(Integer, ForeignKey("outsourcing_partners.id"), nullable=False)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    code = Column(String(40), nullable=False)
+    specification = Column(Text, nullable=False)
+    spec_hash = Column(String(64), nullable=False)
+    safety_instructions = Column(Text, nullable=False, default="")
+    unit = Column(String(20), nullable=False)
+    kind = Column(String(12), nullable=False)
+    verified_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    verified_at = Column(DateTime, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("partner_id", "code", name="uq_outsourcing_partner_code"),
+        UniqueConstraint("partner_id", "item_id", "spec_hash", name="uq_outsourcing_material_identity"),
+    )
+
+
+class OutsourcingJob(Base):
+    __tablename__ = "outsourcing_jobs"
+    id = Column(Integer, primary_key=True)
+    domain = Column(String(20), nullable=False, index=True)
+    partner_id = Column(Integer, ForeignKey("outsourcing_partners.id"), nullable=False)
+    recipe_id = Column(Integer, ForeignKey("recipes.id"), nullable=True)
+    target_item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    quantity = Column(Float, nullable=False)
+    unit = Column(String(20), nullable=False)
+    label_language = Column(String(8), nullable=False)
+    external_product_name = Column(String(150), nullable=False)
+    external_notes = Column(Text, nullable=False)
+    technical_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    manager_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    revision = Column(Integer, nullable=False, default=1)
+    status = Column(String(24), nullable=False, default="DRAFT", index=True)
+    frozen_at = Column(DateTime, nullable=True)
+    closed_at = Column(DateTime, nullable=True)
+    cancel_reason = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_outsourcing_job_qty"),
+        CheckConstraint("technical_user_id <> owner_user_id AND technical_user_id <> manager_user_id AND owner_user_id <> manager_user_id", name="ck_outsourcing_distinct_approvers"),
+    )
+
+
+class OutsourcingPacketRevision(Base):
+    __tablename__ = "outsourcing_packet_revisions"
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey("outsourcing_jobs.id"), nullable=False, index=True)
+    revision = Column(Integer, nullable=False)
+    packet_hash = Column(String(64), nullable=False)
+    snapshot = Column(Text, nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("job_id", "revision", name="uq_outsourcing_packet_revision"),)
+
+
+class OutsourcingApproval(Base):
+    __tablename__ = "outsourcing_approvals"
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey("outsourcing_jobs.id"), nullable=False)
+    revision = Column(Integer, nullable=False)
+    packet_hash = Column(String(64), nullable=False)
+    role = Column(String(16), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    approved_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (
+        UniqueConstraint("job_id", "revision", "role", name="uq_outsourcing_approval_role"),
+        UniqueConstraint("job_id", "revision", "user_id", name="uq_outsourcing_approval_user"),
+    )
+
+
+class OutsourcingContainer(Base):
+    __tablename__ = "outsourcing_containers"
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey("outsourcing_jobs.id"), nullable=False, index=True)
+    material_code_id = Column(Integer, ForeignKey("outsourcing_material_codes.id"), nullable=False)
+    inventory_id = Column(Integer, ForeignKey("inventory.id"), nullable=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    container_uid = Column(String(48), nullable=False, unique=True)
+    external_lot = Column(String(48), nullable=False, unique=True)
+    source_lot_number = Column(String(100), nullable=True)
+    source_snapshot = Column(Text, nullable=False, default="{}")
+    expiry_date = Column(String(20), nullable=True)
+    quantity = Column(Float, nullable=False)
+    unit = Column(String(20), nullable=False)
+    dispatched_quantity = Column(Float, nullable=False, default=0)
+    consumed_quantity = Column(Float, nullable=False, default=0)
+    waste_quantity = Column(Float, nullable=False, default=0)
+    returned_quantity = Column(Float, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (CheckConstraint("quantity > 0", name="ck_outsourcing_container_qty"),)
+
+
+class OutsourcingOperation(Base):
+    __tablename__ = "outsourcing_operations"
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey("outsourcing_jobs.id"), nullable=False)
+    idempotency_key = Column(String(100), nullable=False)
+    kind = Column(String(24), nullable=False)
+    request_hash = Column(String(64), nullable=False)
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("job_id", "idempotency_key", name="uq_outsourcing_operation_key"),)
+
+
+class OutsourcingShipment(Base):
+    __tablename__ = "outsourcing_shipments"
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey("outsourcing_jobs.id"), nullable=False, index=True)
+    revision = Column(Integer, nullable=False)
+    packet_hash = Column(String(64), nullable=False)
+    operation_id = Column(Integer, ForeignKey("outsourcing_operations.id"), nullable=False, unique=True)
+    dispatched_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    dispatched_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class OutsourcingShipmentLine(Base):
+    __tablename__ = "outsourcing_shipment_lines"
+    id = Column(Integer, primary_key=True)
+    shipment_id = Column(Integer, ForeignKey("outsourcing_shipments.id"), nullable=False, index=True)
+    container_id = Column(Integer, ForeignKey("outsourcing_containers.id"), nullable=False, unique=True)
+    transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=False)
+    quantity = Column(Float, nullable=False)
+
+
+class OutsourcingMovement(Base):
+    __tablename__ = "outsourcing_movements"
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey("outsourcing_jobs.id"), nullable=False, index=True)
+    operation_id = Column(Integer, ForeignKey("outsourcing_operations.id"), nullable=False)
+    container_id = Column(Integer, ForeignKey("outsourcing_containers.id"), nullable=False)
+    kind = Column(String(20), nullable=False)  # consumption | waste | return
+    quantity = Column(Float, nullable=False)
+    unit = Column(String(20), nullable=False)
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (CheckConstraint("quantity > 0", name="ck_outsourcing_movement_qty"),)
+
+
+class OutsourcingReceipt(Base):
+    __tablename__ = "outsourcing_receipts"
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey("outsourcing_jobs.id"), nullable=False, index=True)
+    operation_id = Column(Integer, ForeignKey("outsourcing_operations.id"), nullable=False)
+    container_id = Column(Integer, ForeignKey("outsourcing_containers.id"), nullable=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    kind = Column(String(24), nullable=False)  # finished | finished_sample | return
+    quantity = Column(Float, nullable=False)
+    unit = Column(String(20), nullable=False)
+    external_lot = Column(String(100), nullable=True)
+    status = Column(String(20), nullable=False, default="QUARANTINE")
+    input_transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True, unique=True)
+    qc_by = Column(String(100), nullable=True)
+    qc_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (CheckConstraint("quantity > 0", name="ck_outsourcing_receipt_qty"),)
 
 
 class RetentionSample(Base):

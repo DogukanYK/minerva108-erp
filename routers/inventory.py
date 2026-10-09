@@ -1387,6 +1387,7 @@ def receive_stock(
         existing = (db.query(Inventory)
                    .filter(Inventory.item_id == data.item_id,
                            Inventory.lot_number == data.lot_number,
+                           Inventory.outsourcing_receipt_id.is_(None),
                            Inventory.is_sample == is_sample)
                    .with_for_update().first())
 
@@ -1549,6 +1550,11 @@ def adjust_stock(
                 .first()
             )
             if inv:
+                if inv.outsourcing_receipt_id and (inv.status == "QUARANTINE" or inv.qc_required):
+                    db.rollback()
+                    return JSONResponse(status_code=400, content={
+                        "detail": "Fason kabul lotu kalite kontrolü tamamlanmadan stok düzeltmesine konu olamaz."
+                    })
                 # Bu lot için yeni miktar mantıklı mı kontrol etmiyoruz — kullanıcı
                 # zaten gerekçeyi girdi. Sadece lot satırını da güncelleyelim.
                 inv.quantity = round(new_qty, 6)

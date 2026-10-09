@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minerva108 ERP — Fason Üretim</title>
+  <script src="/static/theme.js"></script>
+  <script>
+    window.PERMS = {{ permissions | tojson }};
+    window.DOMAIN = {{ domain | tojson }};
+    window.OUTSOURCING_USER = {id: {{ user_id | tojson }}, name: {{ full_name | tojson }}};
+    window.can = function (category, action) { return !!(window.PERMS && window.PERMS[category] && window.PERMS[category][action]); };
+  </script>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <link rel="manifest" href="/static/manifest.json" />
+  <meta name="theme-color" content="#232E6E" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/dark.css" />
+  <style>
+    :root { --navy:#232E6E; --gold:#C9AC6F; --gold2:#D9BE85; --cream:#f5f0e8; --white:#fff; --sidebar-width:240px; --navbar-height:64px; --os-ink:#1f2937; --os-muted:#6b7280; --os-line:#e5e7eb; --os-soft:#faf8f3; --os-head:#232E6E; --os-good:#15803d; --os-warn:#9a3412; --os-bad:#b91c1c; }
+    :root[data-theme="dark"] { --os-ink:#e2e5ec; --os-muted:#a3adc4; --os-line:#2a3454; --os-soft:#1d2540; --os-head:#e6cfa0; --os-good:#6ee7b7; --os-warn:#fdba74; --os-bad:#fca5a5; }
+    *, *::before, *::after { box-sizing:border-box; }
+    body { margin:0; font-family:'Jost',sans-serif; background:var(--cream); color:var(--os-ink); }
+    .sidebar { position:fixed; inset:0 auto 0 0; width:var(--sidebar-width); background:var(--navy); display:flex; flex-direction:column; z-index:100; }
+    .sidebar-brand { padding:1.4rem 1.25rem; border-bottom:1px solid #ffffff14; text-align:center; }
+    .sidebar-brand-logo { width:168px; max-width:100%; }
+    .sidebar-nav { flex:1; padding:1.25rem .75rem; overflow-y:auto; }
+    .nav-section-label { padding:.5rem .75rem; color:#ffffff60; font-size:.65rem; letter-spacing:.14em; text-transform:uppercase; }
+    .nav-link-item { display:flex; align-items:center; gap:.75rem; padding:.65rem .85rem; border-radius:8px; color:#ffffffa6; font-size:.88rem; text-decoration:none; margin-bottom:2px; }
+    .nav-link-item:hover { color:#fff; background:#ffffff12; }
+    .nav-link-item.active { color:var(--gold2); background:#b8965a2e; }
+    .nav-icon { width:18px; text-align:center; }
+    .sidebar-footer { padding:1rem 1.25rem; border-top:1px solid #ffffff14; display:flex; align-items:center; justify-content:space-between; }
+    .sidebar-footer-text { margin:0; color:#ffffff60; font-size:.7rem; }
+    .topnav { position:fixed; top:0; left:var(--sidebar-width); right:0; height:var(--navbar-height); background:var(--white); border-bottom:1px solid var(--os-line); display:flex; align-items:center; justify-content:space-between; gap:.7rem; padding:0 1.75rem; z-index:90; }
+    .topnav-title { font-family:'Playfair Display',serif; font-size:1.15rem; color:var(--os-head); }
+    .topnav-right,.user-chip { display:flex; align-items:center; gap:.6rem; }
+    .user-chip { background:var(--cream); border-radius:20px; padding:.35rem .8rem; font-size:.82rem; }
+    .main-content { margin-left:var(--sidebar-width); padding-top:var(--navbar-height); min-height:100vh; }
+    .content-inner { padding:2rem 2rem 3rem; max-width:1700px; margin:auto; }
+    .os-header { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; margin-bottom:1.4rem; }
+    .os-eyebrow { color:var(--os-muted); font-size:.75rem; font-weight:600; margin-bottom:.3rem; }
+    .os-title { font-family:'Playfair Display',serif; font-weight:700; font-size:1.65rem; color:var(--os-head); margin:0 0 .4rem; }
+    .os-subtitle { margin:0; max-width:770px; font-size:.9rem; color:var(--os-muted); }
+    .os-tabs { display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:1.1rem; }
+    .os-tab { border:1px solid var(--os-line); background:var(--white); border-radius:9px; padding:.65rem 1rem; font:600 .88rem 'Jost',sans-serif; color:var(--os-muted); }
+    .os-tab[aria-selected="true"] { color:#fff; background:var(--navy); border-color:var(--navy); }
+    .os-card { background:var(--white); border:1px solid var(--os-line); border-radius:12px; margin-bottom:1.2rem; overflow:hidden; }
+    .os-card-head { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; padding:1rem 1.2rem; border-bottom:1px solid var(--os-line); }
+    .os-card-head h2 { font-family:'Playfair Display',serif; color:var(--os-head); font-size:1.1rem; font-weight:600; margin:0; }
+    .os-card-head > i { color:var(--gold); }
+    .os-card-body { padding:1.2rem; }
+    .os-tools { margin-left:auto; display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+    .os-b { display:inline-flex; align-items:center; justify-content:center; gap:.4rem; border:1.5px solid var(--os-line); border-radius:8px; padding:.5rem .9rem; background:var(--white); color:var(--os-head); font:600 .84rem 'Jost',sans-serif; text-decoration:none; cursor:pointer; }
+    .os-b:hover:not(:disabled) { border-color:var(--gold); background:var(--os-soft); color:var(--os-head); }
+    .os-b:disabled { opacity:.45; cursor:not-allowed; }
+    .os-b-main { color:#fff; background:var(--navy); border-color:var(--navy); }
+    .os-b-main:hover:not(:disabled) { color:#fff; background:#1b2458; }
+    .os-b-gold { background:var(--gold); color:#232E6E; border-color:var(--gold); }
+    .os-b-danger { color:var(--os-bad); }
+    .os-b-sm { padding:.3rem .6rem; font-size:.78rem; }
+    .os-label { display:block; font-size:.78rem; color:var(--os-muted); font-weight:600; margin-bottom:.35rem; }
+    .os-input,.os-select,.os-textarea { width:100%; border:1.5px solid var(--os-line); border-radius:8px; background:var(--white); color:var(--os-ink); padding:.6rem .75rem; font:400 .88rem 'Jost',sans-serif; }
+    .os-input:focus,.os-select:focus,.os-textarea:focus { outline:2px solid var(--gold); outline-offset:1px; }
+    .os-textarea { min-height:96px; resize:vertical; }
+    .os-muted { font-size:.82rem; color:var(--os-muted); }
+    .os-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+    .os-span { grid-column:1/-1; }
+    .os-layout { display:grid; grid-template-columns:minmax(0,1fr) 350px; gap:1.2rem; align-items:start; }
+    .os-table-wrap { overflow-x:auto; }
+    .os-table { width:100%; border-collapse:collapse; font-size:.85rem; }
+    .os-table th { color:var(--os-muted); font-size:.73rem; font-weight:600; background:var(--os-soft); padding:.7rem .85rem; white-space:nowrap; }
+    .os-table td { border-top:1px solid var(--os-line); padding:.75rem .85rem; vertical-align:middle; }
+    .os-table .num { text-align:right; font-variant-numeric:tabular-nums; }
+    .os-table .os-input,.os-table .os-select { min-width:100px; }
+    .os-empty { text-align:center; padding:2.3rem 1rem; color:var(--os-muted); font-size:.88rem; }
+    .os-empty i { display:block; color:var(--gold); font-size:1.8rem; margin-bottom:.5rem; }
+    .os-badge { display:inline-flex; align-items:center; gap:.3rem; border:1px solid var(--os-line); border-radius:20px; background:var(--os-soft); padding:.25rem .6rem; font-size:.73rem; white-space:nowrap; }
+    .os-badge-good { color:var(--os-good); }
+    .os-badge-warn { color:var(--os-warn); }
+    .os-badge-bad { color:var(--os-bad); }
+    .os-code { font-family:ui-monospace,SFMono-Regular,monospace; font-weight:600; letter-spacing:.02em; }
+    .os-notice { padding:.85rem 1rem; border:1px solid var(--os-line); border-left:3px solid var(--gold); border-radius:8px; background:var(--os-soft); font-size:.84rem; margin-bottom:1rem; }
+    .os-notice-danger { border-left-color:var(--os-bad); color:var(--os-bad); }
+    .os-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.7rem; margin-bottom:1.2rem; }
+    .os-stat { background:var(--white); border:1px solid var(--os-line); border-radius:10px; padding:.9rem 1rem; }
+    .os-stat strong { display:block; font-size:1.5rem; color:var(--os-head); font-weight:600; }
+    .os-stat span { font-size:.78rem; color:var(--os-muted); }
+    .os-steps { display:flex; gap:.5rem; flex-wrap:wrap; margin:0 0 1rem; padding:0; list-style:none; }
+    .os-step { display:flex; align-items:center; gap:.45rem; color:var(--os-muted); font-size:.78rem; }
+    .os-step b { width:24px; height:24px; border-radius:50%; display:grid; place-items:center; border:1px solid var(--os-line); background:var(--white); font-size:.7rem; }
+    .os-step.is-current { color:var(--os-head); font-weight:600; }
+    .os-step.is-current b,.os-step.is-done b { background:var(--navy); color:#fff; }
+    .os-detail-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; margin-bottom:1rem; }
+    .os-detail-head h2 { margin:0 0 .4rem; font-size:1.35rem; color:var(--os-head); font-family:'Playfair Display',serif; }
+    .os-meta { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.7rem; padding:1rem; background:var(--os-soft); border:1px solid var(--os-line); border-radius:10px; margin-bottom:1rem; font-size:.88rem; }
+    .os-meta span { display:block; color:var(--os-muted); font-size:.74rem; margin-bottom:.25rem; }
+    .os-preview { background:var(--white); border:1px solid var(--os-line); border-radius:8px; padding:1rem; min-height:150px; }
+    .os-preview h3 { font-size:1rem; color:var(--os-head); margin:0 0 .8rem; }
+    .os-pre { white-space:pre-wrap; font-size:.86rem; line-height:1.65; margin:0; }
+    .os-approval { padding:.85rem 0; border-bottom:1px solid var(--os-line); display:flex; align-items:start; justify-content:space-between; gap:.6rem; }
+    .os-approval:last-child { border-bottom:0; }
+    .os-approval strong { display:block; font-size:.85rem; }
+    .os-kv { display:flex; justify-content:space-between; gap:.8rem; padding:.55rem 0; font-size:.84rem; border-bottom:1px solid var(--os-line); }
+    .os-kv:last-child { border:0; }
+    .os-downloads { display:flex; flex-direction:column; gap:.5rem; }
+    .os-dialog .modal-content { border:1px solid var(--os-line); border-radius:14px; background:var(--white); color:var(--os-ink); }
+    .os-dialog .modal-header,.os-dialog .modal-footer { border-color:var(--os-line); }
+    .os-dialog .modal-title { color:var(--os-head); font-family:'Playfair Display',serif; font-size:1.2rem; }
+    .os-check { display:flex; align-items:flex-start; gap:.55rem; font-size:.85rem; }
+    .os-check input { margin-top:.25rem; accent-color:var(--navy); }
+    .os-section-title { margin:1.1rem 0 .7rem; color:var(--os-head); font-size:.92rem; font-weight:600; }
+    #osAlert:empty { display:none; }
+    #toast-container { position:fixed; right:1rem; bottom:1rem; z-index:1100; max-width:min(420px,calc(100vw - 2rem)); }
+    #toast-container .os-notice { background:var(--white); box-shadow:0 6px 25px #0002; }
+    [hidden] { display:none !important; }
+    :root[data-theme="dark"] .os-tab[aria-selected="true"],:root[data-theme="dark"] .os-b-main { background:var(--gold); color:#131B40; border-color:var(--gold); }
+    @media(max-width:1199px) { .os-layout { grid-template-columns:1fr; } }
+    @media(max-width:991px) { .sidebar { transform:translateX(-100%); transition:transform .2s; } .sidebar.mobile-open { transform:translateX(0); } .topnav { left:0; padding:0 1rem; } .main-content { margin-left:0; } .content-inner { padding:1.4rem 1rem 2rem; } .os-header { flex-wrap:wrap; } }
+    @media(max-width:575px) { .os-grid,.os-meta { grid-template-columns:1fr; } .os-stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .user-chip { display:none; } .os-card-head,.os-card-body { padding:.9rem; } .os-tools { margin-left:0; } .topnav-title { font-size:1rem; } .os-detail-head { flex-wrap:wrap; } }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
+  <script src="/static/scanner.js" defer></script>
+  <script src="/static/mobile.js" defer></script>
+  <script src="/static/toast.js" defer></script>
+  <script src="/static/fetch-guard.js" defer></script>
+  <script src="/static/idle-watch.js" defer></script>
+  <script src="/static/outsourcing.js?v=1" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand"><img src="/static/images/logo_sidebar.png" alt="Minerva 108" class="sidebar-brand-logo" /></div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      {% if can('items','view') %}<a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>{% endif %}
+      {% if can('inventory','receive') %}<a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>{% endif %}
+      {% if can('recipes','view') %}<a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>{% endif %}
+      {% if can('production','view') %}<a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>{% endif %}
+      <a href="/outsourcing" class="nav-link-item active" aria-current="page"><i class="bi bi-box-arrow-up-right nav-icon"></i>Fason Üretim</a>
+      {% if can('qc','view') %}<a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>{% endif %}
+      {% if can('inventory','view') %}<a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>{% endif %}
+      {% if can('reports','view') %}<a href="/satin-alma" class="nav-link-item"><i class="bi bi-cart-check nav-icon"></i>Satın Alma</a>{% endif %}
+      {% if can('inventory','view') %}<a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>{% endif %}
+    </nav>
+    <div class="sidebar-footer"><button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir"><i class="bi bi-moon-stars-fill"></i><i class="bi bi-sun-fill"></i></button><p class="sidebar-footer-text">Minerva 108 · 2026</p></div>
+  </aside>
+  <header class="topnav"><span class="topnav-title">Fason Üretim</span><div class="topnav-right"><span class="os-badge">{{ domain_label }}</span><div class="user-chip">{{ full_name }} · {{ role_label }}</div><button type="button" class="os-b" id="osLogout"><i class="bi bi-box-arrow-right"></i>Çıkış</button></div></header>
+  <main class="main-content"><div class="content-inner">
+    <div class="os-header"><div><div class="os-eyebrow">KODLU MALZEME · İZLENEBİLİR ÜRETİM</div><h1 class="os-title">Fason Üretim</h1><p class="os-subtitle">Malzemeleri hazırlayın, kodlu föy ve kap etiketlerini onaylayın; gönderimden geri kabule kadar her miktarı takip edin.</p></div>{% if can('production','view') %}<a href="/production" class="os-b"><i class="bi bi-arrow-left"></i>Üretim Merkezi</a>{% endif %}</div>
+    <div id="osAlert" role="alert" aria-live="assertive"></div>
+    <div class="os-tabs" role="tablist" aria-label="Fason üretim bölümleri">
+      <button type="button" class="os-tab" data-os-tab="jobs" role="tab" aria-selected="true" aria-controls="osJobsPanel">Üretim işleri</button>
+      {% if can('outsourcing','manage') %}<button type="button" class="os-tab" data-os-tab="partners" role="tab" aria-selected="false" aria-controls="osPartnersPanel">Fason üreticiler</button>{% endif %}
+      {% if can('outsourcing','mapping') %}<button type="button" class="os-tab" data-os-tab="mappings" role="tab" aria-selected="false" aria-controls="osMappingsPanel">Malzeme kodları</button>{% endif %}
+    </div>
+    <section id="osJobsPanel" role="tabpanel">
+      <div id="osStats" class="os-stats"></div>
+      <div id="osJobList" class="os-card"><div class="os-card-head"><i class="bi bi-clipboard2-check"></i><h2>Üretim işleri</h2><div class="os-tools"><input id="osSearch" class="os-input" type="search" aria-label="İş ara" placeholder="İş / üretici / ürün ara…" style="width:230px" /><button type="button" class="os-b" id="osRefresh"><i class="bi bi-arrow-clockwise"></i>Yenile</button>{% if can('outsourcing','manage') %}<button type="button" class="os-b os-b-gold" id="osNewJob"><i class="bi bi-plus-lg"></i>Yeni iş hazırla</button>{% endif %}</div></div><div id="osJobsHost" class="os-table-wrap"><div class="os-empty">Yükleniyor…</div></div></div>
+      <div id="osJobDetail" hidden></div>
+    </section>
+    {% if can('outsourcing','manage') %}<section id="osPartnersPanel" role="tabpanel" hidden><div class="os-card"><div class="os-card-head"><i class="bi bi-building"></i><h2>Fason üreticiler</h2></div><div class="os-card-body"><form id="osPartnerForm" class="os-grid"><div><label class="os-label" for="osPartnerName">Firma adı</label><input id="osPartnerName" class="os-input" maxlength="150" required /></div><div><label class="os-label" for="osPartnerContact">İlgili kişi</label><input id="osPartnerContact" class="os-input" maxlength="150" /></div><div class="os-span"><button class="os-b os-b-main" type="submit">Üreticiyi kaydet</button></div></form></div><div id="osPartnersHost" class="os-table-wrap"></div></div></section>{% endif %}
+    {% if can('outsourcing','mapping') %}<section id="osMappingsPanel" role="tabpanel" hidden><div class="os-card"><div class="os-card-head"><i class="bi bi-shield-lock"></i><h2>Malzeme kimliği ve kodu</h2></div><div class="os-card-body"><p class="os-muted">Gerçek malzeme adları ve kod eşlemeleri yalnız yetkili iç kullanıcılara gösterilir.</p><form id="osMappingForm" class="os-grid"><div><label class="os-label" for="osMappingPartner">Fason üretici</label><select id="osMappingPartner" class="os-select" required></select></div><div><label class="os-label" for="osMappingItem">Malzeme kartı</label><select id="osMappingItem" class="os-select" required><option value="">Malzeme seçin</option></select></div><div><label class="os-label" for="osMappingCode">Dışarıda kullanılacak kod</label><input id="osMappingCode" class="os-input os-code" maxlength="64" placeholder="Boş bırakırsanız otomatik oluşturulur" /></div><div class="os-span"><label class="os-label" for="osMappingIdentity">Doğrulanan malzeme kimliği</label><input id="osMappingIdentity" class="os-input" maxlength="250" placeholder="Malzemenin doğrulanan adı / INCI" required /></div><div class="os-span"><label class="os-label" for="osMappingSafety">Kodlu kap etiketinde gösterilecek güvenlik talimatı</label><textarea id="osMappingSafety" class="os-textarea" maxlength="5000" placeholder="Gerçek hammadde adı kullanmadan, laboratuvarın doğruladığı güvenli kullanım ve saklama talimatını yazın." required></textarea></div><div class="os-span"><label class="os-check"><input type="checkbox" id="osMappingConfirmed" required /><span>Malzeme kimliğini kontrol ettim; bu kartın kod eşlemesini doğruluyorum.</span></label></div><div class="os-span"><button class="os-b os-b-main" type="submit">Kimliği ve kodu kaydet</button></div></form></div><div id="osMappingsHost" class="os-table-wrap"></div></div></section>{% endif %}
+  </div></main>
+  <div class="modal fade os-dialog" id="osPrepareModal" tabindex="-1" aria-labelledby="osPrepareTitle" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h2 class="modal-title" id="osPrepareTitle">Yeni fason işi hazırla</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Kapat"></button></div><div class="modal-body"><form id="osPrepareForm"><div class="os-grid"><div><label class="os-label" for="osJobPartner">Fason üretici</label><select id="osJobPartner" class="os-select" required></select></div><div><label class="os-label" for="osJobRecipe">Reçete / ürün</label><select id="osJobRecipe" class="os-select" required></select></div><div><label class="os-label" for="osJobQuantity">Üretilecek adet</label><input id="osJobQuantity" class="os-input" type="number" min="0.000001" step="any" required /></div><div><label class="os-label" for="osJobLanguage">Ürün etiketi dili</label><select id="osJobLanguage" class="os-select"><option value="TR">Türkçe</option><option value="EN">İngilizce</option></select></div><div class="os-span"><label class="os-label" for="osExternalProduct">Kodlu föyde görünecek ürün adı</label><input id="osExternalProduct" class="os-input" maxlength="200" placeholder="Örn. Ürün A — Krem" required /></div><div class="os-span"><div class="os-grid"><div><label class="os-label" for="osTechnicalApprover">Teknik onay</label><select id="osTechnicalApprover" class="os-select" required></select></div><div><label class="os-label" for="osOwnerApprover">İş sahibi onayı</label><select id="osOwnerApprover" class="os-select" required></select></div><div><label class="os-label" for="osManagerApprover">Yönetici onayı</label><select id="osManagerApprover" class="os-select" required></select></div></div></div><div class="os-span"><label class="os-label" for="osProcessText">Kodlu yapılış talimatı</label><textarea id="osProcessText" class="os-textarea" maxlength="10000" placeholder="Yalnız malzeme kodlarını kullanarak fazları, sıcaklıkları ve karıştırma sırasını yazın." required></textarea></div><div class="os-span"><label class="os-label" for="osSafetyText">Kodlu kullanım ve güvenlik talimatı</label><textarea id="osSafetyText" class="os-textarea" maxlength="10000" placeholder="Kodlu malzemelerin kullanım ve saklama talimatları." required></textarea></div></div><div id="osPrepareMaterials" class="os-section-title"></div><div id="osPrepareNotice" class="os-notice" hidden></div></form></div><div class="modal-footer"><button class="os-b" type="button" data-bs-dismiss="modal">Vazgeç</button><button class="os-b os-b-main" type="submit" form="osPrepareForm" id="osPrepareSubmit">İşi hazırla</button></div></div></div></div>
+  <div class="modal fade os-dialog" id="osActionModal" tabindex="-1" aria-labelledby="osActionTitle" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h2 class="modal-title" id="osActionTitle"></h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Kapat"></button></div><div class="modal-body"><form id="osActionForm"><div id="osActionFields"></div></form></div><div class="modal-footer"><button class="os-b" type="button" data-bs-dismiss="modal">Vazgeç</button><button class="os-b os-b-main" id="osActionSubmit" type="submit" form="osActionForm">Kaydet</button></div></div></div></div>
+  <div class="modal fade os-dialog" id="osApprovalModal" tabindex="-1" aria-labelledby="osApprovalTitle" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h2 class="modal-title" id="osApprovalTitle">Kendi hesabınızla onaylayın</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Kapat"></button></div><div class="modal-body"><form id="osApprovalForm"><div id="osApprovalSummary" class="os-notice"></div><p class="os-muted">{{ full_name }} hesabıyla bu işin gösterilen sürümünü onaylıyorsunuz.</p><label class="os-check" style="margin-top:1rem"><input id="osApprovalConfirmed" type="checkbox" required /><span>Föyü, malzeme kodlarını ve kap etiketlerini kontrol ettim; gösterilen sürümü onaylıyorum.</span></label></form></div><div class="modal-footer"><button class="os-b" type="button" data-bs-dismiss="modal">Vazgeç</button><button class="os-b os-b-main" id="osApproveSubmit" type="submit" form="osApprovalForm">Kendi hesabımla onayla</button></div></div></div></div>
+  <div id="toast-container" aria-live="polite"></div>
+</body>
+</html>

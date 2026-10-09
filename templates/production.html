@@ -501,6 +501,7 @@
       <a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>
       <a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
       <a href="/production" class="nav-link-item active"><i class="bi bi-gear nav-icon"></i>Üretim</a>
+      {% if can('outsourcing','view') %}<a href="/outsourcing" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Fason Üretim</a>{% endif %}
       <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
       <a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>
       <a href="/delivery" class="nav-link-item"><i class="bi bi-box-arrow-up nav-icon"></i>Teslimat</a>
@@ -569,6 +570,13 @@
         <h1 class="page-title">Üretim Merkezi</h1>
         <p class="page-subtitle">Reçeteye dayalı üretim başlatma ve geçmiş üretimlerin takibi.</p>
       </div>
+
+      {% if can('outsourcing','view') %}
+      <div style="display:flex;gap:0.5rem;margin:0 0 1.1rem;align-items:center;flex-wrap:wrap;">
+        <span class="btn-primary-gold" style="cursor:default;"><i class="bi bi-gear"></i> İç Üretim</span>
+        <a href="/outsourcing" class="btn-primary-gold" style="background:var(--white);border:1.5px solid var(--gold);text-decoration:none;"><i class="bi bi-box-arrow-up-right"></i> Fason Üretim</a>
+      </div>
+      {% endif %}
 
       <!-- Toolbar -->
       <div class="toolbar">

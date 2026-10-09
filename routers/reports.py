@@ -279,6 +279,7 @@ def report_top_usage(
     import datetime as _dt
     from sqlalchemy import func
     from core.production_cancel import cancelled_tx_ids_subq
+    from core.outsourcing_reporting import transfer_transaction_ids, movement_totals
     since = _dt.datetime.utcnow() - _dt.timedelta(days=30)
     rows = (
         db.query(
@@ -294,16 +295,24 @@ def report_top_usage(
             Item.domain == domain,
             # İptal edilen üretimin tüketimi gerçek kullanım değil
             ~Transaction.id.in_(cancelled_tx_ids_subq(db)),
+            ~Transaction.id.in_(transfer_transaction_ids(db)),
         )
         .group_by(Item.id)
         .order_by(func.sum(Transaction.quantity).desc())
-        .limit(5)
         .all()
     )
-    return [
-        {"item_id": r.id, "name": r.name, "unit": r.unit, "total_used": round(float(r.total_used), 4)}
+    usage = {
+        r.id: {"item_id": r.id, "name": r.name, "unit": r.unit, "total_used": float(r.total_used)}
         for r in rows
-    ]
+    }
+    outside = movement_totals(db, since, domain=domain)
+    if outside:
+        for item in db.query(Item).filter(Item.id.in_(outside), Item.domain == domain).all():
+            row = usage.setdefault(item.id, {"item_id": item.id, "name": item.name, "unit": item.unit, "total_used": 0.0})
+            row["total_used"] += outside[item.id]["consumption"] + outside[item.id]["waste"]
+    for row in usage.values():
+        row["total_used"] = round(row["total_used"], 4)
+    return sorted(usage.values(), key=lambda row: row["total_used"], reverse=True)[:5]
 
 
 @router.get("/reports/production-trends")

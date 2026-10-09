@@ -865,6 +865,7 @@
       <a href="/production" class="nav-link-item">
         <i class="bi bi-gear nav-icon"></i>Üretim
       </a>
+      {% if can('outsourcing','view') %}<a href="/outsourcing" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Fason Üretim</a>{% endif %}
       <a href="/qc" class="nav-link-item">
         <i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol
       </a>

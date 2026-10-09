@@ -95,6 +95,7 @@ PERMISSION_CATEGORIES = {
     # cancel = başlatılmış üretimi iptal et (hammadde stoğa iade, bitmiş ürün
     # düşülür — core/production_cancel.py).
     "production": ["view", "create", "cancel"],
+    "outsourcing": ["view", "manage", "mapping", "approve", "dispatch", "record"],
     "qc":         ["view", "approve"],
     "finance":    ["view"],            # Cost prices, recipe BOM costs, margins
     "b2b":        ["view", "create", "confirm"],
@@ -138,6 +139,7 @@ _DEFAULT_PERMISSIONS = {
         "recipes":    {"view": True,  "create": False, "edit": False, "delete": False},
         "inventory":  {"view": True,  "receive": True, "adjust": True,  "delete": False},
         "production": {"view": True,  "create": True, "cancel": True},
+        "outsourcing": {"view": True, "manage": True, "mapping": True, "approve": True, "dispatch": True, "record": True},
         "qc":         {"view": True,  "approve": True},
         "finance":    {"view": True},
         "b2b":        {"view": True,  "create": True,  "confirm": True},
@@ -162,6 +164,7 @@ _DEFAULT_PERMISSIONS = {
         "recipes":    {"view": True,  "create": True,  "edit": True,  "delete": True},
         "inventory":  {"view": True,  "receive": True, "adjust": True,  "delete": True},
         "production": {"view": True,  "create": True, "cancel": True},
+        "outsourcing": {"view": True, "manage": True, "mapping": True, "approve": True, "dispatch": True, "record": True},
         "qc":         {"view": True,  "approve": True},
         "finance":    {"view": False},
         "b2b":        {"view": False, "create": False, "confirm": False},

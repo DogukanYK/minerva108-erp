@@ -126,6 +126,9 @@ def gather_report_data(db, year: int, month: int) -> dict:
     # malzeme / giriş / düzeltme toplamlarına girmez (net sıfır, gerçek
     # tüketim değil).
     skip_tx = cancelled_tx_ids(db)
+    from core.outsourcing_reporting import transfer_transaction_ids, movement_totals
+    transfer_ids = {tx_id for (tx_id,) in transfer_transaction_ids(db).all()}
+    outside_usage = movement_totals(db, start, end)
 
     # ── Stok hareketleri (transactions) ───────────────────────────────────
     txs = (
@@ -134,13 +137,13 @@ def gather_report_data(db, year: int, month: int) -> dict:
         .order_by(Transaction.timestamp)
         .all()
     )
-    item_ids = {t.item_id for t in txs if t.item_id}
+    item_ids = {t.item_id for t in txs if t.item_id} | set(outside_usage)
     items = {}
     if item_ids:
         for it in db.query(Item).filter(Item.id.in_(item_ids)).all():
             items[it.id] = it
 
-    materials, receiving = {}, {}
+    materials, receiving, transfers = {}, {}, {}
     adjustments = []
     output_count = input_count = 0
     for t in txs:
@@ -153,7 +156,8 @@ def gather_report_data(db, year: int, month: int) -> dict:
         qty = abs(t.quantity or 0.0)
         if t.transaction_type == "Output":
             output_count += 1
-            d = materials.setdefault(t.item_id, {"name": nm, "category": cat,
+            target = transfers if t.id in transfer_ids else materials
+            d = target.setdefault(t.item_id, {"name": nm, "category": cat,
                                                  "unit": un, "qty": 0.0, "count": 0})
             d["qty"] += qty
             d["count"] += 1
@@ -172,6 +176,18 @@ def gather_report_data(db, year: int, month: int) -> dict:
                 "notes": (t.notes or "")[:90],
             })
 
+    for item_id, usage in outside_usage.items():
+        item = items.get(item_id)
+        entry = materials.setdefault(item_id, {"name": item.name if item else f"#{item_id}",
+                                               "category": item.category if item else "",
+                                               "unit": item.unit if item else "", "qty": 0.0, "count": 0})
+        entry["qty"] += usage["consumption"] + usage["waste"]
+        entry["count"] += usage["count"]
+        entry["fason_consumption"] = usage["consumption"]
+        entry["fason_waste"] = usage["waste"]
+    transfers_list = sorted(
+        [{**v, "qty": round(v["qty"], 2)} for v in transfers.values()],
+        key=lambda x: x["qty"], reverse=True)
     materials_list = sorted(
         [{**v, "qty": round(v["qty"], 2)} for v in materials.values()],
         key=lambda x: x["qty"], reverse=True)
@@ -280,6 +296,7 @@ def gather_report_data(db, year: int, month: int) -> dict:
         "production":   production,
         "cancelled":    cancelled,
         "materials":    materials_list,
+        "fason_transfers": transfers_list,
         "receiving":    receiving_list,
         "adjustments":  adjustments,
         "users":        users_list,
@@ -414,12 +431,20 @@ def render_pdf(data: dict) -> bytes:
 
     # ── 3) Harcanan malzemeler ────────────────────────────────────────────
     _section(
-        "3 · Harcanan Malzemeler (stoktan çıkan)",
+        "3 · Harcanan Malzemeler (yerel ve fason)",
         ["Malzeme", "Kategori", "Toplam Miktar", "Birim", "İşlem Sayısı"],
         [[m["name"], m["category"], m["qty"], m["unit"], m["count"]]
          for m in data["materials"]],
         [W*0.38*mm, W*0.18*mm, W*0.18*mm, W*0.12*mm, W*0.14*mm],
-        "Bu dönemde stoktan çıkış (tüketim) yok.")
+        "Bu dönemde malzeme tüketimi yok.")
+
+    if data.get("fason_transfers"):
+        _section(
+            "3a · Fason Sevki (transfer; tüketim değildir)",
+            ["Malzeme", "Kategori", "Toplam Miktar", "Birim", "İşlem Sayısı"],
+            [[m["name"], m["category"], m["qty"], m["unit"], m["count"]]
+             for m in data["fason_transfers"]],
+            [W*0.38*mm, W*0.18*mm, W*0.18*mm, W*0.12*mm, W*0.14*mm], "—")
 
     # ── 4) Mal kabul / stok girişi ────────────────────────────────────────
     _section(
@@ -553,6 +578,12 @@ def render_excel(data: dict) -> bytes:
            ["Malzeme", "Kategori", "Toplam Miktar", "Birim", "İşlem Sayısı"],
            [[m["name"], m["category"], m["qty"], m["unit"], m["count"]]
             for m in data["materials"]])
+
+    if data.get("fason_transfers"):
+        _sheet("Fason Sevk Transferi",
+               ["Malzeme", "Kategori", "Toplam Miktar", "Birim", "İşlem Sayısı"],
+               [[m["name"], m["category"], m["qty"], m["unit"], m["count"]]
+                for m in data["fason_transfers"]])
 
     _sheet("Mal Kabul",
            ["Malzeme", "Kategori", "Toplam Miktar", "Birim", "İşlem Sayısı"],
