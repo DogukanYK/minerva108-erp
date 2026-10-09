@@ -345,6 +345,7 @@
         <i class="bi bi-gear nav-icon"></i>Üretim
       </a>
       {% if can('outsourcing','view') %}<a href="/outsourcing" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Fason Üretim</a>{% endif %}
+      {% if can('b2b_orders','view') %}<a href="/b2b-siparisler" class="nav-link-item"><i class="bi bi-clipboard2-check nav-icon"></i>B2B Siparişleri</a>{% endif %}
       <a href="/qc" class="nav-link-item">
         <i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol
       </a>

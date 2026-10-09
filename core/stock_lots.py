@@ -36,8 +36,9 @@ tam miktar kadar düşer — otorite odur, laboratuvarın işi durmaz.
 """
 import math
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from database import (Inventory, Item, ProductionConsumption, RetentionSample,
@@ -57,6 +58,8 @@ def plan_fifo(
     exclude_samples: bool = True,
     lock: bool = True,
     reserved: Optional[Dict[int, float]] = None,
+    released_only: bool = False,
+    accept: Optional[Callable[[Inventory], bool]] = None,
 ) -> Tuple[List[Tuple[Inventory, float]], float]:
     """`qty` kadar stoğun hangi lotlardan düşeceğini planla — en eski önce.
 
@@ -77,6 +80,10 @@ def plan_fifo(
     bundan düşülür.  Üretim planlayıcısı (core/production_plan) aynı kartı
     birden çok satırda kullanırken aynı lotu iki kez vermesin diye.  Sözlük
     OKUNUR, güncellenmez — çağıran kendi tahsisini ekler.
+
+    `accept` — lot başına ek koşul (SQL'e dökülemeyen; ör. B2B sipariş
+    partisinin "geçerli SKT" şartı).  False dönen lot havuzda yokmuş gibi
+    atlanır; kalan ihtiyaç `uncovered`'a düşer.
     """
     qty = float(qty or 0.0)
     if qty <= EPS:
@@ -93,6 +100,8 @@ def plan_fifo(
     )
     if exclude_samples:
         q = q.filter(Inventory.is_sample == False)      # noqa: E712
+    if released_only:
+        q = _released(db, q)
     lots = q.with_for_update().all() if lock else q.all()
 
     allocations: List[Tuple[Inventory, float]] = []
@@ -100,6 +109,8 @@ def plan_fifo(
     for lot in lots:
         if remaining <= EPS:
             break
+        if accept is not None and not accept(lot):
+            continue
         avail = float(lot.quantity or 0.0)
         if reserved:
             avail -= float(reserved.get(lot.id, 0.0))
@@ -108,6 +119,40 @@ def plan_fifo(
             allocations.append((lot, take))
             remaining = round(remaining - take, 6)
     return allocations, max(0.0, round(remaining, 6))
+
+
+def _released(db: Session, q):
+    """Sevke uygun lot: QC kararı verilmiş (`qc_required` değil) ve şahit
+    numune dolabına bağlı OLMAYAN.  Varsayılan havuz bunları da verir (iç
+    üretim QC'den önce stoğa girer, dolaptaki şahit stokta sayılır — bilinçli
+    karar); B2B sipariş sevkiyatı `released_only=True` ile istemez."""
+    witness = (db.query(RetentionSample.inventory_id)
+               .filter(RetentionSample.is_active == True,           # noqa: E712
+                       RetentionSample.inventory_id.isnot(None)))
+    return q.filter(Inventory.qc_required == False,                  # noqa: E712
+                    ~Inventory.id.in_(witness))
+
+
+def unreleased_quantity(db: Session, item_id: int) -> float:
+    """Kart stoğunda sayılıp sevke uygun OLMAYAN: QC kararı bekleyen ya da
+    şahit numune dolabına bağlı APPROVED lotlar (numune lotu zaten stok değil)."""
+    witness = (db.query(RetentionSample.inventory_id)
+               .filter(RetentionSample.is_active == True,           # noqa: E712
+                       RetentionSample.inventory_id.isnot(None)))
+    q = db.query(func.coalesce(func.sum(Inventory.quantity), 0.0)).filter(
+        Inventory.item_id == item_id, Inventory.status == APPROVED,
+        Inventory.quantity > 0, Inventory.is_sample == False,       # noqa: E712
+        or_(Inventory.qc_required == True, Inventory.id.in_(witness)))  # noqa: E712
+    return float(q.scalar() or 0.0)
+
+
+def shippable_quantity(db: Session, item: Item) -> float:
+    """B2B sipariş sevkiyatına uygun stok = kart stoğu − QC bekleyen − şahit.
+    Lot kaydı olmayan eski stok (lotlar açılmadan önceki) uygundur: QC bekleyen
+    ve şahit stok DAİMA lot satırıdır.  `consume(released_only=True)` önce
+    `_released` lotlarını düşer, kalanı lotsuz Output yazar."""
+    stock = float(item.current_stock or 0.0)
+    return max(0.0, round(stock - unreleased_quantity(db, item.id), 6))
 
 
 def draw_down(
@@ -144,6 +189,7 @@ def consume(
     actor: str,
     exclude_samples: bool = True,
     apply_stock: bool = True,
+    released_only: bool = False,
 ) -> List[Tuple[str, float]]:
     """Stok çıkışının TAMAMI — lot düş + Output yaz + `current_stock` düş.
 
@@ -162,7 +208,7 @@ def consume(
         return []
 
     allocations, uncovered = plan_fifo(
-        db, item, qty, exclude_samples=exclude_samples)
+        db, item, qty, exclude_samples=exclude_samples, released_only=released_only)
 
     used: List[Tuple[str, float]] = []
     for lot, take in allocations:

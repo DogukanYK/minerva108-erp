@@ -186,6 +186,70 @@ varsayılan, yalnız `view`+`approve`). İlk gerçek firma/ürün belli değil �
 `tests/test_outsourcing_documents.py` (PDF gizliliği); etiket 100×70 mm, QR yalnız
 `container_uid` (reportlab `QrCodeWidget`, cv2 ile çözüldüğü doğrulandı).
 
+**B2B sipariş akışı** (`/b2b-siparisler`; `routers/b2b_orders.py`, motor
+`core/b2b_orders.py`, proforma `core/b2b_proforma.py`, iki aşamalı üretim
+`core/production_run.py`, UI `templates/b2b_siparisler.html` + `static/b2b-orders.js`;
+spec `docs/superpowers/specs/2026-10-09-b2b-onay-proforma-uretim-design.md`, 09.10.2026).
+Taslak iç teklif Teklifler'de "Siparişe dönüştür" ile `B2BOrder`'a bağlanır, teklif
+`status='ORDER'` olur — legacy "Onayla & stoktan düş" (`/quotations/{id}/confirm`)
+yalnız DRAFT/PENDING kabul ettiği için bu teklifte ÇALIŞMAZ; yeni akış onu hiç
+çağırmaz, onay/proforma stok hareketi YAZMAZ. Durumlar SUBMITTED (atanmış teknik kişi)
+→ TECH_REVIEWED (atanmış imzacı) → APPROVED (proforma; ödeme · alım satırları · son
+hazırlık · partiler) → SHIPPED | CANCELLED. **Domain-scoped**; RBAC `b2b_orders`
+(`view/manage/tech_review/sign/payment/produce/ship`); fiyat/banka/ödeme/proforma/
+ticari revizyon ayrıca `b2b.view` ister (teknik görünümde satış fiyatı ve alım tutarı
+yok); Distributor 403. Yetki + ATANMIŞ kişi + panel + sürüm sunucuda denetlenir;
+**dört göz**: siparişi açan imzacı olamaz. Ticari sürüm (müşteri, satırlar, fiyat,
+şartlar, SEÇİLEN banka snapshot'ı) ve teknik sürüm (satır başı stoktan kullanım /
+üretim, reçete, eksikler — `routers.purchase_plan.build_report`; ortak hammadde
+sipariş genelinde toplanır, tedarikçi politikası korunur) AYRI, sha256'lı
+`b2b_order_revisions`. Ürün/adet/etiket dili değişirse teknik + yönetim onayı
+(SUBMITTED), yalnız fiyat/şart/banka değişirse yalnız imza (TECH_REVIEWED) yenilenir —
+teknik geçerlilik revizyon numarasıyla DEĞİL kapsamla ölçülür (`technical_current`:
+dil + (ürün, adet)). İmza (ticari, teknik) sürüm çiftine + `document_hash`'e aittir;
+router sırası: atama/aşama (yan etkisiz) → şifre `verify_password_step_up` (giriş kilit
+sayaçlarını PAYLAŞIR, sayaç kendi commit'iyle yazılır; 5 hata → 15 dk) → çizilen imza
+PNG'si (≤300 KB, ölçü denetimli). Şifre SAKLANMAZ. Proforma sunucu PDF'i
+(`render_order_proforma`, antetli, autofit) İMZALI ticari snapshot'tan basılır —
+banka profili/teklif sonradan değişse de aynı belge. Banka: `bank_profiles`
+(quotations.html'deki 3 hesap `_seed_bank_profiles` ile BİR kez, sentinel
+`seed.bank_profiles.v1` — silinen geri gelmez) + `bank_rules` (katlanmış ülke + para
+birimi, `*` = tüm ülkeler) dönüşümde öneri; kural yoksa elle seçim. Ödeme koşulu
+`prepaid` (üretim için %100) / `advance` (%X üretim, tamamı sevkten önce) / `net`
+(ödeme durdurmaz); ödeme proforma para biriminde.
+**İki aşamalı parti** — `core/production_run.py` = `start_production`'ın tüketim ve
+çıktı yarıları BİREBİR (legacy uç ikisini aynı transaction'da çağırır).
+**BAŞLAT** yalnız tüketim: `production_plan.plan(lock=True, lot_filter=strict_lot_ok)`
+— hammadde FIFO'su yalnız lot no'lu, APPROVED, QC'si bitmiş, numune olmayan, SKT'si
+okunur ve geçmemiş lotu görür (`plan_fifo(accept=)`; SKT metin olduğu için SQL'de
+değil); yetmezse `lot_missing` ve HİÇBİR şey yazılmaz. Lot no o an alınır
+(`lots.next_sequence`; `lots.is_taken` B2B partisini de çakışma sayar — tamamlanmamış
+ya da iptal parti no'yu tutar). Output notu üretim sözleşmesiyle aynı; döküm
+`b2b_order_batches.plan_snapshot`. Bitmiş ürün ve `ProductionHistory` YOK. **TAMAMLA**
+yalnız bitmiş ürün: `ProductionHistory` + dökümden `ProductionConsumption` (başlangıç
+Output'larına bağlı) + `write_output` (showroom + `-S` şahit + RetentionSample);
+malzeme İKİNCİ KEZ düşmez. Şahit müşteri adedinden düşer (`üretilen − şahit`), eksik
+yeni partiyle. Başlamış parti İPTALİ iade ETMEZ; fiziksel iade gerekçeli, tüketimle
+sınırlı `+Adjustment` (`B2B parti iadesi — …`, ilk kaynak lota). Normal üretim iptali
+(`core/production_cancel`) B2B partisinin üretimini ENGELLER. Kaynak seçimi kapalı
+(`production.source_choice.enabled=0` aynen). **Tek sevkiyat**: açık parti yok +
+ödeme koşulu + her satırda sevke uygun stok ≥ sipariş; kartlar kilit altında yeniden
+doğrulanır, `build_delivery` (kargo) + `ship_core(released_only=True)` BİR kez düşer.
+Sevke uygun = `stock_lots.shippable_quantity` = kart stoğu − QC bekleyen − şahit
+(aktif RetentionSample'a bağlı) lotlar; lot kaydı olmayan eski stok uygundur (QC
+bekleyen ve şahit stok DAİMA lot satırıdır), o kısım lotsuz Output'la düşer. QC
+`/qc/process` ile aynen; red stoğu geri alır → sevk hazır değil. Ana ekran "Benden
+bekleyen işler" (`GET /api/b2b-orders/my-tasks` — `next_step` sahibi + fason
+onayları; push `notify_b2b_step`), Üretim sayfasında "Müşteri Siparişleri" paneli.
+Yetki backfill `_backfill_perm_b2b_orders` (sentinel `backfill.perm.b2b_orders.v1`):
+override'lı kullanıcıya rol varsayılanı ANCAK mevcut alanıyla — manage/sign/payment ←
+`b2b.view`, tech_review/produce ← `production.create`, ship ← `inventory.adjust`,
+view ← `b2b.view|production.view`. Prod'a: tablolar `create_all` (migration
+`f4a6c8e0b2d3` kayıt için). Motor commit ETMEZ (`AdminAuditLog` `b2b_order.*`
+transaction içinde); kilit sırası sipariş → kart → lot. Nav linki
+`scripts/add_b2b_orders_nav.py` (idempotent, Fason linkinin altı). Testler
+`tests/test_b2b_orders.py`.
+
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +
 low-stock alerts + CRM task reminders), `scheduler.py` (APScheduler — daily 08:00 CRM

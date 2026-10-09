@@ -438,3 +438,15 @@ def notify_crm_task_assigned(user_id: int, task_title: str, due_label, assigner:
         "url":   "/crm",
         "requireInteraction": False,
     })
+
+
+def notify_b2b_step(user_ids, title: str, body: str, url: str) -> None:
+    """B2B sipariş akışında sıradaki adımın sahibine push (atanan kişi ya da
+    o adımın yetkilileri).  BackgroundTasks'ten İLKEL argümanlarla çağır.
+    Görünürlük push'a bağlı değildir — ana ekran "Benden bekleyen işler"."""
+    ids = [int(u) for u in (user_ids or []) if u]
+    if not ids:
+        return
+    _emit("info", "B2B-ORDER", f"{title}: {body}", user_ids=ids)
+    _send_push_to_users(ids, {"title": title, "body": body, "tag": f"b2b-{url}",
+                              "url": url, "requireInteraction": False})

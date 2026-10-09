@@ -674,6 +674,7 @@
       <a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
       <a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
       {% if can('outsourcing','view') %}<a href="/outsourcing" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Fason Üretim</a>{% endif %}
+      {% if can('b2b_orders','view') %}<a href="/b2b-siparisler" class="nav-link-item"><i class="bi bi-clipboard2-check nav-icon"></i>B2B Siparişleri</a>{% endif %}
       <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
       <a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>
       <a href="/delivery" class="nav-link-item"><i class="bi bi-box-arrow-up nav-icon"></i>Teslimat</a>
@@ -1586,6 +1587,7 @@
       if (isConfirmed) statusPill = `<span class="quote-status-pill quote-status-confirmed"><i class="bi bi-lock-fill"></i> Onaylandı</span>`;
       else if (isPending) statusPill = `<span class="quote-status-pill" style="background:#fff7e6;color:#b45309;"><i class="bi bi-hourglass-split"></i> Onay Bekliyor</span>`;
       else if (isRejected) statusPill = `<span class="quote-status-pill" style="background:#fef2f2;color:#b91c1c;"><i class="bi bi-x-circle"></i> Reddedildi</span>`;
+      else if (st === 'ORDER') statusPill = `<a class="quote-status-pill" style="background:#ecfdf5;color:#15803d;text-decoration:none;" href="/b2b-siparisler${q.b2b_order_id ? '#' + Number(q.b2b_order_id) : ''}"><i class="bi bi-clipboard2-check"></i> Siparişe dönüştü</a>`;
       else statusPill = `<span class="quote-status-pill quote-status-draft"><i class="bi bi-pencil-square"></i> Taslak</span>`;
 
       const total = fmtMoney(q.total_amount, q.currency);
@@ -1611,6 +1613,13 @@
              <i class="bi bi-x-circle"></i> Reddet
            </button>`
         : '';
+      // B2B sipariş akışı (onay → proforma → parti → tek sevkiyat) — legacy
+      // "Onayla & Düş"ün yerine; dönüşen teklif ORDER olur, o buton kaybolur.
+      const convertBtn = (window.can('b2b_orders', 'manage') && isDraft && !q.distributor_id)
+        ? `<button class="btn-row-action btn-row-view" onclick="openConvertQuote(${Number(q.id)})" title="Onay akışıyla siparişe dönüştür">
+             <i class="bi bi-clipboard2-check"></i> Siparişe dönüştür
+           </button>`
+        : '';
       const deleteBtn = isDraft
         ? `<button class="btn-row-action btn-row-delete" onclick="deleteQuote(${q.id}, '${escHtml(q.quote_number)}')" title="Taslağı sil">
              <i class="bi bi-trash3"></i>
@@ -1633,7 +1642,7 @@
           </td>
           <td style="text-align:right;">
             <div class="saved-quotes-actions" style="justify-content:flex-end;">
-              ${viewBtn}${confirmBtn}${rejectBtn}${deleteBtn}
+              ${viewBtn}${convertBtn}${confirmBtn}${rejectBtn}${deleteBtn}
             </div>
           </td>
         </tr>`;
@@ -1811,6 +1820,67 @@
     }
 
     /* ── Confirm a draft (deduct stock) ── */
+    // ─── B2B sipariş akışına dönüştür ─────────────────────────────────────
+    let B2B_BOOT = null;
+    async function openConvertQuote(quoteId) {
+      const q = savedQuotes.find(x => x.id === quoteId);
+      if (!q) return;
+      try {
+        if (!B2B_BOOT) {
+          const r = await fetch('/api/b2b-orders/bootstrap', { credentials: 'same-origin', cache: 'no-store' });
+          if (!r.ok) throw new Error('B2B ayarları alınamadı.');
+          B2B_BOOT = await r.json();
+        }
+      } catch (e) { showToast(e.message); return; }
+      let host = document.getElementById('b2ConvertModal');
+      if (!host) {
+        host = document.createElement('div');
+        host.innerHTML = `<div class="modal fade" id="b2ConvertModal" tabindex="-1" aria-labelledby="b2ConvertTitle" aria-hidden="true"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="b2ConvertTitle">Siparişe dönüştür</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div><div class="modal-body" id="b2ConvertBody"></div><div class="modal-footer"><button type="button" class="btn-secondary" data-bs-dismiss="modal">Vazgeç</button><button type="button" class="btn-primary-gold" id="b2ConvertSubmit">Laboratuvara gönder</button></div></div></div></div>`;
+        document.body.appendChild(host.firstElementChild);
+      }
+      const opt = (rows, sel) => rows.map(([v, t]) => `<option value="${escHtml(String(v))}" ${String(v) === String(sel) ? 'selected' : ''}>${escHtml(t)}</option>`).join('');
+      const banks = (B2B_BOOT.banks || []).filter(b => b.is_active).map(b => [b.id, b.label]);
+      // Varsayılan teknik sorumlu: açan kişi / SuperAdmin değil (laboratuvar)
+      const techUsers = B2B_BOOT.technical_users || [];
+      const techDefault = (techUsers.find(u => u.id !== B2B_BOOT.me && u.role !== 'SuperAdmin') || techUsers[0] || {}).id;
+      document.getElementById('b2ConvertBody').innerHTML = `
+        <p style="font-size:.85rem;color:#6b7280;">${escHtml(q.quote_number)} · ${escHtml(q.customer_name)} — ticari onayınızla laboratuvara gider. Teknik değerlendirme ve yönetim imzası tamamlanınca proforma oluşur. Stok bu adımda DÜŞMEZ.</p>
+        <div class="row g-2">
+          <div class="col-md-4"><label class="form-label">Etiket dili</label><select class="form-select" id="b2cLang">${opt([['EN', 'İngilizce'], ['TR', 'Türkçe']], 'EN')}</select></div>
+          <div class="col-md-4"><label class="form-label">Hedef tarih</label><input type="date" class="form-control" id="b2cTarget"></div>
+          <div class="col-md-4"><label class="form-label">Banka hesabı</label><select class="form-select" id="b2cBank"><option value="">Ülke kuralına göre öner</option>${opt(banks, '')}</select></div>
+          <div class="col-md-8"><label class="form-label">Ödeme koşulu</label><select class="form-select" id="b2cTerms">${opt(Object.entries(B2B_BOOT.payment_terms || {}), 'prepaid')}</select></div>
+          <div class="col-md-4"><label class="form-label">Avans %</label><input type="number" min="1" max="99" class="form-control" id="b2cAdvance" placeholder="yalnız avansta"></div>
+          <div class="col-md-6"><label class="form-label">Teknik değerlendirme</label><select class="form-select" id="b2cTech">${opt(techUsers.map(u => [u.id, u.name]), techDefault)}</select></div>
+          <div class="col-md-6"><label class="form-label">Yönetim onayı (imza)</label><select class="form-select" id="b2cSigner">${opt((B2B_BOOT.signers || []).filter(u => u.id !== B2B_BOOT.me).map(u => [u.id, u.name]), '')}</select></div>
+        </div>`;
+      const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('b2ConvertModal'));
+      const btn = document.getElementById('b2ConvertSubmit');
+      btn.onclick = async () => {
+        const terms = document.getElementById('b2cTerms').value;
+        const body = {
+          label_language: document.getElementById('b2cLang').value,
+          target_date: document.getElementById('b2cTarget').value || null,
+          payment_terms: terms,
+          advance_percent: terms === 'advance' ? Number(document.getElementById('b2cAdvance').value) : null,
+          bank_profile_id: Number(document.getElementById('b2cBank').value) || null,
+          technical_user_id: Number(document.getElementById('b2cTech').value),
+          signer_user_id: Number(document.getElementById('b2cSigner').value),
+        };
+        btn.disabled = true;
+        try {
+          const r = await fetch(`/api/b2b-orders/from-quotation/${quoteId}`, { method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Dönüştürme başarısız.');
+          modal.hide();
+          window.location.href = `/b2b-siparisler#${Number(data.order.id)}`;
+        } catch (e) { showToast(e.message); }
+        finally { btn.disabled = false; }
+      };
+      modal.show();
+    }
+
     async function confirmQuote(quoteId, quoteNumber) {
       const msg = `"${quoteNumber}" numaralı teklifi ONAYLAYIP siparişi stoktan düşmek üzeresiniz.\n\n` +
                   `• Bu işlem geri alınamaz.\n` +

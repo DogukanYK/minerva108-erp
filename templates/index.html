@@ -630,6 +630,7 @@
         Üretim
       </a>
       {% if can('outsourcing','view') %}<a href="/outsourcing" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Fason Üretim</a>{% endif %}
+      {% if can('b2b_orders','view') %}<a href="/b2b-siparisler" class="nav-link-item"><i class="bi bi-clipboard2-check nav-icon"></i>B2B Siparişleri</a>{% endif %}
       <a href="/qc" class="nav-link-item">
         <i class="bi bi-patch-check nav-icon"></i>
         Kalite Kontrol
@@ -732,6 +733,28 @@
         <h1 class="page-title">Genel Bakış</h1>
         <p class="page-subtitle">Hoş geldiniz, {{ full_name }}. İşte bugünkü özet.</p>
       </div>
+
+      <!-- ── Benden bekleyen işler (B2B sipariş adımları + fason onayları) ──
+           Kalıcı kart: iş yoksa da görünür; görünürlük push'a bağlı değildir. -->
+      <div class="panel-card" id="myTasksCard" style="margin-bottom:1.25rem;">
+        <div class="panel-header"><div class="panel-title"><i class="bi bi-person-check"></i> Benden bekleyen işler</div></div>
+        <div id="myTasksBody" style="padding:0.4rem 1.2rem 1rem;font-size:0.9rem;color:#6b7280;">Yükleniyor…</div>
+      </div>
+      <script>
+        (function () {
+          var esc = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+          fetch('/api/b2b-orders/my-tasks', { credentials: 'same-origin', cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : { tasks: [] }; })
+            .then(function (data) {
+              var tasks = (data && data.tasks) || [];
+              var host = document.getElementById('myTasksBody');
+              host.innerHTML = tasks.length ? '<ul style="margin:0;padding-left:1.1rem;">' + tasks.map(function (t) {
+                return '<li style="margin:.25rem 0;"><a href="' + esc(t.url) + '" style="font-weight:600;">' + esc(t.text) + '</a> — ' + esc(t.title) + '</li>';
+              }).join('') + '</ul>' : 'Bekleyen işiniz yok.';
+            })
+            .catch(function () { document.getElementById('myTasksBody').textContent = 'Bekleyen işler alınamadı.'; });
+        })();
+      </script>
 
       <!-- ── Kritik Stok Uyarı Bandı (JS tarafından gösterilir) ── -->
       <div id="criticalBanner" class="critical-banner" style="display:none;" role="alert">

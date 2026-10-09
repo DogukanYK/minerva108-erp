@@ -389,6 +389,7 @@
       <a href="/recipes"   class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
       <a href="/production"class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
       {% if can('outsourcing','view') %}<a href="/outsourcing" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Fason Üretim</a>{% endif %}
+      {% if can('b2b_orders','view') %}<a href="/b2b-siparisler" class="nav-link-item"><i class="bi bi-clipboard2-check nav-icon"></i>B2B Siparişleri</a>{% endif %}
       <a href="/qc"        class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
       <a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>
       <a href="/delivery" class="nav-link-item"><i class="bi bi-box-arrow-up nav-icon"></i>Teslimat</a>
@@ -1188,6 +1189,7 @@
       inventory:  { tr: 'Envanter',    icon: 'bi-boxes' },
       production: { tr: 'Üretim',      icon: 'bi-gear-fill' },
       outsourcing: { tr: 'Fason Üretim', icon: 'bi-box-seam' },
+      b2b_orders: { tr: 'B2B Siparişleri', icon: 'bi-clipboard2-check' },
       qc:         { tr: 'Kalite',      icon: 'bi-patch-check' },
       finance:    { tr: 'Finans',      icon: 'bi-cash-coin' },
       b2b:        { tr: 'B2B Teklif',  icon: 'bi-file-earmark-text' },
@@ -1216,6 +1218,7 @@
       cancel: 'İptal',
       status: 'Durum', merge: 'Birleştir',
       mapping: 'Gizli Kod Eşleştirme', dispatch: 'Fason Sevki', record: 'Fason Kayıtları',
+      tech_review: 'Teknik Değerlendirme', sign: 'İmzalı Onay', payment: 'Ödeme Doğrulama', produce: 'Parti Üretimi',
     };
 
     async function ensurePermSchema() {
@@ -1290,6 +1293,7 @@
         'cancel',
         'status', 'merge',
         'mapping', 'dispatch', 'record',
+        'tech_review', 'sign', 'payment', 'produce',
       ];
       // Eksik kalanları da göster (yeni action eklendi ama actionOrder güncel
       // değilse en azından kaybolmasınlar)

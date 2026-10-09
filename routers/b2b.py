@@ -104,6 +104,8 @@ def _serialize_quotation_summary(q: Quotation) -> dict:
         "rejected_at":      to_tr(q.rejected_at).strftime("%d.%m.%Y %H:%M") if q.rejected_at else None,
         "rejected_by":      q.rejected_by,
         "reject_reason":    q.reject_reason,
+        # Siparişe dönüştüyse (status='ORDER') B2B sipariş ekranındaki kayıt
+        "b2b_order_id":     q.b2b_order.id if q.b2b_order is not None else None,
     }
 
 

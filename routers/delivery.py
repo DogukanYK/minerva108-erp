@@ -645,7 +645,8 @@ def proforma_document(
 
 # ─── Kargo / Sevkiyat: takip no atama (stok düş) + iptal + hazırlık listesi ───
 
-def ship_core(db: Session, delivery: Delivery, tracking_no: str, carrier, actor: str) -> dict:
+def ship_core(db: Session, delivery: Delivery, tracking_no: str, carrier, actor: str,
+              *, released_only: bool = False) -> dict:
     """Kargo sevkiyatı çekirdeği: stok O AN düşer + Transaction(Output) + status='shipped'.
 
     `delivery` çağıran tarafından `with_for_update()` ile kilitlenmiş olmalı
@@ -673,6 +674,11 @@ def ship_core(db: Session, delivery: Delivery, tracking_no: str, carrier, actor:
         if not it:
             raise DeliveryError(f"Ürün bulunamadı: {li.item_name}.")
         stock = float(it.current_stock or 0.0)
+        if released_only:
+            # B2B sipariş sevkiyatı: QC bekleyen ve şahit lotlar hariç
+            # (core.stock_lots.shippable_quantity).
+            from core.stock_lots import shippable_quantity
+            stock = min(stock, shippable_quantity(db, it))
         if float(li.quantity) > stock + 1e-9:
             shortages.append(f"{it.name}: stok {_fmt(stock)} {it.unit or ''}, istenen {_fmt(li.quantity)}")
         locked[li.id] = it
@@ -687,6 +693,7 @@ def ship_core(db: Session, delivery: Delivery, tracking_no: str, carrier, actor:
             db, it, float(li.quantity), actor=actor,
             note=(f"Kargo sevkiyatı → {d.recipient_name or '—'} | "
                   f"Belge: {d.document_no} | Takip: {tracking}"),
+            released_only=released_only,
         )
     d.status = "shipped"
     d.tracking_no = tracking

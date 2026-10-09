@@ -3,12 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Minerva108 ERP — Fason Üretim</title>
+  <title>Minerva108 ERP — B2B Siparişleri</title>
   <script src="/static/theme.js"></script>
   <script>
     window.PERMS = {{ permissions | tojson }};
     window.DOMAIN = {{ domain | tojson }};
-    window.OUTSOURCING_USER = {id: {{ user_id | tojson }}, name: {{ full_name | tojson }}};
     window.can = function (category, action) { return !!(window.PERMS && window.PERMS[category] && window.PERMS[category][action]); };
   </script>
   <link rel="icon" type="image/png" href="/static/images/favicon.png" />
@@ -121,14 +120,25 @@
     @media(max-width:991px) { .sidebar { transform:translateX(-100%); transition:transform .2s; } .sidebar.mobile-open { transform:translateX(0); } .topnav { left:0; padding:0 1rem; } .main-content { margin-left:0; } .content-inner { padding:1.4rem 1rem 2rem; } .os-header { flex-wrap:wrap; } }
     @media(max-width:575px) { .os-grid,.os-meta { grid-template-columns:1fr; } .os-stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .user-chip { display:none; } .os-card-head,.os-card-body { padding:.9rem; } .os-tools { margin-left:0; } .topnav-title { font-size:1rem; } .os-detail-head { flex-wrap:wrap; } }
   </style>
+  <style>
+    .b2-steps { display:flex; flex-wrap:wrap; gap:.4rem; margin:.4rem 0 1rem; }
+    .b2-step { padding:.3rem .7rem; border-radius:999px; border:1px solid var(--os-line); font-size:.78rem; color:var(--os-muted); }
+    .b2-step.is-done { border-color:var(--os-good); color:var(--os-good); }
+    .b2-step.is-current { border-color:var(--gold); color:var(--os-head); font-weight:600; }
+    .b2-sign-pad { width:100%; height:180px; border:1.5px dashed var(--gold); border-radius:10px; background:#fff; touch-action:none; cursor:crosshair; }
+    .b2-next { font-size:.82rem; color:var(--os-muted); }
+    .b2-next strong { color:var(--os-head); }
+    .b2-pill { display:inline-block; padding:.12rem .5rem; border-radius:999px; font-size:.72rem; background:var(--os-soft); border:1px solid var(--os-line); }
+    .b2-ok { color:var(--os-good); } .b2-bad { color:var(--os-bad); } .b2-warn { color:var(--os-warn); }
+    .b2-timeline li { margin:.25rem 0; font-size:.85rem; }
+    .b2-sigimg { max-height:70px; background:#fff; border-radius:6px; padding:4px; }
+  </style>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script>
-  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
-  <script src="/static/scanner.js" defer></script>
   <script src="/static/mobile.js" defer></script>
   <script src="/static/toast.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
-  <script src="/static/outsourcing.js?v=2" defer></script>
+  <script src="/static/b2b-orders.js?v=1" defer></script>
 </head>
 <body>
   <aside class="sidebar">
@@ -137,38 +147,33 @@
       <div class="nav-section-label">Ana Menü</div>
       <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
       {% if can('items','view') %}<a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>{% endif %}
-      {% if can('inventory','receive') %}<a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>{% endif %}
       {% if can('recipes','view') %}<a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>{% endif %}
       {% if can('production','view') %}<a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>{% endif %}
-      <a href="/outsourcing" class="nav-link-item active" aria-current="page"><i class="bi bi-box-arrow-up-right nav-icon"></i>Fason Üretim</a>
-      {% if can('b2b_orders','view') %}<a href="/b2b-siparisler" class="nav-link-item"><i class="bi bi-clipboard2-check nav-icon"></i>B2B Siparişleri</a>{% endif %}
       {% if can('qc','view') %}<a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>{% endif %}
       {% if can('inventory','view') %}<a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>{% endif %}
+      {% if can('b2b','view') %}<a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklif</a>{% endif %}
+      <a href="/b2b-siparisler" class="nav-link-item active" aria-current="page"><i class="bi bi-clipboard2-check nav-icon"></i>B2B Siparişleri</a>
       {% if can('reports','view') %}<a href="/satin-alma" class="nav-link-item"><i class="bi bi-cart-check nav-icon"></i>Satın Alma</a>{% endif %}
       {% if can('inventory','view') %}<a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>{% endif %}
     </nav>
     <div class="sidebar-footer"><button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir"><i class="bi bi-moon-stars-fill"></i><i class="bi bi-sun-fill"></i></button><p class="sidebar-footer-text">Minerva 108 · 2026</p></div>
   </aside>
-  <header class="topnav"><span class="topnav-title">Fason Üretim</span><div class="topnav-right"><span class="os-badge">{{ domain_label }}</span><div class="user-chip">{{ full_name }} · {{ role_label }}</div><button type="button" class="os-b" id="osLogout"><i class="bi bi-box-arrow-right"></i>Çıkış</button></div></header>
+  <header class="topnav"><span class="topnav-title">B2B Siparişleri</span><div class="topnav-right"><span class="os-badge">{{ domain_label }}</span><div class="user-chip">{{ full_name }} · {{ role_label }}</div><button type="button" class="os-b" id="b2Logout"><i class="bi bi-box-arrow-right"></i>Çıkış</button></div></header>
   <main class="main-content"><div class="content-inner">
-    <div class="os-header"><div><div class="os-eyebrow">KODLU MALZEME · İZLENEBİLİR ÜRETİM</div><h1 class="os-title">Fason Üretim</h1><p class="os-subtitle">Malzemeleri hazırlayın, kodlu föy ve kap etiketlerini onaylayın; gönderimden geri kabule kadar her miktarı takip edin.</p></div>{% if can('production','view') %}<a href="/production" class="os-b"><i class="bi bi-arrow-left"></i>Üretim Merkezi</a>{% endif %}</div>
-    <div id="osAlert" role="alert" aria-live="assertive"></div>
-    <div class="os-tabs" role="tablist" aria-label="Fason üretim bölümleri">
-      <button type="button" class="os-tab" data-os-tab="jobs" role="tab" aria-selected="true" aria-controls="osJobsPanel">Üretim işleri</button>
-      {% if can('outsourcing','manage') %}<button type="button" class="os-tab" data-os-tab="partners" role="tab" aria-selected="false" aria-controls="osPartnersPanel">Fason üreticiler</button>{% endif %}
-      {% if can('outsourcing','mapping') %}<button type="button" class="os-tab" data-os-tab="mappings" role="tab" aria-selected="false" aria-controls="osMappingsPanel">Malzeme kodları</button>{% endif %}
+    <div class="os-header"><div><div class="os-eyebrow">ONAY · PROFORMA · PARTİ ÜRETİMİ · TEK SEVKİYAT</div><h1 class="os-title">B2B Siparişleri</h1><p class="os-subtitle">Teklif siparişe dönüşür; laboratuvar değerlendirir, yönetim imzalar, partiler üretilir ve sipariş tek seferde sevk edilir.</p></div>{% if can('b2b','view') %}<a href="/quotations" class="os-b"><i class="bi bi-file-earmark-text"></i>Teklifler</a>{% endif %}</div>
+    <div id="b2Alert" role="alert" aria-live="assertive"></div>
+    <div class="os-tabs" role="tablist" aria-label="B2B bölümleri">
+      <button type="button" class="os-tab" data-b2-tab="orders" role="tab" aria-selected="true" aria-controls="b2OrdersPanel">Siparişler</button>
+      {% if can('b2b','view') and can('b2b_orders','manage') %}<button type="button" class="os-tab" data-b2-tab="banks" role="tab" aria-selected="false" aria-controls="b2BanksPanel">Banka hesapları</button>{% endif %}
     </div>
-    <section id="osJobsPanel" role="tabpanel">
-      <div id="osStats" class="os-stats"></div>
-      <div id="osJobList" class="os-card"><div class="os-card-head"><i class="bi bi-clipboard2-check"></i><h2>Üretim işleri</h2><div class="os-tools"><input id="osSearch" class="os-input" type="search" aria-label="İş ara" placeholder="İş / üretici / ürün ara…" style="width:230px" /><button type="button" class="os-b" id="osRefresh"><i class="bi bi-arrow-clockwise"></i>Yenile</button>{% if can('outsourcing','manage') %}<button type="button" class="os-b os-b-gold" id="osNewJob"><i class="bi bi-plus-lg"></i>Yeni iş hazırla</button>{% endif %}</div></div><div id="osJobsHost" class="os-table-wrap"><div class="os-empty">Yükleniyor…</div></div></div>
-      <div id="osJobDetail" hidden></div>
+    <section id="b2OrdersPanel" role="tabpanel">
+      <div id="b2Stats" class="os-stats"></div>
+      <div class="os-card"><div class="os-card-head"><i class="bi bi-clipboard2-check"></i><h2>Siparişler</h2><div class="os-tools"><select id="b2Filter" class="os-select" style="width:auto" aria-label="Durum süzgeci"><option value="open">Açık siparişler</option><option value="">Tümü</option><option value="SHIPPED">Sevk edilenler</option><option value="CANCELLED">İptal edilenler</option></select><button type="button" class="os-b" id="b2Refresh"><i class="bi bi-arrow-clockwise"></i>Yenile</button></div></div><div id="b2ListHost" class="os-table-wrap"><div class="os-empty">Yükleniyor…</div></div></div>
+      <div id="b2Detail" hidden></div>
     </section>
-    {% if can('outsourcing','manage') %}<section id="osPartnersPanel" role="tabpanel" hidden><div class="os-card"><div class="os-card-head"><i class="bi bi-building"></i><h2>Fason üreticiler</h2></div><div class="os-card-body"><form id="osPartnerForm" class="os-grid"><div><label class="os-label" for="osPartnerName">Firma adı</label><input id="osPartnerName" class="os-input" maxlength="150" required /></div><div><label class="os-label" for="osPartnerContact">İlgili kişi</label><input id="osPartnerContact" class="os-input" maxlength="150" /></div><div class="os-span"><button class="os-b os-b-main" type="submit">Üreticiyi kaydet</button></div></form></div><div id="osPartnersHost" class="os-table-wrap"></div></div></section>{% endif %}
-    {% if can('outsourcing','mapping') %}<section id="osMappingsPanel" role="tabpanel" hidden><div class="os-card"><div class="os-card-head"><i class="bi bi-shield-lock"></i><h2>Malzeme kimliği ve kodu</h2></div><div class="os-card-body"><p class="os-muted">Gerçek malzeme adları ve kod eşlemeleri yalnız yetkili iç kullanıcılara gösterilir.</p><form id="osMappingForm" class="os-grid"><div><label class="os-label" for="osMappingPartner">Fason üretici</label><select id="osMappingPartner" class="os-select" required></select></div><div><label class="os-label" for="osMappingItem">Malzeme kartı</label><select id="osMappingItem" class="os-select" required><option value="">Malzeme seçin</option></select></div><div><label class="os-label" for="osMappingCode">Dışarıda kullanılacak kod</label><input id="osMappingCode" class="os-input os-code" maxlength="64" placeholder="Boş bırakırsanız otomatik oluşturulur" /></div><div class="os-span"><label class="os-label" for="osMappingIdentity">Doğrulanan malzeme kimliği</label><input id="osMappingIdentity" class="os-input" maxlength="250" placeholder="Malzemenin doğrulanan adı / INCI" required /></div><div class="os-span"><label class="os-label" for="osMappingSafety">Kodlu kap etiketinde gösterilecek güvenlik talimatı</label><textarea id="osMappingSafety" class="os-textarea" maxlength="5000" placeholder="Gerçek hammadde adı kullanmadan, laboratuvarın doğruladığı güvenli kullanım ve saklama talimatını yazın." required></textarea></div><div class="os-span"><label class="os-check"><input type="checkbox" id="osMappingConfirmed" required /><span>Malzeme kimliğini kontrol ettim; bu kartın kod eşlemesini doğruluyorum.</span></label></div><div class="os-span"><button class="os-b os-b-main" type="submit">Kimliği ve kodu kaydet</button></div></form></div><div id="osMappingsHost" class="os-table-wrap"></div></div></section>{% endif %}
+    {% if can('b2b','view') and can('b2b_orders','manage') %}<section id="b2BanksPanel" role="tabpanel" hidden><div class="os-card"><div class="os-card-head"><i class="bi bi-bank"></i><h2>Banka hesapları ve ülke kuralları</h2></div><div class="os-card-body"><p class="os-muted">Proformada seçilen tek banka hesabı basılır. Ülke + para birimi kuralı siparişe dönüştürürken bankayı önerir; kural yoksa elle seçilir. "*" ülke = tüm ülkeler.</p><div id="b2BanksHost"></div><form id="b2RuleForm" class="os-grid" style="margin-top:1rem"><div><label class="os-label" for="b2RuleCountry">Ülke</label><input id="b2RuleCountry" class="os-input" maxlength="100" placeholder="Örn. Russia ya da *" required /></div><div><label class="os-label" for="b2RuleCurrency">Para birimi</label><select id="b2RuleCurrency" class="os-select"><option>USD</option><option>EUR</option><option>TRY</option></select></div><div><label class="os-label" for="b2RuleBank">Banka</label><select id="b2RuleBank" class="os-select" required></select></div><div><button class="os-b os-b-main" type="submit" style="margin-top:1.55rem">Kuralı kaydet</button></div></form><div id="b2RulesHost" class="os-table-wrap" style="margin-top:1rem"></div></div></div></section>{% endif %}
   </div></main>
-  <div class="modal fade os-dialog" id="osPrepareModal" tabindex="-1" aria-labelledby="osPrepareTitle" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h2 class="modal-title" id="osPrepareTitle">Yeni fason işi hazırla</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Kapat"></button></div><div class="modal-body"><form id="osPrepareForm"><div class="os-grid"><div><label class="os-label" for="osJobPartner">Fason üretici</label><select id="osJobPartner" class="os-select" required></select></div><div><label class="os-label" for="osJobRecipe">Reçete / ürün</label><select id="osJobRecipe" class="os-select" required></select></div><div><label class="os-label" for="osJobQuantity">Üretilecek adet</label><input id="osJobQuantity" class="os-input" type="number" min="0.000001" step="any" required /></div><div><label class="os-label" for="osJobLanguage">Ürün etiketi dili</label><select id="osJobLanguage" class="os-select"><option value="TR">Türkçe</option><option value="EN">İngilizce</option></select></div><div class="os-span"><label class="os-label" for="osExternalProduct">Kodlu föyde görünecek ürün adı</label><input id="osExternalProduct" class="os-input" maxlength="200" placeholder="Örn. Ürün A — Krem" required /></div><div class="os-span"><div class="os-grid"><div><label class="os-label" for="osTechnicalApprover">Teknik onay</label><select id="osTechnicalApprover" class="os-select" required></select></div><div><label class="os-label" for="osOwnerApprover">İş sahibi onayı</label><select id="osOwnerApprover" class="os-select" required></select></div><div><label class="os-label" for="osManagerApprover">Yönetici onayı</label><select id="osManagerApprover" class="os-select" required></select></div></div></div><div class="os-span"><label class="os-label" for="osProcessText">Kodlu yapılış talimatı</label><textarea id="osProcessText" class="os-textarea" maxlength="10000" placeholder="Yalnız malzeme kodlarını kullanarak fazları, sıcaklıkları ve karıştırma sırasını yazın." required></textarea></div><div class="os-span"><label class="os-label" for="osSafetyText">Kodlu kullanım ve güvenlik talimatı</label><textarea id="osSafetyText" class="os-textarea" maxlength="10000" placeholder="Kodlu malzemelerin kullanım ve saklama talimatları." required></textarea></div></div><div id="osPrepareMaterials" class="os-section-title"></div><div id="osPrepareNotice" class="os-notice" hidden></div></form></div><div class="modal-footer"><button class="os-b" type="button" data-bs-dismiss="modal">Vazgeç</button><button class="os-b os-b-main" type="submit" form="osPrepareForm" id="osPrepareSubmit">İşi hazırla</button></div></div></div></div>
-  <div class="modal fade os-dialog" id="osActionModal" tabindex="-1" aria-labelledby="osActionTitle" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h2 class="modal-title" id="osActionTitle"></h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Kapat"></button></div><div class="modal-body"><form id="osActionForm"><div id="osActionFields"></div></form></div><div class="modal-footer"><button class="os-b" type="button" data-bs-dismiss="modal">Vazgeç</button><button class="os-b os-b-main" id="osActionSubmit" type="submit" form="osActionForm">Kaydet</button></div></div></div></div>
-  <div class="modal fade os-dialog" id="osApprovalModal" tabindex="-1" aria-labelledby="osApprovalTitle" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h2 class="modal-title" id="osApprovalTitle">Kendi hesabınızla onaylayın</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Kapat"></button></div><div class="modal-body"><form id="osApprovalForm"><div id="osApprovalSummary" class="os-notice"></div><p class="os-muted">{{ full_name }} hesabıyla bu işin gösterilen sürümünü onaylıyorsunuz.</p><label class="os-check" style="margin-top:1rem"><input id="osApprovalConfirmed" type="checkbox" required /><span>Föyü, malzeme kodlarını ve kap etiketlerini kontrol ettim; gösterilen sürümü onaylıyorum.</span></label></form></div><div class="modal-footer"><button class="os-b" type="button" data-bs-dismiss="modal">Vazgeç</button><button class="os-b os-b-main" id="osApproveSubmit" type="submit" form="osApprovalForm">Kendi hesabımla onayla</button></div></div></div></div>
+  <div class="modal fade os-dialog" id="b2ActionModal" tabindex="-1" aria-labelledby="b2ActionTitle" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h2 class="modal-title" id="b2ActionTitle"></h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Kapat"></button></div><div class="modal-body"><form id="b2ActionForm" novalidate><div id="b2ActionFields"></div></form></div><div class="modal-footer"><button class="os-b" type="button" data-bs-dismiss="modal">Vazgeç</button><button class="os-b os-b-main" id="b2ActionSubmit" type="submit" form="b2ActionForm">Kaydet</button></div></div></div></div>
   <div id="toast-container" aria-live="polite"></div>
 </body>
 </html>

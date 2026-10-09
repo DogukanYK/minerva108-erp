@@ -39,6 +39,7 @@ from core.scheduler import start_scheduler, stop_scheduler
 from routers import auth, users, inventory, recipes, production, b2b, reports, notifications, backup, debug, undo, system, domain as domain_router, drive as drive_router, crm as crm_router, kommo as kommo_router, crm_c as crm_c_router, delivery as delivery_router, distributors as distributors_router, portal as portal_router, returns as returns_router, sample_analysis as sample_analysis_router, shopify as shopify_router, pdks as pdks_router, retention as retention_router, product_images as product_images_router, reviews as reviews_router, influencer as influencer_router, purchase_plan as purchase_plan_router, material_groups as material_groups_router, suppliers as suppliers_router
 from core.domain import get_active_domain, domain_label
 from routers import outsourcing as outsourcing_router
+from routers import b2b_orders as b2b_orders_router
 
 
 # ─── App init ───────────────────────────────────────────────────────────────
@@ -313,6 +314,7 @@ app.include_router(recipes.router)
 app.include_router(production.router)
 app.include_router(outsourcing_router.router)
 app.include_router(b2b.router)
+app.include_router(b2b_orders_router.router)    # /api/b2b-orders — b2b_orders.* (core/b2b_orders.py)
 app.include_router(reports.router)
 app.include_router(notifications.router)
 app.include_router(backup.router)
@@ -535,6 +537,17 @@ def outsourcing_page(request: Request, db: Session = Depends(get_db)):
     if not user or user.role == "Distributor" or not _user_can(user, "outsourcing", "view"):
         return RedirectResponse(url="/", status_code=302)
     return templates.TemplateResponse("outsourcing.html", _page_ctx(request, payload, user))
+
+
+@app.get("/b2b-siparisler", response_class=HTMLResponse)
+def b2b_orders_page(request: Request, db: Session = Depends(get_db)):
+    payload = _get_user_context(request)
+    if not payload:
+        return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not user or user.role == "Distributor" or not _user_can(user, "b2b_orders", "view"):
+        return RedirectResponse(url="/", status_code=302)
+    return templates.TemplateResponse("b2b_siparisler.html", _page_ctx(request, payload, user))
 
 
 @app.get("/reports", response_class=HTMLResponse)

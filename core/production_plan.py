@@ -637,7 +637,7 @@ def _check_consumed_cards(lines: List[Line], cards: Dict[int, Item], domain: str
 
 
 def _allocate_lots(db: Session, lines: List[Line], cards: Dict[int, Item],
-                   pools: Dict[int, List[Inventory]]) -> List[dict]:
+                   pools: Dict[int, List[Inventory]], lot_filter=None) -> List[dict]:
     """Hammadde seçimlerinin lot planı.  Önce AÇIK seçilmiş lotlar (FIFO
     onları kapmasın), sonra FIFO — `reserved` önceki satırların aldığı lot
     payını düşer, aynı lot iki kez verilmez.  Seçili lot yok/kısaysa hata
@@ -675,7 +675,7 @@ def _allocate_lots(db: Session, lines: List[Line], cards: Dict[int, Item],
                 continue
             p.allocations, p.uncovered = plan_fifo(db, cards[p.item_id], p.quantity,
                                                    exclude_samples=True, lock=False,
-                                                   reserved=reserved)
+                                                   reserved=reserved, accept=lot_filter)
             for lot, take in p.allocations:
                 reserved[lot.id] = reserved.get(lot.id, 0.0) + take
     return errors
@@ -718,12 +718,14 @@ def _gate(lines: List[Line], cards: Dict[int, Item], recipe: Recipe) -> Tuple[Li
 
 def plan(db: Session, recipe: Recipe, qty: float, lang: str, *, domain: str,
          sources: Optional[dict] = None, lot_choices: Optional[dict] = None,
-         lock: bool = False) -> Plan:
+         lock: bool = False, lot_filter=None) -> Plan:
     """Reçeteden `qty` adet üretimin tam planı — hiçbir şey yazmaz.
 
     `sources` — {reçete kartı id (str): [{item_id, quantity, inventory_id?}]}
     `lot_choices` — eski {item_id: inventory_id} (geriye uyum)
     `lock` — başlatmada True: düşülecek kartlar + lotları FOR UPDATE.
+    `lot_filter` — FIFO'nun hammadde lotu başına ek koşulu (B2B sipariş
+    partisinin sıkı havuzu); elenen lot atlanır, eksik `uncovered` kalır.
     """
     lang = "EN" if (lang or "").strip().upper().startswith("EN") else "TR"
     recs, items, sibs = load_recipe_recs(db, [recipe.id], domain, active_only=False)
@@ -754,7 +756,7 @@ def plan(db: Session, recipe: Recipe, qty: float, lang: str, *, domain: str,
     errors = _resolve_choices(lines, orm, sources, lot_choices)
     cards, pools = _load_consumed(db, lines, lock, recipe.target_item_id)
     _check_consumed_cards(lines, cards, domain)
-    errors += _allocate_lots(db, lines, cards, pools)
+    errors += _allocate_lots(db, lines, cards, pools, lot_filter)
     per_card, gate_errors = _gate(lines, cards, recipe)
     errors += gate_errors
 

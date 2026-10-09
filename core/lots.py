@@ -30,7 +30,7 @@ from sqlalchemy import and_, not_, or_
 from sqlalchemy.orm import Session
 
 from core.brands import lot_code
-from database import Inventory, Item, ProductionHistory, to_tr
+from database import B2BOrderBatch, Inventory, Item, ProductionHistory, to_tr
 
 LOT_SEQ_PAD = 3          # MNR006 — dolgusuz istenirse 0 yapmak yeterli
 _MAX_LOT_LEN = 100       # ProductionHistory.lot_number / Inventory.lot_number
@@ -115,6 +115,13 @@ def is_taken(db: Session, item_id: int, lot: str) -> bool:
             .filter(ProductionHistory.target_item_id == item_id,
                     ProductionHistory.lot_number == lot,
                     _not_released()).first()):
+        return True
+    # B2B sipariş partisi lot no'yu BAŞLATIRKEN alır; bitmiş ürün (geçmiş +
+    # stok satırı) ancak tamamlanınca yazılır.  Arada aynı no elle verilmesin;
+    # iptal edilen parti de (tüketim notlarında geçtiği için) no'yu bırakmaz.
+    if (db.query(B2BOrderBatch.id)
+            .filter(B2BOrderBatch.item_id == item_id,
+                    B2BOrderBatch.lot_number == lot).first()):
         return True
     return bool(db.query(Inventory.id)
                 .filter(Inventory.item_id == item_id,

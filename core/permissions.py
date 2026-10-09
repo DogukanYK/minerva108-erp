@@ -96,6 +96,12 @@ PERMISSION_CATEGORIES = {
     # düşülür — core/production_cancel.py).
     "production": ["view", "create", "cancel"],
     "outsourcing": ["view", "manage", "mapping", "approve", "dispatch", "record"],
+    # B2B sipariş akışı (core/b2b_orders.py): view = siparişleri gör (fiyatlar
+    # yalnız b2b.view ile), manage = siparişe dönüştür / ticari revizyon /
+    # banka, tech_review = teknik değerlendirme (Songül), sign = şifre + çizilen
+    # imzayla yönetim onayı (Işık), payment = ödeme doğrula, produce = parti
+    # başlat/tamamla, ship = tek sevkiyat.
+    "b2b_orders": ["view", "manage", "tech_review", "sign", "payment", "produce", "ship"],
     "qc":         ["view", "approve"],
     "finance":    ["view"],            # Cost prices, recipe BOM costs, margins
     "b2b":        ["view", "create", "confirm"],
@@ -140,6 +146,7 @@ _DEFAULT_PERMISSIONS = {
         "inventory":  {"view": True,  "receive": True, "adjust": True,  "delete": False},
         "production": {"view": True,  "create": True, "cancel": True},
         "outsourcing": {"view": True, "manage": True, "mapping": True, "approve": True, "dispatch": True, "record": True},
+        "b2b_orders": {"view": True, "manage": True, "tech_review": False, "sign": True, "payment": True, "produce": False, "ship": True},
         "qc":         {"view": True,  "approve": True},
         "finance":    {"view": True},
         "b2b":        {"view": True,  "create": True,  "confirm": True},
@@ -165,6 +172,7 @@ _DEFAULT_PERMISSIONS = {
         "inventory":  {"view": True,  "receive": True, "adjust": True,  "delete": True},
         "production": {"view": True,  "create": True, "cancel": True},
         "outsourcing": {"view": True, "manage": True, "mapping": True, "approve": True, "dispatch": True, "record": True},
+        "b2b_orders": {"view": True, "manage": False, "tech_review": True, "sign": False, "payment": False, "produce": True, "ship": True},
         "qc":         {"view": True,  "approve": True},
         "finance":    {"view": False},
         "b2b":        {"view": False, "create": False, "confirm": False},
@@ -183,6 +191,7 @@ _DEFAULT_PERMISSIONS = {
         "inventory":  {"view": True,  "receive": True, "adjust": False, "delete": False},
         "production": {"view": True,  "create": True, "cancel": False},
         "outsourcing": {"view": False, "manage": False, "mapping": False, "approve": False, "dispatch": False, "record": False},
+        "b2b_orders": {"view": True, "manage": False, "tech_review": False, "sign": False, "payment": False, "produce": True, "ship": False},
         "qc":         {"view": True,  "approve": False},
         "finance":    {"view": False},
         "b2b":        {"view": False, "create": False, "confirm": False},
@@ -202,6 +211,7 @@ _DEFAULT_PERMISSIONS = {
         "inventory":  {"view": True,  "receive": False, "adjust": False, "delete": False},
         "production": {"view": True,  "create": False, "cancel": False},
         "outsourcing": {"view": False, "manage": False, "mapping": False, "approve": False, "dispatch": False, "record": False},
+        "b2b_orders": {"view": False, "manage": False, "tech_review": False, "sign": False, "payment": False, "produce": False, "ship": False},
         "qc":         {"view": True,  "approve": False},
         "finance":    {"view": False},
         "b2b":        {"view": False, "create": False, "confirm": False},
@@ -221,6 +231,7 @@ _DEFAULT_PERMISSIONS = {
         "inventory":    {"view": False, "receive": False, "adjust": False, "delete": False},
         "production":   {"view": False, "create": False, "cancel": False},
         "outsourcing":  {"view": False, "manage": False, "mapping": False, "approve": False, "dispatch": False, "record": False},
+        "b2b_orders": {"view": False, "manage": False, "tech_review": False, "sign": False, "payment": False, "produce": False, "ship": False},
         "qc":           {"view": False, "approve": False},
         "finance":      {"view": False},
         "b2b":          {"view": False, "create": False, "confirm": False},

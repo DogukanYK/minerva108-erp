@@ -57,9 +57,9 @@ from core import lots as lots_mod
 from core.consumption import _kind as consumption_kind
 from core.item_merge import _adjust
 from core.stock_lots import LOT_MOVE_MARK
-from database import (Delivery, DeliveryItem, Inventory, Item, ProductionConsumption,
-                      ProductionHistory, RetentionSample, RetentionSampleMovement,
-                      Transaction, to_tr)
+from database import (B2BOrderBatch, Delivery, DeliveryItem, Inventory, Item,
+                      ProductionConsumption, ProductionHistory, RetentionSample,
+                      RetentionSampleMovement, Transaction, to_tr)
 
 EPS = 1e-6
 NOTE_MARK = "Üretim iptali"
@@ -443,6 +443,14 @@ def check(db: Session, prod: ProductionHistory, rows: Rows) -> dict:
 
     if prod.cancelled_at:
         blockers.append("Bu üretim zaten iptal edilmiş.")
+    # B2B sipariş partisi: tüketim partiyi BAŞLATIRKEN, bitmiş ürün TAMAMLARKEN
+    # yazıldı ve sipariş sevkiyatı bu partiye bakıyor — buradan geri alınırsa
+    # sipariş "tamamlandı" sanmaya devam ederdi.  İade yolu B2B ekranıdır.
+    b2b = (db.query(B2BOrderBatch.order_id)
+             .filter(B2BOrderBatch.production_history_id == prod.id).first())
+    if b2b is not None:
+        blockers.append(f"Bu üretim B2B siparişinin (#{b2b.order_id}) partisi — iptal/iade "
+                        "B2B Siparişleri ekranından yapılır.")
     if source == "ledger" and not cons and NO_LEDGER_OUTPUTS not in blockers:
         blockers.append(NO_LEDGER_OUTPUTS)
 

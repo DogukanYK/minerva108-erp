@@ -26,6 +26,7 @@ PAGES = [
     "/recipes",
     "/production",
     "/outsourcing",
+    "/b2b-siparisler",
     "/qc",
     "/stocks",
     "/ledger",

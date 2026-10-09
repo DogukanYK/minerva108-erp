@@ -635,6 +635,9 @@ class Quotation(Base):
         cascade="all, delete-orphan",
     )
     distributor = relationship("Distributor", foreign_keys=[distributor_id])
+    # B2B sipariş akışına dönüştüyse siparişi (core/b2b_orders) — salt okunur
+    b2b_order = relationship("B2BOrder", uselist=False, viewonly=True,
+                             primaryjoin="Quotation.id == foreign(B2BOrder.quotation_id)")
 
 
 class QuotationItem(Base):
@@ -653,6 +656,187 @@ class QuotationItem(Base):
 
     quotation = relationship("Quotation", back_populates="items")
     item      = relationship("Item",      foreign_keys=[item_id])
+
+
+
+# ─── B2B sipariş akışı: onay → proforma → parti üretimi → tek sevkiyat ───────
+# core/b2b_orders.py.  Teklif (Quotation) ticari içeriğin kaynağıdır; siparişe
+# dönüşen teklif status='ORDER' olur (legacy "Onayla & stoktan düş" o teklifi
+# kabul etmez).  Ticari ve teknik içerik AYRI sürümlenir (snapshot + hash);
+# imza belirli bir (ticari, teknik) sürüm çiftine aittir.  Satırlar ürün kartı
+# (item_id) ile tanınır — sipariş başına ürün tekildir, teklif satırı yeniden
+# yazılsa da parti/plan bağı kopmaz.
+
+class BankProfile(Base):
+    """Proformada basılan banka hesabı — şirket geneli (panelden bağımsız)."""
+    __tablename__ = "bank_profiles"
+    id = Column(Integer, primary_key=True)
+    label = Column(String(80), nullable=False)
+    bank_name = Column(String(150), nullable=False)
+    branch = Column(String(150), nullable=True)
+    swift = Column(String(20), nullable=True)
+    account_holder = Column(String(200), nullable=False)
+    iban_usd = Column(String(40), nullable=True)
+    iban_eur = Column(String(40), nullable=True)
+    iban_try = Column(String(40), nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class BankRule(Base):
+    """Ülke + para birimi → önerilen banka.  Eşleşme yoksa elle seçim istenir."""
+    __tablename__ = "bank_rules"
+    id = Column(Integer, primary_key=True)
+    country = Column(String(100), nullable=False)        # katlanmış ülke adı/kodu
+    currency = Column(String(3), nullable=False)
+    bank_profile_id = Column(Integer, ForeignKey("bank_profiles.id"), nullable=False)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("country", "currency", name="uq_bank_rule_country_currency"),)
+
+
+class B2BOrder(Base):
+    __tablename__ = "b2b_orders"
+    id = Column(Integer, primary_key=True)
+    quotation_id = Column(Integer, ForeignKey("quotations.id"), nullable=False, unique=True)
+    domain = Column(String(20), nullable=False, default="cosmetics", index=True)
+    # SUBMITTED (teknik değerlendirme bekliyor) → TECH_REVIEWED (imza bekliyor)
+    # → APPROVED (proforma; ödeme/malzeme/hazırlık/üretim) → SHIPPED | CANCELLED
+    status = Column(String(20), nullable=False, default="SUBMITTED", index=True)
+    label_language = Column(String(8), nullable=False, default="EN")
+    target_date = Column(Date, nullable=True)
+    payment_terms = Column(String(12), nullable=False, default="prepaid")   # prepaid|advance|net
+    advance_percent = Column(Float, nullable=True)
+    bank_profile_id = Column(Integer, ForeignKey("bank_profiles.id"), nullable=True)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    technical_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    signer_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    commercial_revision = Column(Integer, nullable=False, default=1)
+    technical_revision = Column(Integer, nullable=False, default=0)
+    prep_confirmed_at = Column(DateTime, nullable=True)
+    prep_confirmed_by = Column(String(100), nullable=True)
+    delivery_id = Column(Integer, ForeignKey("deliveries.id"), nullable=True)
+    shipped_at = Column(DateTime, nullable=True)
+    shipped_by = Column(String(100), nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancelled_by = Column(String(100), nullable=True)
+    cancel_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    quotation = relationship("Quotation", foreign_keys=[quotation_id])
+
+
+class B2BOrderRevision(Base):
+    """Değişmez sürüm: kind='commercial' (müşteri, satırlar, fiyat, şartlar, banka)
+    ya da 'technical' (satır başı stoktan kullanım / üretim, reçete, eksikler)."""
+    __tablename__ = "b2b_order_revisions"
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("b2b_orders.id"), nullable=False, index=True)
+    kind = Column(String(12), nullable=False)
+    revision = Column(Integer, nullable=False)
+    snapshot = Column(Text, nullable=False)
+    snapshot_hash = Column(String(64), nullable=False)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("order_id", "kind", "revision", name="uq_b2b_order_revision"),)
+
+
+class B2BOrderSignature(Base):
+    """Yönetim onayı: şifre doğrulaması + çizilen imza.  Şifre SAKLANMAZ;
+    imza PNG'si ve özeti, imzalanan sürüm çifti ve belge özetiyle birlikte."""
+    __tablename__ = "b2b_order_signatures"
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("b2b_orders.id"), nullable=False, index=True)
+    role = Column(String(16), nullable=False, default="management")
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    signer_name = Column(String(150), nullable=True)
+    commercial_revision = Column(Integer, nullable=False)
+    technical_revision = Column(Integer, nullable=False)
+    document_hash = Column(String(64), nullable=False)
+    signature_png = Column(Text, nullable=False)              # base64 PNG
+    signature_sha256 = Column(String(64), nullable=False)
+    ip_address = Column(String(64), nullable=True)
+    user_agent = Column(String(300), nullable=True)
+    signed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class B2BOrderPayment(Base):
+    __tablename__ = "b2b_order_payments"
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("b2b_orders.id"), nullable=False, index=True)
+    amount = Column(Float, nullable=False)
+    currency = Column(String(3), nullable=False)
+    received_on = Column(Date, nullable=True)
+    reference = Column(String(150), nullable=True)
+    note = Column(Text, nullable=True)
+    verified_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    verified_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (CheckConstraint("amount > 0", name="ck_b2b_payment_amount"),)
+
+
+class B2BOrderPurchaseLine(Base):
+    """Siparişin eksik malzeme alımı — sipariş verildi / teslim alındı / kalan."""
+    __tablename__ = "b2b_order_purchase_lines"
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("b2b_orders.id"), nullable=False, index=True)
+    technical_revision = Column(Integer, nullable=False)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    item_name = Column(String(200), nullable=True)
+    unit = Column(String(20), nullable=True)
+    need_quantity = Column(Float, nullable=False)
+    supplier_name = Column(String(150), nullable=True)
+    status = Column(String(12), nullable=False, default="open")   # open|ordered|received|cancelled
+    ordered_quantity = Column(Float, nullable=False, default=0)
+    received_quantity = Column(Float, nullable=False, default=0)
+    note = Column(Text, nullable=True)
+    updated_by = Column(String(100), nullable=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class B2BOrderBatch(Base):
+    """Siparişe bağlı parti: BAŞLAT tüketimi yazar (bitmiş ürün yok), TAMAMLA
+    yalnız bitmiş ürünü + ProductionHistory/dökümü yazar — malzeme ikinci kez
+    düşülmez.  `plan_snapshot` başlangıçta yazılan Output'ların dökümüdür."""
+    __tablename__ = "b2b_order_batches"
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("b2b_orders.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)        # siparişteki ürün
+    recipe_id = Column(Integer, ForeignKey("recipes.id"), nullable=False)
+    planned_quantity = Column(Float, nullable=False)
+    lot_number = Column(String(100), nullable=False)
+    status = Column(String(12), nullable=False, default="STARTED")          # STARTED|COMPLETED|CANCELLED
+    label_language = Column(String(8), nullable=False)
+    commercial_revision = Column(Integer, nullable=False)
+    technical_revision = Column(Integer, nullable=False)
+    plan_snapshot = Column(Text, nullable=False)
+    started_by = Column(String(100), nullable=True)
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    completed_by = Column(String(100), nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    produced_quantity = Column(Float, nullable=True)
+    witness_quantity = Column(Float, nullable=True)
+    production_history_id = Column(Integer, ForeignKey("production_history.id"), nullable=True)
+    cancelled_by = Column(String(100), nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancel_reason = Column(Text, nullable=True)
+    __table_args__ = (CheckConstraint("planned_quantity > 0", name="ck_b2b_batch_qty"),)
+
+
+class B2BOrderBatchReturn(Base):
+    """İptal edilen partiden fiziksel iade — gerekçeli, tüketimle sınırlı, +Adjustment."""
+    __tablename__ = "b2b_order_batch_returns"
+    id = Column(Integer, primary_key=True)
+    batch_id = Column(Integer, ForeignKey("b2b_order_batches.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    quantity = Column(Float, nullable=False)
+    reason = Column(Text, nullable=False)
+    transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=False)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (CheckConstraint("quantity > 0", name="ck_b2b_batch_return_qty"),)
 
 
 # ─── Distribütör Sipariş Portalı ─────────────────────────────────────────────
@@ -2835,6 +3019,119 @@ def _backfill_perm_suppliers():
         db.close()
 
 
+
+def _backfill_perm_b2b_orders():
+    """Override'lı kullanıcılara yeni `b2b_orders.*` — rol varsayılanı, KOŞULLU.
+
+    `_backfill_perm_suppliers` kalıbı: override rol varsayılanının yerine geçtiği
+    için yeni kategori özel yetkili kullanıcıya (prod'da Işık Hanım) hiç
+    ulaşmazdı.  Kimse daha önce çalışmadığı bir alanın yetkisini almaz:
+    manage/sign/payment ← override'da `b2b.view`; tech_review/produce ←
+    `production.create`; ship ← `inventory.adjust` (sevkiyat stok düşer);
+    view ← `b2b.view` ya da `production.view`.  Var olan anahtara dokunulmaz;
+    kullanıcı başına `permissions.backfill` audit'i; BİR KEZ (sentinel)."""
+    import json as _json
+    from core.permissions import _DEFAULT_PERMISSIONS, PERMISSION_CATEGORIES
+
+    SENTINEL = "backfill.perm.b2b_orders.v1"
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter(AppSetting.key == SENTINEL).first():
+            return
+        n = 0
+        for u in (db.query(User)
+                  .filter(User.permissions.isnot(None), User.role != "SuperAdmin")
+                  .order_by(User.id).all()):
+            try:
+                perms = _json.loads(u.permissions)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(perms, dict):
+                continue
+            cat = perms.get("b2b_orders")
+            if not isinstance(cat, dict):
+                cat = {}
+            role_def = ((_DEFAULT_PERMISSIONS.get(u.role) or _DEFAULT_PERMISSIONS["Staff"])
+                        .get("b2b_orders") or {})
+
+            def _has(category, action):
+                c = perms.get(category)
+                return bool(isinstance(c, dict) and c.get(action, False))
+
+            commercial = ("b2b.view", _has("b2b", "view"))
+            technical = ("production.create", _has("production", "create"))
+            gate = {
+                "view": ("b2b.view|production.view", _has("b2b", "view") or _has("production", "view")),
+                "manage": commercial, "sign": commercial, "payment": commercial,
+                "tech_review": technical, "produce": technical,
+                "ship": ("inventory.adjust", _has("inventory", "adjust")),
+            }
+            added, gated = {}, {}
+            for act in PERMISSION_CATEGORIES["b2b_orders"]:
+                if act in cat:
+                    continue
+                default = bool(role_def.get(act, False))
+                cond, ok = gate.get(act, ("", True))
+                if default and not ok:
+                    gated[f"b2b_orders.{act}"] = cond
+                cat[act] = added[act] = default and ok
+            if not added:
+                continue
+            perms["b2b_orders"] = cat
+            u.permissions = _json.dumps(perms, ensure_ascii=False)
+            db.add(AdminAuditLog(
+                actor_name="sistem", action="permissions.backfill",
+                target_type="user", target_id=u.id, target_name=u.username,
+                details=_json.dumps({"keys": {f"b2b_orders.{k}": v for k, v in added.items()},
+                                     "gated": gated, "role": u.role, "sentinel": SENTINEL},
+                                    ensure_ascii=False)))
+            n += 1
+        db.add(AppSetting(key=SENTINEL, value=str(n)))
+        db.commit()
+        if n:
+            print(f"[init_db] b2b_orders.* yetki backfill: {n} özel yetkili kullanıcı")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+# Proforma şablonunda (templates/quotations.html) sabit duran üç hesap — B2B
+# sipariş proforması bunları kayıtlı profillerden okur.  Bir kez tohumlanır;
+# sonrası yönetim ekranından düzenlenir.
+_SEED_BANK_PROFILES = (
+    dict(label="Kuveyt Türk — Levent", bank_name="KUVEYT TÜRK KATILIM BANKASI",
+         branch="214 LEVENT - SANAYİ", swift="KTEFTRISXXX",
+         iban_usd="TR090020500009096875200101", iban_eur="TR790020500009096875200102", sort_order=1),
+    dict(label="İş Bankası — Yeniköy", bank_name="TÜRKİYE İŞ BANKASI A.Ş.",
+         branch="151 YENIKOY", swift="ISBKTRIS",
+         iban_usd="TR37 0006 4000 0021 1510 5912 99", iban_eur="TR53 0006 4000 0021 1510 5913 02",
+         sort_order=2),
+    dict(label="Vakıfbank — Tarabya", bank_name="TURKİYE VAKIFLAR BANKASI T.A.O.",
+         branch="1106 TARABYA", swift="TVBATR2A",
+         iban_usd="TR36 0001 5001 5804 8023 3113 21", iban_eur="TR85 0001 5001 5804 8023 3113 12",
+         sort_order=3),
+)
+
+
+def _seed_bank_profiles():
+    SENTINEL = "seed.bank_profiles.v1"
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter(AppSetting.key == SENTINEL).first():
+            return
+        if not db.query(BankProfile.id).first():
+            for row in _SEED_BANK_PROFILES:
+                db.add(BankProfile(account_holder="MİNERVA 108 YÖNETİM & DANIŞMANLIK A.Ş.", **row))
+        db.add(AppSetting(key=SENTINEL, value=str(len(_SEED_BANK_PROFILES))))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
 def _backfill_drive_folders():
     """original_name'inde '/' olan DriveFile'ları gerçek klasör ağacına yerleştir.
 
@@ -3158,6 +3455,17 @@ def init_db():
             backfill_permissions(_db)
         finally:
             _db.close()
+    except Exception:
+        pass
+
+    # B2B sipariş akışı: yeni `b2b_orders.*` (koşullu) + proformadaki üç banka
+    # hesabının kayıtlı profillere tohumlanması — ikisi de sentinel'li, bir kez.
+    try:
+        _backfill_perm_b2b_orders()
+    except Exception:
+        pass
+    try:
+        _seed_bank_profiles()
     except Exception:
         pass
 
