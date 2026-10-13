@@ -5,7 +5,10 @@
 # Bkz. LICENSE ve AUTHORS.md.
 # ─────────────────────────────────────────────────────────────────────────────
 """
-Minerva Asistan araç işleyicileri (15 araç, HEPSİ salt-okunur; `search_help` DB'siz).
+Minerva Asistan araç işleyicileri — katalog/stok/üretim/tedarikçi araçları (HEPSİ
+salt-okunur; `search_help` DB'siz).  Operasyon araçları (teslimat, B2B, QC, fason,
+pazaryerleri …) `handlers_ops.py`'de.  CRM ve PDKS araçları 13.10.2026 kullanıcı
+kararıyla KALDIRILDI — asistan bu verileri hiç görmez.
 
 Her işleyici `fn(ctx, db, args) -> dict`:
   • `ctx`  — tools.ToolContext (kullanıcı, panel, etkin yetkiler, can_finance)
@@ -19,8 +22,8 @@ dokunulmaz).
 
 DEĞİŞMEZLER
 ───────────
-• Panel: domain kolonu olan her tablo `ctx.domain` ile süzülür (Drive/CRM/PDKS
-  cross-cutting, süzülmez).
+• Panel: domain kolonu olan her tablo `ctx.domain` ile süzülür (Drive cross-cutting,
+  süzülmez).
 • Finans alanları (`cost_price`, reçete maliyeti) YALNIZ `ctx.can_finance`
   ise ÜRETİLİR — "hesapla-sıfırla" yok; anahtar hiç konmaz.
 • Tedarikçi alış fiyatları sistemdeki kuralla aynı (items.view|reports.view
@@ -43,14 +46,13 @@ DEĞİŞMEZLER
 """
 import datetime as _dt
 import difflib
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 from urllib.parse import quote
 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from database import (CrmCompany, CrmContact, CrmDeal, DriveFile, DriveFolder, Inventory, Item,
-                      MaterialGroup, MaterialSupplierPref, ProductionHistory, Recipe,
+from database import (DriveFile, DriveFolder, Inventory, Item, MaterialGroup, MaterialSupplierPref, ProductionHistory, Recipe,
                       RetentionSample, StockOrderFlag, Supplier, SupplierPrice, to_tr, tr_now)
 from core import drive as D
 from core import group_stock, material_groups, stock_gaps
@@ -80,7 +82,6 @@ GAPS_MAX = 20
 EXPIRING_MAX = 20
 FILES_MAX = 10
 FOLDERS_MAX = 5
-CRM_MAX = 8
 NOTES_MAX = 1500
 EXPIRING_DEFAULT_DAYS = 60
 EXPIRING_MAX_DAYS = 180
@@ -687,74 +688,6 @@ def drive_search(ctx: "ToolContext", db: Session, args: dict) -> dict:
                     for f in folders[:FOLDERS_MAX]],
         "more": len(files) > FILES_MAX or len(folders) > FOLDERS_MAX,
         "link": f"/drive?q={_q(term)}",
-    }
-
-
-# ─── my_pdks_today ───────────────────────────────────────────────────────────
-
-def my_pdks_today(ctx: "ToolContext", db: Session, args: dict) -> dict:
-    """YALNIZ kullanıcının kendisi: `routers.pdks._employee_for_user` +
-    `_today_status` (router-özel, tembel import — core.purchase_plan emsali).
-    `checkin` (doğrulama modu) ve olay IP'leri dışarı verilmez."""
-    from routers.pdks import _employee_for_user, _today_status
-    emp = _employee_for_user(db, {"sub": ctx.user_id})
-    if emp is None:
-        raise ToolError("PDKS personel kaydınız yok (yöneticinize başvurun)")
-    st = _today_status(db, emp)
-    today = st.get("today") or {}
-    return {
-        "employee": st["employee"]["full_name"],
-        "state": st.get("state"), "open_since": st.get("open_since") or "",
-        "worked_live_minutes": st.get("worked_live_minutes"),
-        "worked_live_label": st.get("worked_live_label"),
-        "schedule": st.get("schedule"),
-        "today": {k: today.get(k) for k in ("date_label", "status", "status_label", "worked_minutes",
-                                             "worked_label", "expected_minutes", "overtime_minutes",
-                                             "missing_minutes", "missing_checkout", "first_in",
-                                             "last_out", "leave_type", "holiday_name")
-                  if k in today},
-        "events": [{"type": e.get("event_type") or e.get("type"), "time": e.get("time") or e.get("ts")}
-                   for e in (st.get("events") or [])],
-        "link": "/pdks",
-    }
-
-
-# ─── crm_search ──────────────────────────────────────────────────────────────
-
-def crm_search(ctx: "ToolContext", db: Session, args: dict) -> dict:
-    """Firma/kişi arama — tutar YOK (fırsat sayısı var).  CRM cross-cutting."""
-    q = _text(args.get("q"))
-    if len(q) < 2:
-        raise ToolError("En az 2 karakter gir")
-    like = f"%{q}%"
-    companies = (db.query(CrmCompany)
-                 .filter(CrmCompany.is_active == True,   # noqa: E712
-                         or_(CrmCompany.name.ilike(like), CrmCompany.email.ilike(like),
-                             CrmCompany.phone.ilike(like), CrmCompany.city.ilike(like)))
-                 .order_by(CrmCompany.name).limit(CRM_MAX + 1).all())
-    ids = [c.id for c in companies]
-    deals: Dict[int, int] = {}
-    if ids:
-        for cid, n in (db.query(CrmDeal.company_id, func.count(CrmDeal.id))
-                       .filter(CrmDeal.company_id.in_(ids), CrmDeal.status == "open",
-                               CrmDeal.is_active == True)   # noqa: E712
-                       .group_by(CrmDeal.company_id).all()):
-            deals[cid] = int(n)
-    contacts = (db.query(CrmContact).options(joinedload(CrmContact.company))
-                .filter(CrmContact.is_active == True,   # noqa: E712
-                        or_(CrmContact.full_name.ilike(like), CrmContact.email.ilike(like),
-                            CrmContact.phone.ilike(like), CrmContact.mobile.ilike(like)))
-                .order_by(CrmContact.full_name).limit(CRM_MAX + 1).all())
-    return {
-        "companies": [{"id": c.id, "name": c.name, "phone": c.phone or "", "email": c.email or "",
-                       "city": c.city or "", "open_deals": deals.get(c.id, 0)}
-                      for c in companies[:CRM_MAX]],
-        "contacts": [{"id": k.id, "name": k.full_name, "title": k.title or "",
-                      "company": k.company.name if k.company else "",
-                      "phone": k.mobile or k.phone or "", "email": k.email or ""}
-                     for k in contacts[:CRM_MAX]],
-        "more": len(companies) > CRM_MAX or len(contacts) > CRM_MAX,
-        "link": "/crm",
     }
 
 

@@ -73,8 +73,13 @@
     production_summary: 'Üretim özeti', recent_productions: 'Son üretimler',
     find_supplier: 'Tedarikçi arama', supplier_detail: 'Tedarikçi detayı',
     stock_gaps: 'Stok eksikleri', expiring_lots: 'SKT yaklaşan lotlar',
-    drive_search: 'Drive arama', my_pdks_today: 'PDKS bugün', crm_search: 'CRM arama',
-    search_help: 'Rehber'
+    drive_search: 'Drive arama', search_help: 'Rehber',
+    deliveries: 'Teslimat', product_returns: 'İadeler', b2b_orders: 'B2B siparişleri',
+    quotations: 'Teklifler', qc_pending: 'QC bekleyenler', outsourcing_jobs: 'Fason işleri',
+    stock_movements: 'Stok hareketleri', consumption: 'Tüketim', month_end_stock: 'Ay sonu stok',
+    production_capacity: 'Üretim kapasitesi', retention_samples: 'Şahit numune',
+    sample_analyses: 'Numune analizi', trendyol_orders: 'Trendyol', shopify_orders: 'Shopify',
+    influencer_overview: 'Creator programı', reviews_overview: 'Yorumlar'
   };
   var ROTATION_LABELS = {
     too_long: 'sohbet uzadı', model_changed: 'model değişti',

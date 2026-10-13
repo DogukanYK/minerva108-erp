@@ -311,6 +311,17 @@ eşleşmesi: elle eşleme (set = çok satır) → aktif bitmiş üründe tek bar
 `finance.view`. Müşteri kişisel verisi saklanmaz. Ayrıntı ve tuzaklar: CLAUDE.md
 "Trendyol". Testler `tests/test_trendyol_{client,sync,api}.py`.
 
+**Minerva Asistan** (`core/assistant/`, `routers/assistant.py`, `static/assistant.js`,
+`docs/assistant/*.md`) — IMS içi, YALNIZ OKUMA yapan Claude asistanı (`assistant.use`).
+Araçlar `core/assistant/tools.py` `REGISTRY`'sinde (strict şema, sistemdeki uçla AYNI
+izin, aktif panel süzgeci, mevcut motorları çağırır); operasyon araçları
+`handlers_ops.py` (teslimat/kargo, iade, B2B sipariş/teklif, QC bekleyen, fason, stok
+hareketi, tüketim, ay sonu stoğu, üretim kapasitesi, şahit/numune analizi, Trendyol,
+Shopify, creator, yorumlar). Veri sınırı (13.10.2026 kullanıcı kararı): kişisel iletişim
+verisi, PDKS ve CRM verisi modele GÖNDERİLMEZ — CRM/PDKS araçları kaldırıldı. Sistem
+istemi dondurulmuştur (önbellek; değişince sohbetler rotasyonla yenilenir). Ayrıntı ve
+tuzaklar: CLAUDE.md "Minerva Asistan". Testler `tests/test_assistant_*.py` (sahte SDK).
+
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +
 low-stock alerts + CRM task reminders), `scheduler.py` (APScheduler — daily 08:00 CRM

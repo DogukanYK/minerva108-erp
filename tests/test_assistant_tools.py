@@ -29,8 +29,7 @@ from core.assistant import tools as T
 from core.assistant.handlers import score_item
 from core.assistant.tools import PROMPT_HASH, REGISTRY, TOOL_NAMES, ToolContext, run_tool, tool_specs
 from core.permissions import PERMISSION_CATEGORIES
-from database import (AttendanceEvent, CrmCompany, CrmContact, CrmDeal, CrmStage, DriveFile, DriveFolder,
-                      Employee, Inventory, Item, MaterialGroup, MaterialSupplierPref, ProductionHistory,
+from database import (DriveFile, DriveFolder, Inventory, Item, MaterialGroup, MaterialSupplierPref, ProductionHistory,
                       Recipe, RecipeIngredient, RetentionSample, StockOrderFlag, Supplier, SupplierPrice,
                       User, tr_now)
 
@@ -85,14 +84,21 @@ def _run(ctx, name, args):
 
 # ─── Katalog ─────────────────────────────────────────────────────────────────
 
-def test_registry_fifteen_tools_sorted_strict_and_stable():
-    assert len(TOOL_NAMES) == 15
+OPS_TOOLS = {"deliveries", "product_returns", "b2b_orders", "quotations", "qc_pending", "outsourcing_jobs",
+             "stock_movements", "consumption", "month_end_stock", "production_capacity", "retention_samples",
+             "sample_analyses", "trendyol_orders", "shopify_orders", "influencer_overview", "reviews_overview"}
+
+
+def test_registry_tools_sorted_strict_and_stable():
+    # 13.10.2026: CRM ve PDKS araçları KALDIRILDI (kullanıcı kararı), 16 operasyon aracı eklendi
+    assert len(TOOL_NAMES) == 29
     assert TOOL_NAMES == tuple(sorted(TOOL_NAMES))
     assert set(TOOL_NAMES) == {"find_item", "item_detail", "find_lot", "find_recipe", "recipe_detail",
                                "production_summary", "recent_productions", "find_supplier",
                                "supplier_detail", "stock_gaps", "expiring_lots", "drive_search",
-                               "my_pdks_today", "crm_search", "search_help"}
-    assert TOOL_NAMES.index("search_help") == TOOL_NAMES.index("recipe_detail") + 1
+                               "search_help"} | OPS_TOOLS
+    assert not {"my_pdks_today", "crm_search"} & set(TOOL_NAMES)
+    assert not any(c in ("crm", "pdks") for n in TOOL_NAMES for c, _ in REGISTRY[n].perms)
     specs = tool_specs()
     assert [s["name"] for s in specs] == list(TOOL_NAMES)
     for s in specs:
@@ -454,13 +460,13 @@ def test_item_detail_lots_locations_sample_group_order_and_finance(db_session):
 
 def test_permission_denied_is_error_and_never_opens_db(db_session, monkeypatch):
     db = db_session
-    ctx = _ctx(db, "Staff", {"items": {"view": True}})           # crm.view yok
+    ctx = _ctx(db, "Staff", {"items": {"view": True}})           # b2b.view yok
 
     def _boom():
         raise AssertionError("yetkisiz çağrı DB açmamalı")
     monkeypatch.setattr(T, "SessionLocal", _boom)
-    res, p = _run(ctx, "crm_search", {"q": "minerva"})
-    assert res.is_error and p == {"error": "yetkiniz yok", "permission": "crm.view"}
+    res, p = _run(ctx, "quotations", {"status": None, "q": "minerva"})
+    assert res.is_error and p == {"error": "yetkiniz yok", "permission": "b2b.view"}
     assert res.summary == "Yetki yok" and res.links == []
     res, p = _run(ctx, "stock_gaps", {"status": None, "q": None})
     assert res.is_error and p["permission"] == "reports.view"
@@ -468,7 +474,7 @@ def test_permission_denied_is_error_and_never_opens_db(db_session, monkeypatch):
     assert res.is_error and p["error"] == "bilinmeyen araç"
     # items.view Drive kuralının altı izninden biri → drive_search de açık
     assert T.allowed_tools(ctx) == ["drive_search", "find_item", "find_supplier", "item_detail", "supplier_detail"]
-    assert ("crm_search", "crm.view") in T.denied_tools(ctx)
+    assert ("quotations", "b2b.view") in T.denied_tools(ctx)
 
 
 def test_handler_exception_and_tool_error(db_session, monkeypatch):
@@ -781,55 +787,6 @@ def test_drive_search_names_only_and_min_length(db_session):
     kiosk = _ctx(db, "Staff", {"pdks": {"kiosk": True, "view_own": True}}, username="kiosk")
     res, p = _run(kiosk, "drive_search", {"q": "sertifika"})
     assert res.is_error and p["error"] == "yetkiniz yok"
-
-
-def test_my_pdks_today_is_self_only(db_session):
-    db = db_session
-    me = _user(db, "pdks_me", "Staff")
-    other = _user(db, "pdks_other", "Staff")
-    nobody = _user(db, "pdks_none", "Staff")
-    e1 = Employee(user_id=me.id, full_name="Ben Kendim", is_active=True)
-    e2 = Employee(user_id=other.id, full_name="Başkası", is_active=True)
-    db.add_all([e1, e2])
-    db.flush()
-    now = dt.datetime.utcnow()
-    db.add(AttendanceEvent(employee_id=e2.id, event_type="in", ts_utc=now - dt.timedelta(minutes=30),
-                           work_date=(now + dt.timedelta(hours=3)).date(), source="self"))
-    db.commit()
-    ctx = ToolContext.from_user(me, "cosmetics", db)
-    res, p = _run(ctx, "my_pdks_today", {})
-    assert not res.is_error and p["employee"] == "Ben Kendim" and p["state"] == "disarida"
-    assert p["events"] == [] and "checkin" not in p and p["link"] == "/pdks"
-    assert "Başkası" not in res.content
-    res, p = _run(ToolContext.from_user(other, "cosmetics", db), "my_pdks_today", {})
-    assert p["state"] == "iceride" and p["events"][0]["type"] == "in" and res.summary == "İçeride"
-    res, p = _run(ToolContext.from_user(nobody, "cosmetics", db), "my_pdks_today", {})
-    assert res.is_error and "personel kaydınız yok" in p["error"]
-
-
-def test_crm_search_requires_crm_view_and_hides_amounts(db_session):
-    db = db_session
-    stage = CrmStage(name="Teklif", sort_order=1)
-    db.add(stage)
-    db.flush()
-    co = CrmCompany(name="Minerva Dağıtım A.Ş.", phone="0216", email="info@x.com", city="İstanbul")
-    db.add(co)
-    db.flush()
-    db.add(CrmContact(company_id=co.id, full_name="Ayşe Yetkili", title="Satın alma", mobile="0532", email="a@x.com"))
-    db.add(CrmDeal(title="Büyük sipariş", company_id=co.id, stage_id=stage.id, value=250000, currency="TRY", status="open"))
-    db.add(CrmDeal(title="Kayıp", company_id=co.id, stage_id=stage.id, value=9, status="lost"))
-    db.commit()
-    staff = _ctx(db, "Staff")                                  # crm.view varsayılan False
-    res, p = _run(staff, "crm_search", {"q": "minerva"})
-    assert res.is_error and p["permission"] == "crm.view"
-    sa = ToolContext.from_user(db.query(User).filter_by(username="dogukan").one(), "cosmetics", db)
-    res, p = _run(sa, "crm_search", {"q": "minerva"})
-    assert not res.is_error
-    assert p["companies"][0]["name"] == co.name and p["companies"][0]["open_deals"] == 1
-    assert "250000" not in res.content and "value" not in p["companies"][0]
-    _, p = _run(sa, "crm_search", {"q": "ayşe"})
-    assert p["contacts"][0]["company"] == co.name and p["contacts"][0]["phone"] == "0532"
-    assert res.summary == "1 firma · 0 kişi"
 
 
 # ─── Kırpma ──────────────────────────────────────────────────────────────────

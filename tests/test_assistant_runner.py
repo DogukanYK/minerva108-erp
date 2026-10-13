@@ -129,7 +129,7 @@ async def test_context_message_is_system_after_question_never_first():
     assert "Songül Deneme (Lab Sorumlusu)" in text and "Panel: Kozmetik" in text
     assert "Tarih: 12.10.2026 Pazartesi (TR)" in text
     assert "Kullanabildiği araçlar: drive_search, find_item, find_supplier, item_detail, supplier_detail" in text
-    assert "crm_search (crm.view yok)" in text and "Finans verisi: hayır" in text
+    assert "quotations (b2b.view yok)" in text and "Finans verisi: hayır" in text
     assert [r["kind"] for r in res.rows] == ["question", "context", "assistant"]
     assert res.rows[1] == {"role": "system", "kind": "context", "content": text, "display_text": None}
     assert res.rows[0]["display_text"] == "Stearil alkol kaç kg kaldı?"
@@ -148,22 +148,22 @@ async def test_context_message_is_system_after_question_never_first():
 
 @pytest.mark.asyncio
 async def test_tool_loop_parallel_blocks_single_user_message_order_and_is_error(monkeypatch):
-    denied = ToolResult(json.dumps({"error": "yetkiniz yok", "permission": "crm.view"}), True, "Yetki yok", [], 1)
-    calls = _fake_tools(monkeypatch, {"crm_search": denied})
+    denied = ToolResult(json.dumps({"error": "yetkiniz yok", "permission": "b2b.view"}), True, "Yetki yok", [], 1)
+    calls = _fake_tools(monkeypatch, {"quotations": denied})
     client = FakeClient([
         _ok(tool_use_block("t1", "find_item", {"q": "stearil", "category": None}),
-            tool_use_block("t2", "crm_search", {"q": "x"}), stop_reason="tool_use"),
+            tool_use_block("t2", "quotations", {"status": None, "q": "x"}), stop_reason="tool_use"),
         _ok(text_block("Stearil alkol 3944 kg."), usage_obj=usage(read=11000, output=50)),
     ])
     events, res = await _turn(client)
-    assert [c[0] for c in calls] == ["find_item", "crm_search"]
+    assert [c[0] for c in calls] == ["find_item", "quotations"]
     assert calls[0][1] == {"q": "stearil", "category": None}
     # 2. çağrı: assistant(tool_use ×2) + TEK user mesajı, aynı sıra, is_error yalnız hatalıda
     msgs = client.calls[1]["messages"]
     assert [m["role"] for m in msgs] == ["user", "system", "assistant", "user"]
     assert msgs[2]["content"] == [{"type": "tool_use", "id": "t1", "name": "find_item",
                                    "input": {"q": "stearil", "category": None}},
-                                  {"type": "tool_use", "id": "t2", "name": "crm_search", "input": {"q": "x"}}]
+                                  {"type": "tool_use", "id": "t2", "name": "quotations", "input": {"status": None, "q": "x"}}]
     results = msgs[3]["content"]
     assert [r["tool_use_id"] for r in results] == ["t1", "t2"]
     assert "is_error" not in results[0] and results[1]["is_error"] is True
@@ -183,7 +183,7 @@ async def test_tool_loop_parallel_blocks_single_user_message_order_and_is_error(
     assert res.rows[2]["tools"][0]["summary"] == "find_item tamam" and res.rows[2]["tools"][1]["is_error"] is True
     assert res.rows[3]["content"] == results and res.rows[4]["display_text"] == "Stearil alkol 3944 kg."
     assert res.final_text == "Stearil alkol 3944 kg." and res.error is None
-    assert [c["name"] for c in res.tool_calls] == ["find_item", "crm_search"]
+    assert [c["name"] for c in res.tool_calls] == ["find_item", "quotations"]
     assert len(res.usages) == 2 and res.usages[0]["tool_calls"][1]["is_error"] is True
     assert res.cost_usd == round(res.usages[0]["cost_usd"] + res.usages[1]["cost_usd"], 6) == done["cost_usd"]
     assert res.last_prompt_tokens == 200 + 11000

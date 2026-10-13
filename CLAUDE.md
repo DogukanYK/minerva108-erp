@@ -860,7 +860,8 @@ seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `lo
   `GUIDE_MAX_CHARS=4500`, konu başına `HELP_DOC_MAX_CHARS=2800` testle kilitli) ·
   `help_docs.py` (DB'siz rehber yükleme + `search_help` araması: id tam eşleşme,
   TR-katlı ağırlıklı puan, ≤2 konu tam metin + ≤4 aday; birinci konu kırpılmaz) ·
-  `tools.py` + `handlers.py` (15 araç,
+  `tools.py` + `handlers.py` (ürün/lot/reçete/üretim/tedarikçi/stok/SKT/Drive/
+  `search_help`) + `handlers_ops.py` (operasyon araçları, aşağıda) — 29 araç,
   `REGISTRY` ada göre sıralı, strict şema, araç başına any-of izin, her araç kendi
   `SessionLocal()`'ını thread'de açar, çıktı ≤ `MAX_RESULT_CHARS`) · `budget.py`
   (`PRICES`, `compute_cost`, ay/gün toplamları TR takvimde, `check_budget`,
@@ -875,6 +876,28 @@ seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `lo
   Alembic `b4d6f8a0c2e4`); yetki kategorisi `assistant.use` (iç roller True, Distributor
   False; override'lı hesaplara `_backfill_perm_assistant` sentinel'i dağıtır).
   SDK yalnız sohbet ucunda TEMBEL import edilir (`api_main` import'u `anthropic`'i yüklemez).
+- **Okuma kapsamı — "her şeyi okusun" (13.10.2026 kullanıcı kararı).** `handlers_ops.py`
+  16 salt-okur araç: `deliveries` (kargo bekleyen = Teslimat sayfasının kuyruğu; onay
+  bekleyen proforma YALNIZ SuperAdmin), `product_returns`, `b2b_orders` (liste / teklif no
+  ya da `SIP-<id>`; `core.b2b_orders.list_orders` + `order_detail`), `quotations`,
+  `qc_pending`, `outsourcing_jobs` (`FS-<id>`; gerçek kart adı motorun kuralıyla yalnız
+  `outsourcing.mapping`), `stock_movements`, `consumption` (`routers.reports.usage_between`
+  — top-usage ucu da artık onu çağırır; iptal edilen üretim + fason sevki hariç, fason
+  fiilî tüketimi dahil), `month_end_stock` (`report_monthly_stock`: dondurulmuş kayıt ya da
+  canlı), `production_capacity` (`core.production_sim.simulate`), `retention_samples`,
+  `sample_analyses`, `trendyol_orders` (komisyon yalnız `can_profit`), `shopify_orders`,
+  `influencer_overview`, `reviews_overview`. Her araç sistemdeki uçla AYNI izni ister ve
+  mevcut motoru çağırır (ikinci hesap kopyası YOK). **Veri sınırı "yalnız işin verisi":**
+  kişisel İLETİŞİM verisi (telefon, e-posta, adres, VKN/T.C.) hiçbir araçtan çıkmaz; alıcı/
+  müşteri firma (yoksa ad) olarak görünür; iade eden, formu dolduran, defterde işlemi yapan,
+  creator ve yorumcu kimliği çıkmaz; B2B tutar/ödeme tutarı yalnız `b2b.view` (izinsize ödeme
+  kapısı yalnız evet/hayır), banka/IBAN, imza görseli ve belge özeti hiç çıkmaz.
+  **CRM ve PDKS araçları (`crm_search`, `my_pdks_today`) KALDIRILDI** — personel devam
+  kaydı ve müşteri kişileri modele gönderilmez; asistan bu sorularda ilgili sayfayı
+  önerir (PDKS nasıl-yapılır rehberi `05_…` kalır: kişisel veri içermez). Yeni araç
+  eklerken `tests/test_assistant_ops_tools.py::SECRETS` kalıbıyla "iletişim sızmaz"
+  testini yaz; B2B/fason araç testleri `tests/test_assistant_ops_{b2b,outsourcing}.py`
+  (o modüllerin `world` fikstürünü içe aktarır — aynı ad, ayrı dosya).
 - **Rehber `search_help` aracında, önekte DEĞİL.** 13.10.2026 `count_tokens` ölçümü:
   önek 19.661 token (SSS bloğu 14.196, araçlar 3.533, kurallar 1.924; Türkçe ≈1,8
   karakter/token), soğuk 1h yazma ≈0,16 $ → konu metinleri araca taşındı, önek ≈7K
@@ -920,7 +943,8 @@ seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `lo
   `max_tokens` %2'yi geçerse `max_output_tokens`'ı yükselt; soğuk 1h yazmaları artarsa
   TTL'i gözden geçir. Beklenen: ay ≈ 30 $ (günde ~30 soru).
 - **Test.** SDK tamamen sahte (`tests/assistant_fakes.py`, ağ YOK, gerçek anahtar
-  gerekmez); `tests/test_assistant_{tools,runner,api,budget_history,rbac,widget}.py`.
+  gerekmez); `tests/test_assistant_{tools,runner,api,budget_history,rbac,widget}.py` +
+  `tests/test_assistant_ops_{tools,b2b,outsourcing}.py`.
   Deploy öncesi canlı `.env`'e `ANTHROPIC_API_KEY` eklenir (sohbete yapıştırılmaz);
   tablolar `init_db()` ile gelir, alembic için `stamp head`.
 
