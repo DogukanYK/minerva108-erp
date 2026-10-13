@@ -94,10 +94,16 @@ def test_registry_fourteen_tools_sorted_strict_and_stable():
         assert sch["type"] == "object" and sch["additionalProperties"] is False
         assert set(sch["required"]) == set(sch["properties"]), s["name"]
         for key, prop in sch["properties"].items():
+            if "anyOf" in prop:
+                # boş bırakılabilir seçim listesi: string enum + null
+                kinds = [b["type"] for b in prop["anyOf"]]
+                assert kinds == ["string", "null"], (s["name"], key)
+                assert prop["anyOf"][0]["enum"] and None not in prop["anyOf"][0]["enum"]
+                continue
             t = prop["type"]
             assert isinstance(t, str) or (isinstance(t, list) and "null" in t), (s["name"], key)
-            if "enum" in prop:
-                assert None in prop["enum"]
+            # API, liste tipi + enum birleşimini 400'le reddeder (13.10.2026 canlı)
+            assert not ("enum" in prop and isinstance(t, list)), (s["name"], key)
         assert s["description"].strip()
     # byte-aynı ve dışarıya verilen kopya mutasyona kapalı
     a = json.dumps(tool_specs(), ensure_ascii=False)

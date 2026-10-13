@@ -325,6 +325,9 @@ async def _call_model(state: _State, client, settings, emit: Emit):
         wants_fold = ((not _FOLD_SYSTEM) and _FOLD_REQUIRED in text
                       and any(m in text for m in _FOLD_MARKERS))
         if not (wants_safe or wants_fold):
+            # Gövde loga düşmezse teşhis canlıda yeniden istek atmayı gerektirir
+            # (13.10.2026 araç şeması 400'ü böyle bulundu).  Anahtar gövdede yok.
+            print(f"[assistant] API 400: {str(e)[:500]}", file=sys.stderr)
             raise _Failed("api_error", f"{ERROR_MESSAGES['api_error']} (400)")
         if wants_safe:
             _SAFE_MODE = True

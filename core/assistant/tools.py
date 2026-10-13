@@ -124,7 +124,11 @@ def _i_opt(desc: str) -> dict:
 
 
 def _enum_opt(desc: str, values: Tuple[str, ...]) -> dict:
-    return {"type": ["string", "null"], "enum": list(values) + [None], "description": desc}
+    # API, `type: ["string","null"]` + `enum` birleşimini REDDEDER (400 "Enum value
+    # ... does not match declared type", 13.10.2026 canlıda) → boş bırakılabilir
+    # seçim listesi anyOf ile yazılır.
+    return {"anyOf": [{"type": "string", "enum": list(values)}, {"type": "null"}],
+            "description": desc}
 
 
 def _schema(props: Dict[str, dict]) -> dict:

@@ -932,7 +932,7 @@
         boot = d;
         dailyRemaining = (d.daily_remaining_usd != null) ? Number(d.daily_remaining_usd) : null;
         buildDom();
-        ui.sub.textContent = (d.model_label || d.model || '') + ' · yalnız okuma';
+        ui.sub.textContent = 'yalnız okuma';   // model adı lab'a gösterilmez (kullanıcı kararı 13.10.2026)
         updateFooter();
         if (!d.enabled) setComposer(false, d.reason || 'Minerva Asistan şu anda kapalı.');
         var saved = parseInt(ssGet(SS_CONV) || '', 10);
