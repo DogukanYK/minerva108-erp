@@ -236,6 +236,7 @@
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
   <script src="/static/assistant.js?v=4" defer></script>
+  {% if can('assistant','use') %}<script src="/static/belge-oku.js?v=1" defer></script>{% endif %}
 </head>
 <body>
 
@@ -327,6 +328,11 @@
         <h1 class="page-title">Mal Kabul</h1>
         <p class="page-subtitle">Hammadde ve ambalaj kabulü, lot takibi ve depo stok durumu.</p>
       </div>
+
+      <!-- ── Belgeden doldur (Minerva Asistan · Belge Oku, 13.10.2026) — fatura /
+           irsaliye / CoA okunur, satır "Forma aktar" ile aşağıdaki form dolar;
+           kaydı kullanıcı "Kabul Et ve Kaydet" ile yapar (asistan kayıt yazmaz). ── -->
+      {% if can('assistant','use') %}<div id="recvDocHost" style="margin-bottom:1.25rem;"></div>{% endif %}
 
       <!-- ── Yeni Mal Kabul Formu ── -->
       <div class="form-card">
@@ -496,6 +502,14 @@
     document.getElementById('searchInput').addEventListener('input', renderInventory);
 
     /* ── Dropdown'ları doldur ── */
+    // defer'li yardımcılar (trSortBy, showToast) bu satır içi betikten SONRA
+    // çalışır; liste fetch'i onlardan önce dönerse açılır listeler boş kalıyordu
+    // (13.10.2026, e2e'de yakalandı) → kullanmadan önce DOMContentLoaded beklenir.
+    const domReady = new Promise(res => {
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', res, { once: true });
+      else res();
+    });
+
     async function loadDropdowns() {
       try {
         // /api/items 30sn cache'li (static/items-cache.js); defer-loaded helper
@@ -507,6 +521,7 @@
           itemsP,
           fetch('/api/suppliers'),
         ]);
+        await domReady;
         allItems = items;
         const suppliers = await suppRes.json();
 
@@ -532,7 +547,7 @@
           o.value = s.id; o.textContent = s.name;
           suppSel.appendChild(o);
         });
-      } catch { showToast('Ürün/tedarikçi listesi yüklenemedi.'); }
+      } catch { await domReady; showToast('Ürün/tedarikçi listesi yüklenemedi.'); }
     }
 
     /* ── Ürün seçilince birim güncelle + varsayılan tedarikçiyi yansıt ── */
@@ -834,9 +849,51 @@
       catch { showToast('Çıkış sırasında hata oluştu.'); this.disabled = false; }
     });
 
+    /* ── Belgeden doldur: Belge Oku satırı → form (kayıt yine "Kabul Et ve Kaydet") ── */
+    function recvFillFromDoc(doc, line, choice) {
+      const sel = document.getElementById('recvItem');
+      const supp = document.getElementById('recvSupplier');
+      if (choice.itemId) {
+        const o = recvEnsureOption(choice.itemId, { name: choice.itemName, unit: choice.itemUnit });
+        if (o) { sel.value = String(choice.itemId); sel.dispatchEvent(new Event('change')); }
+      } else {
+        sel.value = '';
+        sel.dispatchEvent(new Event('change'));
+      }
+      if (choice.supplierId && [...supp.options].some(o => o.value === String(choice.supplierId))) {
+        supp.value = String(choice.supplierId);
+        supp.dispatchEvent(new Event('change'));
+      }
+      document.getElementById('recvLot').value = line.lot || '';
+      document.getElementById('recvExpiry').value = line.expiry_iso || '';
+      document.getElementById('recvQty').value = choice.qty != null ? choice.qty : '';
+      document.getElementById('receiveForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const notes = [];
+      if (!choice.itemId) notes.push('kartı seçin');
+      if (choice.itemId && choice.qty == null && line.quantity != null) notes.push('miktarı kart birimine çevirin');
+      if (!line.expiry_iso) notes.push('SKT\'yi girin');
+      showToast(`Satır ${line.index + 1} forma aktarıldı` + (notes.length ? ` — ${notes.join(', ')}` : '') +
+                '. Kontrol edip "Kabul Et ve Kaydet"e basın.', notes.length ? 'info' : 'success', 6000);
+    }
+
     /* ── Init ── */
-    loadDropdowns();
+    const dropdownsReady = loadDropdowns();
     loadInventory();
+    document.addEventListener('DOMContentLoaded', () => {
+      const host = document.getElementById('recvDocHost');
+      if (!host || !window.M108Doc) return;
+      const pending = window.M108Doc.takePendingReceive();   // /asistan/belge → "Mal Kabul'e aktar"
+      window.M108Doc.mount(host, {
+        context: 'receiving',
+        docId: pending ? pending.doc : null,
+        onUseLine: recvFillFromDoc,
+        onLoaded: doc => {
+          if (!pending) return;
+          const line = (doc.lines || []).find(l => l.index === pending.line);
+          if (line) dropdownsReady.then(() => recvFillFromDoc(doc, line, pending.choice || {}));
+        },
+      });
+    });
   </script>
 
 </body>

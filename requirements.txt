@@ -23,3 +23,7 @@ httpx==0.28.1
 anthropic==0.125.0
 pypdf==5.1.0
 segno==1.6.1
+# Belge Oku (core/assistant/documents.py) fotoğrafı küçültür.  reportlab zaten
+# getirir; doğrudan import edildiği için açık yazıldı.  Sürüm SABİTLENMEZ:
+# Pillow 12 Python 3.9'u desteklemez (Mac test kapısı 3.9, canlı 3.12).
+pillow>=10

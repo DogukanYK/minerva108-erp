@@ -11,7 +11,10 @@
  *   • Raporlar → Tedarikçi Fiyatları paneli → "Fiyat ekle" / satır kalemi
  *
  *   SupplierPriceForm.mount(container, {mode: 'create'|'edit', row?,
- *     supplierId?, supplierName?, item?: {id, name, unit}, onSaved(row), onCancel()})
+ *     supplierId?, supplierName?, item?: {id, name, unit}, prefill?, onSaved(row), onCancel()})
+ *   `prefill` (yalnız create; Belge Oku → "Fiyatı kaydet", 13.10.2026): {unit_price,
+ *   currency, price_unit, package_size, quoted_at, note, vat_included, vat_rate,
+ *   source_label} — alanlar dolu gelir, kullanıcı kontrol edip KENDİSİ kaydeder.
  *   `item` verilirse malzeme sabittir (Ürünler → kart → "Tedarikçi tercihi"
  *   satırındaki "fiyat ekle" kısayolu: kart + tedarikçi baştan belli).
  *
@@ -251,6 +254,24 @@
     f('vatrate').value = edit && row.vat_rate != null ? row.vat_rate : '';
     fillUnits();
 
+    // Belge Oku önerisi — yalnız yeni fiyatta; geçersiz değer sessizce atlanır
+    var pre = !edit && opts.prefill ? opts.prefill : null;
+    if (pre) {
+      if (pre.unit_price != null && isFinite(Number(pre.unit_price))) f('price').value = pre.unit_price;
+      if (['USD', 'EUR', 'TRY'].indexOf(String(pre.currency || '').toUpperCase()) >= 0) {
+        f('currency').value = String(pre.currency).toUpperCase();
+      }
+      if (pre.package_size != null && isFinite(Number(pre.package_size))) f('pkg').value = pre.package_size;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(pre.quoted_at || ''))) f('date').value = pre.quoted_at;
+      if (pre.note) f('note').value = String(pre.note).slice(0, 2000);
+      if (pre.vat_included === true) f('vat').value = '1';
+      else if (pre.vat_included === false) f('vat').value = '0';
+      if (pre.vat_rate != null && isFinite(Number(pre.vat_rate))) f('vatrate').value = pre.vat_rate;
+      if (pre.price_unit && [].some.call(f('unit').options, function (o) { return o.value === pre.price_unit; })) {
+        f('unit').value = pre.price_unit;
+      }
+    }
+
     if (!fixedItem) {
       var itemSel = f('item'), search = f('search');
       var renderItems = function () {
@@ -324,6 +345,7 @@
         vat_included: vatSel === '1' ? true : vatSel === '0' ? false : null,
         vat_rate: vatRate,
       };
+      if (pre && pre.source_label) body.source_label = String(pre.source_label).slice(0, 120);
       var url, method;
       if (edit) {
         url = '/api/supplier-prices/' + row.id; method = 'PUT';

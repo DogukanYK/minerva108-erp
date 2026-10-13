@@ -75,6 +75,8 @@ from core.assistant.budget import PRICES, compute_cost, usage_fields
 from core.assistant.tools import ToolContext, ToolResult, run_tool
 
 TURN_DEADLINE = 150.0
+WRITE_MAX_TOKENS = 6000      # metin yazma modu: ürün açıklaması/çeviri Q&A'nın 1500 sınırına sığmaz
+MODES = ("ask", "write")
 BETAS = ["server-side-fallback-2026-07-01", "thinking-binding-controls-2026-08-01"]
 BLOCK_BINDING = {"prefix_mismatch_behavior": "drop_block"}
 TOOL_CHOICE = {"type": "auto"}
@@ -159,13 +161,14 @@ def _fold_system(messages: List[dict]) -> List[dict]:
 
 
 def build_params(settings, messages: List[dict], *, safe_mode: bool = False,
-                 fold_system: bool = False) -> dict:
+                 fold_system: bool = False, max_tokens: Optional[int] = None) -> dict:
     """`client.beta.messages.stream(**params)` sözlüğü.  Önek (tools, system)
     ayarlardan/geçmişten bağımsız, her çağrıda byte-aynı.  `safe_mode` beta
-    alanlarını düşürür; `fold_system` sistem mesajlarını user'a katlar."""
+    alanlarını düşürür; `fold_system` sistem mesajlarını user'a katlar.
+    `max_tokens` (yazma modu) önbelleğe dokunmaz — önek tools + system'dir."""
     params: Dict[str, Any] = {
         "model": settings.model,
-        "max_tokens": int(settings.max_output_tokens),
+        "max_tokens": max(int(settings.max_output_tokens), int(max_tokens or 0)),
         "system": prompt.system_blocks(settings.cache_ttl),
         "tools": T.tool_specs(),
         "tool_choice": dict(TOOL_CHOICE),
@@ -182,9 +185,11 @@ def build_params(settings, messages: List[dict], *, safe_mode: bool = False,
     return params
 
 
-def context_message(ctx: ToolContext, settings=None, today: Optional[_dt.datetime] = None) -> dict:
+def context_message(ctx: ToolContext, settings=None, today: Optional[_dt.datetime] = None,
+                    mode: str = "ask") -> dict:
     """Soru mesajından SONRA gelen `role:"system"` oturum bağlamı — önbelleğe
-    dokunmaz, user metninden sahtelenemez."""
+    dokunmaz, user metninden sahtelenemez.  `mode="write"` → "Mod: metin
+    yazma" satırı (SYSTEM_RULES'taki yazma kuralları devreye girer)."""
     now = today or tr_now()
     allowed = T.allowed_tools(ctx)
     denied = T.denied_tools(ctx)
@@ -196,6 +201,8 @@ def context_message(ctx: ToolContext, settings=None, today: Optional[_dt.datetim
         "Kullanamadığı araçlar (sebep): " + (", ".join(f"{n} ({p} yok)" for n, p in denied) or "—"),
         "Finans verisi: " + ("evet" if ctx.can_finance else "hayır"),
     ]
+    if mode == "write":
+        parts.append("Mod: metin yazma (taslak metin üret; 150 kelime sınırı yok)")
     return {"role": "system", "content": "Oturum bağlamı — " + " · ".join(parts)}
 
 
@@ -272,9 +279,10 @@ def _partial_snapshot(stream):
 # ─── Çalışma durumu ──────────────────────────────────────────────────────────
 
 class _State:
-    def __init__(self, messages: List[dict], rows: List[dict]):
+    def __init__(self, messages: List[dict], rows: List[dict], max_tokens: Optional[int] = None):
         self.messages = messages
         self.rows = rows
+        self.max_tokens = max_tokens       # yazma modu: WRITE_MAX_TOKENS
         self.res = TurnResult(rows=rows)
         self.pending_tool_use = False      # son asistan satırı cevapsız tool_use taşıyor
 
@@ -317,7 +325,8 @@ async def _stream_once(state: _State, client, params: dict, emit: Emit, settings
 async def _call_model(state: _State, client, settings, emit: Emit):
     """Bir API çağrısı; tek seferlik safe-mode yinelemesi burada."""
     global _SAFE_MODE, _FOLD_SYSTEM
-    params = build_params(settings, state.messages, safe_mode=_SAFE_MODE, fold_system=_FOLD_SYSTEM)
+    params = build_params(settings, state.messages, safe_mode=_SAFE_MODE, fold_system=_FOLD_SYSTEM,
+                          max_tokens=state.max_tokens)
     try:
         return await _stream_once(state, client, params, emit, settings)
     except anthropic.BadRequestError as e:
@@ -339,7 +348,8 @@ async def _call_model(state: _State, client, settings, emit: Emit):
             print(f"[assistant] UYARI: model '{settings.model}' role:system mesajını desteklemiyor; "
                   "oturum bağlamı user mesajına katlanıyor (önek değişti, önbellek yeniden yazılır). "
                   "Ayarlardan destekleyen bir model seçin.", file=sys.stderr)
-        params = build_params(settings, state.messages, safe_mode=_SAFE_MODE, fold_system=_FOLD_SYSTEM)
+        params = build_params(settings, state.messages, safe_mode=_SAFE_MODE, fold_system=_FOLD_SYSTEM,
+                              max_tokens=state.max_tokens)
         try:
             return await _stream_once(state, client, params, emit, settings)
         except anthropic.APIStatusError as e2:
@@ -487,21 +497,22 @@ async def _emit_done(res: TurnResult, emit: Emit) -> None:
 async def run_turn(*, client, settings, ctx: ToolContext, history: List[dict], question: str,
                    emit: Emit, display_question: Optional[str] = None,
                    today: Optional[_dt.datetime] = None,
-                   deadline: Optional[float] = None) -> TurnResult:
+                   deadline: Optional[float] = None, mode: str = "ask") -> TurnResult:
     """Bir soru: `history` (api_messages) + soru + bağlam → döngü → TurnResult.
     DB'ye DOKUNMAZ (araçlar kendi oturumunu thread'de açar; kalıcılık router'ın).
     `display_question`: rotasyon tohumu soruya katlanmışsa widget'a görünecek
     temiz soru.  Her durumda ya `done` ya `error` olayı gelir (dış iptalde de
     `error`/timeout — CancelledError dışarı çıkmaz)."""
     question_msg = {"role": "user", "content": [{"type": "text", "text": question}]}
-    ctx_msg = context_message(ctx, settings, today)
+    mode = mode if mode in MODES else "ask"
+    ctx_msg = context_message(ctx, settings, today, mode)
     messages = list(history) + [question_msg, ctx_msg]
     rows = [
         {"role": "user", "kind": "question", "content": question_msg["content"],
          "display_text": display_question if display_question is not None else question},
         {"role": "system", "kind": "context", "content": ctx_msg["content"], "display_text": None},
     ]
-    state = _State(messages, rows)
+    state = _State(messages, rows, WRITE_MAX_TOKENS if mode == "write" else None)
     res = state.res
     try:
         await asyncio.wait_for(_run(state, client, settings, ctx, emit),

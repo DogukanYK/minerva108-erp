@@ -1,0 +1,11 @@
+# Belge Oku (tedarikçi belgesini okut → Mal Kabul / SKT / fiyat formu) ve Metin Yaz (açıklama, çeviri, e-posta)
+Yetki: assistant.use (kayıt için ilgili formun yetkisi: inventory.receive, inventory.adjust, suppliers.prices)
+Sayfa: /asistan/belge, /receiving ("Belgeden doldur"), /asistan/yaz
+
+1. Belge Oku: sol menü "Yapay Zekâ" → "Belge Oku" (ya da Mal Kabul sayfasının üstündeki "Belgeden doldur"). "Dosya seç" ya da telefonda "Fotoğraf çek" ile fatura, proforma, irsaliye ya da analiz sertifikası (CoA) yükle: PDF, JPG ya da PNG, en çok 10 MB ve 20 sayfa.
+2. Minerva belgeyi okur (genelde 10–40 sn): tedarikçi, belge no / tarih, toplamlar ve her satır için malzeme, lot, SKT, miktar, birim fiyat. Her satırda "Sistemdeki kart" seçicisi önerilen kartı gösterir (İngilizce ad Türkçe kartla eşleşir: Glycerin → Gliserin; aynı malzemenin birden çok firma kartı varsa belgedeki firmanın kartı seçilir); yanlışsa adaylardan seç. Uyarılar (SKT okunamadı / geçmiş, lot sistemde var, birim farklı, toplam uyuşmuyor) satırın altında yazar.
+3. Satır eylemleri: "Mal Kabul'e aktar" (Mal Kabul sayfasında "Forma aktar") kartı, tedarikçiyi, lotu, SKT'yi ve kart birimine çevrilmiş miktarı formda doldurur — kontrol edip "Kabul Et ve Kaydet"e sen basarsın. "SKT'yi düzelt" lot sistemde kayıtlıysa İzlenebilirlik sayfasını açar; "Bu tarihi SKT olarak kaydet" ile kaydedilir. "Fiyatı kaydet" tedarikçi fiyat formunu belgedeki fiyatla doldurur.
+4. "Bu belge hakkında sor": Asistan sayfasında belge, ilk sorunla birlikte gönderilir (ör. "bu faturadaki lotlar sistemde var mı?").
+5. Metin Yaz: sol menü "Yapay Zekâ" → "Metin Yaz". Tür seç (Amazon açıklaması, web/Shopify metni, etiket metni, çeviri, müşteri e-postası, WhatsApp mesajı), alanları doldur, "Taslak yaz". Ürün metinlerinde INCI listesini gir; INCI'de karşılığı olmayan bileşen/koku iddiası ve tıbbi iddia yazılmaz, metin kurallara göre denetlenir. Cevabın altındaki "Kopyala" ile al; düzeltme için kutuya "daha kısa yap" gibi yaz.
+
+Dikkat: Asistan hiçbir kaydı kendisi yazmaz; okuduğu değerler kontrol edilmeden kaydedilmemelidir. CoA'daki "retest" tarihi SKT değildir. Kg ↔ litre çevrilmez, miktarı elle çevir. Aynı belge aynı panelde tekrar yüklenirse yeniden okunmaz (ücretsiz). Belge dosyası saklanmaz, yalnız okunan alanlar saklanır. Reçete miktarı, maliyet ve tedarikçi müşteri metnine girmez.

@@ -90,13 +90,14 @@ OPS_TOOLS = {"deliveries", "product_returns", "b2b_orders", "quotations", "qc_pe
 
 
 def test_registry_tools_sorted_strict_and_stable():
-    # 13.10.2026: CRM ve PDKS araçları KALDIRILDI (kullanıcı kararı), 16 operasyon aracı eklendi
-    assert len(TOOL_NAMES) == 29
+    # 13.10.2026: CRM ve PDKS araçları KALDIRILDI (kullanıcı kararı), 16 operasyon aracı +
+    # metin yazma modunun check_product_text'i eklendi
+    assert len(TOOL_NAMES) == 30
     assert TOOL_NAMES == tuple(sorted(TOOL_NAMES))
     assert set(TOOL_NAMES) == {"find_item", "item_detail", "find_lot", "find_recipe", "recipe_detail",
                                "production_summary", "recent_productions", "find_supplier",
                                "supplier_detail", "stock_gaps", "expiring_lots", "drive_search",
-                               "search_help"} | OPS_TOOLS
+                               "search_help", "check_product_text"} | OPS_TOOLS
     assert not {"my_pdks_today", "crm_search"} & set(TOOL_NAMES)
     assert not any(c in ("crm", "pdks") for n in TOOL_NAMES for c, _ in REGISTRY[n].perms)
     specs = tool_specs()
@@ -150,11 +151,11 @@ def test_prompt_hash_guide_block_limits_and_system_blocks():
     assert P.HELP_INTRO is not None and P.HELP_INTRO.id == "giris"
     assert P.HELP_INTRO.body in guide
     assert "Dashboard → /" in guide and "Panel değiştir" in guide
-    # Konu dizini: docs 01..17'nin HEPSİ, dosya sırasıyla, satır başına "- id: başlık"
+    # Konu dizini: docs 01..18'in HEPSİ, dosya sırasıyla, satır başına "- id: başlık"
     stems = sorted(f.stem for f in DOCS_DIR.glob("*.md") if not f.name.startswith("00_"))
     assert [d.filename for d in P.HELP_TOPICS] == [f"{st}.md" for st in stems]
     assert [d.id for d in P.HELP_TOPICS] == [HD.doc_id(st) for st in stems]
-    assert len(P.HELP_TOPICS) == 17 and P.HELP_TOPICS[1].id == "lot_tasima"
+    assert len(P.HELP_TOPICS) == 18 and P.HELP_TOPICS[1].id == "lot_tasima"
     lines = [ln for ln in guide.splitlines() if ln.startswith("- ")]
     assert lines == [f"- {d.id}: {d.title}" for d in P.HELP_TOPICS]
     for d in P.HELP_TOPICS:
@@ -244,6 +245,8 @@ HELP_CASES = {
     "şahit numune": "sahit_numune_dolabi",
     "şahit numune imha": "sahit_numune_dolabi",
     "mal kabul": "mal_kabul",
+    "faturayı okut mal kabule aktar": "belge_oku_metin_yaz",
+    "amazon ürün açıklaması yaz": "belge_oku_metin_yaz",
     "hammadde girişi nasıl yapılır": "mal_kabul",
     "teslimat": "teslimat_iade",
     "müşteriden gelen iade": "teslimat_iade",
@@ -316,7 +319,8 @@ def test_search_help_no_match_weak_match_and_short_query():
     assert p == {"query": "uzay gemisi rotası", "topics": [], "others": [], "note": "rehberde bu konu yok"}
     weak = _help("fatura kes")                      # tek seyrek gövde eşleşmesi → konu değil
     assert weak["topics"] == [] and weak["note"] == "rehberde bu konu yok"
-    assert [o["id"] for o in weak["others"]] == ["teslimat_iade"]
+    # Belge Oku rehberi de "fatura"yı anar (fatura okutma) — ikisi de yalnız aday
+    assert [o["id"] for o in weak["others"]] == ["belge_oku_metin_yaz", "teslimat_iade"]
     with pytest.raises(H.ToolError):
         _help(" a ")
     assert HD.query_tokens("nasıl yapılır") == []

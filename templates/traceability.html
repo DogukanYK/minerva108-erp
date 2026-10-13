@@ -1121,7 +1121,62 @@
       document.getElementById('lotSearchInput').value = lot;
       const iid = parseInt(p.get('item_id') || '', 10);
       searchLot(iid > 0 ? iid : undefined);
+      // Belge Oku → "SKT'yi düzelt": &inv=<lot satırı>&skt=YYYY-AA-GG — öneri çubuğu;
+      // kaydı kullanıcı yapar (PATCH /api/inventory/lots/{id}/expiry, audit'li).
+      const skt = p.get('skt') || '', inv = parseInt(p.get('inv') || '', 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(skt) && inv > 0) showSktSuggestion(inv, skt, lot, iid > 0 ? iid : undefined);
     })();
+
+    function showSktSuggestion(invId, iso, lot, itemId) {
+      const anchor = document.getElementById('lotChoiceCard');
+      if (!anchor || document.getElementById('sktSuggestBar')) return;
+      const bar = document.createElement('div');
+      bar.id = 'sktSuggestBar';
+      bar.setAttribute('role', 'status');
+      bar.style.cssText = 'display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;margin:0 0 1rem;padding:.75rem 1rem;' +
+        'border:1px solid #e8e3d9;border-left:3px solid var(--gold);border-radius:10px;background:var(--white);font-size:.86rem;';
+      const ic = document.createElement('i');
+      ic.className = 'bi bi-file-earmark-text';
+      ic.style.color = 'var(--gold)';
+      const [y, m, d] = iso.split('-');
+      const txt = document.createElement('span');
+      txt.textContent = `Belge Oku: ${lot} lotu için belgedeki SKT ${d}.${m}.${y}.`;
+      bar.append(ic, txt);
+      if (window.can && window.can('inventory', 'adjust')) {
+        const save = document.createElement('button');
+        save.type = 'button';
+        save.className = 'skt-save';
+        save.textContent = 'Bu tarihi SKT olarak kaydet';
+        save.addEventListener('click', async () => {
+          save.disabled = true;
+          try {
+            const res = await fetch(`/api/inventory/lots/${invId}/expiry`, { method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiry_date: iso }) });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) { showToast(typeof data.detail === 'string' ? data.detail : 'SKT kaydedilemedi.'); save.disabled = false; return; }
+            showToast(data.changed ? 'SKT kaydedildi.' : 'SKT zaten bu tarih.', 'success');
+            bar.remove();
+            searchLot(itemId);
+            loadExpiryIssues();
+            loadExpiring();
+          } catch { showToast('Sunucuya bağlanılamadı.'); save.disabled = false; }
+        });
+        bar.append(save);
+      } else {
+        const n = document.createElement('span');
+        n.style.color = '#6b7280';
+        n.textContent = 'SKT düzeltmek için "inventory.adjust" yetkisi gerekir.';
+        bar.append(n);
+      }
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Kapat');
+      close.style.cssText = 'margin-left:auto;border:0;background:transparent;color:#9ca3af;cursor:pointer;font-size:1rem;';
+      close.textContent = '×';
+      close.addEventListener('click', () => bar.remove());
+      bar.append(close);
+      anchor.parentNode.insertBefore(bar, anchor);
+    }
 
     /* ── Logout ── */
     document.getElementById('logoutBtn').addEventListener('click', async function () {

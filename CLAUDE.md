@@ -857,12 +857,13 @@ seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `lo
   `client.py` (süreç başına TEK `AsyncAnthropic`, anahtar YALNIZ `ANTHROPIC_API_KEY`
   env'den çağrı anında; `max_retries=1`, connect 5 s / read 60 s) · `prompt.py`
   (DONDURULMUŞ Türkçe kurallar + `<rehber>` bloğu = `00_giris.md` gövdesi (menü
-  haritası + panel değiştirme) + 01..17 konu DİZİNİ `- id: başlık` → `SYSTEM_BLOCKS`;
+  haritası + panel değiştirme) + 01..18 konu DİZİNİ `- id: başlık` → `SYSTEM_BLOCKS`;
   `GUIDE_MAX_CHARS=4500`, konu başına `HELP_DOC_MAX_CHARS=2800` testle kilitli) ·
   `help_docs.py` (DB'siz rehber yükleme + `search_help` araması: id tam eşleşme,
   TR-katlı ağırlıklı puan, ≤2 konu tam metin + ≤4 aday; birinci konu kırpılmaz) ·
   `tools.py` + `handlers.py` (ürün/lot/reçete/üretim/tedarikçi/stok/SKT/Drive/
-  `search_help`) + `handlers_ops.py` (operasyon araçları, aşağıda) — 29 araç,
+  `search_help`) + `handlers_ops.py` (operasyon araçları, aşağıda) + `handlers_write.py`
+  (`check_product_text`, Metin Yaz) — 30 araç,
   `REGISTRY` ada göre sıralı, strict şema, araç başına any-of izin, her araç kendi
   `SessionLocal()`'ını thread'de açar, çıktı ≤ `MAX_RESULT_CHARS`) · `budget.py`
   (`PRICES`, `compute_cost`, ay/gün toplamları TR takvimde, `check_budget`,
@@ -930,6 +931,47 @@ seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `lo
   ve kenarlık kutudan gelir (`bareField` satır içi !important). **TUZAK — undo-watch.js
   düğmesi** satır içi `right:1.25rem; z-index:9999`: panel açıkken gönder düğmesini örtüyordu
   → `body.m108-ai-sheet-on #undoFloatBtn` ile sola kaydırılır (mobilde gizlenir).
+- **Belge Oku (13.10.2026).** `core/assistant/documents.py` + `POST /api/assistant/documents`
+  (multipart `file`; `assistant.use`; kullanıcı başı 10/dk, `MAX_ACTIVE_TURNS` sohbetle ortak;
+  NDJSON `meta` → `ping` → `done{document, reused}`|`error`). `prepare_file`: `sniff_media`
+  → pdf/jpg/png, ≤10 MB, PDF ≤20 sayfa (pypdf; şifreli RED), foto Pillow `exif_transpose` →
+  RGB → uzun kenar ≤2576 → JPEG (EXIF atılır). `extract`: DONDURULMUŞ `EXTRACTION_RULES` +
+  `output_config.format` JSON şeması — şemada union/nullable/sayısal kısıt YOK (API sınırı;
+  "bilinmiyor" = boş metin, evet/hayır enum); API format'ı reddederse süreç bir kez formatsıza
+  düşer (`_NO_FORMAT`, `parse_json_text`), SAFE MODE runner'la ortak; iptal/hatada da kısmi
+  kullanım bütçeye yazılır. `match_document` (YALNIZ okur): tedarikçi (normalize /
+  `supplier_key` / alt dizgi / difflib), kart = `score_item` + **belgeye özel `doc_key`**
+  (saflık/kalite/ambalaj eki atılır, EN kimya adı TR yazımına katlanır: "Glycerin 99.5% USP"
+  ↔ GLİSERİN, "Stearic Acid" ↔ STEARİK ASİT, "Sodium Benzoate" ↔ SODYUM BENZOAT — e2e'de
+  yakalandı: eşanlamlı tablosu bunları karşılamıyordu; `material_key` ve grup önerileri
+  DEĞİŞMEZ); eşit adaylarda belgedeki firmanın kartı +5 (lab'ın "her tedarikçi ayrı kart"
+  düzeni); ad eşleşmezse lot no TEK kartta kayıtlıysa o kart (uyarılı), lot başka karttaysa
+  uyarı; birim g↔kg, ml↔l kesin, kg↔l ÇEVRİLMEZ; SKT `parse_expiry` (geçmiş/okunamaz
+  uyarı), CoA retest'i SKT DEĞİL; satır toplamı ↔ belge toplamı. Tablo
+  `assistant_documents` (create_all + Alembic `b917b245c7c5`) YALNIZ çıkarım JSON'u +
+  sha256 tutar — **DOSYA SAKLANMAZ**; aynı kişi + panel + sha256 tekrar yüklenirse model
+  çağrılmaz (`reused`). Maliyet `assistant_usage`'a (`question_preview="Belge: <ad>"`).
+  Sohbete bağ: `ChatIn.document_id` (sahibi + panel, değilse 404) → soru metninin başına
+  `<belge>` sıkı JSON bloğu (ham dosya değil; geçmiş küçük, replay güvenli). **Asistan kayıt
+  YAZMAZ** — `static/belge-oku.js` (`window.M108Doc`; `/asistan/belge` + Mal Kabul
+  "Belgeden doldur", `can('assistant','use')` kapılı) satırı mevcut formlara aktarır: Mal
+  Kabul formu (başka sayfadan sessionStorage `m108doc.recv` → `/receiving`), İzlenebilirlik
+  SKT öneri çubuğu (`?lot=&item_id=&inv=&skt=` → `PATCH /api/inventory/lots/{id}/expiry`),
+  tedarikçi fiyat formu (`SupplierPriceForm` `prefill`; `source_label` "Belge okuma —
+  <dosya>"); kaydı kullanıcı kendi yetkisiyle yapar. Mal Kabul `loadDropdowns` fetch'ten
+  sonra `domReady` bekler — defer'li `trSortBy`/`showToast`'tan önce dönen cevap listeleri
+  boş bırakıyordu (eski yarış, e2e'de yakalandı).
+- **Metin Yaz.** `ChatIn.mode="write"` → oturum bağlamına "Mod: metin yazma" + `max_tokens =
+  max(ayar, WRITE_MAX_TOKENS=6000)` (önek/önbellek değişmez); `SYSTEM_RULES` "## Metin
+  yazma modu" (Amazon/Shopify, etiket, çeviri, e-posta, WhatsApp; INCI'de karşılığı olmayan
+  bileşen/koku iddiası ve tıbbi iddia yok; reçete miktarı, maliyet, tedarikçi, lot müşteri
+  metnine girmez). `check_product_text` (`handlers_write.py`, DB'siz,
+  `core/product_content_rules.validate_card`; INCI verilmediyse INCI'ye bağlı kurallar
+  atlanır + `INCI_NOT_GIVEN`). Biçim kuralı: yalnız **kalın**, liste, `kod` — widget'ın
+  markdown çizicisi italik/tablo çizmez. Şablonlar `static/asistan-page.js` (`KINDS`/
+  `FIELDS`); çok satırlı istekte yalnız ilk satır başlık (`m108-ai-qmore`). Yeni araç =
+  `assistant.js` `TOOL_LABELS` + `TOOL_ACTIVITY` satırı (yoksa cevabın altında ham ad
+  görünür; `test_every_tool_has_a_screen_label_and_activity_line`).
 - **Rehber `search_help` aracında, önekte DEĞİL.** 13.10.2026 `count_tokens` ölçümü:
   önek 19.661 token (SSS bloğu 14.196, araçlar 3.533, kurallar 1.924; Türkçe ≈1,8
   karakter/token), soğuk 1h yazma ≈0,16 $ → konu metinleri araca taşındı, önek ≈7K
@@ -976,7 +1018,8 @@ seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `lo
   TTL'i gözden geçir. Beklenen: ay ≈ 30 $ (günde ~30 soru).
 - **Test.** SDK tamamen sahte (`tests/assistant_fakes.py`, ağ YOK, gerçek anahtar
   gerekmez); `tests/test_assistant_{tools,runner,api,budget_history,rbac,widget}.py` +
-  `tests/test_assistant_ops_{tools,b2b,outsourcing}.py` + `tests/test_assistant_search.py`.
+  `tests/test_assistant_ops_{tools,b2b,outsourcing}.py` + `tests/test_assistant_search.py` +
+  `tests/test_assistant_documents.py`.
   Deploy öncesi canlı `.env`'e `ANTHROPIC_API_KEY` eklenir (sohbete yapıştırılmaz);
   tablolar `init_db()` ile gelir, alembic için `stamp head`.
 

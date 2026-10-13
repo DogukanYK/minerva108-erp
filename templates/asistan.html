@@ -80,8 +80,36 @@
     .aip-mhead { display:none; align-items:center; justify-content:space-between; padding:.55rem .8rem; border-bottom:1px solid var(--aip-line); }
     .aip-histtoggle { display:inline-flex; align-items:center; gap:.4rem; height:34px; padding:0 .7rem; border:1px solid var(--aip-line); border-radius:8px; background:var(--white); color:var(--aip-ink); font:500 .82rem 'Jost',sans-serif; cursor:pointer; }
 
-    /* ── Belge Oku / Metin Yaz ── */
+    /* ── Belge Oku ── */
     .aip-pane { background:var(--white); border:1px solid var(--aip-line); border-radius:12px; padding:1.4rem 1.5rem; color:var(--aip-ink); }
+    .aip-steps { display:flex; gap:.5rem 1.4rem; flex-wrap:wrap; margin:0 0 1rem; padding:0; list-style:none; font-size:.82rem; color:var(--aip-muted); }
+    .aip-steps li { display:flex; align-items:center; gap:.45rem; }
+    .aip-steps b { width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--aip-line2); font-size:.7rem; color:var(--aip-head); }
+
+    /* ── Metin Yaz ── */
+    .aip-write { display:grid; grid-template-columns:340px minmax(0,1fr); gap:1rem; height:calc(100vh - var(--navbar-height) - 12rem); min-height:560px; }
+    .aip-wform { background:var(--white); border:1px solid var(--aip-line); border-radius:12px; padding:1.1rem 1.1rem 1.2rem; overflow-y:auto; color:var(--aip-ink); }
+    .aip-wtitle { margin:0 0 .2rem; font:600 .98rem/1.3 'Jost',sans-serif; color:var(--aip-ink); }
+    .aip-wsub { margin:0 0 .9rem; font-size:.78rem; color:var(--aip-muted); }
+    .aip-field { display:block; margin:0 0 .75rem; }
+    .aip-flabel { display:block; font-size:.72rem; font-weight:600; letter-spacing:.04em; color:var(--aip-muted); margin:0 0 .3rem; }
+    .aip-input, .aip-select, .aip-textarea { width:100%; border:1px solid var(--aip-line2); border-radius:8px; background:var(--white); color:var(--aip-ink); padding:.5rem .65rem; font:400 .86rem 'Jost',sans-serif; }
+    .aip-textarea { min-height:84px; resize:vertical; line-height:1.45; }
+    .aip-input:focus, .aip-select:focus, .aip-textarea:focus { outline:none; border-color:var(--gold); box-shadow:0 0 0 3px rgba(201,172,111,.25); }
+    .aip-fhint { font-size:.72rem; color:var(--aip-muted); margin-top:.25rem; }
+    .aip-kinds { display:grid; grid-template-columns:1fr 1fr; gap:.4rem; margin:0 0 .9rem; }
+    .aip-kind { display:flex; flex-direction:column; align-items:flex-start; gap:.1rem; padding:.5rem .6rem; border:1px solid var(--aip-line); border-radius:9px; background:var(--white); color:var(--aip-ink); font:500 .8rem/1.3 'Jost',sans-serif; text-align:left; cursor:pointer; }
+    .aip-kind i { color:var(--aip-head); }
+    .aip-kind:hover { border-color:var(--gold2); }
+    .aip-kind[aria-pressed="true"] { border-color:var(--gold); background:var(--aip-hover); }
+    .aip-go { display:flex; align-items:center; justify-content:center; gap:.45rem; width:100%; height:40px; border:0; border-radius:9px; background:var(--navy); color:#fff; font:600 .86rem 'Jost',sans-serif; cursor:pointer; }
+    .aip-go:hover { background:var(--navy-dark); }
+    .aip-go:disabled { opacity:.5; cursor:not-allowed; }
+    :root[data-theme="dark"] .aip-go { background:var(--gold); color:#131B40; }
+    .aip-kind:focus-visible, .aip-go:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+    #aipWriteThread { background:var(--white); border:1px solid var(--aip-line); border-radius:12px; overflow:hidden; display:flex; flex-direction:column; min-height:0; color:var(--aip-ink); }
+    .aip-docchip { display:flex; align-items:center; gap:.5rem; margin:.7rem 1.5rem 0; padding:.45rem .7rem; border:1px solid var(--aip-line); border-left:3px solid var(--gold); border-radius:8px; font-size:.8rem; color:var(--aip-ink); background:var(--aip-soft); }
+    .aip-docchip button { margin-left:auto; border:0; background:transparent; color:var(--aip-muted); cursor:pointer; padding:.1rem .3rem; border-radius:6px; }
 
     #toast-container { position:fixed; bottom:1.5rem; right:1.5rem; z-index:9999; display:flex; flex-direction:column; gap:.6rem; }
     .toast-msg { min-width:260px; max-width:360px; padding:.8rem 1rem; border-radius:10px; font-family:'Jost',sans-serif; font-size:.88rem; font-weight:500; box-shadow:0 4px 20px rgba(0,0,0,.12); display:flex; align-items:center; gap:.6rem; }
@@ -97,6 +125,8 @@
       .aip-ask.show-history .aip-history { display:flex; }
       .aip-mhead { display:flex; }
       .user-chip { display:none; }
+      .aip-write { grid-template-columns:1fr; height:auto; }
+      #aipWriteThread { min-height:520px; }
     }
     @media (max-width:575px) { .aip-title { font-size:1.3rem; } .aip-sub { display:none; } .aip-tabs { gap:1rem; } }
   </style>
@@ -105,6 +135,9 @@
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
   <script src="/static/assistant.js?v=4" defer></script>
+  <script src="/static/tr-datetime.js?v=1" defer></script>
+  <script src="/static/supplier-price-form.js?v=5" defer></script>
+  <script src="/static/belge-oku.js?v=1" defer></script>
   <script src="/static/asistan-page.js?v=1" defer></script>
 </head>
 <body>
@@ -178,9 +211,16 @@
       </section>
     </section>
     {% elif ai_tab == 'belge' %}
-    <section class="aip-pane" id="aipDocPane" aria-label="Belge Oku"></section>
+    <section class="aip-pane" aria-label="Belge Oku">
+      <ol class="aip-steps">
+        <li><b>1</b>Fatura, proforma, irsaliye ya da CoA yükleyin</li>
+        <li><b>2</b>Minerva alanları okur, kart ve tedarikçiyle eşleştirir</li>
+        <li><b>3</b>Satırı Mal Kabul'e, SKT düzeltmeye ya da fiyat formuna aktarın — kaydı siz yaparsınız</li>
+      </ol>
+      <div id="aipDocPane"></div>
+    </section>
     {% else %}
-    <section class="aip-pane" id="aipWritePane" aria-label="Metin Yaz"></section>
+    <section class="aip-write" id="aipWritePane" aria-label="Metin Yaz"></section>
     {% endif %}
   </div></main>
   <div id="toast-container" aria-live="polite"></div>

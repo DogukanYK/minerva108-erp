@@ -295,3 +295,58 @@ def test_ai_nav_script_is_idempotent_and_skips_admin_block(tmp_path):
                         capture_output=True, text=True, timeout=30)
     assert r2.returncode == 0 and "Toplam: 0" in r2.stdout
     assert (tmp_path / "templates" / "a.html").read_text(encoding="utf-8") == a
+
+
+# ─── Belge Oku istemcisi (13.10.2026) ────────────────────────────────────────
+
+def test_belge_oku_js_is_safe():
+    path = STATIC / "belge-oku.js"
+    node = shutil.which("node")
+    if node:
+        r = subprocess.run([node, "--check", str(path)], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, r.stderr
+    code = _code(path)
+    assert code.lstrip().startswith("(function ()") and "'use strict'" in code
+    assert "createElement" in code and "textContent" in code
+    assert ".innerHTML" not in code and "insertAdjacentHTML" not in code and "document.write" not in code
+    assert not re.search(r"['\"][^'\"]*\bbtn-", code), "btn-* sınıf adı yasak"
+    for cls in re.findall(r"\.([a-zA-Z][\w-]*)\{", code):
+        assert cls.startswith("m108-doc-"), f"öneksiz CSS sınıfı: {cls}"
+    assert "function isInternalHref(href)" in code and "isInternalHref(href)" in code   # SKT bağlantısı
+    assert "/api/assistant/documents" in code and "getReader" in code
+
+
+def test_pages_wire_the_document_reader():
+    rec = (TPL / "receiving.html").read_text(encoding="utf-8")
+    assert "{% if can('assistant','use') %}<div id=\"recvDocHost\"" in rec
+    assert "{% if can('assistant','use') %}<script src=\"/static/belge-oku.js" in rec
+    assert "function recvFillFromDoc(doc, line, choice)" in rec and "M108Doc.takePendingReceive()" in rec
+    page = (TPL / "asistan.html").read_text(encoding="utf-8")
+    assert "/static/belge-oku.js" in page and "/static/supplier-price-form.js" in page
+    trace = (TPL / "traceability.html").read_text(encoding="utf-8")
+    assert "function showSktSuggestion(invId, iso, lot, itemId)" in trace
+    assert "/api/inventory/lots/${invId}/expiry" in trace
+    spf = (STATIC / "supplier-price-form.js").read_text(encoding="utf-8")
+    assert "opts.prefill" in spf and "body.source_label" in spf
+
+
+def test_every_tool_has_a_screen_label_and_activity_line():
+    # Etiketsiz araç cevabın altında ham adla ("Bakılan: check_product_text") görünür
+    from core.assistant.tools import REGISTRY
+    names = {t.name for t in REGISTRY} if not isinstance(REGISTRY, dict) else set(REGISTRY)
+    code = (STATIC / "assistant.js").read_text(encoding="utf-8")
+
+    def keys(start, end):
+        block = code[code.index(start):code.index(end)]
+        return set(re.findall(r"(\w+): '", block))
+
+    assert keys("var TOOL_LABELS", "var TOOL_ACTIVITY") == names
+    assert keys("var TOOL_ACTIVITY", "var ROTATION_LABELS") == names
+
+
+def test_receiving_waits_for_deferred_helpers_before_filling_lists():
+    # Liste fetch'i defer'li trSortBy/showToast'tan önce dönerse listeler boş kalıyordu
+    rec = (TPL / "receiving.html").read_text(encoding="utf-8")
+    body = rec[rec.index("async function loadDropdowns()"):rec.index("/* ── Ürün seçilince birim")]
+    assert "await domReady;" in body and body.index("await domReady;") < body.index("window.trSortBy(")
+    assert "catch { await domReady; showToast(" in body

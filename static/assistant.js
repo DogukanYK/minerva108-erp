@@ -83,7 +83,8 @@
     stock_movements: 'Stok hareketleri', consumption: 'Tüketim', month_end_stock: 'Ay sonu stoğu',
     production_capacity: 'Üretim kapasitesi', retention_samples: 'Şahit numune',
     sample_analyses: 'Numune analizi', trendyol_orders: 'Trendyol', shopify_orders: 'Shopify',
-    influencer_overview: 'Creator programı', reviews_overview: 'Yorumlar'
+    influencer_overview: 'Creator programı', reviews_overview: 'Yorumlar',
+    check_product_text: 'Metin denetimi'
   };
   var TOOL_ACTIVITY = {
     find_item: 'Ürün kartları aranıyor', item_detail: 'Ürün kartı okunuyor',
@@ -99,7 +100,8 @@
     month_end_stock: 'Ay sonu stoğu hesaplanıyor', production_capacity: 'Üretim kapasitesi hesaplanıyor',
     retention_samples: 'Şahit numunelere bakılıyor', sample_analyses: 'Numune analizlerine bakılıyor',
     trendyol_orders: 'Trendyol siparişlerine bakılıyor', shopify_orders: 'Shopify siparişlerine bakılıyor',
-    influencer_overview: 'Creator programına bakılıyor', reviews_overview: 'Yorumlara bakılıyor'
+    influencer_overview: 'Creator programına bakılıyor', reviews_overview: 'Yorumlara bakılıyor',
+    check_product_text: 'Metin kurallara göre denetleniyor'
   };
   var ROTATION_LABELS = {
     too_long: 'sohbet uzadı', model_changed: 'model değişti',
@@ -283,6 +285,7 @@
       '.m108-ai-turn:last-child{border-bottom:0;margin-bottom:0}',
       '.m108-ai-qmeta{display:flex;align-items:center;gap:.45rem;font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;margin-bottom:.25rem}',
       '.m108-ai-qtext{font-size:.98rem;font-weight:600;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere}',
+      '.m108-ai-qmore{margin-top:.2rem;font-size:.8rem;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}',
       '.m108-ai-act{display:flex;align-items:center;gap:.5rem;font-size:.8rem;margin:.7rem 0 .2rem}',
       '.m108-ai-spin{flex:none;width:12px;height:12px;border-radius:50%;border:2px solid var(--m108-ai-line2);border-top-color:var(--m108-ai-gold);',
       'animation:m108-ai-rot .8s linear infinite}',
@@ -613,7 +616,13 @@
       t.textContent = when || nowLabel();
       qmeta.appendChild(t);
       q.appendChild(qmeta);
-      q.appendChild(el('div', 'qtext c-ink', question));
+      // Çok satırlı istek (Metin Yaz formu, Shift+Enter): ilk satır başlık,
+      // kalanı küçük gri ayrıntı — altı satırlık kalın blok cevabı ezmesin.
+      var qs = String(question == null ? '' : question);
+      var nl = qs.indexOf('\n');
+      q.appendChild(el('div', 'qtext c-ink', nl === -1 ? qs : qs.slice(0, nl)));
+      var rest = nl === -1 ? '' : qs.slice(nl + 1).replace(/^\s+|\s+$/g, '');
+      if (rest) q.appendChild(el('div', 'qmore c-muted', rest));
       var a = el('section', 'a');
       var act = el('div', 'act c-muted'); act.style.display = 'none';
       var md = el('div', 'md');

@@ -38,6 +38,7 @@ from database import SessionLocal, User
 from core.permissions import _FINANCE_ROLES, _resolve_permissions, get_role_labels
 from core.assistant import handlers as H
 from core.assistant import handlers_ops as O
+from core.assistant import handlers_write as W
 from core.assistant import prompt
 from core.assistant.handlers import ToolError
 
@@ -178,6 +179,13 @@ def _sum_count(key: str, noun: str):
             n = len(p.get(key) or [])
         return f"{n} {noun}"
     return f
+
+
+def _sum_text_check(p: dict) -> str:
+    e, w = p.get("errors") or 0, p.get("warnings") or 0
+    if not e and not w:
+        return "Sorun yok"
+    return " · ".join(x for x in (f"{e} hata" if e else "", f"{w} uyarı" if w else "") if x)
 
 
 def _sum_one_or_count(detail_key: str, key: str, noun: str):
@@ -494,6 +502,20 @@ _TOOLS: List[Tool] = [
         "bekleyenler, son yayınlanan yorumlardan kısa alıntı (yorumcu bilgisi yok).",
         _schema({"q": _s_opt("Ürün adı süzgeci; null = hepsi")}),
         P_REVIEWS, O.reviews_overview, "Yorumlar", _sum_count("products", "ürün"),
+    ),
+    Tool(
+        "check_product_text",
+        "Ürün metni taslağını (ürün açıklaması, Amazon başlık/madde/arama terimleri, Shopify metni, "
+        "etiket metni) yayın kurallarıyla denetler: INCI listesinde karşılığı olmayan bileşen ya da koku "
+        "iddiası, yasaklı tıbbi/abartılı iddia, başlıktaki hacmin ürünle tutarlılığı. Metin yazma "
+        "modunda ürün metnini kullanıcıya sunmadan ÖNCE çağır; hataları düzelt, kalan uyarıları metnin "
+        "altında kısaca belirt. E-posta / WhatsApp / çeviri için gerekmez.",
+        _schema({"text": _s("Denetlenecek metnin tamamı"),
+                 "title": _s_opt("Ürün başlığı; yoksa null"),
+                 "inci": _s_opt("Ürünün INCI listesi (virgüllü); bilinmiyorsa null"),
+                 "size": _s_opt("Hacim / ağırlık, ör. 50 ml; yoksa null"),
+                 "lang": _enum_opt("Metnin dili; null = tr", ("tr", "en"))}),
+        P_HELP, W.check_product_text, "Metin denetimi", _sum_text_check,
     ),
     Tool(
         "search_help",

@@ -324,7 +324,13 @@ tuzaklar: CLAUDE.md "Minerva Asistan". Arayüz (13.10.2026): sağ alttaki düğm
 çubukta "Ara ya da sor" (`GET /api/assistant/search`, yapay zekâ çağrısı YOK; sayfa listesi
 `core/assistant/search.PAGES` route izinleriyle birebir), yan cevap paneli, sol menüde
 "Yapay Zekâ" bölümü (`scripts/add_ai_nav.py`) ve `/asistan` sayfası (`window.M108AI`
-çekirdeğini paylaşır). Testler `tests/test_assistant_*.py` (sahte SDK).
+çekirdeğini paylaşır). **Belge Oku** (`core/assistant/documents.py`, `POST
+/api/assistant/documents`, `static/belge-oku.js`): fatura/proforma/irsaliye/CoA (PDF/JPG/PNG)
+→ yapılandırılmış çıkarım + kart/tedarikçi eşleşmesi (`doc_key`: EN kimya adı ↔ TR kart);
+dosya SAKLANMAZ (`assistant_documents` yalnız çıkarım JSON'u); asistan kayıt yazmaz —
+satır Mal Kabul formuna, SKT öneri çubuğuna ve tedarikçi fiyat formuna aktarılır, kaydı
+kullanıcı yapar. **Metin Yaz** (`mode="write"`, `check_product_text`): ürün metni, çeviri,
+e-posta, WhatsApp taslağı. Testler `tests/test_assistant_*.py` (sahte SDK).
 
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +

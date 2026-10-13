@@ -10,6 +10,9 @@ Minerva Asistan router'ı — `/api/assistant/*` (çekirdek: `core/assistant/`).
 Uçlar (hepsi `require_internal_user`; sohbet/bootstrap ayrıca `assistant.use`):
   POST   /chat                 NDJSON akışı (aşağıda) — kullanıcı bazlı 20/dk
   GET    /search?q=            üst çubuk araması — YAPAY ZEKÂ ÇAĞRISI YOK (core/assistant/search.py)
+  POST   /documents            Belge Oku: PDF/JPG/PNG → çıkarım + eşleşme, NDJSON (meta → ping → done|error)
+  GET    /documents            son okunan belgelerim (10)
+  GET    /documents/{id}       belge çıkarımı + CANLI eşleşme (yalnız sahibi, aynı panel)
   GET    /conversations        son sohbetlerim (`limit` 1–100, varsayılan 20)
   GET    /conversations/{id}   sohbet + widget mesajları (yalnız sahibi; 404)
   DELETE /conversations/{id}   sert silme (yalnız sahibi; 204 / 404)
@@ -65,10 +68,10 @@ import sys
 import time
 import traceback
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import anyio
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from slowapi.util import get_remote_address
@@ -83,7 +86,8 @@ from core.auth import decode_token
 from core.domain import active_domain
 from core.limiter import limiter
 from core.permissions import _FINANCE_ROLES, get_role_labels, require_internal_user
-from database import AssistantConversation, AssistantUsage, SessionLocal, User, get_db, to_tr, tr_now
+from database import (AssistantConversation, AssistantDocument, AssistantUsage, SessionLocal, User, get_db, to_tr,
+                      tr_now)
 
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
@@ -140,6 +144,10 @@ def _release_turn(user_id: int, stamp: float) -> None:
 class ChatIn(BaseModel):
     message: str = Field(..., min_length=1, max_length=MESSAGE_MAX)
     conversation_id: Optional[int] = Field(None, ge=1)
+    # Belge Oku çıkarımı soruya `<belge>` bloğu olarak eklenir (yalnız sahibi + panel)
+    document_id: Optional[int] = Field(None, ge=1)
+    # "write" = metin yazma modu (bağlam notu + daha yüksek çıktı sınırı, runner.WRITE_MAX_TOKENS)
+    mode: Literal["ask", "write"] = "ask"
 
     @field_validator("message")
     @classmethod
@@ -388,6 +396,17 @@ async def chat(
             rotated = True
     else:
         conv = history.start_conversation(db, user.id, domain, settings.model, PROMPT_HASH)
+    doc_block, display = "", body.message
+    if body.document_id:
+        from core.assistant import documents as D
+        doc = (db.query(AssistantDocument)
+               .filter(AssistantDocument.id == body.document_id, AssistantDocument.user_id == user.id).first())
+        if doc is None or doc.domain != domain:
+            db.rollback()
+            return _err(404, "Belge bulunamadı (başka panelde ya da silinmiş olabilir).", "document_not_found")
+        ex = json.loads(doc.extraction_json)
+        doc_block = D.chat_block(doc, ex, D.match_document(db, domain, ex))
+        display = f"[Belge: {D.clean_name(doc.file_name)}] {body.message}"
     history.set_title(conv, body.message)
     db.commit()
     conv_id = conv.id
@@ -400,9 +419,11 @@ async def chat(
 
     meta = {"t": "meta", "conversation_id": conv_id, "rotated": rotated, "rotation_reason": reason,
             "model": settings.model}
-    run_kwargs = dict(client=client, settings=settings, ctx=ctx, history=hist,
-                      question=history.seed_question(seed, body.message),
-                      display_question=body.message)
+    question = history.seed_question(seed, body.message)
+    if doc_block:
+        question = doc_block + "\n\n" + question
+    run_kwargs = dict(client=client, settings=settings, ctx=ctx, history=hist, question=question,
+                      display_question=display, mode=body.mode)
     persist_kwargs = dict(conv_id=conv_id, user_id=user.id, domain=domain, settings=settings,
                           question_preview=body.message[:160], fresh=not hist)
     # Sayaç burada artar (denetimle aynı loop adımında — araya başka istek giremez);
@@ -432,6 +453,198 @@ def quick_search(request: Request, q: str = Query("", max_length=200),
     user = _load_user(db, current_user)
     ctx = ToolContext.from_user(user, domain, db)
     return quick.search(ctx, db, q)
+
+
+# ─── Belge Oku (fatura / proforma / irsaliye / CoA → alanlar) ──────────────
+
+DOCUMENTS_LIST_MAX = 10
+
+
+def _persist_document(outcome: tuple, *, user_id: int, domain: str, settings, file_name: str,
+                      media_type: str, sha256: str, size: int, pages: Optional[int]) -> Optional[dict]:
+    """Çıkarım sonrası YENİ oturumda: her API çağrısı için `assistant_usage`
+    (hata/kopma olsa da — maliyet oluştu) + başarılıysa `assistant_documents`
+    satırı; dönen değer arayüz görünümü (`documents.view`) ya da None."""
+    from core.assistant import documents as D
+    ex, usages, err = outcome
+    db = SessionLocal()
+    try:
+        for u in usages:
+            budget.record_usage(
+                db, user_id=user_id, conversation_id=None, message_id=None,
+                model=u.get("model") or settings.model, usage=u, cost_usd=u.get("cost_usd") or 0.0,
+                tool_calls=[{"name": "belge_okuma", "ms": u.get("latency_ms") or 0, "is_error": err is not None}],
+                latency_ms=u.get("latency_ms"), stop_reason=u.get("stop_reason"), request_id=u.get("request_id"),
+                domain=domain, round_no=u.get("round_no") or 1, question_preview=f"Belge: {file_name}"[:160])
+        view = None
+        if ex is not None:
+            doc = AssistantDocument(
+                user_id=user_id, domain=domain, file_name=file_name[:255], media_type=media_type, sha256=sha256,
+                size_bytes=size, pages=pages, doc_type=ex.get("doc_type"),
+                extraction_json=json.dumps(ex, ensure_ascii=False),
+                model=(usages[-1].get("model") if usages else settings.model),
+                cost_usd=round(sum(u.get("cost_usd") or 0.0 for u in usages), 6),
+                created_at=_dt.datetime.utcnow())
+            db.add(doc)
+            db.flush()
+            view = D.view(doc, ex, D.match_document(db, domain, ex))
+        now = tr_now()
+        budget.maybe_warn(db, settings, budget.month_spend(db, now.year, now.month), now)
+        db.commit()
+        return view
+    except Exception:
+        db.rollback()
+        traceback.print_exc(file=sys.stderr)
+        return None
+    finally:
+        db.close()
+
+
+def _persist_document_from_task(task: "asyncio.Task", kwargs: dict) -> None:
+    """Bağlantı koptuysa (üreteç kapandı): görev bitince usage yine yazılsın."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+        return
+    outcome = task.result()
+    try:
+        bg = asyncio.ensure_future(anyio.to_thread.run_sync(lambda: _persist_document(outcome, **kwargs)))
+    except RuntimeError:
+        _persist_document(outcome, **kwargs)
+        return
+    _BACKGROUND.add(bg)
+    bg.add_done_callback(_BACKGROUND.discard)
+
+
+async def _document_stream(meta: dict, work, persist_kwargs: dict, release):
+    """NDJSON: meta → ping (≤15 s'de bir; nginx 60 s okuma sınırı) → done{document} | error."""
+    task = asyncio.create_task(work())
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
+    task.add_done_callback(lambda _t: release())
+    persisted = False
+    yield _line(meta)
+    try:
+        while not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), PING_INTERVAL)
+            except asyncio.TimeoutError:
+                yield _line({"t": "ping"})
+        with anyio.CancelScope(shield=True):
+            outcome = task.result()
+            view = await anyio.to_thread.run_sync(lambda: _persist_document(outcome, **persist_kwargs))
+            persisted = True
+        err = outcome[2]
+        if err is not None:
+            yield _line({"t": "error", "code": err.code, "msg": err.msg})
+        elif view is None:
+            yield _line({"t": "error", "code": "persist_failed", "msg": "Belge okundu ama kaydedilemedi; tekrar deneyin."})
+        else:
+            yield _line({"t": "done", "document": view, "reused": False})
+    finally:
+        if not persisted:
+            if task.done():
+                _persist_document_from_task(task, persist_kwargs)
+            else:
+                task.add_done_callback(lambda t: _persist_document_from_task(t, persist_kwargs))
+
+
+@router.post("/documents")
+@limiter.limit("10/minute", key_func=_user_key)
+async def read_document(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db),
+                        current_user: dict = Depends(_USER), domain: str = Depends(active_domain)):
+    """Belge → çıkarım + canlı eşleşme (NDJSON).  Aynı kullanıcı aynı belgeyi
+    (sha256) aynı panelde yeniden yüklerse model ÇAĞRILMAZ, kayıtlı çıkarım
+    döner (`reused: true`).  Ön kontroller JSON: 413/415/400 dosya, 402/409/503
+    bütçe/kapalı/anahtar, 429 `busy` (sohbetle ORTAK eşzamanlı tur sınırı)."""
+    from core.assistant import client as client_mod
+    from core.assistant import documents as D
+
+    user = _load_user(db, current_user)
+    raw = await file.read(D.MAX_BYTES + 1)
+    name = D.clean_name(file.filename)
+    try:
+        prepared = await anyio.to_thread.run_sync(lambda: D.prepare_file(raw, name))
+    except D.DocError as e:
+        return _err(e.status, e.msg, e.code)
+    meta = {"t": "meta", "file_name": name, "pages": prepared.pages, "kind": prepared.kind}
+
+    existing = (db.query(AssistantDocument)
+                .filter(AssistantDocument.user_id == user.id, AssistantDocument.domain == domain,
+                        AssistantDocument.sha256 == prepared.sha256)
+                .order_by(AssistantDocument.id.desc()).first())
+    if existing is not None:
+        ex = json.loads(existing.extraction_json)
+        view = D.view(existing, ex, D.match_document(db, domain, ex))
+
+        async def replay():
+            yield _line(meta)
+            yield _line({"t": "done", "document": view, "reused": True})
+        return StreamingResponse(replay(), media_type="application/x-ndjson", headers=dict(STREAM_HEADERS))
+
+    settings = S.load_settings(db)
+    denied = budget.check_budget(db, settings, user.id)
+    if denied is not None:
+        return _err(denied.status, denied.detail, denied.code)
+    if _active_turns(user.id) >= MAX_ACTIVE_TURNS:
+        return _err(429, "Devam eden işleminiz bitmeden yeni belge okunamaz.", "busy", retry_after_seconds=10)
+    try:
+        client = client_mod.get_client()
+    except client_mod.NotConfigured:
+        return _err(503, "Asistan yapılandırılmamış (API anahtarı yok).", "not_configured")
+
+    usages: List[dict] = []
+
+    async def work():
+        try:
+            ex = await asyncio.wait_for(D.extract(client, settings, prepared, name, usages), D.DEADLINE)
+            return ex, usages, None
+        except D.DocError as e:
+            return None, usages, e
+        except asyncio.TimeoutError:
+            return None, usages, D.DocError("timeout", "Belge okuma zaman aşımına uğradı; daha kısa bir belgeyle deneyin.")
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+            return None, usages, D.DocError("api_error", "Belge okunamadı; biraz sonra tekrar deneyin.")
+
+    persist_kwargs = dict(user_id=user.id, domain=domain, settings=settings, file_name=name,
+                          media_type=prepared.media_type if prepared.kind == "pdf" else "image/jpeg",
+                          sha256=prepared.sha256, size=prepared.size, pages=prepared.pages)
+    stamp = _acquire_turn(user.id)
+    uid = user.id
+
+    def release() -> None:
+        _release_turn(uid, stamp)
+
+    return StreamingResponse(_document_stream(meta, work, persist_kwargs, release),
+                             media_type="application/x-ndjson", headers=dict(STREAM_HEADERS))
+
+
+@router.get("/documents")
+def list_documents(db: Session = Depends(get_db), current_user: dict = Depends(_USER),
+                   domain: str = Depends(active_domain)):
+    from core.assistant.documents import DOC_TYPE_LABELS
+    rows = (db.query(AssistantDocument)
+            .filter(AssistantDocument.user_id == int(current_user["sub"]), AssistantDocument.domain == domain)
+            .order_by(AssistantDocument.id.desc()).limit(DOCUMENTS_LIST_MAX).all())
+    return [{"id": d.id, "file_name": d.file_name, "doc_type": d.doc_type,
+             "doc_type_label": DOC_TYPE_LABELS.get(d.doc_type, "Belge"), "pages": d.pages,
+             "created_at": to_tr(d.created_at).strftime("%d.%m.%Y %H:%M") if d.created_at else ""}
+            for d in rows]
+
+
+@router.get("/documents/{doc_id}")
+def document_detail(doc_id: int, db: Session = Depends(get_db), current_user: dict = Depends(_USER),
+                    domain: str = Depends(active_domain)):
+    from core.assistant import documents as D
+    doc = (db.query(AssistantDocument)
+           .filter(AssistantDocument.id == doc_id, AssistantDocument.user_id == int(current_user["sub"])).first())
+    if doc is None or doc.domain != domain:
+        raise HTTPException(status_code=404, detail="Belge bulunamadı.")
+    ex = json.loads(doc.extraction_json)
+    return D.view(doc, ex, D.match_document(db, domain, ex))
 
 
 # ─── Sohbet listesi / detay / silme (yalnız sahibi) ──────────────────────────

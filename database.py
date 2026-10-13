@@ -3061,6 +3061,37 @@ class AssistantUsage(Base):
     created_at                  = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class AssistantDocument(Base):
+    """Belge Oku (13.10.2026): kullanıcının yüklediği fatura / proforma /
+    irsaliye / CoA / teklif belgesinin yapay zekâ ÇIKARIMI
+    (`core/assistant/documents.py`).  DOSYANIN KENDİSİ SAKLANMAZ — yalnız
+    sha256 (aynı kullanıcı aynı belgeyi aynı panelde yeniden yüklerse çıkarım
+    yeniden kullanılır, ikinci kez ücret ödenmez).  Eşleştirme (kart /
+    tedarikçi / lot) her açılışta CANLI hesaplanır, burada tutulmaz.  Sohbete
+    `document_id` ile bağlanır (yalnız sahibi + aynı panel).  Kullanıcı
+    silinince CASCADE.  Tablo prod'a `init_db()` create_all ile gelir
+    (migration `b917b245c7c5` kayıt için)."""
+    __tablename__ = "assistant_documents"
+    __table_args__ = (
+        Index("ix_assistant_documents_user_created", "user_id", "created_at"),
+        Index("ix_assistant_documents_user_sha", "user_id", "sha256"),
+    )
+
+    id              = Column(Integer, primary_key=True)
+    user_id         = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    domain          = Column(String(20), nullable=False)
+    file_name       = Column(String(255), nullable=False)
+    media_type      = Column(String(40), nullable=False)       # application/pdf | image/jpeg | image/png
+    sha256          = Column(String(64), nullable=False)
+    size_bytes      = Column(Integer, nullable=False, default=0)
+    pages           = Column(Integer, nullable=True)            # PDF sayfa sayısı
+    doc_type        = Column(String(20), nullable=True)         # fatura|proforma|irsaliye|coa|teklif|siparis|diger
+    extraction_json = Column(Text, nullable=False)              # normalize edilmiş çıkarım (documents.normalize_extraction)
+    model           = Column(String(60), nullable=True)
+    cost_usd        = Column(Float, nullable=False, default=0.0, server_default=text("0"))
+    created_at      = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 def log_system_event(event_type: str, detail: str = None) -> None:
     """Bir sistem olayını (örn. 'app_start') kaydet.
 
