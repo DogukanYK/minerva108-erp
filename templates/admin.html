@@ -354,6 +354,50 @@
     .btn-import:hover { background: #166534; }
     .btn-import:disabled { opacity: 0.6; cursor: not-allowed; }
 
+    /* ══ MİNERVA ASİSTAN KARTI (m108-ai-admin-*) ══
+       Yalnız finans rolleri görür; Bootstrap'le çakışmasın diye tüm sınıflar
+       m108-ai-admin- önekli; Bootstrap düğme sınıfları kullanılmaz (bkz. tests/test_pages.py gölgeleme notu).
+       Renkler dark.css değişkenlerine düşer (var(--cream/--border/--text-*)), açık temada fallback. */
+    .m108-ai-admin-pill { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.7rem; border-radius: 20px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; background: var(--cream, #f3f4f6); color: var(--text-muted, #6b7280); white-space: nowrap; }
+    .m108-ai-admin-pill-on  { background: rgba(21,128,61,0.10);  color: #15803d; }
+    .m108-ai-admin-pill-off { background: rgba(185,28,28,0.09);  color: #b91c1c; }
+    .m108-ai-admin-toolbar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .m108-ai-admin-month { width: auto; min-width: 170px; }
+    .m108-ai-admin-ghost { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0.9rem; background: transparent; color: var(--text-muted, #6b7280); border: 1.5px solid var(--border, #e5e7eb); border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.84rem; font-weight: 500; cursor: pointer; transition: border-color 0.2s, color 0.2s; }
+    .m108-ai-admin-ghost:hover { border-color: var(--navy); color: var(--navy); }
+    .m108-ai-admin-btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.55rem 1.2rem; background: var(--navy); color: #fff; border: none; border-radius: 8px; font-family: 'Jost', sans-serif; font-size: 0.86rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+    .m108-ai-admin-btn:hover { background: #1a2252; }
+    .m108-ai-admin-btn:disabled, .m108-ai-admin-ghost:disabled { opacity: 0.6; cursor: not-allowed; }
+    .m108-ai-admin-warn { margin-bottom: 1rem; padding: 0.6rem 0.9rem; border-radius: 8px; font-size: 0.82rem; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+    .m108-ai-admin-warn-err { background: #fff1f1; border-color: #fecaca; color: #b91c1c; }
+    .m108-ai-admin-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.6rem; margin-bottom: 0.6rem; }
+    .m108-ai-admin-tile { background: var(--cream, #f9f7f3); border: 1px solid var(--border, #f0ece4); border-radius: 8px; padding: 0.55rem 0.85rem; min-width: 0; }
+    .m108-ai-admin-tile-label { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint, #9ca3af); }
+    .m108-ai-admin-tile-value { font-family: 'Playfair Display', serif; font-size: 1.25rem; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; }
+    .m108-ai-admin-tile-sub { font-size: 0.72rem; color: var(--text-muted, #6b7280); margin-top: 2px; }
+    .m108-ai-admin-bar { height: 8px; border-radius: 4px; background: var(--border, #f0ece4); overflow: hidden; margin: 0 0 1.2rem; }
+    .m108-ai-admin-bar > span { display: block; height: 100%; width: 0; background: #15803d; transition: width 0.3s; }
+    .m108-ai-admin-bar-warn > span { background: #d97706; }
+    .m108-ai-admin-bar-over > span { background: #b91c1c; }
+    .m108-ai-admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+    .m108-ai-admin-section { min-width: 0; }
+    .m108-ai-admin-section-title { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted, #6b7280); margin: 0 0 0.4rem; }
+    .m108-ai-admin-scroll { max-height: 320px; overflow: auto; border: 1px solid var(--border, #f0ece4); border-radius: 8px; }
+    .m108-ai-admin-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .m108-ai-admin-table th { position: sticky; top: 0; background: var(--cream, #f9f7f3); padding: 0.45rem 0.7rem; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-muted, #6b7280); text-align: left; white-space: nowrap; }
+    .m108-ai-admin-table td { padding: 0.42rem 0.7rem; border-bottom: 1px solid var(--border, #f3f0ea); vertical-align: top; }
+    .m108-ai-admin-num { text-align: right !important; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .m108-ai-admin-empty { padding: 0.8rem; text-align: center; color: var(--text-faint, #9ca3af); font-size: 0.8rem; }
+    .m108-ai-admin-chip { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 0.68rem; font-weight: 600; background: #eef2ff; color: #4338ca; margin: 0 3px 3px 0; white-space: nowrap; }
+    .m108-ai-admin-chip-ok   { background: #f0fdf4; color: #15803d; }
+    .m108-ai-admin-chip-warn { background: #fffbeb; color: #92400e; }
+    .m108-ai-admin-chip-err  { background: #fff1f1; color: #b91c1c; }
+    .m108-ai-admin-preview { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .m108-ai-admin-settings { margin-top: 1.25rem; padding-top: 1rem; border-top: 2px solid var(--border, #f0ece4); }
+    .m108-ai-admin-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0.75rem 1rem; }
+    .m108-ai-admin-hint { font-size: 0.74rem; color: var(--text-faint, #9ca3af); margin: 0.5rem 0 0; }
+    .m108-ai-admin-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin-top: 0.9rem; }
+
     /* ══ TOAST ══ */
     #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
     .toast-msg { min-width: 260px; max-width: 380px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; animation: slideUp 0.3s ease; }
@@ -372,6 +416,7 @@
   <script src="/static/undo-watch.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
+  <script src="/static/assistant.js?v=1" defer></script>
 </head>
 <body>
 
@@ -615,6 +660,160 @@
           Otomatik olarak önce safety backup alınır — yanlış geri yüklersen onu kullanabilirsin.
           Sadece <strong>SuperAdmin</strong> bu işlemi yapabilir.
         </div>
+      </div>
+      {% endif %}
+
+      <!-- ════ MİNERVA ASİSTAN — kullanım raporu & ayarlar ════ -->
+      {# Yalnız finans rolleri (SuperAdmin/Manager) görür; sunucu aynı kuralı
+         GET /api/assistant/admin/usage içinde canlı rolle yeniden denetler.
+         Ayar formu yalnız SuperAdmin (PUT /api/assistant/admin/settings). #}
+      {% if role in ('SuperAdmin', 'Manager') %}
+      <div class="import-panel" id="m108AiAdminCard" style="margin-top:2rem;border-left:4px solid var(--navy);">
+        <div class="import-panel-header">
+          <span class="import-panel-icon" style="background:rgba(35,46,110,0.10);color:var(--navy);">
+            <i class="bi bi-stars"></i>
+          </span>
+          <div style="flex:1;min-width:0;">
+            <h2 class="import-panel-title">Minerva Asistan</h2>
+            <p class="import-panel-sub">
+              Aylık harcama ve tavan · kullanıcı ve gün kırılımı · araç kullanımı · önbellek oranı · son sorular{% if role == 'SuperAdmin' %} · ayarlar{% endif %}
+            </p>
+          </div>
+          <span class="m108-ai-admin-pill" id="m108AiAdminState">Yükleniyor…</span>
+        </div>
+
+        <div class="m108-ai-admin-toolbar">
+          <label class="form-label-sm" for="m108AiAdminMonth" style="margin:0;">Ay</label>
+          <select class="form-select form-select-sm m108-ai-admin-month" id="m108AiAdminMonth"></select>
+          <button type="button" class="m108-ai-admin-ghost" id="m108AiAdminRefresh">
+            <i class="bi bi-arrow-clockwise"></i> Yenile
+          </button>
+        </div>
+
+        <div class="m108-ai-admin-warn" id="m108AiAdminWarn" style="display:none;"></div>
+
+        <div class="m108-ai-admin-tiles" id="m108AiAdminTiles">
+          <div class="m108-ai-admin-tile"><div class="m108-ai-admin-tile-label">Harcama</div><div class="m108-ai-admin-tile-value">—</div></div>
+          <div class="m108-ai-admin-tile"><div class="m108-ai-admin-tile-label">Soru</div><div class="m108-ai-admin-tile-value">—</div></div>
+          <div class="m108-ai-admin-tile"><div class="m108-ai-admin-tile-label">API çağrısı</div><div class="m108-ai-admin-tile-value">—</div></div>
+          <div class="m108-ai-admin-tile"><div class="m108-ai-admin-tile-label">Önbellek isabeti</div><div class="m108-ai-admin-tile-value">—</div></div>
+        </div>
+        <div class="m108-ai-admin-bar" id="m108AiAdminBar"><span></span></div>
+
+        <div class="m108-ai-admin-grid">
+          <section class="m108-ai-admin-section">
+            <h3 class="m108-ai-admin-section-title">Kullanıcı başına</h3>
+            <div class="m108-ai-admin-scroll">
+              <table class="m108-ai-admin-table">
+                <thead><tr><th>Kullanıcı</th><th class="m108-ai-admin-num">Soru</th><th class="m108-ai-admin-num">Çağrı</th><th class="m108-ai-admin-num">Maliyet</th></tr></thead>
+                <tbody id="m108AiAdminUsers"><tr><td colspan="4" class="m108-ai-admin-empty">—</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="m108-ai-admin-section">
+            <h3 class="m108-ai-admin-section-title">Günlük kırılım</h3>
+            <div class="m108-ai-admin-scroll">
+              <table class="m108-ai-admin-table">
+                <thead><tr><th>Gün</th><th class="m108-ai-admin-num">Soru</th><th class="m108-ai-admin-num">Çağrı</th><th class="m108-ai-admin-num">Maliyet</th></tr></thead>
+                <tbody id="m108AiAdminDays"><tr><td colspan="4" class="m108-ai-admin-empty">—</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="m108-ai-admin-section">
+            <h3 class="m108-ai-admin-section-title">Araç kullanımı</h3>
+            <div class="m108-ai-admin-scroll">
+              <table class="m108-ai-admin-table">
+                <thead><tr><th>Araç</th><th class="m108-ai-admin-num">Çağrı</th><th class="m108-ai-admin-num">Hata</th></tr></thead>
+                <tbody id="m108AiAdminTools"><tr><td colspan="3" class="m108-ai-admin-empty">—</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="m108-ai-admin-section">
+            <h3 class="m108-ai-admin-section-title">Önbellek ve durma sebepleri</h3>
+            <div class="m108-ai-admin-scroll">
+              <table class="m108-ai-admin-table">
+                <tbody id="m108AiAdminCache"><tr><td class="m108-ai-admin-empty">—</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <section class="m108-ai-admin-section">
+          <h3 class="m108-ai-admin-section-title">Son sorular <span style="font-weight:400;letter-spacing:0;text-transform:none;" id="m108AiAdminQCount"></span></h3>
+          <div class="m108-ai-admin-scroll" style="max-height:420px;">
+            <table class="m108-ai-admin-table">
+              <thead><tr><th>Zaman</th><th>Kullanıcı</th><th>Soru</th><th>Araçlar</th><th class="m108-ai-admin-num">Çağrı</th><th class="m108-ai-admin-num">Maliyet</th><th>Sonuç</th></tr></thead>
+              <tbody id="m108AiAdminQuestions"><tr><td colspan="7" class="m108-ai-admin-empty">—</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        {% if role == 'SuperAdmin' %}
+        <form class="m108-ai-admin-settings" id="m108AiAdminSettings" novalidate>
+          <h3 class="m108-ai-admin-section-title"><i class="bi bi-sliders"></i> Ayarlar</h3>
+          <div class="m108-ai-admin-fields">
+            <div>
+              <label class="form-label-sm" for="m108AiAdminEnabled">Asistan</label>
+              <div class="form-check form-switch" style="padding-top:0.35rem;padding-left:2.75rem;">
+                <input class="form-check-input" type="checkbox" role="switch" id="m108AiAdminEnabled" data-field="enabled" style="width:2.4em;height:1.3em;cursor:pointer;" />
+                <label class="form-check-label" for="m108AiAdminEnabled" style="margin-left:0.5rem;font-size:0.88rem;cursor:pointer;" id="m108AiAdminEnabledLabel">Açık</label>
+              </div>
+            </div>
+            <div>
+              <label class="form-label-sm" for="m108AiAdminModel">Model</label>
+              <select class="form-select form-select-sm" id="m108AiAdminModel" data-field="model"></select>
+            </div>
+            <div>
+              <label class="form-label-sm" for="m108AiAdminEffort">Efor</label>
+              <select class="form-select form-select-sm" id="m108AiAdminEffort" data-field="effort">
+                <option value="low">Düşük (low)</option>
+                <option value="medium">Orta (medium)</option>
+                <option value="high">Yüksek (high)</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label-sm" for="m108AiAdminTtl">Önbellek TTL</label>
+              <select class="form-select form-select-sm" id="m108AiAdminTtl" data-field="cache_ttl">
+                <option value="5m">5 dakika</option>
+                <option value="1h">1 saat</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label-sm" for="m108AiAdminMonthlyCap">Aylık tavan ($)</label>
+              <input type="number" class="form-control form-control-sm" id="m108AiAdminMonthlyCap" data-field="monthly_cap_usd" min="0" max="10000" step="1" />
+            </div>
+            <div>
+              <label class="form-label-sm" for="m108AiAdminDailyCap">Kişi başı günlük tavan ($)</label>
+              <input type="number" class="form-control form-control-sm" id="m108AiAdminDailyCap" data-field="daily_user_cap_usd" min="0" max="1000" step="0.5" />
+            </div>
+            <div>
+              <label class="form-label-sm" for="m108AiAdminRounds">Soru başına araç turu</label>
+              <input type="number" class="form-control form-control-sm" id="m108AiAdminRounds" data-field="max_tool_rounds" min="0" max="12" step="1" />
+            </div>
+            <div>
+              <label class="form-label-sm" for="m108AiAdminMaxTokens">Cevap üst sınırı (token)</label>
+              <input type="number" class="form-control form-control-sm" id="m108AiAdminMaxTokens" data-field="max_output_tokens" min="256" max="32000" step="1" />
+            </div>
+            <div>
+              <label class="form-label-sm" for="m108AiAdminMaxTurns">Sohbet başına soru</label>
+              <input type="number" class="form-control form-control-sm" id="m108AiAdminMaxTurns" data-field="max_turns" min="1" max="200" step="1" />
+            </div>
+            <div>
+              <label class="form-label-sm" for="m108AiAdminHistTokens">Geçmiş eşiği (token)</label>
+              <input type="number" class="form-control form-control-sm" id="m108AiAdminHistTokens" data-field="max_history_tokens" min="1000" max="150000" step="100" />
+            </div>
+          </div>
+          <p class="m108-ai-admin-hint">
+            Yalnız değişen alanlar gönderilir ve denetim kaydına yazılır. Model, efor ya da TTL değişince açık sohbetler yeni sohbete taşınır.
+            Kapatınca asistan anında 409 döner; açmak tek kayıt. Düşük efor ve 1 saatlik TTL maliyet için önerilen ayardır.
+          </p>
+          <div class="m108-ai-admin-actions">
+            <button type="submit" class="m108-ai-admin-btn" id="m108AiAdminSave"><i class="bi bi-check2"></i> Ayarları Kaydet</button>
+            <button type="button" class="m108-ai-admin-ghost" id="m108AiAdminReset"><i class="bi bi-arrow-counterclockwise"></i> Değişiklikleri Geri Al</button>
+            <span class="m108-ai-admin-hint" id="m108AiAdminDirty" style="margin:0;"></span>
+          </div>
+        </form>
+        {% endif %}
       </div>
       {% endif %}
 
@@ -1203,6 +1402,7 @@
       reviews:      { tr: 'Ürün Yorumları',  icon: 'bi-chat-quote' },
       influencer:   { tr: 'Influencer',      icon: 'bi-megaphone' },
       suppliers:    { tr: 'Tedarikçiler',    icon: 'bi-truck' },
+      assistant:    { tr: 'Minerva Asistan', icon: 'bi-stars' },
     };
     const _ACTION_LABELS = {
       view: 'Görüntüle', create: 'Oluştur', edit: 'Düzenle', delete: 'Sil',
@@ -1219,6 +1419,7 @@
       status: 'Durum', merge: 'Birleştir',
       mapping: 'Gizli Kod Eşleştirme', dispatch: 'Fason Sevki', record: 'Fason Kayıtları',
       tech_review: 'Teknik Değerlendirme', sign: 'İmzalı Onay', payment: 'Ödeme Doğrulama', produce: 'Parti Üretimi',
+      use: 'Kullan',
     };
 
     async function ensurePermSchema() {
@@ -1294,6 +1495,7 @@
         'status', 'merge',
         'mapping', 'dispatch', 'record',
         'tech_review', 'sign', 'payment', 'produce',
+        'use',
       ];
       // Eksik kalanları da göster (yeni action eklendi ama actionOrder güncel
       // değilse en azından kaybolmasınlar)
@@ -1825,6 +2027,279 @@
       } catch (e) { showToast('Sunucuya bağlanılamadı.'); }
       finally { btn.disabled = false; }
     }
+
+    /* ── Minerva Asistan — aylık kullanım raporu + ayarlar ──
+       Kart yalnız finans rollerinde (SuperAdmin/Manager) render edilir, ayar
+       formu yalnız SuperAdmin'de (Jinja).  Veri: GET /api/assistant/admin/usage
+       ?month=YYYY-MM (sunucu rolü canlı denetler; 403 → kart içinde mesaj).
+       Ayarlar: PUT /api/assistant/admin/settings — yalnız DEĞİŞEN alanlar
+       gönderilir (sunucu doğrular, audit yazar).  Tüm dinamik metin escHtml'den
+       geçer; sunucudan gelen hiçbir alan ham innerHTML'e girmez. */
+    (function () {
+      const card = document.getElementById('m108AiAdminCard');
+      if (!card) return;
+      const el = function (id) { return document.getElementById(id); };
+      const monthSel   = el('m108AiAdminMonth');
+      const refreshBtn = el('m108AiAdminRefresh');
+      const form       = el('m108AiAdminSettings');     // yalnız SuperAdmin'de var
+      const TR_MONTHS  = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+                          'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+      const STOP_LABELS = {
+        end_turn: 'Tamamlandı', tool_use: 'Araç çağrısı', max_tokens: 'Kesildi (max_tokens)',
+        refusal: 'Reddedildi', pause_turn: 'Duraklatıldı', stop_sequence: 'Durdurma dizisi',
+      };
+      const STOP_CLASS = { end_turn: 'm108-ai-admin-chip-ok', max_tokens: 'm108-ai-admin-chip-warn', refusal: 'm108-ai-admin-chip-err' };
+      // Sunucu `models` listesi gelmezse yedek (core/assistant/budget.PRICES anahtarları)
+      const FALLBACK_MODELS = [
+        { id: 'claude-opus-5-5',   label: 'Claude Opus 5.5' },
+        { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
+        { id: 'claude-haiku-5-5',  label: 'Claude Haiku 5.5' },
+      ];
+      let currentSettings = null;   // sunucudan gelen son ayar seti (fark hesabı için)
+      let modelLabels = {};
+
+      function usd(v, digits) {
+        return Number(v || 0).toLocaleString('tr-TR', { minimumFractionDigits: digits, maximumFractionDigits: digits }) + ' $';
+      }
+      function num(v) { return Number(v || 0).toLocaleString('tr-TR'); }
+      function pctText(ratio) { return '%' + Math.round(Number(ratio || 0) * 100); }
+      function dayLabel(iso) {           // "2026-10-12" → "12.10"
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+        return m ? (m[3] + '.' + m[2]) : String(iso || '—');
+      }
+      function stopChip(reason) {
+        const key = String(reason || '—');
+        const cls = STOP_CLASS[key] || '';
+        return '<span class="m108-ai-admin-chip ' + cls + '" title="' + escHtml(key) + '">' + escHtml(STOP_LABELS[key] || key) + '</span>';
+      }
+      function emptyRow(cols, text) {
+        return '<tr><td colspan="' + cols + '" class="m108-ai-admin-empty">' + escHtml(text || 'Bu ay kayıt yok.') + '</td></tr>';
+      }
+      function setWarn(msg, isErr) {
+        const box = el('m108AiAdminWarn');
+        if (!msg) { box.style.display = 'none'; box.textContent = ''; box.classList.remove('m108-ai-admin-warn-err'); return; }
+        box.style.display = '';
+        box.classList.toggle('m108-ai-admin-warn-err', !!isErr);
+        box.innerHTML = '<i class="bi ' + (isErr ? 'bi-x-octagon-fill' : 'bi-exclamation-triangle-fill') + '"></i> ' + escHtml(msg);
+      }
+
+      // Ay seçici: son 12 ay (TR etiketli), varsayılan bu ay
+      (function fillMonths() {
+        const now = new Date();
+        for (let i = 0; i < 12; i++) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          const o = document.createElement('option');
+          o.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+          o.textContent = TR_MONTHS[d.getMonth()] + ' ' + d.getFullYear();
+          monthSel.appendChild(o);
+        }
+      })();
+
+      function renderState(settings) {
+        const pill = el('m108AiAdminState');
+        const on = !!(settings && settings.enabled);
+        pill.classList.toggle('m108-ai-admin-pill-on', on);
+        pill.classList.toggle('m108-ai-admin-pill-off', !on);
+        const label = settings ? (modelLabels[settings.model] || settings.model || '—') : '—';
+        pill.textContent = (on ? 'Açık' : 'Kapalı') + ' · ' + label + (settings && settings.effort ? ' · efor ' + settings.effort : '');
+      }
+
+      function renderTiles(d) {
+        const cap = Number(d.cap_usd || 0), spent = Number(d.spent_usd || 0);
+        const pct = Number(d.pct || 0);
+        const hit = d.cache ? Number(d.cache.hit_ratio || 0) : 0;
+        el('m108AiAdminTiles').innerHTML =
+          '<div class="m108-ai-admin-tile"><div class="m108-ai-admin-tile-label">Harcama</div>'
+          + '<div class="m108-ai-admin-tile-value">' + escHtml(usd(spent, 2)) + '</div>'
+          + '<div class="m108-ai-admin-tile-sub">Tavan ' + escHtml(usd(cap, 0)) + ' · %' + escHtml(String(pct)) + '</div></div>'
+          + '<div class="m108-ai-admin-tile"><div class="m108-ai-admin-tile-label">Soru</div>'
+          + '<div class="m108-ai-admin-tile-value">' + escHtml(num(d.questions_count)) + '</div>'
+          + '<div class="m108-ai-admin-tile-sub">' + escHtml((d.by_user && d.by_user.length) ? (d.by_user.length + ' kullanıcı') : '—') + '</div></div>'
+          + '<div class="m108-ai-admin-tile"><div class="m108-ai-admin-tile-label">API çağrısı</div>'
+          + '<div class="m108-ai-admin-tile-value">' + escHtml(num(d.calls_count)) + '</div>'
+          + '<div class="m108-ai-admin-tile-sub">Soru başına ' + escHtml(d.questions_count ? (d.calls_count / d.questions_count).toLocaleString('tr-TR', { maximumFractionDigits: 1 }) : '—') + '</div></div>'
+          + '<div class="m108-ai-admin-tile"><div class="m108-ai-admin-tile-label">Önbellek isabeti</div>'
+          + '<div class="m108-ai-admin-tile-value">' + escHtml(pctText(hit)) + '</div>'
+          + '<div class="m108-ai-admin-tile-sub">Okunan ' + escHtml(num(d.cache && d.cache.read_tokens)) + ' token</div></div>';
+        const bar = el('m108AiAdminBar');
+        bar.classList.toggle('m108-ai-admin-bar-warn', pct >= 80 && pct < 100);
+        bar.classList.toggle('m108-ai-admin-bar-over', pct >= 100);
+        bar.firstElementChild.style.width = Math.max(0, Math.min(100, pct)) + '%';
+        bar.title = 'Aylık bütçe: ' + usd(spent, 2) + ' / ' + usd(cap, 0);
+        if (cap > 0 && pct >= 100) setWarn('Aylık tavan doldu (' + usd(spent, 2) + ' / ' + usd(cap, 0) + ') — asistan ay başına kadar kapalı kalır.', true);
+        else if (cap > 0 && pct >= 80) setWarn('Aylık bütçenin %' + pct + '’i kullanıldı (' + usd(spent, 2) + ' / ' + usd(cap, 0) + ').', false);
+        else setWarn('');
+      }
+
+      function renderUsers(rows) {
+        el('m108AiAdminUsers').innerHTML = (rows && rows.length) ? rows.map(function (u) {
+          return '<tr><td>' + escHtml(u.name) + '</td>'
+            + '<td class="m108-ai-admin-num">' + escHtml(num(u.questions)) + '</td>'
+            + '<td class="m108-ai-admin-num">' + escHtml(num(u.calls)) + '</td>'
+            + '<td class="m108-ai-admin-num">' + escHtml(usd(u.cost_usd, 2)) + '</td></tr>';
+        }).join('') : emptyRow(4);
+      }
+
+      function renderDays(rows) {
+        el('m108AiAdminDays').innerHTML = (rows && rows.length) ? rows.map(function (r) {
+          return '<tr><td>' + escHtml(dayLabel(r.day)) + '</td>'
+            + '<td class="m108-ai-admin-num">' + escHtml(num(r.questions)) + '</td>'
+            + '<td class="m108-ai-admin-num">' + escHtml(num(r.calls)) + '</td>'
+            + '<td class="m108-ai-admin-num">' + escHtml(usd(r.cost_usd, 2)) + '</td></tr>';
+        }).join('') : emptyRow(4);
+      }
+
+      function renderTools(rows) {
+        el('m108AiAdminTools').innerHTML = (rows && rows.length) ? rows.map(function (t) {
+          const errs = Number(t.errors || 0);
+          return '<tr><td><code>' + escHtml(t.name) + '</code></td>'
+            + '<td class="m108-ai-admin-num">' + escHtml(num(t.calls)) + '</td>'
+            + '<td class="m108-ai-admin-num"' + (errs ? ' style="color:#b91c1c;font-weight:600;"' : '') + '>' + escHtml(num(errs)) + '</td></tr>';
+        }).join('') : emptyRow(3, 'Bu ay araç çağrısı yok.');
+      }
+
+      function renderCache(c, stops) {
+        c = c || {};
+        const rows = [
+          ['Önbellekten okunan', num(c.read_tokens) + ' token'],
+          ['Önbelleğe yazılan', num(c.creation_tokens) + ' token (1 sa: ' + num(c.creation_1h_tokens) + ')'],
+          ['Önbelleksiz girdi', num(c.uncached_input_tokens) + ' token'],
+          ['Çıktı', num(c.output_tokens) + ' token'],
+          ['İsabet oranı', pctText(c.hit_ratio)],
+        ].map(function (r) {
+          return '<tr><td style="color:#6b7280;">' + escHtml(r[0]) + '</td><td class="m108-ai-admin-num">' + escHtml(r[1]) + '</td></tr>';
+        });
+        const keys = Object.keys(stops || {}).sort(function (a, b) { return (stops[b] || 0) - (stops[a] || 0); });
+        rows.push('<tr><td style="color:#6b7280;">Durma sebepleri</td><td>'
+          + (keys.length ? keys.map(function (k) { return stopChip(k) + '<span style="font-size:0.75rem;color:#6b7280;margin-right:6px;">×' + escHtml(num(stops[k])) + '</span>'; }).join('') : '—')
+          + '</td></tr>');
+        el('m108AiAdminCache').innerHTML = rows.join('');
+      }
+
+      function renderQuestions(rows) {
+        el('m108AiAdminQCount').textContent = (rows && rows.length) ? '(son ' + rows.length + ')' : '';
+        el('m108AiAdminQuestions').innerHTML = (rows && rows.length) ? rows.map(function (q) {
+          const tools = Array.isArray(q.tools) ? q.tools : [];
+          return '<tr>'
+            + '<td style="white-space:nowrap;color:#6b7280;">' + escHtml(q.at) + '</td>'
+            + '<td>' + escHtml(q.user) + '</td>'
+            + '<td><div class="m108-ai-admin-preview" title="' + escHtml(q.preview) + (q.conversation_id ? ' (sohbet #' + escHtml(q.conversation_id) + ')' : '') + '">' + escHtml(q.preview || '—') + '</div></td>'
+            + '<td>' + (tools.length ? tools.map(function (t) { return '<span class="m108-ai-admin-chip">' + escHtml(t) + '</span>'; }).join('') : '<span style="color:#9ca3af;">—</span>') + '</td>'
+            + '<td class="m108-ai-admin-num">' + escHtml(num(q.calls)) + '</td>'
+            + '<td class="m108-ai-admin-num">' + escHtml(usd(q.cost_usd, 4)) + '</td>'
+            + '<td>' + stopChip(q.stop_reason) + '</td></tr>';
+        }).join('') : emptyRow(7, 'Bu ay soru sorulmamış.');
+      }
+
+      // ── Ayar formu (yalnız SuperAdmin) ──
+      function fieldInputs() {
+        return form ? Array.prototype.slice.call(form.querySelectorAll('[data-field]')) : [];
+      }
+      function fillModels(models) {
+        const list = (Array.isArray(models) && models.length) ? models : FALLBACK_MODELS;
+        modelLabels = {};
+        list.forEach(function (m) { modelLabels[m.id] = m.label || m.id; });
+        const sel = el('m108AiAdminModel');             // yalnız SuperAdmin formunda var
+        if (!sel) return;
+        sel.innerHTML = '';
+        list.forEach(function (m) {
+          const o = document.createElement('option');
+          o.value = m.id; o.textContent = m.label || m.id;
+          sel.appendChild(o);
+        });
+      }
+      function fillSettings(s) {
+        currentSettings = s || null;
+        if (!form || !s) return;
+        fieldInputs().forEach(function (inp) {
+          const name = inp.dataset.field;
+          if (inp.type === 'checkbox') inp.checked = !!s[name];
+          else inp.value = (s[name] === undefined || s[name] === null) ? '' : String(s[name]);
+        });
+        updateDirty();
+      }
+      function readValue(inp) {
+        if (inp.type === 'checkbox') return !!inp.checked;
+        if (inp.type === 'number') return inp.value === '' ? null : Number(inp.value);
+        return inp.value;
+      }
+      function gatherChanges() {
+        const out = {};
+        if (!currentSettings) return out;
+        fieldInputs().forEach(function (inp) {
+          const name = inp.dataset.field;
+          const v = readValue(inp);
+          if (v === null) return;                       // boş sayı alanı = dokunma
+          const cur = currentSettings[name];
+          const same = (typeof v === 'number') ? Number(cur) === v : cur === v;
+          if (!same) out[name] = v;
+        });
+        return out;
+      }
+      function updateDirty() {
+        const tag = el('m108AiAdminDirty');
+        if (!tag) return;
+        const keys = Object.keys(gatherChanges());
+        tag.textContent = keys.length ? ('Değişen: ' + keys.join(', ')) : '';
+        const lbl = el('m108AiAdminEnabledLabel'), sw = el('m108AiAdminEnabled');
+        if (lbl && sw) lbl.textContent = sw.checked ? 'Açık' : 'Kapalı';
+      }
+      if (form) {
+        form.addEventListener('input', updateDirty);
+        form.addEventListener('change', updateDirty);
+        el('m108AiAdminReset').addEventListener('click', function () { fillSettings(currentSettings); });
+        form.addEventListener('submit', async function (ev) {
+          ev.preventDefault();
+          const changes = gatherChanges();
+          if (!Object.keys(changes).length) { showToast('Değişiklik yok.'); return; }
+          const saveBtn = el('m108AiAdminSave');
+          saveBtn.disabled = true;
+          try {
+            const res = await fetch('/api/assistant/admin/settings', {
+              method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes),
+            });
+            const data = await res.json().catch(function () { return {}; });
+            if (!res.ok) { showToast(errMsg(data) || 'Asistan ayarları kaydedilemedi.'); return; }
+            const changed = Array.isArray(data.changed) ? data.changed : [];
+            showToast(changed.length ? ('Asistan ayarları güncellendi: ' + changed.join(', ')) : 'Ayarlar zaten güncel.', 'success');
+            fillSettings(data.settings || currentSettings);
+            renderState(currentSettings);
+            load();                                   // tavan/pct yeniden hesaplansın
+          } catch (e) { showToast('Sunucuya ulaşılamadı.'); }
+          finally { saveBtn.disabled = false; }
+        });
+      }
+
+      // ── Yükleme ──
+      async function load() {
+        refreshBtn.disabled = true; monthSel.disabled = true;
+        try {
+          const res = await fetch('/api/assistant/admin/usage?month=' + encodeURIComponent(monthSel.value));
+          const data = await res.json().catch(function () { return {}; });
+          if (!res.ok) {
+            setWarn(errMsg(data) || 'Asistan kullanım raporu yüklenemedi.', true);
+            el('m108AiAdminState').textContent = '—';
+            return;
+          }
+          fillModels(data.models);
+          fillSettings(data.settings);
+          renderState(data.settings);
+          renderTiles(data);
+          renderUsers(data.by_user);
+          renderDays(data.by_day);
+          renderTools(data.top_tools);
+          renderCache(data.cache, data.stop_reasons);
+          renderQuestions(data.questions);
+        } catch (e) {
+          setWarn('Sunucuya ulaşılamadı.', true);
+        } finally {
+          refreshBtn.disabled = false; monthSel.disabled = false;
+        }
+      }
+      monthSel.addEventListener('change', load);
+      refreshBtn.addEventListener('click', load);
+      load();
+    })();
 
     /* ── Init ── */
     loadUsers();

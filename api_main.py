@@ -356,6 +356,11 @@ app.include_router(material_groups_router.router)
 app.include_router(suppliers_router.router)
 # Malzeme bazlı tedarikçi tercihi — /api/material-prefs (yazma suppliers.status)
 app.include_router(suppliers_router.prefs_router)
+# Minerva Asistan — /api/assistant/* (assistant.use + active_domain; sohbet NDJSON
+# akışı).  Router burada, Claude SDK'sı ise yalnız sohbet ucunda TEMBEL import
+# edilir — api_main anahtarsız/SDK'sız ortamda da aynı hızda açılır.
+from routers import assistant as assistant_router   # noqa: E402
+app.include_router(assistant_router.router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────

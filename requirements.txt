@@ -17,5 +17,9 @@ alembic==1.13.3
 pytest==8.3.4
 pytest-asyncio==0.25.0
 httpx==0.28.1
+# Minerva Asistan (core/assistant) — 0.125.x son Python 3.9 uyumlu seri;
+# 1.x 3.10+ ister (yerel testler 3.9'da).  httpx tabanlı; typed olmayan
+# alanlar extra_body ile geçer.
+anthropic==0.125.0
 pypdf==5.1.0
 segno==1.6.1

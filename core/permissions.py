@@ -135,6 +135,12 @@ PERMISSION_CATEGORIES = {
     # kalır), merge = mükerrer firma kartlarını birleştir.  Kart ekle/düzenle/
     # pasife al hâlâ items.create/edit/delete'tedir.
     "suppliers":     ["status", "prices", "merge"],
+    # Minerva Asistan (core/assistant) — IMS içi, YALNIZ OKUMA yapan Claude
+    # tabanlı soru-cevap / nasıl-yapılır asistanı.  use = widget'ı görme +
+    # soru sorma.  Her araç ayrıca kendi kategorisinin okuma iznini
+    # (items.view, inventory.view, …) yeniden denetler; bayi (Distributor)
+    # ve yalnız pdks.kiosk taşıyan kiosk tableti kapalıdır.
+    "assistant":     ["use"],
 }
 
 # Default permission set per role — used when a user's `permissions` JSON is null.
@@ -165,6 +171,7 @@ _DEFAULT_PERMISSIONS = {
         # Manager'da items.delete de kapalı (DELETE /api/suppliers onu ister).
         # Gerekirse yetki matrisinden kişiye açılır.
         "suppliers":     {"status": True,  "prices": True,  "merge": False},
+        "assistant":     {"use": True},
     },
     "LabLead": {
         "items":      {"view": True,  "create": True,  "edit": True,  "delete": True,  "import": True},
@@ -184,6 +191,7 @@ _DEFAULT_PERMISSIONS = {
         "reviews":         {"view": False, "invite": False, "moderate": False, "delete": False},
         "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
         "suppliers":     {"status": True,  "prices": True,  "merge": True},
+        "assistant":     {"use": True},
     },
     "LabTech": {
         "items":      {"view": True,  "create": True,  "edit": False, "delete": False, "import": False},
@@ -203,6 +211,7 @@ _DEFAULT_PERMISSIONS = {
         "reviews":         {"view": False, "invite": False, "moderate": False, "delete": False},
         "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
         "suppliers":     {"status": False, "prices": False, "merge": False},
+        "assistant":     {"use": True},
     },
     "Staff": {
         # Read-only baseline
@@ -223,6 +232,7 @@ _DEFAULT_PERMISSIONS = {
         "reviews":         {"view": False, "invite": False, "moderate": False, "delete": False},
         "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
         "suppliers":     {"status": False, "prices": False, "merge": False},
+        "assistant":     {"use": True},
     },
     "Distributor": {
         # Dışa dönük distribütör — YALNIZ sipariş portalı, ERP'ye hiçbir erişim yok.
@@ -245,6 +255,7 @@ _DEFAULT_PERMISSIONS = {
         "reviews":           {"view": False, "invite": False, "moderate": False, "delete": False},
         "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
         "suppliers":     {"status": False, "prices": False, "merge": False},
+        "assistant":     {"use": False},
     },
 }
 

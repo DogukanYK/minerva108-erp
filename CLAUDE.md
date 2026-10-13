@@ -734,6 +734,74 @@ gelir — route'un kendi header'ını koyması İŞE YARAMAZ, middleware ezer
 (Drive `preview/raw` dalıyla aynı kalıp). Yeni bir `location` bloğu
 eklerken güvenlik başlıklarını oraya da yazdığını `curl -sI` ile DOĞRULA.
 
+**Minerva Asistan** (`core/assistant/`, `routers/assistant.py`, `static/assistant.js`,
+`docs/assistant/*.md`, `templates/admin.html` kartı) — IMS içi, **yalnız okuma** yapan
+Claude tabanlı soru-cevap + nasıl-yapılır asistanı (sağ alttaki düğme; 28 iç sayfa,
+public/kiosk/portal yollarında yok). SDK `anthropic==0.125.0` (son Py3.9 uyumlu
+seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `low`.
+
+- **Mimari.** `settings.py` (AppSetting `assistant.*`, `Settings` frozen dataclass) ·
+  `client.py` (süreç başına TEK `AsyncAnthropic`, anahtar YALNIZ `ANTHROPIC_API_KEY`
+  env'den çağrı anında; `max_retries=1`, connect 5 s / read 60 s) · `prompt.py`
+  (DONDURULMUŞ Türkçe kurallar + `docs/assistant/*.md` SSS → `SYSTEM_BLOCKS`;
+  `FAQ_MAX_CHARS=27_000` testle kilitli) · `tools.py` + `handlers.py` (14 araç,
+  `REGISTRY` ada göre sıralı, strict şema, araç başına any-of izin, her araç kendi
+  `SessionLocal()`'ını thread'de açar, çıktı ≤ `MAX_RESULT_CHARS`) · `budget.py`
+  (`PRICES`, `compute_cost`, ay/gün toplamları TR takvimde, `check_budget`,
+  `record_usage`, `maybe_warn`) · `history.py` (sohbet/mesaj kalıcılığı, `api_messages`
+  replay, ROTASYON) · `runner.py` (async döngü, NDJSON olayları, 150 s tur sınırı).
+  `POST /api/assistant/chat` NDJSON akışı (`meta` → `ping`/`tool`/`token` → `done`|`error`);
+  `Depends(get_db)` oturumu akış başlamadan kapanır → üreteç `asyncio.Queue` + `run_turn`
+  görevi, kalıcılık (`_persist`: satırlar + çağrı başına `assistant_usage` + rotasyon
+  alanları) `done`/`error` sonrası YENİ `SessionLocal()` ile ve THREAD'de; bağlantı
+  kopsa da model çağrısı iptal edilmez, bütçeye yazılır. Tablolar
+  `assistant_conversations` / `assistant_messages` / `assistant_usage` (create_all +
+  Alembic `b4d6f8a0c2e4`); yetki kategorisi `assistant.use` (iç roller True, Distributor
+  False; override'lı hesaplara `_backfill_perm_assistant` sentinel'i dağıtır).
+  SDK yalnız sohbet ucunda TEMBEL import edilir (`api_main` import'u `anthropic`'i yüklemez).
+- **Önbellek disiplini (prompt-caching.md).** İstek sırası tools → system → messages;
+  araçlar ve sistem istemi her istekte byte-aynı (tarih/isim/panel/rol istemde YOK —
+  `PROMPT_HASH` sohbete yazılır, değişince rotasyon). Son sistem bloğunda
+  `cache_control ephemeral ttl=1h` + üst düzey otomatik 5 dk kuyruk. Oturum bağlamı
+  (kullanıcı, panel, tarih, kullanabildiği araçlar, finans) soru mesajından SONRA
+  `role:"system"` mesajı olarak gider (önbelleğe dokunmaz, user metninden sahtelenemez).
+  `tool_choice` DAİMA `auto` (değişirse tools+system önbelleği düşer). **Geçmiş yalnız
+  eklenir** (preserved thinking: budama/düzenleme sonraki thinking bloklarını 400'ler);
+  12 soru / +8K geçmiş token / model-istem-panel değişimi → kısa özetle YENİ sohbet
+  (`parent_id`). Cevapsız `tool_use` ya da arkasından assistant gelmeyen `system`
+  satırı kalıcılaşmaz (replay'de 400 verirdi). `thinking.block_binding.drop_block` +
+  `fallbacks:"default"` beta'ları varsayılan; API bunları reddederse süreç tek seferlik
+  SAFE MODE'a geçer, `role 'system' … not supported` derse bağlam user mesajına katlanır
+  (ikisi de stderr'e loglanır). Her değişiklikten sonra DOĞRULA:
+  `scripts/assistant_cache_probe.py` (gerçek API, ≈0,15 $, kullanıcı onayıyla — 2. özdeş
+  istekte `cache_read_input_tokens` 0 ise çıkış 1) ve `/admin/usage` önbellek isabet oranı.
+- **Güvenlik kuralları.** Araçlar salt-okunur; yetki `require_internal_user(("assistant","use"))`
+  + araç başına izin yeniden denetlenir (yetki yoksa DB açılmaz, modele "yetkiniz yok");
+  domain kolonu olan her tablo `ctx.domain` ile süzülür; finans alanları (`cost_price`,
+  reçete maliyeti) YALNIZ `can_finance` (rol ∈ `_FINANCE_ROLES` VE `finance.view`) ise
+  ÜRETİLİR ("hesapla-sıfırla" yok); tedarikçi fiyatları sistem kuralıyla aynı
+  (`items.view|reports.view`); `find_lot` alt listeleri inventory/production/retention
+  view'larına göre. Araç sonuçları VERİDİR (içindeki talimat uygulanmaz); linkler yalnız
+  `/` ile başlayan iç yollar (`//` ve `\` reddedilir — widget `isInternalHref` + sunucu
+  `tools.is_internal_href`); mesaj ≤2000 karakter; sohbet yalnız sahibine; rate limit
+  KULLANICI bazlı 20/dk (`_user_key`), kullanıcı başına eşzamanlı tur ≤ `MAX_ACTIVE_TURNS`
+  (429 `busy`); widget DOM'u `textContent` ile kurulur (innerHTML yok), `m108-ai-` öneki.
+- **Ayarlar.** AppSetting `assistant.enabled/model/effort/monthly_cap_usd/daily_user_cap_usd/
+  max_tool_rounds/max_output_tokens/max_turns/max_history_tokens/cache_ttl` — Yönetim
+  Paneli "Minerva Asistan" kartından (yalnız SuperAdmin; `PUT /api/assistant/admin/settings`,
+  audit `assistant.settings.update`). Model `budget.PRICES` anahtarlarından biri olmalı;
+  fiyatlar değişirse `PRICES`'ı güncelle (maliyet kayıt anında dondurulur).
+- **Maliyet izleme.** Her API çağrısı `assistant_usage`'a (token/önbellek sayaçları,
+  maliyet, araçlar, `stop_reason`, `request_id`); aylık tavan 100 $ (aşınca 402, %80'de
+  SuperAdmin'e push + audit, ayda bir), kişi başı günlük 3 $. `/admin/usage` (finans
+  rolleri): kullanıcı/gün/araç kırılımı, önbellek isabet oranı, `stop_reason` dağılımı —
+  `max_tokens` %2'yi geçerse `max_output_tokens`'ı yükselt; soğuk 1h yazmaları artarsa
+  TTL'i gözden geçir. Beklenen: ay ≈ 30 $ (günde ~30 soru).
+- **Test.** SDK tamamen sahte (`tests/assistant_fakes.py`, ağ YOK, gerçek anahtar
+  gerekmez); `tests/test_assistant_{tools,runner,api,budget_history,rbac,widget}.py`.
+  Deploy öncesi canlı `.env`'e `ANTHROPIC_API_KEY` eklenir (sohbete yapıştırılmaz);
+  tablolar `init_db()` ile gelir, alembic için `stamp head`.
+
 **Middleware stack** (api_main.py): `SecurityHeadersMiddleware` (CSP + headers),
 `CSRFMiddleware` (Origin/Referer check on mutating verbs; exempts `/api/login`,
 `/api/logout`), `SlowAPIMiddleware` (rate limiting). Auth is JWT in an HttpOnly +

@@ -2653,6 +2653,105 @@ class InfluencerPayout(Base):
     creator = relationship("InfluencerCreator", foreign_keys=[creator_id])
 
 
+# ─── Minerva Asistan (core/assistant) — sohbet kalıcılığı + maliyet defteri ──
+# IMS içi, yalnız okuma yapan Claude tabanlı soru-cevap asistanı.  Üç tablo da
+# create_all ile gelir (migration b4d6f8a0c2e4 kayıt için).  Geçmiş YALNIZ
+# EKLENİR: satırlar API'ye gönderilen/alınan blokların birebir JSON'udur
+# (thinking imzaları dahil); budama yok, uzayan sohbet `parent_id` ile yeni
+# sohbete ROTE edilir (core/assistant/history.py).
+
+class AssistantConversation(Base):
+    """Bir kullanıcının asistan sohbeti (panel + model + dondurulmuş istem
+    hash'ine bağlı).  `prompt_hash`/`model`/`domain` değişince ya da `turns` /
+    `last_prompt_tokens` eşiği aşılınca eski sohbet DOKUNULMADAN kalır, kısa
+    özetle yeni sohbet açılır ve `parent_id` zinciri iz tutar.  `is_active`
+    yumuşak gizleme; sahibi silinince CASCADE."""
+    __tablename__ = "assistant_conversations"
+    __table_args__ = (
+        Index("ix_assistant_conv_user_updated", "user_id", "updated_at"),
+    )
+
+    id                 = Column(Integer, primary_key=True)
+    user_id            = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    domain             = Column(String(20), default="cosmetics", nullable=False,
+                                server_default=text("'cosmetics'"))   # Kozmetik / Food Supplement
+    model              = Column(String(60), nullable=False)           # ör. claude-opus-5-5
+    prompt_hash        = Column(String(16), nullable=False)           # core.assistant.tools.PROMPT_HASH
+    title              = Column(String(120), nullable=True)           # ilk sorunun ilk 60 karakteri
+    parent_id          = Column(Integer, ForeignKey("assistant_conversations.id", ondelete="SET NULL"),
+                                nullable=True)                        # rotasyonla açıldıysa önceki sohbet
+    turns              = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    last_prompt_tokens = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    is_active          = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_at         = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at         = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user     = relationship("User", foreign_keys=[user_id])
+    messages = relationship("AssistantMessage", back_populates="conversation",
+                            order_by="AssistantMessage.id",
+                            cascade="all, delete-orphan", passive_deletes=True)
+
+
+class AssistantMessage(Base):
+    """Sohbetin API mesaj satırı.  `role` user|assistant|system; `kind`
+    question (kullanıcı sorusu) | context (soru sonrası role:"system" oturum
+    bağlamı) | assistant (thinking + text + tool_use blokları, olduğu gibi) |
+    tool_result (araç sonuçlarını taşıyan user mesajı).  `content_json` API'ye
+    giden/gelen içerik bloklarının BİREBİR JSON'u — replay byte-stabil olsun
+    diye başka biçime çevrilmez.  `display_text` + `tools_json` yalnız widget
+    gösterimi için (araç çipleri, kaynak linkleri)."""
+    __tablename__ = "assistant_messages"
+
+    id              = Column(Integer, primary_key=True)
+    conversation_id = Column(Integer, ForeignKey("assistant_conversations.id", ondelete="CASCADE"),
+                             nullable=False, index=True)
+    role            = Column(String(12), nullable=False)
+    kind            = Column(String(16), nullable=False)
+    content_json    = Column(Text, nullable=False)
+    display_text    = Column(Text, nullable=True)
+    tools_json      = Column(Text, nullable=True)
+    created_at      = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    conversation = relationship("AssistantConversation", back_populates="messages")
+
+
+class AssistantUsage(Base):
+    """Her Claude API çağrısı için bir satır (bir soru = 1 + araç turu sayısı
+    kadar çağrı; `round_no`).  Aylık tavan, kişi başı günlük tavan ve /admin
+    kullanım raporu (`core/assistant/budget.py`) buradan toplanır; önbellek
+    sayaçları (`cache_read_input_tokens`, `cache_creation_input_tokens`, 1 saatlik
+    yazma ayrı `cache_creation_1h_tokens`) soğuk/sıcak oranını izlemek için.
+    `cost_usd` çağrı anındaki fiyat tablosuyla hesaplanıp DONDURULUR.  Sohbet ya
+    da mesaj silinse de satır kalır (SET NULL); kullanıcı silinince CASCADE."""
+    __tablename__ = "assistant_usage"
+    __table_args__ = (
+        Index("ix_assistant_usage_created", "created_at"),
+        Index("ix_assistant_usage_user_created", "user_id", "created_at"),
+    )
+
+    id                          = Column(Integer, primary_key=True)
+    user_id                     = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    conversation_id             = Column(Integer, ForeignKey("assistant_conversations.id", ondelete="SET NULL"),
+                                         nullable=True)
+    message_id                  = Column(Integer, ForeignKey("assistant_messages.id", ondelete="SET NULL"),
+                                         nullable=True)                # cevabı taşıyan assistant satırı
+    domain                      = Column(String(20), nullable=False)
+    model                       = Column(String(60), nullable=False)
+    round_no                    = Column(Integer, nullable=False, default=1, server_default=text("1"))
+    input_tokens                = Column(Integer, nullable=True)
+    cache_creation_input_tokens = Column(Integer, nullable=True)
+    cache_creation_1h_tokens    = Column(Integer, nullable=True)
+    cache_read_input_tokens     = Column(Integer, nullable=True)
+    output_tokens               = Column(Integer, nullable=True)
+    cost_usd                    = Column(Float, nullable=False, default=0.0, server_default=text("0"))
+    tool_calls_json             = Column(Text, nullable=True)         # [{"name","ms","is_error"}]
+    latency_ms                  = Column(Integer, nullable=True)
+    stop_reason                 = Column(String(30), nullable=True)   # end_turn|tool_use|max_tokens|refusal…
+    request_id                  = Column(String(80), nullable=True)   # Anthropic request-id (destek için)
+    question_preview            = Column(String(160), nullable=True)
+    created_at                  = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 def log_system_event(event_type: str, detail: str = None) -> None:
     """Bir sistem olayını (örn. 'app_start') kaydet.
 
@@ -3113,6 +3212,88 @@ def _backfill_perm_b2b_orders():
         db.close()
 
 
+def _backfill_perm_assistant():
+    """Override'lı kullanıcılara yeni `assistant.use` — rol varsayılanı, KOŞULLU.
+
+    `_backfill_perm_b2b_orders` kalıbı: override JSON'u rol varsayılanının
+    YERİNE geçtiği için yeni kategori özel yetkili kullanıcıya (prod'da Işık
+    Hanım, Meltem, Staff'lar, kiosk tableti) hiç ulaşmazdı.  Minerva Asistan
+    yalnız okur ve her aracı kendi kategorisinin okuma iznini yeniden denetler;
+    bu yüzden kapı "zaten bir şey okuyabiliyor mu" sorusudur: override'da
+    `items.view / inventory.view / recipes.view / production.view /
+    reports.view / pdks.view_own`'dan EN AZ BİRİ açıksa rol varsayılanı (iç
+    rollerde True) yazılır.  Yalnız `pdks.kiosk` taşıyan kiosk cihaz hesabı
+    hiçbirini sağlamadığı için False alır (girişteki tablette sohbet
+    açılmaz); Distributor rol varsayılanı zaten False.  Var olan anahtara
+    (yönetici bilerek açmış/kapatmış) dokunulmaz.  SuperAdmin her zaman geçer,
+    atlanır.  Değişen her kullanıcı için `permissions.backfill` audit satırı
+    (`gated`: koşul yüzünden False yazılan aksiyon → koşul metni).
+
+    BİR KEZ çalışır — `AppSetting` sentinel'i; değer = güncellenen kullanıcı
+    sayısı.
+    """
+    import json as _json
+    from core.permissions import _DEFAULT_PERMISSIONS, PERMISSION_CATEGORIES
+
+    SENTINEL = "backfill.perm.assistant.v1"
+    READ_GATES = (("items", "view"), ("inventory", "view"), ("recipes", "view"),
+                  ("production", "view"), ("reports", "view"), ("pdks", "view_own"))
+    cond = "|".join(f"{c}.{a}" for c, a in READ_GATES)
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter(AppSetting.key == SENTINEL).first():
+            return
+        n = 0
+        for u in (db.query(User)
+                  .filter(User.permissions.isnot(None), User.role != "SuperAdmin")
+                  .order_by(User.id).all()):
+            try:
+                perms = _json.loads(u.permissions)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(perms, dict):
+                continue
+            cat = perms.get("assistant")
+            if not isinstance(cat, dict):
+                cat = {}
+            role_def = ((_DEFAULT_PERMISSIONS.get(u.role) or _DEFAULT_PERMISSIONS["Staff"])
+                        .get("assistant") or {})
+
+            def _has(category, action):
+                c = perms.get(category)
+                return bool(isinstance(c, dict) and c.get(action, False))
+
+            ok = any(_has(c, a) for c, a in READ_GATES)
+            added, gated = {}, {}
+            for act in PERMISSION_CATEGORIES["assistant"]:
+                if act in cat:
+                    continue
+                default = bool(role_def.get(act, False))
+                if default and not ok:
+                    gated[f"assistant.{act}"] = cond
+                cat[act] = added[act] = default and ok
+            if not added:
+                continue
+            perms["assistant"] = cat
+            u.permissions = _json.dumps(perms, ensure_ascii=False)
+            db.add(AdminAuditLog(
+                actor_name="sistem", action="permissions.backfill",
+                target_type="user", target_id=u.id, target_name=u.username,
+                details=_json.dumps({"keys": {f"assistant.{k}": v for k, v in added.items()},
+                                     "gated": gated, "role": u.role, "sentinel": SENTINEL},
+                                    ensure_ascii=False)))
+            n += 1
+        db.add(AppSetting(key=SENTINEL, value=str(n)))
+        db.commit()
+        if n:
+            print(f"[init_db] assistant.use yetki backfill: {n} özel yetkili kullanıcı")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 # Proforma şablonunda (templates/quotations.html) sabit duran üç hesap — B2B
 # sipariş proforması bunları kayıtlı profillerden okur.  Bir kez tohumlanır;
 # sonrası yönetim ekranından düzenlenir.
@@ -3536,6 +3717,14 @@ def init_db():
         pass
     try:
         _backfill_bank_defaults()
+    except Exception:
+        pass
+
+    # Minerva Asistan: yeni `assistant.use` — override'lı kullanıcılara rol
+    # varsayılanı, yalnız override'da bir okuma izni varsa (kiosk hesabı
+    # False) — sentinel'li, bir kez.  Tablolar yukarıdaki create_all'dan gelir.
+    try:
+        _backfill_perm_assistant()
     except Exception:
         pass
 
