@@ -22,7 +22,10 @@ Kurallar
     (POST /quotations/{id}/confirm) bu akışta hiç çağrılmaz (teklif ORDER olur).
   • Rezervasyon yok: her parti başlangıcında güncel stok yeniden planlanır;
     yetersizse HİÇBİR tüketim yazılmaz.  Hammaddede lot + geçerli SKT zorunlu,
-    QC bekleyen/numune/SKT'si geçmiş lot kullanılmaz.  Kaynak seçimi kapalı.
+    QC bekleyen/numune/SKT'si geçmiş lot kullanılmaz.  "Aynı malzeme"
+    satırının kaynak kartı OTOMATİK seçilir (`production_plan.plan(
+    auto_sources=True)`, öneri sırası; kararlar `plan_snapshot["sources"]`);
+    `production.source_choice.enabled=0` iken yalnız reçete kartı.
   • Parti BAŞLAT yalnız tüketimi yazar (bitmiş ürün yok); TAMAMLA yalnız
     bitmiş ürünü + ProductionHistory/dökümü yazar — malzeme ikinci kez düşmez
     (core/production_run iki yarıyı ayrı çağrılır kılar).
@@ -914,8 +917,14 @@ def start_batch(db, domain, actor, order_id, data):
              "yenilenmeli.", "recipe_changed", 409)
     lang = order.label_language
     try:
+        # Sipariş ekranı kaynak kart SORAMAZ: "aynı malzeme" seçimi öneri
+        # sırasıyla otomatik çözülür (sıkı lot havuzuna göre); yetmeyen kalan
+        # stoğu onu karşılayan ilk seçenekte kalır → lot_missing o kartı
+        # (SKT/QC sorunlu kardeşi) adıyla söyler; kimse karşılamıyorsa reçete
+        # kartında → insufficient_stock.
         pl = production_plan.plan(db, recipe, qty, lang, domain=domain, sources=None,
-                                  lot_choices=None, lock=True, lot_filter=strict_lot_ok)
+                                  lot_choices=None, lock=True, lot_filter=strict_lot_ok,
+                                  auto_sources=True)
     except production_plan.PlanError as exc:
         fail(exc.detail, exc.code, exc.status)
     if pl.errors:
@@ -949,20 +958,45 @@ def start_batch(db, domain, actor, order_id, data):
                                      sel_lang_label=lang_label, record=record)
     db.flush()
     snapshot = [{**{k: v for k, v in r.items() if k != "tx"}, "transaction_id": r["tx"].id} for r in rows]
+    sources = batch_sources(pl)
     batch = B2BOrderBatch(order_id=order.id, item_id=line["item_id"], recipe_id=recipe.id,
                           planned_quantity=qty, lot_number=lot_no, status="STARTED", label_language=lang,
                           commercial_revision=order.commercial_revision,
                           technical_revision=order.technical_revision,
                           plan_snapshot=_json({"recipe_name": recipe.name, "rows": snapshot,
-                                               "label_warnings": list(pl.label_warnings)}),
+                                               "label_warnings": list(pl.label_warnings),
+                                               "sources": sources}),
                           started_by=name)
     db.add(batch)
     db.flush()
     order.updated_at = datetime.utcnow()
-    _audit(db, actor, "batch_start", order.id, {"batch_id": batch.id, "item_id": line["item_id"],
-                                                "quantity": qty, "lot_number": lot_no,
-                                                "outputs": len(snapshot)})
+    details = {"batch_id": batch.id, "item_id": line["item_id"], "quantity": qty,
+               "lot_number": lot_no, "outputs": len(snapshot)}
+    if sources:
+        details["sources"] = [{"recipe_item_id": s["recipe_item_id"], "auto": s["auto"],
+                               "picks": [[p["item_id"], p["quantity"]] for p in s["sources"]]}
+                              for s in sources]
+    _audit(db, actor, "batch_start", order.id, details)
     return batch
+
+
+def batch_sources(pl):
+    """Partinin "aynı malzeme" kaynak kararları — seçim satırları (`auto` =
+    öneri sırasıyla otomatik) ve reçete kartından başka karttan düşülen
+    satırlar: [{recipe_item_id, recipe_item_name, auto, group, sources:
+    [{item_id, name, quantity}]}].  Etiket dil kardeşi kaynak sayılmaz."""
+    out = []
+    for ln in pl.lines:
+        if ln.kind == "label":
+            continue
+        if not (ln.auto or ln.needs_choice or any(p.item_id != ln.recipe_item_id for p in ln.chosen)):
+            continue
+        out.append({"recipe_item_id": ln.recipe_item_id,
+                    "recipe_item_name": pl.names.get(ln.recipe_item_id, ""),
+                    "auto": bool(ln.auto), "group": ln.group, "unit": ln.unit,
+                    "sources": [{"item_id": p.item_id, "name": pl.names.get(p.item_id, ""),
+                                 "quantity": round(p.quantity, 6)} for p in ln.chosen]})
+    return out
 
 
 def _batch(db, order, batch_id, *, lock=True):
@@ -1313,6 +1347,7 @@ def order_detail(db, order, *, user, show_prices):
                         "started_at": _when(b.started_at), "completed_by": b.completed_by,
                         "completed_at": _when(b.completed_at), "cancel_reason": b.cancel_reason or "",
                         "production_history_id": b.production_history_id,
+                        "sources": snap.get("sources") or [],
                         "consumed": [{**c, "name": item_names.get(c["item_id"], "—"),
                                       "returned": round(returned.get(c["item_id"], 0.0), 6)}
                                      for c in consumed.values()]})

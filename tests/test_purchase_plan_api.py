@@ -13,8 +13,9 @@ TR-katlanmış, yumuşak silme sonrası ad yeniden kullanılabilir, sahip /
 SuperAdmin / Manager kuralı, audit satırları, missing[] işaretleme,
 last_run_at damgası updated_at'i değiştirmez); Origin'siz mutasyon 403;
 sayfa render + script dosyası; "aynı malzeme" grubu önizlemede (ui.sup
-"Aynı malzeme:" satırı + ui.firms "Tedarikçiler (N)" dökümü, ihtiyaç
-değişmez) ve Excel dışa aktarmada.
+"Aynı malzeme:" satırı + ui.firms "Tedarikçiler (N)" dökümü) ve Excel dışa
+aktarmada; grup stoğu (ui.stock_note, "— stoğu sayıldı", eski senaryo açık,
+üretimde kaynak seçimi kapalıyken seçenek kapanır + source_choice_disabled).
 """
 from datetime import datetime, timedelta
 
@@ -227,8 +228,10 @@ def test_source_choice_switch_gates_phase_out_stock_without_changing_request_or_
     disabled = build_report(db_session, request, "cosmetics")
     m = {x["item_id"]: x for x in disabled["materials"]}[ids["gli"]]
     assert m["stock_phase_out"] == 0 and m["display"]["buy_num"] == pytest.approx(2.8)
+    assert m["group_stock"] is None
     assert (m["supplier"], m["price"]) == ("NATURALYA", 5.0)
     assert disabled["meta"]["options"]["count_phase_out_stock"] is False
+    assert disabled["meta"]["options"]["count_group_stock"] is False                 # tek anahtar
     assert "source_choice_disabled" in disabled["meta"]["warning_codes"]
     assert any("Üretimde kaynak seçimi kapalı" in w for w in disabled["meta"]["warnings"])
     assert request.model_dump(mode="json") == before
@@ -240,14 +243,78 @@ def test_source_choice_switch_gates_phase_out_stock_without_changing_request_or_
     m = {x["item_id"]: x for x in enabled["materials"]}[ids["gli"]]
     assert m["stock_phase_out"] == pytest.approx(1000) and m["display"]["buy_num"] == pytest.approx(1.8)
     assert enabled["meta"]["options"]["count_phase_out_stock"] is True
+    assert enabled["meta"]["options"]["count_group_stock"] is True                   # eski senaryo → açık
     assert "source_choice_disabled" not in enabled["meta"].get("warning_codes", [])
+    # grup sayımı açıkken "bitirilecek" kutusu kapalı olsa da o kart sayılır (kapsar)
+    po_off = build_report(db_session, request.model_copy(update={"options": request.options.model_copy(
+        update={"count_phase_out_stock": False})}), "cosmetics")
+    m = {x["item_id"]: x for x in po_off["materials"]}[ids["gli"]]
+    assert m["stock_phase_out"] == pytest.approx(1000) and m["display"]["buy_num"] == pytest.approx(1.8)
     off_request = request.model_copy(update={"options": request.options.model_copy(
-        update={"count_phase_out_stock": False})})
+        update={"count_phase_out_stock": False, "count_group_stock": False})})
     off = build_report(db_session, off_request, "cosmetics")
     m = {x["item_id"]: x for x in off["materials"]}[ids["gli"]]
     assert m["stock_phase_out"] == 0 and m["display"]["buy_num"] == pytest.approx(2.8)
     assert request.model_dump(mode="json") == before
     assert authed_client.get(f"/api/purchase-plan/scenarios/{sid}").json()["config"] == saved
+
+
+def test_preview_group_stock_counted_with_breakdown_and_switch(authed_client: TestClient, db_session: Session):
+    """XHANTAN vakası uçtan uca: aynı malzemenin öteki tedarikçi kartındaki
+    stok ihtiyaçtan düşülür, döküm `ui.stock_note`'ta (sunucu biçimli),
+    eşdeğer kart satırı "— stoğu sayıldı"; ayar kapalıyken eski hesap +
+    `source_choice_disabled`.  Alanı olmayan eski senaryo grup sayımıyla açılır."""
+    import json as _json
+    from database import MaterialGroup, Supplier
+    ids = _seed(db_session)
+    hs = Supplier(name="HAMMADDESEPETİ", domain="cosmetics")
+    yk = Supplier(name="YİĞİTOGLU KİMYA", domain="cosmetics")
+    g = MaterialGroup(name="XHANTAN GUM", domain="cosmetics")
+    db_session.add_all([hs, yk, g])
+    db_session.flush()
+    gli = db_session.get(Item, ids["gli"])
+    alt = _item(db_session, "GLYCERIN YK", unit="g", stock=24687.81)
+    kg = _item(db_session, "GLİSERİN ESKİ", unit="kg", stock=2)
+    gli.supplier_id, alt.supplier_id = hs.id, yk.id
+    gli.material_group_id = alt.material_group_id = kg.material_group_id = g.id
+    db_session.commit()
+    r = authed_client.post("/api/purchase-plan/preview", json=_req(ids, qty=100), headers=_HDR)
+    assert r.status_code == 200, r.text
+    rep = r.json()
+    m = {x["item_id"]: x for x in rep["materials"]}[ids["gli"]]
+    assert m["need"] == pytest.approx(3300) and m["status"] == "yeterli" and m["amount"] is None
+    assert m["stock"] == pytest.approx(25187.81)                                    # 500 + 24.687,81
+    assert m["group_stock"]["breakdown_text"] == "HAMMADDESEPETİ 500 g · YİĞİTOGLU KİMYA 24,7 kg"
+    assert m["ui"]["stock_note"] == ("HAMMADDESEPETİ 500 g · YİĞİTOGLU KİMYA 24,7 kg; ayrı: GLİSERİN ESKİ 2,0 kg"
+                                     " — üretimde kullanılamaz (birim farklı)")
+    sup_t = [x["t"] for x in m["ui"]["sup"]]
+    assert "Aynı malzeme: «GLYCERIN YK» (YİĞİTOGLU KİMYA, stok 24,7 kg) — stoğu sayıldı" in sup_t
+    assert any(c["code"] == "group_stock_counted" for c in m["cautions"])
+    assert any(c["code"] == "group_alt_stock" and "«GLİSERİN ESKİ»" in c["text"] for c in m["cautions"])
+    assert any("stok sütununun altında" in n for n in next(
+        s for s in rep["sections"] if s["key"] == "notes")["rows"])
+    for fmt in ("pdf", "xlsx"):
+        assert authed_client.post(f"/api/purchase-plan/export?format={fmt}", json=_req(ids, qty=100),
+                                  headers=_HDR).status_code == 200
+    # Eski senaryo (alan yok) → açılınca grup sayımı açık
+    old_cfg = _req(ids, qty=100)
+    db_session.add(PurchasePlan(name="Eski senaryo", domain="cosmetics",
+                                config=_json.dumps({"version": 1, **old_cfg}, ensure_ascii=False)))
+    db_session.commit()
+    sid = db_session.query(PurchasePlan).filter(PurchasePlan.name == "Eski senaryo").one().id
+    cfg = authed_client.get(f"/api/purchase-plan/scenarios/{sid}").json()["config"]
+    assert cfg["options"]["count_group_stock"] is True
+    # Tek anahtar: üretimde kaynak seçimi kapalı → grup stoğu düşülmez
+    db_session.add(AppSetting(key="production.source_choice.enabled", value="0"))
+    db_session.commit()
+    r = authed_client.post("/api/purchase-plan/preview", json=_req(ids, qty=100), headers=_HDR)
+    rep = r.json()
+    m = {x["item_id"]: x for x in rep["materials"]}[ids["gli"]]
+    assert m["stock"] == pytest.approx(500) and m["display"]["buy_num"] == pytest.approx(2.8)
+    assert m["group_stock"] is None and m["ui"]["stock_note"] is None
+    assert rep["meta"]["options"]["count_group_stock"] is False
+    assert "source_choice_disabled" in rep["meta"]["warning_codes"]
+    assert any(c["code"] == "group_alt_stock" and "«GLYCERIN YK»" in c["text"] for c in m["cautions"])
 
 
 def test_preview_supplier_status_prefs_and_phase_out_stock(authed_client: TestClient, db_session: Session):
@@ -298,7 +365,8 @@ def test_preview_supplier_status_prefs_and_phase_out_stock(authed_client: TestCl
     # Seçenekler kapalı → eski davranış: yalnız kartın kendi teklifleri, en ucuzu
     # (eşdeğer kartların teklifleri — bitirilecek dahil — hiç yüklenmez), stok düşülmez
     r = authed_client.post("/api/purchase-plan/preview", headers=_HDR,
-                           json=_req(ids, qty=100, respect_supplier_status=False, count_phase_out_stock=False))
+                           json=_req(ids, qty=100, respect_supplier_status=False, count_phase_out_stock=False,
+                                     count_group_stock=False))
     m = {x["item_id"]: x for x in r.json()["materials"]}[ids["gli"]]
     assert m["stock_phase_out"] == 0 and m["display"]["buy_num"] == pytest.approx(2.8)
     assert (m["supplier"], m["price"]) == ("UMAYCHEM", 4.52)

@@ -14,7 +14,8 @@ nedeni ("fiyat yazılmamış" değil) PDF + Excel'de, ambalaj katı Excel "Not"
 sütununda, ondalıklı serbest miktar biçimi, kontrol karakterli ad Excel'i
 düşürmez; xlsx_cache hata ve tür durumları; "aynı malzeme" + sipariş
 satırları (PDF'te en çok 3 + "+N", Excel'de "Not"tan sonra Y/Z sütunları,
-Tedarikçiler K "İlişki türleri").
+Tedarikçiler K "İlişki türleri"); grup stoğu dökümü PDF stok hücresinde ve
+Excel AA (27.) sütununda (24–26 aynı).
 Sondaki test `RUSYA_FIXTURE_DIR` varsa Rusya kabul senaryosunu iki çıktıya da
 basar (toplamlar PDF ↔ Excel ↔ rapor aynı).
 """
@@ -396,3 +397,45 @@ def test_rusya_scenario_renders_with_matching_totals():
     wb = openpyxl.load_workbook(io.BytesIO(build_workbook(res)), data_only=True)[SHEET_LIST]
     tot = next(x for x in range(2, wb.max_row + 1) if wb.cell(x, 3).value == "GENEL TOPLAM (fiyatı belli olanlar)")
     assert wb[f"K{tot}"].value == total
+
+
+# ─── "Aynı malzeme" grup stoğu (13.10.2026) ─────────────────────────────────
+
+def _xhantan_report(qty=100):
+    """Grup #5: 105 HAMMADDESEPETİ 180,31 g (reçetede) + 636 YİĞİTOGLU KİMYA
+    24.687,81 g — grup stoğu sayılır, döküm stok hücresinin altında."""
+    items = [_it(105, "XHANTAN GUM", stock=180.31), _it(636, "XANTHAN GUM", stock=24687.81)]
+    recipe = RecipeRec(id=1, name="Jel", ingredients=(IngredientRec(item_id=105, quantity=2),))
+    inp = PlanInputs(items={i.id: i for i in items}, recipes={1: recipe}, stock_as_of=NOW,
+                     mgroup_of={105: 5, 636: 5}, mgroup_names={5: "XHANTAN GUM"}, card_supplier={105: 1, 636: 2},
+                     supplier_names={1: "HAMMADDESEPETİ", 2: "YİĞİTOGLU KİMYA"})
+    res = compute(inp, PlanRequest(title="Grup", lines=[{"recipe_id": 1, "qty": qty}]))
+    sup = {1: SupplierRec(id=1, name="HAMMADDESEPETİ"), 2: SupplierRec(id=2, name="YİĞİTOGLU KİMYA")}
+    return attach(res, PriceInputs(suppliers=sup, card_supplier={105: 1, 636: 2}), None, currency="USD")
+
+
+def test_pdf_group_stock_breakdown_under_stock_cell():
+    res = _xhantan_report()
+    assert res["materials"][0]["status"] == "yeterli"
+    _, text = _pdf_text(render_pdf(res))
+    assert "24.868 gram" in text and "YİĞİTOGLU KİMYA 24,7 kg" in text          # "Yeterli olanlar" tablosu
+    assert "Aynı malzeme: «XANTHAN GUM» (YİĞİTOGLU KİMYA, stok 24,7 kg) — stoğu sayıldı" not in text  # bölümde tedarikçi hücresi yok
+    big = _xhantan_report(qty=20000)
+    _, text = _pdf_text(render_pdf(big))
+    assert "15,2 kg" in text and "YİĞİTOGLU KİMYA 24,7 kg" in text              # alım tablosu
+    assert "Aynı malzeme: «XANTHAN GUM» (YİĞİTOGLU KİMYA, stok 24,7 kg) — stoğu sayıldı" in text
+
+
+def test_xlsx_group_stock_column_aa_after_existing_columns():
+    res = _xhantan_report(qty=20000)
+    m = res["materials"][0]
+    wb = openpyxl.load_workbook(io.BytesIO(build_workbook(res)))
+    ws = wb[SHEET_LIST]
+    assert [ws.cell(1, c).value for c in (24, 25, 26, 27)] == [
+        "Not", "Aynı malzeme (diğer kartlar)", "Sipariş geçmişi", "Grup stoğu (kart dökümü)"]
+    r = _row_of(ws, "XHANTAN GUM")
+    assert ws.cell(r, 27).value == m["group_stock"]["note"] == "HAMMADDESEPETİ 180 g · YİĞİTOGLU KİMYA 24,7 kg"
+    assert ws.cell(r, 25).value == "«XANTHAN GUM» (YİĞİTOGLU KİMYA, stok 24,7 kg) — stoğu sayıldı"
+    assert ws.cell(r, 5).value == pytest.approx(24.8)                          # E = elimizde (grup dahil)
+    assert ws[f"G{r}"].value == f"=MAX(0,ROUND(D{r}-E{r}-F{r},3))"            # formüller kaymadı
+    assert ws.column_dimensions["AA"].width == 50

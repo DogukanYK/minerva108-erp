@@ -119,6 +119,13 @@ class PlanOptionsIn(BaseModel):
     # en ucuz (eski davranış).
     count_phase_out_stock: bool = True
     respect_supplier_status: bool = True
+    # "Aynı malzeme" grup stoğu (13.10.2026) — eski senaryolarda alan yok →
+    # açık (yeni davranış).  Net modda gruptaki, üretimde bu satırın YERİNE
+    # düşülebilen kartların (`core.group_stock.can_substitute`: aynı birim,
+    # aynı tür, aktif) stoğu ihtiyaçtan düşülür; açıkken "bitirilecek" kartları
+    # da kapsar (önce onlar kullanılır).  Üretimde kaynak seçimi kapalıysa
+    # router bunu ve count_phase_out_stock'u kapatır.
+    count_group_stock: bool = True
     item_notes: Dict[int, str] = Field(default_factory=dict)
     notes: List[str] = Field(default_factory=list, max_length=50)
     checklist_owner: Optional[str] = Field(None, max_length=120)

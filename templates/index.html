@@ -530,6 +530,12 @@
       font-size: 0.7rem; font-weight: 600;
       background: #f3f4f6; color: #4b5563;
     }
+    /* Kritik stok — "aynı malzeme" grup rozeti (13.10.2026) */
+    .grp-badge {
+      display: inline-block; padding: 1px 8px; border-radius: 20px;
+      background: #ede9fe; color: #5b21b6; font-size: 0.68rem; font-weight: 700;
+    }
+    :root[data-theme="dark"] .grp-badge { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
 
     /* ══ SAFE EMPTY STATE ══ */
     .safe-state {
@@ -917,25 +923,37 @@
         'Yardımcı':    '#1e40af',
       };
 
+      const escC = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       tbody.innerHTML = items.map(it => {
         const catColor = CAT_COLORS[it.category] || '#374151';
         const catLabel = it.category || 'Diğer';
         const curClass = it.current_stock <= 0 ? 'stock-critical' : 'stock-low';
+        // "Aynı malzeme" grubu (üretimde kaynak seçimi açıkken): tek satır,
+        // toplam/min/eksik grubun taban biriminde ve SUNUCUDA biçimli.
+        const g = it.group;
+        const sub = g
+          ? `<div style="margin-top:2px;"><span class="grp-badge" title="Aynı malzemenin tedarikçi kartları toplandı">Aynı malzeme · ${g.member_count} kart</span></div>
+             <div style="font-size:0.74rem;color:#6b7280;margin-top:2px;">${escC(g.breakdown_text)}</div>`
+          : (it.sku ? `<div style="font-size:0.75rem;color:#9ca3af;margin-top:1px;">${escC(it.sku)}</div>` : '');
+        const cur = g ? escC(g.total_text) : `${escC(it.current_stock)} ${escC(it.unit)}`;
+        const min = g ? escC(g.min_text) : `${escC(it.min_stock_level)} ${escC(it.unit)}`;
+        const def = g ? escC(g.deficit_text) : `${escC(it.deficit)} ${escC(it.unit)}`;
         return `
           <tr style="border-bottom:1px solid #f3f0ea;">
             <td style="padding:0.7rem 1.1rem;">
-              <div style="font-weight:600;font-size:0.88rem;color:#1f2937;">${it.name}</div>
-              ${it.sku ? `<div style="font-size:0.75rem;color:#9ca3af;margin-top:1px;">${it.sku}</div>` : ''}
+              <div style="font-weight:600;font-size:0.88rem;color:#1f2937;">${escC(it.name)}</div>
+              ${sub}
             </td>
             <td style="padding:0.7rem 1rem;">
-              <span class="cat-pill" style="background:${catColor}20;color:${catColor};border-radius:20px;padding:2px 10px;font-size:0.72rem;font-weight:700;letter-spacing:0.03em;">${catLabel}</span>
+              <span class="cat-pill" style="background:${catColor}20;color:${catColor};border-radius:20px;padding:2px 10px;font-size:0.72rem;font-weight:700;letter-spacing:0.03em;">${escC(catLabel)}</span>
             </td>
             <td style="padding:0.7rem 1rem;text-align:right;">
-              <span class="${curClass}" style="font-weight:700;font-size:0.9rem;">${it.current_stock} ${it.unit}</span>
+              <span class="${curClass}" style="font-weight:700;font-size:0.9rem;">${cur}</span>
             </td>
-            <td style="padding:0.7rem 1rem;text-align:right;font-size:0.88rem;color:#6b7280;">${it.min_stock_level} ${it.unit}</td>
+            <td style="padding:0.7rem 1rem;text-align:right;font-size:0.88rem;color:#6b7280;">${min}</td>
             <td style="padding:0.7rem 1.1rem;text-align:right;">
-              <span class="deficit-badge">-${it.deficit} ${it.unit}</span>
+              <span class="deficit-badge">-${def}</span>
             </td>
           </tr>`;
       }).join('');

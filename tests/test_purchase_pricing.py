@@ -585,13 +585,22 @@ def test_material_with_only_group_alternative_is_not_unrelated():
     items = [it(1, "Kil", unit="g"), it(2, "KAOLİN KİLİ", unit="g", stock=500)]
     inp = PlanInputs(items={i.id: i for i in items}, recipes={1: rec(1, [(1, 1)])}, stock_as_of=NOW,
                      mgroup_of={1: 3, 2: 3}, mgroup_names={3: "Kil"})
-    res = attach(compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}])),
+    res = attach(compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}],
+                                          options={"count_group_stock": False})),
                  PriceInputs(suppliers=STEARYL_SUP, card_supplier={2: 3}), None)
     assert res["suppliers"]["unrelated"] == []
     assert [b["name"] for b in res["suppliers"]["candidates"]] == ["VESER KİMYEVİ"]
     m = mat(res, 1)
     assert any(c["code"] == "group_alt_stock" for c in m["cautions"])
     assert m["display"]["buy_text"] == "1,0 kg"                      # eşdeğer kartın 500 g'ı düşülmedi
+    assert alt_texts(m) == ["«KAOLİN KİLİ» (VESER KİMYEVİ, stok 500 gram)"]
+    # Grup stoğu sayılırken (varsayılan) aynı birimli eşdeğer kartın stoğu düşülür
+    res = attach(compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}])),
+                 PriceInputs(suppliers=STEARYL_SUP, card_supplier={2: 3}), None)
+    m = mat(res, 1)
+    assert m["display"]["buy_text"] == "500 gram" and "group_alt_stock" not in [c["code"] for c in m["cautions"]]
+    assert alt_texts(m) == ["«KAOLİN KİLİ» (VESER KİMYEVİ, stok 500 gram) — stoğu sayıldı"]
+    assert m["relations"]["alternatives"][0]["counted"] is True
 
 
 def test_firms_view_for_preview():

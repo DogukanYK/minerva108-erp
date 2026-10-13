@@ -21,7 +21,8 @@ stoklar tarih" + "Sayfa N"; başta kapsam metni, turuncu uyarı kutusu, yeşil
 "(daha pahalı)", fiyatsızda kırmızı "Fiyat yok — teklif alınacak", altında
 stok kartı / son alım / numune ilişkileri, "Sipariş:" ve "Aynı malzeme:"
 (eşdeğer tedarikçi kartları) satırları ve uyarı notları; elle işaretlemek
-için boş "Alındı" sütunu.
+için boş "Alındı" sütunu.  "Elimizde" hücresinin altında grup stoğu
+sayıldıysa kart dökümü (`purchase_plan.stock_note`) küçük gri satırda.
 
 Bütün dinamik metin (malzeme/tedarikçi adı, not, iletişim) reportlab
 Paragraph'ına `escape()` ile girer — adında "&" ya da "<" geçen bir kart
@@ -32,7 +33,7 @@ from io import BytesIO
 from typing import List, Optional
 from xml.sax.saxutils import escape
 
-from core.purchase_plan import _amount_near, tr_num
+from core.purchase_plan import _amount_near, stock_note, tr_num
 from core.purchase_pricing import (CURRENCY_SYMBOL, UNIT_TEXT, money, offer_lines, price_text, relation_texts,
                                    sections)
 
@@ -183,6 +184,16 @@ def _name_cell(c: _Ctx, m: dict) -> str:
     return t
 
 
+def _stock_cell(c: _Ctx, m: dict, d: dict) -> str:
+    """"Elimizde" + altında küçük gri grup stoğu dökümü (`stock_note` —
+    önizleme ve Excel AA ile aynı metin)."""
+    t = _e(d.get("stock_text"))
+    note = stock_note(m)
+    if note:
+        t += "<br/>" + c.grey(f"<font size='8.5'>{_e(note)}</font>")
+    return t
+
+
 def _material_table(c: _Ctx, rows: List[dict], kind: str):
     from reportlab.platypus import Paragraph
 
@@ -200,7 +211,7 @@ def _material_table(c: _Ctx, rows: List[dict], kind: str):
         d = m.get("display") or {}
         cell = {"name": Paragraph(_name_cell(c, m), S["cell"]),
                 "need": Paragraph(_e(d.get("need_text")), S["val"]),
-                "stock": Paragraph(_e(d.get("stock_text")), S["val"]),
+                "stock": Paragraph(_stock_cell(c, m, d), S["val"]),
                 "open": Paragraph(_e(d.get("open_text")), S["val"]),
                 "buy": Paragraph(_e(d.get("buy_text")), S["num"]),
                 "sup": Paragraph(_sup_cell(c, m), S["cell"]),
@@ -357,7 +368,7 @@ def _sec_sufficient(c: _Ctx, sec: dict) -> list:
         cell = {"name": Paragraph(_name_cell(c, m), S["cell"]),
                 "kind": Paragraph(KIND_HEADER.get(m["kind"], ""), S["cell"]),
                 "need": Paragraph(_e(d.get("need_text")), S["val"]),
-                "stock": Paragraph(_e(d.get("stock_text")), S["val"]),
+                "stock": Paragraph(_stock_cell(c, m, d), S["val"]),
                 "open": Paragraph(_e(d.get("open_text")), S["val"]),
                 "note": Paragraph(c.grey(notes) if notes else "", S["cell"])}
         data.append([cell[k] for k, _, _ in cols])

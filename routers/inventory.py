@@ -49,6 +49,7 @@ from core.auth import get_current_user
 from core.permissions import (_can_see_finance, require_any_permission, require_internal_user,
                               require_permission)
 from core.notifications import notify_low_stock
+from core.group_stock import low_stock_alerts
 from core.undo import record as record_undoable
 from core.domain import active_domain
 from core.audit import log_admin_event
@@ -1020,11 +1021,15 @@ def update_item(
 
     # ── Low-stock alert: if the edit (typically a min_stock_level bump) leaves
     #     the item at or below threshold, queue a notification on the response.
-    if item.min_stock_level > 0 and item.current_stock <= item.min_stock_level:
-        background_tasks.add_task(
-            notify_low_stock,
-            item.name, item.current_stock, item.min_stock_level, item.unit or "",
-        )
+    #     "Aynı malzeme" grubu yeterliyse uyarı gitmez (core.group_stock).
+    try:
+        alerts = low_stock_alerts(db, [item], domain)
+    except Exception:       # kayıt commit'li — bildirim hesabı yanıtı bozmasın
+        import logging
+        logging.getLogger("minerva108.notifications").exception("low stock alert failed")
+        alerts = []
+    for args in alerts:
+        background_tasks.add_task(notify_low_stock, *args)
 
     return {"id": item.id, "message": "Ürün güncellendi."}
 
@@ -1638,6 +1643,20 @@ def adjust_stock(
 
 # ─── Inventory summary + transactions feed ──────────────────────────────────
 
+_UNIT_FAMILY = {"g": "mass", "kg": "mass", "ml": "volume", "l": "volume", "adet": "count"}
+_SMALL_UNIT = {"mass": "g", "volume": "ml", "count": "adet"}
+
+
+def _bar_fields(value, unit) -> dict:
+    """Stoklar çubuğu için birim ailesi + küçük birimde değer — çubuklar
+    yalnız AYNI aile içinde (g/kg · ml/l · adet) kıyaslansın (g ile adet
+    karşılaştırması anlamsızdı)."""
+    from core.group_stock import convert_qty, unit_norm
+    fam = _UNIT_FAMILY.get(unit_norm(unit), "count")
+    small = convert_qty(max(0.0, float(value or 0.0)), unit, _SMALL_UNIT[fam])
+    return {"unit_family": fam, "bar_value": round(small or 0.0, 6)}
+
+
 @router.get("/inventory/summary")
 def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(active_domain),
                       _: dict = Depends(require_any_permission(("inventory", "view"), ("reports", "view")))):
@@ -1648,7 +1667,13 @@ def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(activ
     ve current_stock'a yansımıyordu. Phase 8 / Bug 4'le production direkt
     current_stock'u arttırıyor — bu endpoint de aynı kanonik değeri okur,
     böylece /stocks ve canlı önizleme birbirine uyumlu.
+
+    `group_id` / `group_key` (13.10.2026): kart, kovasında ≥2 aktif üyesi
+    olan bir "aynı malzeme" grubundaysa grubu (`group_key` =
+    "<grup id>:<kova>", /inventory/groups-summary'nin `key`'i); değilse null.
+    `unit_family` + `bar_value` stok çubuğunu birim ailesi içinde kıyaslar.
     """
+    from core import group_stock
     items = (
         db.query(Item)
         .filter(Item.is_active == True, Item.domain == domain)
@@ -1658,8 +1683,11 @@ def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(activ
     # Supplier lookup — listing'de supplier_name göstermek için tek query
     # (pasife alınan tedarikçinin adı da — kart tedarikçisiz görünmesin)
     supplier_name_by_id = _supplier_names(db, domain)
-    return [
-        {
+    by_item = group_stock.index_by_item(group_stock.load_groups(db, domain))
+    out = []
+    for i in items:
+        g = by_item.get(i.id)
+        out.append({
             "item_id":       i.id,
             "name":          i.name,
             "category":      i.category or "Diğer",
@@ -1668,9 +1696,41 @@ def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(activ
             "total_stock":   round(float(i.current_stock or 0), 4),
             "supplier_id":   i.supplier_id,
             "supplier_name": supplier_name_by_id.get(i.supplier_id) if i.supplier_id else None,
-        }
-        for i in items
-    ]
+            "group_id":      g.group_id if g else None,
+            "group_key":     f"{g.group_id}:{g.bucket}" if g else None,
+            **_bar_fields(i.current_stock, i.unit),
+        })
+    return out
+
+
+@router.get("/inventory/groups-summary")
+def inventory_groups_summary(db: Session = Depends(get_db), domain: str = Depends(active_domain),
+                             _: dict = Depends(require_any_permission(("inventory", "view"),
+                                                                      ("reports", "view")))):
+    """Stoklar sayfasının "aynı malzeme" grup satırları (13.10.2026) — grup ×
+    kova başına (`core.group_stock.load_groups`; kovada <2 aktif üye → yok).
+
+    Metinler SUNUCUDA biçimli (`total_text` "24,9 kg", `breakdown_text`
+    "HAMMADDESEPETİ 180 g · YİĞİTOGLU KİMYA 24,7 kg", `aside_text` başka
+    birim ailesindeki kartlar, `members_label` "2 tedarikçi") — JS TR sayı
+    biçimini yeniden yazmaz.  Yalnız görünüm: `group_stock_enabled`
+    ayarından bağımsız her zaman döner (ayar `rule_active` olarak bilgi)."""
+    from core import group_stock
+    out = []
+    for (gid, bucket), g in group_stock.load_groups(db, domain).items():
+        d = g.as_dict()
+        sups = [m.supplier_id for m in g.members]
+        distinct = {sid for sid in sups if sid}
+        n = len(g.members)
+        d.update({
+            "key": f"{gid}:{bucket}",
+            "member_ids": [m.id for m in g.members],
+            "supplier_count": len(distinct),
+            "members_label": (f"{n} tedarikçi" if len(distinct) == n else f"{n} kart"),
+            **_bar_fields(g.total, g.base_unit),
+        })
+        out.append(d)
+    return {"rule_active": group_stock.group_stock_enabled(db), "groups": out}
 
 
 @router.get("/inventory/by-item/{item_id}")

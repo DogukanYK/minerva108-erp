@@ -444,7 +444,28 @@ SUNUCUDAN sorulur (`GET /item-refs?ids=` → senaryodaki `missing[]` biçimi) �
 `/api/items`'a bakılmaz: o liste pasif kartı vermez ve `items-cache.js`
 önbelleği panele göre ayrılmaz (sayfa listeyi `fetchItems(true)` ile taze çeker).
 Kapasite ("elimizdekiyle üretilebilir") hariç kalemleri kısıt saymaz (su kartı
-0 stokta durur). Varsayılanlar: alım firesi %0, USD,
+0 stokta durur). **Grup stoğu** (13.10.2026, `PlanOptionsIn.count_group_stock`
+varsayılan True — eski senaryolar da açık; yalnız net mod): `compute` iki geçiş —
+satır başına kendi stok/ihtiyaç (`base`), sonra `_allocate_group_stock`.
+Yalnız satırın kök kartının YERİNE üretimde düşülebilen kartlar
+(`group_stock.can_substitute`; etiket satırı hiç) sayılır. Havuz = planda satırı
+olmayan, hariç/bekletilmemiş uygun kartlar + satırların ihtiyaç fazlası; eksik
+satırlar plan sırasıyla alır (bitirilecek/alma → tercih edilen → diğer → plan içi
+fazla), artan havuz kartı kullanabilen SON satıra yazılır, fazlası verilen satır
+`kendi − verilen` gösterir → grubun satır stokları toplamı grup toplamını AŞMAZ
+(XHANTAN: 180 g + 24.687,81 g → "24.868 gram", alınacak 0). Satıra `group_stock`
+{own, taken[], given[], open_from[], total, breakdown_text, aside_text, note};
+`stock_note` önizlemede `ui.stock_note`, PDF stok hücresinde ve Excel AA
+"Grup stoğu (kart dökümü)" sütununda (24–26. sütunlar ve formüller aynı).
+Uyarılar `group_stock_counted`/`group_stock_given` (bilgi); `group_alt_stock`
+yalnız SAYILMAYAN kartlar (g↔kg dahil — üretim birim çevirmez). Açık sipariş
+miktarı kendi biriminden satır birimine çevrilir (çevrilemezse
+`open_order_unit_mismatch`). Kapasite grup toplamını kullanır; aynı üründe aynı
+havuzu paylaşan satırlar havuzu BİR kez harcar. Açıkken "bitirilecek stok"
+kutusu da kapsanır. Router: üretimde kaynak seçimi kapalıysa
+`count_group_stock` + `count_phase_out_stock` hesap kopyasında kapanır,
+`source_choice_disabled` uyarısı (senaryo değişmez).
+Varsayılanlar: alım firesi %0, USD,
 "1 l ≈ 1 kg" notu, DİSTİLE SU / SAF SU hariç (AppSetting
 `purchase_plan.default_excluded[.<domain>]`), bitmiş ürün stoğunu düşme kapalı;
 kontrol listesi sorumlusu senaryoda girilir (kişi adı SABİT YAZILMAZ).
@@ -465,9 +486,12 @@ ile bağlanır (`core/material_groups.py`, `routers/material_groups.py`
 setil↔cetyl, uçucu yağ↔essential oil …) öneri üretir; lab Ürünler → "Aynı malzeme
 önerileri"nden onaylar — SİSTEM KENDİLİĞİNDEN GRUPLAMAZ (tohum: lab'ın "kept"
 kopya kararları, sentinel `backfill.material_groups_from_kept.v1`). Satın Alma
-Planı grubu YALNIZ alternatif tedarikçi olarak gösterir (`relations.firms[]` /
-`alternatives[]`, önizlemede "Tedarikçiler (N)"); gruptaki başka kartın stoğu
-ihtiyaçtan DÜŞÜLMEZ (lab ayrı ürün sayıyor) — yalnız `group_alt_stock` bilgi uyarısı.
+Planı gruptaki firmaları alternatif tedarikçi olarak gösterir (`relations.firms[]` /
+`alternatives[]`, önizlemede "Tedarikçiler (N)"). 06.10'da gruptaki başka kartın
+stoğu ihtiyaçtan düşülmüyordu (yalnız `group_alt_stock`); **13.10.2026'dan beri
+grup = eşdeğer malzeme**: stok raporlarda toplanır, Satın Alma ve üretim
+birbirinin yerine kullanır (aşağıda `core/group_stock.py`). Ürünler sayfasındaki
+öneri/grup metinleri lab'a bunu söyler ("yalnız eşdeğer kartları gruplayın").
 "Stoğa çevir" hedef sorar (bu kart / başka kart / yeni kart → `convert-options`);
 hedef kartta numune geldikten sonra numune miktarını karşılayan elle "Stok
 düzeltme…" varsa 409 `maybe_already_counted` → "yalnız lotu bağla" (`link_only`:
@@ -480,6 +504,47 @@ taşındı", "Stok düzeltme" (guard yalnız bunu elle düzeltme sayar). 05.10.2
 vakası: Naturalya numuneleri KRK/İpeda ana kartlarında durduğu için çevirme stoğu
 oraya yazdı; 758 kartı elle +20 + çevirme +20 ile çift sayıldı
 (`scripts/fix_numune_double_count_20261006.py`).
+
+**Grup stoğu çekirdeği `core/group_stock.py`** (13.10.2026; plan
+`~/.claude/plans/robust-orbiting-hartmanis.md`). Kural TEK yerde:
+`convert_qty` yalnız aynı `unit_norm` (1:1), g↔kg, ml↔l (×/÷1000) çevirir, başka
+her şey `None` — g ile ml TOPLANMAZ. `can_substitute(a, b)`: b aktif, aynı panel,
+aynı `lot_kind` (bitmiş ürün asla), aynı tüketim türü (etiket ≠ şişe), BİREBİR
+aynı `unit_norm` (üretim birim çevirmez); `production_plan._option_cards` ve
+Satın Alma bunu kullanır. `load_groups(db, domain)` tek sorgu: aktif grup + aktif
+aynı-panel üye + tedarikçi adı; anahtar `(grup, kova)` — kova
+hammadde/ambalaj/etiket/finished/other, `classify` = Stoklar'daki `classify`
+(`ledger.html`) BİREBİR; kovada <2 üye kalırsa grup yok. Stok `max(0, current)`
+(numune zaten dışarıda). `pick_base_unit`: en çok stoklu birim ailesi taban,
+başka ailedeki kart `aside` ("ayrı birim"). `group_min` = sayılan üye
+minimumlarının çevrilmiş EN BÜYÜĞÜ (toplam sahte alarm üretirdi). Metinler
+Python'da: `amount_short` ("180 g", "24,7 kg"), `breakdown_text`
+("HAMMADDESEPETİ 180 g · YİĞİTOGLU KİMYA 24,7 kg"; tedarikçi yoksa/ikiyse kart
+adı) — yalnız kart dökümü; Eksik Hammaddeler grup satırı/notu/PDF ve dashboard
+kritik grup mevcut/min/eksik/numune `amount_exact` (taban birim korunur, kg/l ≤3,
+g/ml ≤2 ondalık, pozitif eksik asla "0": 999,6 g / 1.000 g, eksik "0,4 g"). **Tek anahtar** `group_stock_enabled(db)` = `production_plan.
+source_choice_enabled`: "yeterli mi" sonucunu değiştiren her şey (Satın Alma
+düşümü, Eksik Hammaddeler/dashboard grup kuralı, düşük stok push'u) ona bağlı;
+ayar `0` → hepsi eski kart başı davranış, deploysuz. Stoklar ve Aylık rapor
+yalnız görünüm, DAİMA gruplar. Yüzeyler: `GET /api/inventory/summary` karta
+`group_id`/`group_key`/`unit_family`/`bar_value`; `GET /api/inventory/groups-summary`
+(summary ile aynı izin + panel) sunucu biçimli toplam/döküm; `ledger.html` grup
+satırı (açınca üyeler kendi "Düzelt"iyle, arama üyeyi bulursa grup açık);
+Aylık rapor ve Excel'i grup satırı + girintili üye (Excel'de toplam METİN — SUM
+çift saymasın), bölüm toplamları aynı. **Bilinen sınır:** dondurulmuş eski
+ayların kaydında grup yok, BUGÜNKÜ gruplamayla gösterilir (dipnot). **Eksik
+Hammaddeler** (`core/stock_gaps.assemble`): kural açıkken gruplu kartın durumu
+`classify(toplam, group_min, numune)`; eksik grup tek satır (`kind="group"`,
+`members[]`), grubu yeterli kart listeden DÜŞER; sipariş bayrağı KART başına
+(grup "Sipariş verildi · 1/2 kart"); seçim modu (`ids=`) kart başı kalır, karta
+`group` notu (Excel "Grup dökümü", PDF ad hücresi); kural kapalıyken Excel eski 13
+sütun. Dashboard sıfır/kritik sayısı grubu bir sayar. Push: dört çağrı noktası
+(`routers/inventory.py`, `routers/production.py`, `routers/b2b.py`,
+`core/shopify._low_stock_after`) `low_stock_alerts(db, items, domain)` →
+`notify_low_stock(*t)`; grup yeterliyse sessiz, değilse grup başına TEK uyarı;
+hesap commit SONRASI try/except içinde (bildirim hatası başarılı işi 500 yapmasın).
+Asistan `item_detail.group` grup toplamı + döküm, `stock_gaps` grup satırı.
+Testler `tests/test_group_stock.py`, `tests/test_group_stock_reports.py`.
 
 **Kodlu fason üretim** (`/outsourcing`; `routers/outsourcing.py`, motor
 `core/outsourcing.py`, PDF `core/outsourcing_documents.py`, rapor ayrımı
@@ -592,8 +657,19 @@ Output'larına bağlı) + `write_output` (showroom + `-S` şahit + RetentionSamp
 malzeme İKİNCİ KEZ düşmez. Şahit müşteri adedinden düşer (`üretilen − şahit`), eksik
 yeni partiyle. Başlamış parti İPTALİ iade ETMEZ; fiziksel iade gerekçeli, tüketimle
 sınırlı `+Adjustment` (`B2B parti iadesi — …`, ilk kaynak lota). Normal üretim iptali
-(`core/production_cancel`) B2B partisinin üretimini ENGELLER. Kaynak seçimi kapalı
-(`production.source_choice.enabled=0` aynen). **Tek sevkiyat**: açık parti yok +
+(`core/production_cancel`) B2B partisinin üretimini ENGELLER. **Kaynak seçimi
+otomatik** (13.10.2026): BAŞLAT `plan(..., auto_sources=True)` — cevapsız
+"Hangi tedarikçiden?" satırı öneri sırasını alır (bitirilecek/alma → reçete kartı
+→ tercih → diğer; havuz `lot_filter`'a uyar — yalnız sıkı lotlar; satırlar arası
+ortak), karşılanamayan kısım süzgeçsiz kart stoğu (planın öteki satırlarının
+payı düşülmüş) onu karşılayan İLK seçenekte kalır → `lot_missing` o kartı (SKT/QC
+sorunlu kardeşi) adıyla söyler; hiçbiri karşılamazsa reçete kartında →
+`insufficient_stock` (eksikler yenilenir). Kararlar
+`plan_snapshot["sources"]` + `batch_start` audit'inde (`batch_sources`),
+`order_detail` partilerinde `sources`; iç teknik föy "X (reçetede: Y)". İptal
+iadesi kaynak kartın ilk lotuna, TAMAMLA `ProductionConsumption.recipe_item_id`
+= reçete kartı. Ayar `0` → seçenek yalnız reçete kartı (eski davranış).
+**Tek sevkiyat**: açık parti yok +
 ödeme koşulu + her satırda sevke uygun stok ≥ sipariş; kartlar kilit altında yeniden
 doğrulanır, `build_delivery` (kargo) + `ship_core(released_only=True)` BİR kez düşer.
 Sevke uygun = `stock_lots.shippable_quantity` = kart stoğu − QC bekleyen − şahit
@@ -1048,8 +1124,9 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   `expand_recipe` — aynı kart birleşir, `parts` reçete satırlarını tutar ve
   yazımda her reçete satırı eskisi gibi kendi Output'unu/fazını alır).
   Hammadde/ambalaj satırının kartı AKTİF bir "aynı malzeme" grubundaysa
-  seçenekler = reçete kartı + gruptaki aktif, aynı panel/tür/birim ailesi
-  kartlar; reçete kartı dışındaki birinde stok varsa `needs_choice` ve
+  seçenekler = reçete kartı + gruptaki aktif, aynı panel/tür/birim
+  (`group_stock.can_substitute`) kartlar; reçete kartı dışındaki birinde
+  stok varsa `needs_choice` ve
   başlatma `ingredient_sources {reçete kartı id: [{item_id, quantity,
   inventory_id?}]}` ister (yoksa 400 `source_choice_required`, hiçbir şey
   yazılmaz). Bölme serbest; toplam = brüt (tolerans içinde son giriş kalana
@@ -1066,11 +1143,20 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   (eski davranış, deploysuz). Hata kodları: `source_choice_required`,
   `invalid_source`, `lot_not_found`, `lot_insufficient`, `insufficient_stock`
   (400 + `errors` + `lines`). Testler `tests/test_production_sources.py`.
-  Canlıda 08.10.2026 kararıyla bu ayar `0`: laboratuvar eşdeğerlik teyidi
-  gelene kadar kapalı. Satın Alma API'si de ayar kapalıyken diğer karttaki
-  bitirilecek stoğu ihtiyaçtan düşmez ve `source_choice_disabled` uyarısı
-  döndürür; kaydedilmiş senaryonun tercihini değiştirmez. Kaynak stoğu aynı
-  tüketim türüne ait olmalıdır (etiket stoğu şişe ihtiyacını karşılayamaz).
+  08.10.2026'da bu ayar canlıda `0`'a çekilmişti (lab eşdeğerlik teyidi
+  beklenirken); **13.10.2026 kullanıcı kararıyla `1`** (grup = eşdeğer malzeme,
+  deploy sonrası `pg_dump` + yukarıdaki INSERT'in `'1'`li hâli). Aynı anahtar
+  `core.group_stock.group_stock_enabled` olarak grup toplamını da yönetir:
+  Satın Alma grup/bitirilecek stok düşümü, Eksik Hammaddeler + dashboard grup
+  kuralı ve düşük stok push bastırma ayar `0` iken eski kart başı davranışa
+  döner (Satın Alma `source_choice_disabled` uyarısı verir, kaydedilmiş
+  senaryonun tercihini değiştirmez); Stoklar/Aylık rapor yine gruplu görünür.
+  Seçenek kartı `group_stock.can_substitute` ile süzülür: aynı tüketim türü
+  (etiket stoğu şişe ihtiyacını karşılayamaz), aynı `lot_kind`, BİREBİR aynı
+  `unit_norm`. `plan(auto_sources=True)` (yalnız B2B BAŞLAT) cevapsız seçim
+  satırını öneri sırasıyla doldurur (`Line.auto`, önizlemede `"auto"`);
+  gönderilen `sources` DAİMA önceliklidir, parametresiz çağrı eskisi gibi
+  `source_choice_required` verir.
 - **Üretimi iptal et** (`core/production_cancel.py`; `GET /api/production/{id}/
   cancel-preview` + `POST …/cancel {reason, fingerprint, release_lot}`, perm
   `production.cancel`, 07.10.2026). `start_production` her Output/Input'u

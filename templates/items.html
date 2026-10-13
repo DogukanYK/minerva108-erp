@@ -1303,10 +1303,12 @@
         <div class="modal-body" id="mgSugBody">
           <p class="mg-sub" style="margin:0 0 0.9rem;">
             Aşağıdaki kartlar ada göre <b>aynı malzeme</b> olabilir — çoğu zaman aynı
-            hammaddenin farklı tedarikçi kartları. <b>Grupla</b> kartları birleştirmez,
-            stoklar ayrı kalır; satın alma planı ve numune çevirme alternatif tedarikçiyi
-            bu bağdan bulur. Gerçekten farklı malzemelerse <b>Farklı</b> deyin.
-            Yalnız işaretli kartlar işleme girer.
+            hammaddenin farklı tedarikçi kartları. <b>Grupla</b> kartları birleştirmez
+            (stok her kartta kalır), ama gruplanan kartlar <b>aynı malzeme</b> sayılır:
+            Stoklar, Eksik Hammaddeler ve Satın Alma Planı toplam stoğu gösterir; üretimde
+            kaynak seçimi açıkken üretim ve B2B partileri birbirinin stoğunu kullanabilir.
+            Yalnız eşdeğer olduğundan emin olduğunuz kartları gruplayın; gerçekten farklı
+            malzemelerse <b>Farklı</b> deyin. Yalnız işaretli kartlar işleme girer.
           </p>
           <div id="mgSugList"></div>
         </div>
@@ -3640,14 +3642,14 @@
         h += `<span class="mg-title">Aynı malzeme · «${escHtml(g.name)}»</span>`;
         if (MG_CAN_EDIT) h += '<button type="button" class="mg-link" data-mg-act="rename">Adını değiştir</button>';
         h += '</div>';
-        h += `<div class="mg-sub">${g.active_count} aktif kart. Kartlar birleşmez, her tedarikçi kendi kartında ve stoğunda kalır; satın alma planı alternatif tedarikçiyi bu gruptan gösterir.</div>`;
+        h += `<div class="mg-sub">${g.active_count} aktif kart. Kartlar birleşmez, her tedarikçi kendi kartında ve stoğunda kalır; ama raporlar grubun toplam stoğunu gösterir, Satın Alma Planı ve üretim (kaynak seçimi açıkken) kartları birbirinin yerine kullanır.</div>`;
         if (g.note) h += `<div class="mg-sub">Not: ${escHtml(g.note)}</div>`;
         const w = mgWarnText(g);
         if (w) h += `<div class="mg-warn"><i class="bi bi-exclamation-triangle"></i> ${escHtml(w)}</div>`;
         h += '<div class="mg-list">' + g.members.map(m => mgMemberRow(P, m, it)).join('') + '</div>';
       } else if (it) {
         h += '<span class="mg-title">Aynı malzeme</span></div>';
-        h += '<div class="mg-sub">Bu kart bir gruba bağlı değil. Aynı malzemenin başka tedarikçi kartı varsa bulup gruplayın — kartlar birleşmez, stoklar ayrı kalır.</div>';
+        h += '<div class="mg-sub">Bu kart bir gruba bağlı değil. Aynı malzemenin başka tedarikçi kartı varsa bulup gruplayın — kartlar birleşmez, stok kartlarda kalır ama toplam sayılır; yalnız eşdeğer kartları gruplayın.</div>';
       } else {
         P.host.innerHTML = '<div class="mg-sub">Grup bulunamadı — dağıtılmış olabilir.</div>';
         return;

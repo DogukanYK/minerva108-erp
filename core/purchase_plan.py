@@ -26,14 +26,32 @@ yeniden yazılmaz.  Bu modülün kendi kuralları:
     DOKUNULMAZ; lab'ın "farklı" dediği (`DuplicateItemDecision.status='kept'`)
     kümeler ve aynı "aynı malzeme" grubundaki kartlar (`Item.
     material_group_id`) birleştirilmez.
-  • "Aynı malzeme" grubu ihtiyacı azaltmaz: gruptaki diğer kartlar satıra
-    `material_group.alts` olarak yazılır, stoğu varsa yalnız bilgi uyarısı
-    (`group_alt_stock`) çıkar — lab onları ayrı ürün sayıyor.  TEK İSTİSNA
-    (`count_phase_out_stock`, varsayılan açık, yalnız net mod): kartının
-    tedarikçisi "bitirilecek" (ya da bu malzemede "alma") olan grup kartının
-    stoğu önce kullanılacağı için ihtiyaçtan düşülür — satırlar arasında
-    ORTAK havuzdan, aynı stok iki kez sayılmaz; planda kendi satırı olan kart
-    sayılmaz.  Uyarı `phase_out_stock`.
+  • "Aynı malzeme" grubu (13.10.2026, `count_group_stock`, varsayılan açık,
+    yalnız net mod): gruptaki diğer kartlar satıra `material_group.alts`
+    olarak yazılır; üretimde bu satırın YERİNE düşülebilen kartların
+    (`core.group_stock.can_substitute`: aktif, aynı panel/tür/tüketim türü,
+    BİREBİR aynı birim — etiket satırı hariç, üretim etiketi grupla
+    değiştirmez) stoğu ihtiyaçtan düşülür.  İki geçiş
+    (`_allocate_group_stock`): havuz = planda kendi satırı olmayan uygun
+    kartlar + planda satırı olan kartların ihtiyaç fazlası; bekletilen /
+    hariç satır ve kart havuza ne verir ne alır.  Eksik satırlar plan
+    sırasıyla alır: bitirilecek / "alma" → tercih edilen → diğer → plan içi
+    fazla; artan havuz grubun SON uygun satırına yazılır.  Fazlası alınan
+    satır `kendi − verilen` gösterir → bir grubun satırlarındaki stoklar
+    toplamı grup toplamını aşmaz (çift sayım yok).  Satırda `group_stock`
+    {own, taken[], given[], total, breakdown_text, aside_text, note};
+    uyarılar `group_stock_counted` / `group_stock_given` (bilgi).  Birimi
+    farklı kart (g↔kg dahil — üretim birim çevirmez) ve g/ml kartı yalnız
+    bilgi: `aside_text` "üretimde kullanılamaz (birim farklı)" +
+    `group_alt_stock`.  Kapalıyken eski kural: grup ihtiyacı azaltmaz
+    (`group_alt_stock` bilgi uyarısı), TEK İSTİSNA `count_phase_out_stock`
+    (bitirilecek / "alma" tedarikçinin grup kartı önce kullanılır, uyarı
+    `phase_out_stock`).  Üretimde kaynak seçimi kapalıysa router ikisini de
+    kapatır (`source_choice_disabled`).  Kapasite grup toplamını kullanır;
+    aynı üründe aynı havuzu paylaşan satırlar havuzu BİR kez harcar.
+  • Açık sipariş ("yolda") kartın biriminden satır birimine çevrilir
+    (g↔kg, ml↔l); çevrilemeyen sipariş sayılmaz (`open_order_unit_mismatch`).
+    Grup açıkken havuz kartlarının açık siparişleri de yolda sayılır.
   • Negatif kart stoğu 0 sayılır (build.py ham toplamı kullanıyordu).
   • `safe_triplet` = urunler.triple5'in birebir uyarlaması: gereken YUKARI,
     elimizde AŞAĞI yuvarlanır → yazılan rakamlarla alınacak = gereken −
@@ -151,6 +169,9 @@ class PlanInputs:
     supplier_status: Dict[int, str] = field(default_factory=dict)
     avoid: Dict[int, Set[int]] = field(default_factory=dict)
     supplier_names: Dict[int, str] = field(default_factory=dict)
+    # kart → {tedarikçi id: rank} — bu malzemede "tercih" (grup havuzu
+    # sırası: bitirilecek/alma → tercih → diğer).  Boş varsayılan.
+    prefer: Dict[int, Dict[int, int]] = field(default_factory=dict)
 
     def recipe_item_ids(self) -> Set[int]:
         """Herhangi bir aktif reçetede geçen kalemler (birleştirme kökü seçimi)."""
@@ -195,17 +216,20 @@ def unit_norm(unit) -> str:
     return "adet"
 
 
-def _amount_near(v, unit) -> str:
-    """urunler._amount — en yakın yuvarlama (benzer kart / bilgi metinleri)."""
+def _amount_near(v, unit, short: bool = False) -> str:
+    """urunler._amount — en yakın yuvarlama (benzer kart / bilgi metinleri).
+    `short=True` → kısa birim adları ("180 g", "24,7 kg", "1,2 l"; grup
+    stoğu dökümü, core/group_stock.amount_short)."""
     u = unit_norm(unit)
+    gram, litre = ("g", "l") if short else ("gram", "litre")
     if u == "g":
-        return f"{tr_num(v / 1000, 1)} kg" if v >= 1000 else f"{tr_num(v)} gram"
+        return f"{tr_num(v / 1000, 1)} kg" if v >= 1000 else f"{tr_num(v)} {gram}"
     if u == "kg":
         return f"{tr_num(v, 1)} kg"
     if u == "ml":
-        return f"{tr_num(v / 1000, 1)} litre" if v >= 1000 else f"{tr_num(v)} ml"
+        return f"{tr_num(v / 1000, 1)} {litre}" if v >= 1000 else f"{tr_num(v)} ml"
     if u == "l":
-        return f"{tr_num(v, 1)} litre"
+        return f"{tr_num(v, 1)} {litre}"
     return f"{tr_num(v)} adet"
 
 
@@ -602,7 +626,7 @@ def load_inputs(db, req: PlanRequest, domain: str) -> PlanInputs:
         mgroup_names[gid] = clean_text(gname) or f"Grup #{gid}"
 
     # ── Tedarikçi durumu + malzeme "alma" tercihleri ("bitirilecek" stok) ──
-    card_supplier, supplier_status, avoid, supplier_names = _load_supplier_prefs(
+    card_supplier, supplier_status, avoid, supplier_names, prefer = _load_supplier_prefs(
         db, domain, items, mgroup_of)
 
     # ── Varsayılan hariçler ─────────────────────────────────────────────────
@@ -618,13 +642,13 @@ def load_inputs(db, req: PlanRequest, domain: str) -> PlanInputs:
         default_excluded=tuple(default_excluded), warnings=warnings,
         mgroup_of=mgroup_of, mgroup_names=mgroup_names,
         card_supplier=card_supplier, supplier_status=supplier_status, avoid=avoid,
-        supplier_names=supplier_names,
+        supplier_names=supplier_names, prefer=prefer,
     )
 
 
 def _load_supplier_prefs(db, domain: str, items: Dict[int, ItemRec], mgroup_of: Dict[int, int]):
     """`load_inputs` yardımcısı — (card_supplier, supplier_status, avoid,
-    supplier_names).  Durum `core.suppliers.status_by_key` ile firma anahtarı
+    supplier_names, prefer).  Durum `core.suppliers.status_by_key` ile firma anahtarı
     düzeyinde (TATLIDİLİMLER / TATLİDİLİMLER kartlarından biri bitirilecekse
     ikisi de); "alma" tercihleri gruptan kartlara açılır, kartın kendi
     tercihi aynı tedarikçinin grup satırını ezer, mükerrer firma kartları da
@@ -658,15 +682,22 @@ def _load_supplier_prefs(db, domain: str, items: Dict[int, ItemRec], mgroup_of: 
         if k:
             by_firm.setdefault(k, set()).add(sid)
     avoid: Dict[int, Set[int]] = {}
+    prefer: Dict[int, Dict[int, int]] = {}
     for iid, rows in per_item.items():
         out: Set[int] = set()
-        for sid, (pref, _rank) in effective_prefs(rows).items():
+        pref_out: Dict[int, int] = {}
+        for sid, (pref, rank) in effective_prefs(rows).items():
+            firm = {sid} | by_firm.get(key_of.get(sid) or "", set())
             if pref == "avoid":
-                out.add(sid)
-                out |= by_firm.get(key_of.get(sid) or "", set())
+                out |= firm
+            elif pref == "preferred":
+                for f in firm:
+                    pref_out[f] = min(pref_out.get(f, rank), rank)
         if out:
             avoid[iid] = out
-    return card_supplier, status, avoid, names
+        if pref_out:
+            prefer[iid] = pref_out
+    return card_supplier, status, avoid, names, prefer
 
 
 def default_excluded_ids(items: Dict[int, ItemRec], domain: str) -> List[int]:
@@ -1016,31 +1047,73 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
     def in_plan(i):
         return f"i:{root(i)}" in mats
 
-    # "Bitirilecek" tedarikçi kartlarının kalan stoğu — satırlar arası ORTAK
-    # havuz (aynı gruptaki iki satır aynı stoğu iki kez saymasın).
-    count_po = bool(opts.count_phase_out_stock) and mode == "net"
+    # "Aynı malzeme" grup stoğu (count_group_stock, net mod) — iki geçiş:
+    # önce satır başına kendi stoğu/ihtiyacı (`base`), sonra grup havuzunun
+    # paylaştırılması (`_allocate_group_stock`).  Kapalıyken eski kural:
+    # yalnız "bitirilecek" tedarikçi kartlarının kalan stoğu, satırlar arası
+    # ORTAK havuzdan (aynı gruptaki iki satır aynı stoğu iki kez saymasın).
+    count_group = bool(opts.count_group_stock) and mode == "net"
+    count_po = bool(opts.count_phase_out_stock) and mode == "net" and not count_group
     po_pool: Dict[int, float] = {}
+
+    base: Dict[str, dict] = {}
+    for key, m in mats.items():
+        members = [] if m["is_new_item"] else groups.get(m["item_id"], [m["item_id"]])
+        oo_pairs = [(i, o) for i in members for o in inputs.open_orders.get(i, [])]
+        own_open, oo_bad = 0.0, []
+        if opts.subtract_open_orders:
+            for i, o in oo_pairs:
+                if not o.quantity:
+                    continue
+                q = _order_qty(o, items.get(i), m["unit"])
+                if q is None:
+                    oo_bad.append((i, o))
+                else:
+                    own_open += q
+        base[key] = {"members": members, "oo": [o for _, o in oo_pairs], "oo_bad": oo_bad,
+                     "open": own_open, "own": sum(stock_of(i) for i in members),
+                     "need": m["need_production"] * (1 + waste.get(m["kind"], 0.0) / 100.0),
+                     "held": any(i in held_reason for i in members),
+                     "excluded": any(i in excluded_ids for i in members)}
+    galloc = (_allocate_group_stock(inputs, opts, mats, base, mg_members, in_plan, stock_of,
+                                    excluded_ids, held_reason) if count_group else {})
 
     rows: List[dict] = []
     for key, m in mats.items():
+        b = base[key]
         kind = m["kind"]
-        members = [] if m["is_new_item"] else groups.get(m["item_id"], [m["item_id"]])
+        members = b["members"]
         unit = m["unit"]
-        stock = sum(stock_of(i) for i in members)
+        stock = b["own"]
         used_stock = sum(stock_of(i) for i in members if i in used_cards)
         other = max(0.0, stock - used_stock)
-        oo_list = [o for i in members for o in inputs.open_orders.get(i, [])]
-        open_qty = sum(float(o.quantity) for o in oo_list if o.quantity) if opts.subtract_open_orders else 0.0
+        oo_list = b["oo"]
+        open_qty = b["open"]
         need_prod = m["need_production"]
-        need = need_prod * (1 + waste.get(kind, 0.0) / 100.0)
-        is_held = any(i in held_reason for i in members)
-        is_excluded = any(i in excluded_ids for i in members)
+        need = b["need"]
+        is_held = b["held"]
+        is_excluded = b["excluded"]
+        ga = galloc.get(key)
         # ── "Bitirilecek" grup kartlarının stoğu önce kullanılır ────────────
         # (hariç / bekletilen satır havuzdan pay almaz — listeye girmiyor)
         po_ids: Set[int] = set()
         po_from: List[dict] = []
         po_taken = 0.0
-        if count_po and members and not is_held and not is_excluded:
+        if ga is not None:
+            # Grup havuzu: alınan (eksik + artan) eklenir, verilen düşülür.
+            # (yuvarlanmamış değerler: görünüm listelerinin _r6 toplamı verilen
+            # satırı tavanın 1e-7 altına itip gösterimde "Alınacak 1 gram" yazardı)
+            stock = ga["stock"]
+            open_qty = ga["open_total"]
+            for t in ga["view"]["taken"]:
+                if t["reason"] in PHASE_OUT_REASON_TEXT and t["used"] > 1e-9:
+                    po_ids.add(t["item_id"])
+                    po_taken += t["used"]
+                    po_from.append({"item_id": t["item_id"], "name": t["name"],
+                                    "supplier_id": t["supplier_id"], "supplier": t["supplier"],
+                                    "reason": t["reason"], "qty": t["used"],
+                                    "qty_text": _amount_near(t["used"], unit)})
+        elif count_po and members and not is_held and not is_excluded:
             for a in _phase_out_alts(members, unit, inputs, mg_members, in_plan, kind=kind):
                 po_ids.add(a["item_id"])
                 deficit = need - (stock + po_taken) - open_qty
@@ -1056,7 +1129,7 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
                 po_pool[a["item_id"]] = avail - take
                 po_taken += take
                 po_from.append(dict(a, qty=_r6(take), qty_text=_amount_near(take, unit)))
-        stock += po_taken
+            stock += po_taken
         available = stock + open_qty
         buy = max(0.0, need - available) if mode == "net" else need
         display = purchase_display(need, stock, open_qty, unit, mode=mode, safe=opts.safe_rounding)
@@ -1124,6 +1197,15 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
         if opts.subtract_open_orders and any(not o.quantity for o in oo_list):
             caut.append(_caution("open_order_no_qty",
                                  "Açık sipariş işareti var ama miktarı girilmemiş; yoldaki miktar hesaba katılmadı."))
+        bad_oo = [(None, o) for _, o in b["oo_bad"]] + (list(ga["bad_orders"]) if ga is not None else [])
+        if bad_oo:
+            caut.append(_caution(
+                "open_order_unit_mismatch",
+                f"Açık siparişin birimi bu satırın birimine ({unit or '—'}) çevrilemiyor; yolda sayılmadı: "
+                + ", ".join((f"«{clean_text(items[i].name)}» " if i is not None and i in items else "")
+                            + f"{clean_text(o.supplier_name) or 'firma yazılmamış'} "
+                            + f"{_plain_qty(o.quantity)} {o.unit or '—'}" for i, o in bad_oo)
+                + ". Sipariş işaretindeki birim teyit edilmeli."))
         sample_qty = sum(l.quantity for i in members for l in inputs.lots.get(i, [])
                          if l.is_sample and l.quantity > 0)
         if sample_qty > 0:
@@ -1152,19 +1234,30 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
                      f"{PHASE_OUT_REASON_TEXT[a['reason']]}) kartındaki {a['qty_text']}" for a in po_from]
             caut.append(_caution("phase_out_stock",
                                  "; ".join(parts) + " önce kullanılacak — ihtiyaçtan düşüldü."))
+        if ga is not None:
+            caut += _group_cautions(ga["view"], members, items, unit, inputs)
         if mgroup:
-            stocked = [a for a in mgroup["alts"]
-                       if a["stock"] > 0 and not a["in_plan"] and a["item_id"] not in po_ids]
+            if ga is not None:
+                # Grup sayımı açık: yalnız SAYILMAYAN kartlar (birimi/türü
+                # farklı, etiket, hariç/bekletilen) bilgi olarak kalır.
+                tags = ga["alt_tags"]
+                stocked = [a for a in mgroup["alts"]
+                           if a["stock"] > 0 and not a["in_plan"] and a["item_id"] in tags]
+                tail = "; ihtiyaçtan düşülmedi."
+            else:
+                tags = {a["item_id"]: "birimi farklı" for a in mgroup["alts"] if a["unit_mismatch"]}
+                stocked = [a for a in mgroup["alts"]
+                           if a["stock"] > 0 and not a["in_plan"] and a["item_id"] not in po_ids]
+                tail = "; lab ayrı ürün saydığı için ihtiyaçtan düşülmedi."
             if stocked:
                 parts = [(a["name"], _amount_near(a["stock"], a["unit"])
-                          + ("; birimi farklı" if a["unit_mismatch"] else "")) for a in stocked]
+                          + (f"; {tags[a['item_id']]}" if tags.get(a["item_id"]) else "")) for a in stocked]
                 if len(parts) == 1:
                     txt = f"Aynı malzeme grubundaki «{parts[0][0]}» kartında stok var ({parts[0][1]})"
                 else:
                     txt = ("Aynı malzeme grubundaki " + ", ".join(f"«{n}» ({a})" for n, a in parts)
                            + " kartlarında stok var")
-                caut.append(_caution("group_alt_stock",
-                                     txt + "; lab ayrı ürün saydığı için ihtiyaçtan düşülmedi.", "info"))
+                caut.append(_caution("group_alt_stock", txt + tail, "info"))
         if m["est_products"]:
             caut.append(_caution("estimated", "Tahmini." if m["est_products"] >= m["products"]
                                  else "Kısmen tahmini.", "info"))
@@ -1181,12 +1274,14 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
             "open_orders": _r6(open_qty),
             "open_orders_info": [{"quantity": o.quantity, "unit": o.unit, "supplier": o.supplier_name,
                                   "expected_date": o.expected_date.isoformat() if o.expected_date else None}
-                                 for o in oo_list],
+                                 for o in oo_list] + (ga["open_info"] if ga is not None else []),
             "available": _r6(available), "buy": _r6(buy), "display": display, "status": status,
             "per_product": per_product, "products": sorted(m["products"]),
             "cautions": caut, "is_new_item": m["is_new_item"], "estimated": bool(m["est_products"]),
             # "Aynı malzeme" grubu — `group` (fiyat listesi bayrağı, attach) ile KARIŞMASIN
             "material_group": mgroup,
+            # Grup stoğu paylaşımı (count_group_stock, net mod) — yoksa None
+            "group_stock": ga["view"] if ga is not None else None,
             "_held": is_held, "_excluded": is_excluded,
         })
 
@@ -1212,17 +1307,43 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
     # Hariç kalemler kısıt sayılmaz: DİSTİLE SU kendi üretimimiz, stok kartı
     # 0 durur — sayılsaydı her kozmetik ürün "0 üretilebilir, sebep su" çıkardı.
     # Bekletilenler fiziksel stok olduğu için sayılır.
+    # Grup sayımı açıkken satırın stoğu yerine grup TOPLAMI (ürün tek başına
+    # üretilecekmiş gibi — satırlar arası paylaşım burada yok).
+    # Aynı ürünün İKİ satırı aynı grup havuzunu paylaşıyorsa (reçetede iki
+    # tedarikçi kartı) havuz BİR KEZ harcanır: kapasite = birleşik havuz ÷
+    # o satırların birim ihtiyaçları toplamı — toplamlar ayrı ayrı bölünse
+    # ortak stok iki kez sayılırdı.
     excluded_keys = {e["key"] for e in excluded}
-    stock_by_key = {r["key"]: (r["stock"], r["name"], r["unit"]) for r in rows
-                    if r["key"] not in excluded_keys}
+    stock_by_key = {r["key"]: (r["group_stock"]["total"] if r.get("group_stock") else r["stock"],
+                               r["name"], r["unit"])
+                    for r in rows if r["key"] not in excluded_keys}
+    pool_ids = {r["key"]: set(r["member_ids"]) | set(r["group_stock"]["counted_ids"])
+                for r in rows if r.get("group_stock") and r["key"] not in excluded_keys}
     for p in products:
         roots_here = line_roots.get(p["no"]) or {}
-        caps = []
-        for key, per in roots_here.items():
-            if per <= 0 or key not in stock_by_key:
+        keys = [k for k, per in roots_here.items() if per > 0 and k in stock_by_key]
+        comps: List[Tuple[List[str], Optional[Set[int]]]] = []    # ayrık (satırlar, havuz kartları)
+        for k in keys:
+            ids = pool_ids.get(k)
+            if not ids:
+                comps.append(([k], None))
                 continue
-            st, nm, un = stock_by_key[key]
-            caps.append((max(0.0, st) / per, nm, st, un))
+            ks, merged, rest = [k], set(ids), []
+            for ck, cids in comps:
+                if cids is not None and cids & merged:
+                    ks, merged = ck + ks, merged | cids
+                else:
+                    rest.append((ck, cids))
+            comps = rest + [(sorted(ks, key=keys.index), merged)]
+        caps = []
+        for ks, ids in comps:
+            if len(ks) == 1:
+                st, nm, un = stock_by_key[ks[0]]
+                caps.append((max(0.0, st) / roots_here[ks[0]], nm, st, un))
+                continue
+            st = sum(stock_of(i) for i in ids if i not in excluded_ids)
+            per = sum(roots_here[k] for k in ks)
+            caps.append((st / per, " + ".join(stock_by_key[k][1] for k in ks), st, stock_by_key[ks[0]][2]))
         if not caps:
             continue
         lo = min(c[0] for c in caps)
@@ -1327,6 +1448,385 @@ def _phase_out_alts(members: List[int], unit, inputs: PlanInputs,
                         "supplier": clean_text(inputs.supplier_names.get(sid)), "reason": why})
     out.sort(key=lambda x: (x["reason"] != "phase_out", alnum_fold(x["name"]), x["item_id"]))
     return out
+
+
+def _plain_qty(v) -> str:
+    """Sipariş miktarı (ham, birimiyle yazılır): 5 · 2,5 · 0,125."""
+    v = float(v or 0.0)
+    return tr_num(v) if v.is_integer() else tr_num(v, 3).rstrip("0").rstrip(",")
+
+
+def _order_qty(o: OpenOrderRec, card: Optional[ItemRec], row_unit) -> Optional[float]:
+    """Açık siparişin miktarı satır biriminde.  Siparişin birimi (yoksa
+    kartın birimi) satır birimine çevrilir — aynı birim 1:1, g↔kg / ml↔l
+    ×1000; çevrilemiyorsa (g ↔ adet, g ↔ ml) None: sipariş yolda SAYILMAZ
+    (eskiden birim hiç okunmuyordu — kartı kg'dan g'ye çevrilen malzemede
+    5 kg'lık sipariş 5 g sayılıyordu)."""
+    from core.group_stock import convert_qty
+    src = (o.unit or "").strip() or ((card.unit if card is not None else None) or row_unit)
+    return convert_qty(float(o.quantity or 0.0), src, row_unit)
+
+
+GROUP_ASIDE_TEXT = "üretimde kullanılamaz (birim farklı)"
+
+
+def _allocate_group_stock(inputs: PlanInputs, opts: PlanOptionsIn, mats, base: Dict[str, dict],
+                          mg_members: Dict[int, List[int]], in_plan, stock_of,
+                          excluded_ids: Set[int], held_reason: Dict[int, str]) -> Dict[str, dict]:
+    """"Aynı malzeme" grup stoğunun satırlara paylaştırılması (net mod).
+
+    Satır başına (gruplu, yeni kalem olmayan) dönüş:
+      {"view": satırın `group_stock` alanı, "stock" (kendi + alınan − verilen,
+       YUVARLANMAMIŞ), "open_total" (kendi yoldaki + havuz kartlarının
+       siparişi), "open_info",
+       "alt_tags": {kart: sayılmama nedeni}, "bad_orders": [(kart, sipariş)]}.
+
+    Kural (spec §3): yalnız üretimde satırın kök kartının YERİNE düşülebilen
+    kartlar (`group_stock.can_substitute`; etiket satırı hiç) sayılır.
+    Havuz = planda kendi satırı olmayan, hariç/bekletilmemiş uygun kartlar +
+    hariç/bekletilmemiş satırların ihtiyaç fazlası (güvenli yuvarlamada
+    gösterimde "alınacak 0" kalacak kadarı tutulur).  Eksik satırlar plan
+    sırasıyla alır: bitirilecek / "alma" → tercih edilen (malzeme tercihi
+    rank'i, sonra firma) → diğer (ad, id) → plan içi fazla (plan sırası);
+    güvenli yuvarlamada `_cover_qty` kadar.  Sonra (yolda seçeneği açıksa)
+    havuz kartlarının açık siparişleri aynı sırayla.  Artan havuz kartı
+    stoğu ve siparişi, o kartı kullanabilen SON satıra yazılır (XHANTAN:
+    180 g'lık satır 24,7 kg'lık kartın tamamını gösterir).  Her havuz
+    kartının stoğu en çok bir kez dağıtılır, fazlası verilen satır
+    `kendi − verilen` gösterir → bir grubun satır stokları toplamı
+    `total`'ı aşmaz.
+
+    `view` = {group_id, group_name, unit, own, taken[], given[], open_from[],
+    total (kendi + yerine geçebilen hariç-olmayan kartlar; kapasite bunu
+    kullanır), total_text, breakdown_text (kart başına kendi biriminde),
+    aside_text (birimi farklı kartlar), counted_ids, note (stok hücresinin
+    altı — `stock_note`)}.  taken[] = {item_id, name, unit, supplier_id,
+    supplier, reason (phase_out | avoid | preferred | normal | surplus),
+    row_key (surplus'ta veren satır), qty (satıra yazılan: eksik + artan),
+    used (eksiği kapatan kısım), qty_text}; given[] = {key, name, qty,
+    qty_text}."""
+    from core.group_stock import amount_short, breakdown_text, can_substitute
+    from core.stock_lots import lot_kind
+
+    items = inputs.items
+    safe = opts.safe_rounding
+    open_on = opts.subtract_open_orders
+
+    def blocked(i):
+        return i in excluded_ids or i in held_reason
+
+    def sup(i) -> Tuple[Optional[int], Optional[str]]:
+        sid = inputs.card_supplier.get(i)
+        return sid, (clean_text(inputs.supplier_names.get(sid)) if sid is not None else None)
+
+    def part(i, qty, *, name=None, unit=None):
+        return {"name": clean_text(name if name is not None else items[i].name) or "—",
+                "supplier_name": sup(i)[1], "unit": unit if unit is not None else (items[i].unit or ""),
+                "stock": max(0.0, float(qty or 0.0))}
+
+    # ── Satırlar: grup, aday ve yerine geçebilen kartlar ───────────────────
+    info: "OrderedDict[str, dict]" = OrderedDict()
+    for key, m in mats.items():
+        b = base[key]
+        if m["is_new_item"] or not b["members"]:
+            continue
+        gids = list(dict.fromkeys(inputs.mgroup_of[i] for i in b["members"] if i in inputs.mgroup_of))
+        if not gids:
+            continue
+        rootc = items.get(m["item_id"])
+        mset = set(b["members"])
+        cands: List[int] = []
+        for g in gids:
+            for i in mg_members.get(g, []):
+                a = items.get(i)
+                if i in mset or i in cands or a is None or not a.is_active:
+                    continue
+                cands.append(i)
+        label = m["kind"] == "label"
+        subst = [i for i in cands if not label and rootc is not None and can_substitute(rootc, items[i])]
+        info[key] = {"gids": gids, "root": rootc, "cands": cands, "subst": subst, "label": label,
+                     "active": not (b["held"] or b["excluded"]) and not label}
+
+    # ── Havuz: satırı olmayan uygun kartlar (+ açık siparişleri) ───────────
+    pool: Dict[int, float] = {}
+    pool_open: Dict[int, float] = {}
+    pool_orders: Dict[int, List[OpenOrderRec]] = {}
+    bad: Dict[int, List[OpenOrderRec]] = {}
+    for r in info.values():
+        for i in r["subst"]:
+            if i in pool or in_plan(i) or blocked(i):
+                continue
+            pool[i] = stock_of(i)
+            q = 0.0
+            if open_on:
+                for o in inputs.open_orders.get(i, []):
+                    if not o.quantity:
+                        continue
+                    c = _order_qty(o, items[i], items[i].unit)
+                    if c is None:
+                        bad.setdefault(i, []).append(o)
+                    else:
+                        q += c
+                        pool_orders.setdefault(i, []).append(o)
+            pool_open[i] = q
+
+    # ── Plan içi fazla (hariç/bekletilen vermez) ───────────────────────────
+    surplus: Dict[str, float] = {}
+    for key, r in info.items():
+        if not r["active"]:
+            continue
+        b = base[key]
+        keep = _cover_qty(b["need"], 0.0, 0.0, mats[key]["unit"]) if safe else b["need"]
+        if b["own"] - keep > 1e-9:
+            surplus[key] = b["own"] - keep
+
+    def order_for(key: str, r: dict) -> List[Tuple[int, str]]:
+        avoid: Set[int] = set()
+        prefer: Dict[int, int] = {}
+        for i in base[key]["members"]:
+            avoid |= inputs.avoid.get(i, set())
+            for sid, rk in (inputs.prefer.get(i) or {}).items():
+                prefer[sid] = min(prefer.get(sid, rk), rk)
+        out = []
+        for i in r["subst"]:
+            if i not in pool:
+                continue
+            sid = inputs.card_supplier.get(i)
+            st = inputs.supplier_status.get(sid) if sid is not None else None
+            if sid is not None and st == "phase_out":
+                reason, k = "phase_out", (0, 0)
+            elif sid is not None and sid in avoid:
+                reason, k = "avoid", (0, 1)
+            elif sid is not None and sid in prefer:
+                reason, k = "preferred", (1, prefer[sid])
+            elif st == "preferred":
+                reason, k = "preferred", (1, 10 ** 6)
+            else:
+                reason, k = "normal", (2, 0)
+            out.append((k + (alnum_fold(items[i].name), i), i, reason))
+        out.sort()
+        return [(i, reason) for _, i, reason in out]
+
+    def donors(key: str, r: dict) -> List[str]:
+        g = set(r["gids"])
+        return [k2 for k2, r2 in info.items()
+                if k2 != key and k2 in surplus and r2["active"] and g & set(r2["gids"])
+                and r2["root"] is not None and can_substitute(r["root"], r2["root"])]
+
+    taken: Dict[str, "OrderedDict[str, dict]"] = {k: OrderedDict() for k in info}
+    given: Dict[str, "OrderedDict[str, dict]"] = {k: OrderedDict() for k in info}
+    open_from: Dict[str, "OrderedDict[int, dict]"] = {k: OrderedDict() for k in info}
+    have = {k: base[k]["own"] for k in info}
+    opn = {k: base[k]["open"] for k in info}
+    reasons: Dict[str, Dict[int, str]] = {}
+
+    def entry(key, sk, **kw):
+        t = taken[key]
+        if sk not in t:
+            t[sk] = dict(kw, qty=0.0, used=0.0)
+        return t[sk]
+
+    def pool_entry(key, i):
+        sid, sname = sup(i)
+        return entry(key, f"i:{i}", item_id=i, name=clean_text(items[i].name) or "—", unit=items[i].unit or "",
+                     supplier_id=sid, supplier=sname, reason=reasons[key].get(i, "normal"), row_key=None)
+
+    for key, r in info.items():
+        order = order_for(key, r)
+        reasons[key] = {i: why for i, why in order}
+        if not r["active"]:
+            continue
+        b, unit = base[key], mats[key]["unit"]
+        need = b["need"]
+
+        def want(stock_like: bool) -> float:
+            deficit = need - have[key] - opn[key]
+            if deficit <= 1e-9:
+                return 0.0
+            if not safe:
+                return deficit
+            cover = (_cover_qty(need, have[key], opn[key], unit) if stock_like
+                     else _cover_open(need, have[key], opn[key], unit))
+            return max(deficit, cover)
+
+        for i, _why in order:
+            w = want(True)
+            if w <= 0:
+                break
+            take = min(pool[i], w)
+            if take <= 1e-9:
+                continue
+            pool[i] -= take
+            have[key] += take
+            e = pool_entry(key, i)
+            e["qty"] += take
+            e["used"] += take
+        for k2 in donors(key, r):
+            w = want(True)
+            if w <= 0:
+                break
+            take = min(surplus[k2], w)
+            if take <= 1e-9:
+                continue
+            surplus[k2] -= take
+            have[key] += take
+            have[k2] -= take
+            rid = mats[k2]["item_id"]
+            sid, sname = sup(rid)
+            e = entry(key, f"r:{k2}", item_id=rid, name=mats[k2]["name"], unit=mats[k2]["unit"],
+                      supplier_id=sid, supplier=sname, reason="surplus", row_key=k2)
+            e["qty"] += take
+            e["used"] += take
+            g = given[k2].setdefault(key, {"key": key, "name": mats[key]["name"], "qty": 0.0})
+            g["qty"] += take
+        if open_on:
+            for i, _why in order:
+                w = want(False)
+                if w <= 0:
+                    break
+                take = min(pool_open.get(i, 0.0), w)
+                if take <= 1e-9:
+                    continue
+                pool_open[i] -= take
+                opn[key] += take
+                o = open_from[key].setdefault(i, {"item_id": i, "name": clean_text(items[i].name) or "—",
+                                                  "supplier": sup(i)[1], "qty": 0.0})
+                o["qty"] += take
+
+    # ── Artan havuz → kartı kullanabilen SON satır ─────────────────────────
+    last_for: Dict[int, str] = {}
+    for key, r in info.items():
+        if r["active"]:
+            for i in r["subst"]:
+                if i in pool:
+                    last_for[i] = key
+    for i, key in last_for.items():
+        if pool[i] > 1e-9:
+            e = pool_entry(key, i)
+            e["qty"] += pool[i]
+            have[key] += pool[i]
+            pool[i] = 0.0
+        if pool_open.get(i, 0.0) > 1e-9:
+            o = open_from[key].setdefault(i, {"item_id": i, "name": clean_text(items[i].name) or "—",
+                                              "supplier": sup(i)[1], "qty": 0.0})
+            o["qty"] += pool_open[i]
+            opn[key] += pool_open[i]
+            pool_open[i] = 0.0
+
+    # ── Satır görünümleri ──────────────────────────────────────────────────
+    out: Dict[str, dict] = {}
+    for key, r in info.items():
+        m, b = mats[key], base[key]
+        unit = m["unit"]
+        t_list = [dict(e, qty=_r6(e["qty"]), used=_r6(e["used"]), qty_text=_amount_near(e["qty"], unit))
+                  for e in taken[key].values() if e["qty"] > 1e-9]
+        g_list = [dict(g, qty=_r6(g["qty"]), qty_text=_amount_near(g["qty"], unit))
+                  for g in given[key].values() if g["qty"] > 1e-9]
+        o_list = [dict(o, qty=_r6(o["qty"]), qty_text=_amount_near(o["qty"], unit))
+                  for o in open_from[key].values() if o["qty"] > 1e-9]
+        counted = [i for i in r["subst"] if i not in excluded_ids]
+        total = b["own"] + sum(stock_of(i) for i in counted)
+        rootc = r["root"]
+        aside = [i for i in r["cands"] if i not in r["subst"] and not r["label"] and rootc is not None
+                 and _kind(items[i]) == m["kind"] and lot_kind(items[i].category) == lot_kind(rootc.category)
+                 and unit_norm(items[i].unit) != unit_norm(rootc.unit) and stock_of(i) > 1e-9]
+        own_parts = [part(i, stock_of(i)) for i in b["members"] if i in items]
+        group_parts = own_parts + [part(i, stock_of(i)) for i in counted if stock_of(i) > 1e-9]
+        aside_text = (breakdown_text([part(i, stock_of(i)) for i in aside]) + " — " + GROUP_ASIDE_TEXT
+                      if aside else "")
+        notes: List[str] = []
+        if t_list or g_list:
+            row_parts = own_parts + [part(e["item_id"], e["qty"], name=e["name"], unit=e["unit"]) for e in t_list]
+            notes.append(breakdown_text(row_parts))
+        if g_list:
+            notes.append(", ".join(f"{amount_short(g['qty'], unit)} «{g['name']}»" for g in g_list)
+                         + " satırında sayıldı")
+        if o_list:
+            notes.append("yolda: " + ", ".join(f"«{o['name']}» {amount_short(o['qty'], unit)}" for o in o_list))
+        if aside_text:
+            notes.append("ayrı: " + aside_text)
+        tags: Dict[int, str] = {}
+        for i in r["cands"]:
+            a = items[i]
+            if r["label"]:
+                tags[i] = "etiket — üretimde yerine geçmez"
+            elif i not in r["subst"]:
+                # stok notu / döküm ile AYNI ifade (önizleme, PDF, Excel tek söz)
+                tags[i] = (GROUP_ASIDE_TEXT
+                           if rootc is not None and unit_norm(a.unit) != unit_norm(rootc.unit) else "türü farklı")
+            elif i in excluded_ids:
+                tags[i] = "hariç tutuldu"
+            elif i in held_reason:
+                tags[i] = "bekletiliyor"
+        open_info = [{"quantity": o.quantity, "unit": o.unit, "supplier": o.supplier_name,
+                      "expected_date": o.expected_date.isoformat() if o.expected_date else None,
+                      "item_id": i, "card": clean_text(items[i].name)}
+                     for i in (x["item_id"] for x in o_list) for o in pool_orders.get(i, [])]
+        bad_orders = [(i, o) for i in r["subst"] if r["active"] for o in bad.get(i, [])]
+        gid = r["gids"][0]
+        view = {"group_id": gid, "group_name": inputs.mgroup_names.get(gid) or f"Grup #{gid}",
+                "unit": unit, "own": _r6(b["own"]), "taken": t_list, "given": g_list, "open_from": o_list,
+                "total": _r6(total), "total_text": _amount_near(total, unit, short=True),
+                "breakdown_text": breakdown_text(group_parts), "aside_text": aside_text,
+                "counted_ids": counted, "note": "; ".join(notes) or None}
+        out[key] = {"view": view, "stock": have[key], "open_total": opn[key],
+                    "open_info": open_info, "alt_tags": tags, "bad_orders": bad_orders}
+    return out
+
+
+def _cover_open(need, stock, open_qty, unit) -> float:
+    """`_cover_qty`'nin yoldaki karşılığı: gösterimde (elimizde AŞAĞI, yolda
+    AŞAĞI yuvarlanır) alınacağı 0 yapan en küçük ek YOLDA miktarı."""
+    u = unit_norm(unit)
+    k = 1000 if u in ("kg", "l") else 1
+    n = max(0.0, float(need or 0.0)) * k
+    s_ = max(0.0, float(stock or 0.0)) * k
+    o_ = max(0.0, float(open_qty or 0.0)) * k
+    return max(0.0, (math.ceil(n - 1e-9) - math.floor(s_ + 1e-9) - o_) / k)
+
+
+def _group_cautions(gv: dict, members: List[int], items: Dict[int, ItemRec], unit, inputs: PlanInputs) -> List[dict]:
+    """`group_stock_counted` (alınan stok + yoldaki) ve `group_stock_given`
+    (fazlası başka satırda sayıldı) — ikisi de bilgi."""
+    from core.group_stock import amount_short
+    out: List[dict] = []
+
+    def who(name, supplier):
+        return f"«{name}»" + (f" ({supplier})" if supplier else "")
+
+    sentences: List[str] = []
+    if gv["taken"]:
+        own = []
+        for i in members:
+            it = items.get(i)
+            if it is None:
+                continue
+            sid = inputs.card_supplier.get(i)
+            own.append(who(clean_text(it.name) or "—", clean_text(inputs.supplier_names.get(sid)) if sid else None)
+                       + f" {amount_short(max(0.0, float(it.current_stock or 0.0)), it.unit)}")
+        parts = own + [who(t["name"], t["supplier"]) + (" fazlası" if t["reason"] == "surplus" else "")
+                       + f" {amount_short(t['qty'], t['unit'] or unit)}" for t in gv["taken"]]
+        sentences.append("Aynı malzeme grubunun stoğu toplandı: " + " + ".join(parts)
+                         + " — üretimde birbirinin yerine kullanılabilir.")
+    if gv["open_from"]:
+        sentences.append("Aynı malzeme grubundaki " + ", ".join(f"«{o['name']}» ({o['qty_text']})" for o in gv["open_from"])
+                         + " açık siparişi yolda sayıldı.")
+    if sentences:
+        out.append(_caution("group_stock_counted", " ".join(sentences), "info"))
+    if gv["given"]:
+        out.append(_caution(
+            "group_stock_given",
+            "İhtiyaç fazlasından " + ", ".join(f"{g['qty_text']} aynı malzeme grubundaki «{g['name']}»"
+                                                for g in gv["given"])
+            + " satırında sayıldı; burada elimizde o kadar az gösterildi.", "info"))
+    return out
+
+
+def stock_note(m: dict) -> Optional[str]:
+    """Stok hücresinin altındaki grup stoğu dökümü ("HAMMADDESEPETİ 180 g ·
+    YİĞİTOGLU KİMYA 24,7 kg"; verilen / yolda / birimi farklı kartlar) —
+    önizleme (`ui.stock_note`), PDF ve Excel AA sütunu TEK kaynak."""
+    return (m.get("group_stock") or {}).get("note") or None
 
 
 def _material_group_row(members: List[int], unit, inputs: PlanInputs,

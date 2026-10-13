@@ -783,19 +783,18 @@ def _process_order(db: Session, row, order: dict) -> dict:
 
 
 def _low_stock_after(db: Session, order: dict):
-    """Commit sonrası düşen kalemlerin kritik stok kontrolü (primitif döner)."""
-    out = []
+    """Commit sonrası düşen kalemlerin kritik stok kontrolü (primitif döner).
+    `core.group_stock.low_stock_alerts` — "aynı malzeme" grubu yeterliyse
+    sessiz, ayar kapalıysa eski kart kuralı."""
+    from core.group_stock import low_stock_alerts
     bcs = [ln.get("barcode") for ln in order["lines"] if ln.get("barcode")]
     if not bcs:
-        return out
+        return []
     rows = (db.query(Item)
             .filter(Item.barcode.in_(bcs), Item.is_active == True,   # noqa: E712
                     Item.domain == "cosmetics").all())
-    for it in rows:
-        if (it.min_stock_level or 0) > 0 and (it.current_stock or 0) <= it.min_stock_level:
-            out.append((it.name, float(it.current_stock or 0),
-                        float(it.min_stock_level), it.unit or ""))
-    return out
+    return [(name, float(cur), float(mn), unit)
+            for name, cur, mn, unit in low_stock_alerts(db, rows, "cosmetics")]
 
 
 def _parasut_enabled(db: Session) -> bool:

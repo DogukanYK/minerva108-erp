@@ -192,6 +192,25 @@
     .sg-sel-chip button { background: none; border: none; color: rgba(255,255,255,0.75); cursor: pointer; padding: 0 3px; font-size: 0.7rem; line-height: 1; }
     .sg-sel-chip button:hover { color: #fff; }
     tr.sg-row.sg-picked { background: #f5f4ff; }
+    /* "Aynı malzeme" grup satırı (13.10.2026) */
+    tr.sg-group-row { background: #f8f6fe; }
+    tr.sg-group-row:hover { background: #f1edfc; }
+    .sg-caret { display: inline-flex; width: 1.1rem; color: #7c6bb8; font-size: 0.72rem; transition: transform 0.15s; }
+    .sg-caret.open { transform: rotate(90deg); }
+    .sg-grp-tag { display: inline-block; margin-left: 0.5rem; padding: 1px 8px; border-radius: 20px; background: #ede9fe; color: #5b21b6; font-size: 0.66rem; font-weight: 700; vertical-align: middle; }
+    .sg-grp-break { font-weight: 400; color: #6b7280; font-size: 0.76rem; margin-top: 2px; }
+    tr.sg-member { background: #fdfcff; }
+    tr.sg-member td.td-name { padding-left: 2.4rem; position: relative; font-weight: 500; }
+    tr.sg-member td.td-name::before { content: '↳'; position: absolute; left: 1.2rem; color: #a78bfa; }
+    .sg-member-sup { margin-left: 0.45rem; color: #6b7280; font-size: 0.76rem; font-weight: 400; }
+    :root[data-theme="dark"] tr.sg-group-row, :root[data-theme="dark"] tr.sg-member { background: var(--surface-2); }
+    :root[data-theme="dark"] .sg-grp-tag { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+    /* Aylık Stok Raporu — grup satırı + girintili üyeler */
+    tr.msr-grp td { background: #f8f6fe; border-top: 1px solid #ede9fe; }
+    tr.msr-member td.msr-name { padding-left: 1.9rem !important; }
+    .msr-grp-tag { display: inline-block; margin-left: 0.4rem; padding: 1px 8px; border-radius: 20px; background: #ede9fe; color: #5b21b6; font-size: 0.66rem; font-weight: 700; }
+    .msr-grp-break { color: #6b7280; font-size: 0.76rem; margin-top: 1px; }
+    :root[data-theme="dark"] tr.msr-grp td { background: var(--surface-2); border-color: var(--border); }
 
     /* ── Modal form (paylaşılan kalıp: templates/items.html) ── */
     .form-label-sm { font-size: 0.78rem; font-weight: 600; color: #6b7280; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.35rem; display: block; }
@@ -796,6 +815,7 @@
       // yağları, sonra Ambalaj sekmesinde şişeleri seçip tek Excel alabilsin.
       selected: new Set(),
       visibleIds: [],
+      openGroups: new Set(),     // açık "aynı malzeme" grup satırları (key)
     };
     let _sgSuppliers = [];
 
@@ -864,8 +884,9 @@
       const recipes = row.recipes.length
         ? `<ul>${row.recipes.map(r => `<li>${escHtml(r.name)}</li>`).join('')}</ul>`
         : '<span style="color:#9ca3af;">Hiçbir aktif reçetede kullanılmıyor.</span>';
+      // Grup satırında lotlar üye kartlardan gelir — her lot KENDİ biriminde
       const lots = row.sample_lots.length
-        ? `<ul>${row.sample_lots.map(l => `<li>${escHtml(l.lot_number)} · ${(l.quantity).toLocaleString('tr-TR',{maximumFractionDigits:4})} ${escHtml(row.unit)}${l.supplier_name ? ' · ' + escHtml(l.supplier_name) : ''}</li>`).join('')}</ul>`
+        ? `<ul>${row.sample_lots.map(l => `<li>${escHtml(l.lot_number)} · ${(l.quantity).toLocaleString('tr-TR',{maximumFractionDigits:4})} ${escHtml(l.unit || row.unit)}${l.item_name ? ' · ' + escHtml(l.item_name) : ''}${l.supplier_name ? ' · ' + escHtml(l.supplier_name) : ''}</li>`).join('')}</ul>`
         : '';
       return `<div class="sg-detail-cols">
         <div><b>Reçeteler (${row.recipe_count})</b>${recipes}</div>
@@ -874,45 +895,27 @@
       </div>`;
     }
 
-    function sgRender() {
-      sgSyncQuery();
-      const q = window.trFold ? window.trFold(sgState.q) : sgState.q.toLowerCase();
-      let rows = (sgState.report.rows || []).filter(r => {
-        if (!q) return true;
-        const hay = window.trFold ? window.trFold(`${r.name} ${r.name_tr} ${r.supplier_name||''} ${r.last_supplier||''}`)
-                                   : `${r.name} ${r.name_tr}`.toLowerCase();
-        return hay.includes(q);
-      });
-      const body = document.getElementById('sgBody');
-      const footer = document.getElementById('sgFooter');
-      document.getElementById('sgCount').textContent = `${rows.length} kayıt`;
-      sgState.visibleIds = rows.map(r => r.item_id);
-      sgRenderSelection();
-      if (!rows.length) {
-        body.innerHTML = `<tr><td colspan="8"><div class="empty-state">
-          <i class="bi bi-check-circle" style="color:#22c55e;"></i>
-          <p>Seçili filtrelerde eksik hammadde yok.</p></div></td></tr>`;
-        footer.textContent = '0 kayıt';
-        return;
-      }
-      body.innerHTML = rows.map(r => {
-        const cur = r.current_stock.toLocaleString('tr-TR', {maximumFractionDigits:2});
-        const min = r.min_stock_level.toLocaleString('tr-TR', {maximumFractionDigits:2});
-        const stockClass = r.current_stock <= 0 ? 'stock-zero' : 'stock-low';
-        const numune = r.sample_qty > 0
-          ? `${r.sample_qty.toLocaleString('tr-TR',{maximumFractionDigits:2})} ${escHtml(r.unit)}` : '—';
-        const recipePill = r.recipe_count
-          ? `<button type="button" class="sg-recipe-pill" onclick="event.stopPropagation();sgToggleDetail(${r.item_id})">${r.recipe_count} reçete</button>`
-          : '<span style="color:#9ca3af;font-size:0.8rem;">—</span>';
-        const open = sgState.openDetailId === r.item_id;
-        const picked = sgState.selected.has(r.item_id);
-        return `<tr class="sg-row${picked ? ' sg-picked' : ''}" onclick="sgToggleDetail(${r.item_id})">
+    /* Kart satırı — `member` ise "aynı malzeme" grubunun altında girintili */
+    function sgCardHtml(r, member) {
+      const cur = r.current_stock.toLocaleString('tr-TR', {maximumFractionDigits:2});
+      const min = r.min_stock_level.toLocaleString('tr-TR', {maximumFractionDigits:2});
+      const stockClass = r.current_stock <= 0 ? 'stock-zero' : 'stock-low';
+      const numune = r.sample_qty > 0
+        ? `${r.sample_qty.toLocaleString('tr-TR',{maximumFractionDigits:2})} ${escHtml(r.unit)}` : '—';
+      const recipePill = r.recipe_count
+        ? `<button type="button" class="sg-recipe-pill" onclick="event.stopPropagation();sgToggleDetail(${r.item_id})">${r.recipe_count} reçete</button>`
+        : '<span style="color:#9ca3af;font-size:0.8rem;">—</span>';
+      const open = sgState.openDetailId === r.item_id;
+      const picked = sgState.selected.has(r.item_id);
+      const badge = member && r.status === 'yeterli'
+        ? '<span style="color:#9ca3af;font-size:0.78rem;">kart yeterli</span>' : sgBadge(r);
+      return `<tr class="sg-row${member ? ' sg-member' : ''}${picked ? ' sg-picked' : ''}" onclick="sgToggleDetail(${r.item_id})">
           <td style="padding-left:1.1rem;" onclick="event.stopPropagation()">
             <input type="checkbox" class="sg-check" data-id="${r.item_id}" ${picked ? 'checked' : ''}
                    style="accent-color:var(--navy);cursor:pointer;" onchange="sgTogglePick(${r.item_id}, this.checked)" />
           </td>
-          <td class="td-name">${escHtml(r.name)}${r.name_tr ? `<div style="font-weight:400;color:#9ca3af;font-size:0.78rem;">${escHtml(r.name_tr)}</div>` : ''}</td>
-          <td>${sgBadge(r)}</td>
+          <td class="td-name">${escHtml(r.name)}${member && r.supplier_name ? `<span class="sg-member-sup">${escHtml(r.supplier_name)}</span>` : ''}${r.name_tr ? `<div style="font-weight:400;color:#9ca3af;font-size:0.78rem;">${escHtml(r.name_tr)}</div>` : ''}</td>
+          <td>${badge}</td>
           <td style="text-align:right;"><span class="stock-fraction"><span class="${stockClass}">${cur}</span><span style="color:#9ca3af;"> / ${min} ${escHtml(r.unit)}</span></span></td>
           <td style="text-align:right;">${numune}</td>
           <td>${recipePill}</td>
@@ -920,13 +923,97 @@
           <td onclick="event.stopPropagation();">${sgOrderCell(r)}</td>
         </tr>
         <tr class="sg-detail ${open ? '' : 'hidden'}" data-detail-for="${r.item_id}"><td colspan="8">${sgDetailHtml(r)}</td></tr>`;
-      }).join('');
-      footer.textContent = `${rows.length} kayıt · rapor: ${sgState.report.generated_at}`;
+    }
+
+    /* "Aynı malzeme" grubu TEK satır (sunucu grup kuralı açıkken): toplam +
+       kart dökümü sunucuda biçimli; açınca üyeler kendi sipariş düğmesiyle.
+       Sipariş bayrağı KART başına — grup, üyelerden birinde varsa işaretli. */
+    function sgGroupHtml(r) {
+      const open = sgState.openGroups.has(r.key);
+      const ids = r.member_ids || [];
+      const pickedAll = ids.length > 0 && ids.every(id => sgState.selected.has(id));
+      const stockClass = r.current_stock <= 0 ? 'stock-zero' : 'stock-low';
+      const recipePill = r.recipe_count
+        ? `<button type="button" class="sg-recipe-pill" data-key="${escHtml(r.key)}" onclick="event.stopPropagation();sgToggleGroup(this.dataset.key)">${r.recipe_count} reçete</button>`
+        : '<span style="color:#9ca3af;font-size:0.8rem;">—</span>';
+      const canOrder = window.can && window.can('inventory', 'adjust');
+      const orderCell = r.ordered_count
+        ? `<span class="sg-order-badge"><i class="bi bi-check2-circle"></i>Sipariş verildi${r.member_count > 1 ? ` · ${r.ordered_count}/${r.member_count} kart` : ''}</span>`
+        : (canOrder ? '<span style="color:#9ca3af;font-size:0.78rem;">kart satırından ▸</span>'
+                    : '<span style="color:#9ca3af;font-size:0.8rem;">—</span>');
+      const aside = r.aside_text ? ` · ayrı birim: ${escHtml(r.aside_text)}` : '';
+      return `<tr class="sg-row sg-group-row${pickedAll ? ' sg-picked' : ''}" data-key="${escHtml(r.key)}" onclick="sgToggleGroup(this.dataset.key)"
+                title="Aynı malzemenin tedarikçi kartları — göster / gizle">
+          <td style="padding-left:1.1rem;" onclick="event.stopPropagation()">
+            <input type="checkbox" class="sg-gcheck" data-key="${escHtml(r.key)}" ${pickedAll ? 'checked' : ''}
+                   title="Gruptaki tüm kartları seç / bırak"
+                   style="accent-color:var(--navy);cursor:pointer;" onchange="sgTogglePickGroup(this.dataset.key, this.checked)" />
+          </td>
+          <td class="td-name"><span class="sg-caret${open ? ' open' : ''}"><i class="bi bi-caret-right-fill"></i></span>${escHtml(r.name)}<span class="sg-grp-tag">Aynı malzeme · ${r.member_count} kart</span>
+            <div class="sg-grp-break">${escHtml(r.breakdown_text)}${aside}</div></td>
+          <td>${sgBadge(r)}</td>
+          <td style="text-align:right;"><span class="stock-fraction"><span class="${stockClass}">${escHtml(r.current_text)}</span><span style="color:#9ca3af;"> / ${escHtml(r.min_text || 'min yok')}</span></span></td>
+          <td style="text-align:right;">${r.sample_text ? escHtml(r.sample_text) : '—'}</td>
+          <td>${recipePill}</td>
+          <td style="color:#6b7280;font-size:0.82rem;">${escHtml(r.last_movement || '—')}</td>
+          <td onclick="event.stopPropagation();">${orderCell}</td>
+        </tr>
+        ${open ? (r.members || []).map(m => sgCardHtml(m, true)).join('') : ''}
+        <tr class="sg-detail ${open ? '' : 'hidden'}" data-detail-for="${escHtml(r.key)}"><td colspan="8">${sgDetailHtml(r)}</td></tr>`;
+    }
+
+    function sgRender() {
+      sgSyncQuery();
+      const fold = s => window.trFold ? window.trFold(String(s || '')) : String(s || '').toLowerCase();
+      const q = fold(sgState.q);
+      const cardHay = r => `${r.name} ${r.name_tr} ${r.supplier_name||''} ${r.last_supplier||''}`;
+      let rows = (sgState.report.rows || []).filter(r => {
+        if (!q) return true;
+        const hay = r.kind === 'group'
+          ? [r.name].concat((r.members || []).map(cardHay)).join(' ') : cardHay(r);
+        return fold(hay).includes(q);
+      });
+      const body = document.getElementById('sgBody');
+      const footer = document.getElementById('sgFooter');
+      document.getElementById('sgCount').textContent = `${rows.length} kayıt`;
+      // Seçim KART başına — grup satırı üyelerini temsil eder
+      sgState.visibleIds = [].concat(...rows.map(r => r.kind === 'group' ? (r.member_ids || []) : [r.item_id]));
+      if (!rows.length) {
+        body.innerHTML = `<tr><td colspan="8"><div class="empty-state">
+          <i class="bi bi-check-circle" style="color:#22c55e;"></i>
+          <p>Seçili filtrelerde eksik hammadde yok.</p></div></td></tr>`;
+        footer.textContent = '0 kayıt';
+        sgRenderSelection();
+        return;
+      }
+      body.innerHTML = rows.map(r => r.kind === 'group' ? sgGroupHtml(r) : sgCardHtml(r, false)).join('');
+      sgRenderSelection();
+      footer.textContent = `${rows.length} kayıt · rapor: ${sgState.report.generated_at}` +
+        (sgState.report.group_rule ? ' · aynı malzeme grupları toplam stokla değerlendirildi (grubu yeterli kart listelenmez)' : '');
     }
 
     function sgToggleDetail(itemId) {
       sgState.openDetailId = sgState.openDetailId === itemId ? null : itemId;
       sgRender();
+    }
+
+    function sgToggleGroup(key) {
+      if (sgState.openGroups.has(key)) sgState.openGroups.delete(key);
+      else sgState.openGroups.add(key);
+      sgRender();
+    }
+
+    /* Rapordaki KART satırını bul (grup üyeleri dahil) — sipariş modalı */
+    function sgFindCard(itemId) {
+      for (const r of (sgState.report.rows || [])) {
+        if (r.kind === 'group') {
+          const m = (r.members || []).find(x => x.item_id === itemId);
+          if (m) return m;
+        } else if (r.item_id === itemId) {
+          return r;
+        }
+      }
+      return null;
     }
 
     function sgToggleStatus(status) {
@@ -955,6 +1042,12 @@
       if (tr) tr.classList.toggle('sg-picked', on);
       sgRenderSelection();
     }
+    function sgTogglePickGroup(key, on) {
+      const g = (sgState.report.rows || []).find(r => r.kind === 'group' && r.key === key);
+      if (!g) return;
+      (g.member_ids || []).forEach(id => on ? sgState.selected.add(id) : sgState.selected.delete(id));
+      sgRender();
+    }
     function sgSelectVisible() {
       sgState.visibleIds.forEach(id => sgState.selected.add(id));
       sgRender();
@@ -977,6 +1070,15 @@
       const vis = sgState.visibleIds;
       all.checked = vis.length > 0 && vis.every(id => sgState.selected.has(id));
       all.indeterminate = !all.checked && vis.some(id => sgState.selected.has(id));
+      // Grup kutusu: tüm üyeler seçiliyse işaretli, bir kısmıysa yarım
+      document.querySelectorAll('#sgBody .sg-gcheck').forEach(cb => {
+        const g = (sgState.report.rows || []).find(r => r.kind === 'group' && r.key === cb.dataset.key);
+        const ids = (g && g.member_ids) || [];
+        cb.checked = ids.length > 0 && ids.every(id => sgState.selected.has(id));
+        cb.indeterminate = !cb.checked && ids.some(id => sgState.selected.has(id));
+        const tr = cb.closest('tr');
+        if (tr) tr.classList.toggle('sg-picked', cb.checked);
+      });
       document.querySelectorAll('#eksik .pill[data-export]').forEach(b => {
         b.textContent = b.dataset.label + (n ? ` (${n} seçili)` : '');
       });
@@ -992,7 +1094,7 @@
     /* ── Sipariş modalı ── */
     async function sgOpenOrder(itemId) {
       sgState.pendingOrderItemId = itemId;
-      const row = (sgState.report.rows || []).find(r => r.item_id === itemId);
+      const row = sgFindCard(itemId);
       document.getElementById('sgOrderTitle').textContent = row ? `Sipariş Ver — ${row.name}` : 'Sipariş Ver';
       document.getElementById('sgOrderQty').value = '';
       document.getElementById('sgOrderDate').value = '';
@@ -1125,22 +1227,42 @@
                 ${escHtml(sec.label)} — 0 kalem
               </summary></details>`;
           }
-          const rows = sec.rows.map((r, i) => `
-            <tr>
+          // "Aynı malzeme" grubu: sunucu üyeleri ardışık dizer; ilk üyeden
+          // önce grup satırı (toplam + döküm sunucu biçimli), üyeler girintili.
+          const groups = {};
+          (sec.groups || []).forEach(g => { groups[g.group_id] = g; });
+          const shown = new Set();
+          const rows = sec.rows.map((r, i) => {
+            const g = r.group_id != null ? groups[r.group_id] : null;
+            let head = '';
+            if (g && !shown.has(g.group_id)) {
+              shown.add(g.group_id);
+              head = `
+            <tr class="msr-grp">
+              <td style="padding:0.45rem 0.6rem;color:#7c6bb8;"><i class="bi bi-diagram-3"></i></td>
+              <td colspan="3" style="padding:0.45rem 0.6rem;"><b>${escHtml(g.name)}</b><span class="msr-grp-tag">aynı malzeme · ${g.member_count} kart</span>
+                <div class="msr-grp-break">${escHtml(g.breakdown_text)}${g.aside_text ? ' · ayrı birim: ' + escHtml(g.aside_text) : ''}</div></td>
+              <td style="padding:0.45rem 0.6rem;text-align:right;font-weight:700;color:var(--navy);">${escHtml(g.total_text)}</td>
+            </tr>`;
+            }
+            return head + `
+            <tr${g ? ' class="msr-member"' : ''}>
               <td style="padding:0.45rem 0.6rem;color:#9ca3af;">${i+1}</td>
-              <td style="padding:0.45rem 0.6rem;">${escHtml(r.name)}</td>
+              <td class="msr-name" style="padding:0.45rem 0.6rem;">${g ? '<span style="color:#a78bfa;margin-right:0.35rem;">↳</span>' : ''}${escHtml(r.name)}</td>
               <td style="padding:0.45rem 0.6rem;color:#6b7280;font-size:0.85rem;">${escHtml(r.pkg_type || '—')}</td>
               <td style="padding:0.45rem 0.6rem;color:#6b7280;font-size:0.85rem;">${escHtml(r.language || '—')}</td>
               <td style="padding:0.45rem 0.6rem;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">
                 ${fmt(r.stock)} ${escHtml(r.unit)}
               </td>
-            </tr>`).join('');
+            </tr>`;
+          }).join('');
+          const gCount = (sec.groups || []).length;
           return `
             <details open style="margin:0.85rem 0;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">
               <summary style="cursor:pointer;padding:0.75rem 1rem;background:#faf8f3;font-weight:700;color:var(--navy);">
                 ${escHtml(sec.label)}
                 <span style="color:#6b7280;font-weight:500;font-size:0.85rem;margin-left:0.5rem;">
-                  ${sec.row_count} kalem · toplam ${fmt(sec.total)}
+                  ${sec.row_count} kalem · toplam ${fmt(sec.total)}${gCount ? ` · ${gCount} aynı malzeme grubu` : ''}
                 </span>
               </summary>
               <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
@@ -1165,6 +1287,9 @@
           `<p style="color:#6b7280;font-size:0.82rem;margin:0.5rem 0;">Rapor tarihi: <b>${escHtml(data.generated_at || data.as_of)}</b>`
           + `<span style="color:#9ca3af;"> &nbsp;·&nbsp; Stok kesim: ${escHtml(data.as_of)} itibarıyla</span>`
           + srcBadge + `</p>`
+          + (data.group_note
+              ? `<p style="color:#6b7280;font-size:0.76rem;margin:0 0 0.4rem;"><i class="bi bi-info-circle"></i> ${escHtml(data.group_note)}</p>`
+              : '')
           + parts.join('');
       }
 

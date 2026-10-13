@@ -36,14 +36,23 @@ KURALLAR
     kendi Output'unu ve fazını alır (`segments`), lotlar sırayla dilimlenir.
   • Seçenekler yalnız hammadde ve ambalaj satırlarında (etiket HARİÇ): reçete
     kartı + kartın AKTİF grubundaki aktif, aynı panel, aynı tür
-    (`stock_lots.lot_kind`), aynı birim ailesi (`purchase_plan.unit_norm`)
-    kartlar.
+    (`stock_lots.lot_kind`), aynı birim (`purchase_plan.unit_norm`) kartlar —
+    kural TEK yerde: `core.group_stock.can_substitute` (satın alma planı da
+    "üretimin kullanabileceği" stoğu onunla sayar).
   • `needs_choice` — reçete kartı dışındaki bir seçenekte stok var.  Böyle bir
     satırda `sources` gelmezse hata `source_choice_required`.
   • Öneri (bütün satırlarda ORTAK havuzla, açgözlü): (1) bitirilecek firma /
     "bu malzemede alma" kartları — en eski lot önce, (2) reçete kartı,
     (3) tercih edilen (malzeme tercihi sırası, sonra firma durumu),
     (4) diğerleri (FIFO yaşı).
+  • `auto_sources=True` (B2B sipariş partisi — arayüzü seçim soramaz):
+    cevapsız seçim satırı öneri sırasıyla KİLİTTEN SONRA çözülür; havuz
+    `lot_filter`'a (yalnız süzgeçten geçen lot miktarı, kart stoğuyla
+    sınırlı) ve önceki satırların payına uyar.  Karşılanamayan kalan,
+    süzgeçsiz stoğu onu karşılayan ilk seçeneğe yazılır (B2B `lot_missing`
+    o kartı adıyla söyler); hiçbiri karşılamıyorsa reçete kartına →
+    `insufficient_stock`.
+    Gönderilen `sources` her zaman önceliklidir.  Satır `auto=True`.
   • Eski `ingredient_lot_choices {item_id: inventory_id}` → reçete kartından
     tam brüt + o lot (geriye uyum; seçim gereken satırı CEVAPLAMAZ — eski
     ekran grubu bilmiyordu).
@@ -69,7 +78,8 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from core.consumption import _kind as consumption_kind, expand_recipe, load_recipe_recs
-from core.stock_lots import APPROVED, lot_kind, plan_fifo
+from core.group_stock import can_substitute
+from core.stock_lots import APPROVED, plan_fifo
 from database import (AppSetting, Inventory, Item, MaterialGroup, MaterialSupplierPref,
                       Recipe, Supplier, to_tr)
 
@@ -154,6 +164,7 @@ class Line:
     suggested: List[dict] = field(default_factory=list)
     chosen: List[Pick] = field(default_factory=list)
     answered: bool = False
+    auto: bool = False             # seçim auto_sources ile öneri sırasından çözüldü
     shortfall: float = 0.0
     errors: List[dict] = field(default_factory=list)
 
@@ -304,8 +315,9 @@ def _group_members(db: Session, lines: List[Line], orm: Dict[int, Item], domain:
 
 
 def _option_cards(lines: List[Line], orm: Dict[int, Item], groups, members) -> Dict[str, List[Item]]:
-    """Satır başına seçenek kartları: reçete kartı + aynı tür ve birim
-    ailesindeki grup kartları (bitmiş ürün kartında grup seçeneği yok)."""
+    """Satır başına seçenek kartları: reçete kartı + grubun yerine
+    kullanılabilir kartları (`group_stock.can_substitute`: aktif, aynı
+    panel/tür/tüketim türü/birim; bitmiş ürün kartında grup seçeneği yok)."""
     out: Dict[str, List[Item]] = {}
     for ln in lines:
         if ln.kind == "label":
@@ -313,13 +325,10 @@ def _option_cards(lines: List[Line], orm: Dict[int, Item], groups, members) -> D
         card = orm[ln.item_id]
         cands = [card]
         grp = groups.get(card.material_group_id) if card.material_group_id else None
-        kind = lot_kind(card.category)
-        if grp is not None and kind != "finished":
-            unit = _unit_norm(card.unit)
+        if grp is not None:
             cands += [m for m in members.get(grp.id, [])
-                      if m.id != card.id and lot_kind(m.category) == kind
-                      and consumption_kind(m) == ln.kind
-                      and _unit_norm(m.unit) == unit]
+                      if m.id != card.id and consumption_kind(m) == ln.kind
+                      and can_substitute(card, m)]
             if len(cands) > 1:
                 ln.group = {"id": grp.id, "name": grp.name}
         out[ln.key] = cands
@@ -560,10 +569,13 @@ def _validate_sources(ln: Line, entries: list, name: str) -> List[Pick]:
     return picks
 
 
-def _resolve_choices(lines: List[Line], orm: Dict[int, Item], sources, lot_choices) -> List[dict]:
+def _resolve_choices(lines: List[Line], orm: Dict[int, Item], sources, lot_choices,
+                     auto: bool = False) -> List[dict]:
     """Her satırın `chosen`'ı: gönderilen kaynaklar → (seçim gerekmiyorsa)
     reçete kartından tam brüt + eski lot seçimi.  Seçim gereken satırda
-    kaynak yoksa `source_choice_required`.  Dönüş: bu adımın hataları."""
+    kaynak yoksa `source_choice_required` — `auto=True` ise hata yerine satır
+    `auto` işaretlenir, `chosen` kilitten sonra `_auto_pick` ile dolar.
+    Dönüş: bu adımın hataları."""
     errors: List[dict] = []
     by_key = {ln.key: ln for ln in lines}
     src_in = _normalize_sources(sources)
@@ -579,6 +591,9 @@ def _resolve_choices(lines: List[Line], orm: Dict[int, Item], sources, lot_choic
                 ln.errors.append(_err(INVALID_SOURCE, ln.key, f"«{name}» etiket — kaynak kart seçilmez."))
             else:
                 ln.chosen = _validate_sources(ln, src_in[ln.key], name)
+        elif ln.needs_choice and auto:
+            ln.answered = True
+            ln.auto = True
         elif ln.needs_choice:
             ln.errors.append(_err(SOURCE_CHOICE_REQUIRED, ln.key,
                                   f"«{name}» için hangi tedarikçinin kartından kullanılacağını seçin."))
@@ -597,8 +612,11 @@ def _load_consumed(db: Session, lines: List[Line], lock: bool,
     """Düşülecek kartlar ve hammadde lot havuzları.  lock=True: kartlar TEK
     sorguda HEDEF DAHİL id sıralı FOR UPDATE, sonra lotlar id sıralı FOR UPDATE —
     `populate_existing` ile kilitten SONRAKİ değer okunur (planlayıcı aynı
-    satırları önce kilitsiz okudu)."""
-    card_ids = sorted({p.item_id for ln in lines for p in ln.chosen})
+    satırları önce kilitsiz okudu).  `auto` satırların BÜTÜN seçenek kartları
+    (ve hammaddede lotları) da okunur/kilitlenir — seçim kilitli değerle
+    yapılır; kullanılmayanlar `plan()`'da ayıklanır."""
+    card_ids = sorted({p.item_id for ln in lines for p in ln.chosen}
+                      | {i for ln in lines if ln.auto for i in ln.option_ids})
     lock_ids = sorted(set(card_ids) | ({target_item_id} if lock and target_item_id else set()))
     cards: Dict[int, Item] = {}
     if lock_ids:
@@ -608,7 +626,8 @@ def _load_consumed(db: Session, lines: List[Line], lock: bool,
         # Hedef yalnız kilit için eklendi; tüketim/uyarı kartlarına karışmaz.
         # Aynı kart hem kaynak hem hedefse tek kez kilitlenir, cards'ta kalır.
         cards = {it.id: it for it in q.all() if it.id in card_ids}
-    raw_ids = sorted({p.item_id for ln in lines if ln.kind == "raw" for p in ln.chosen})
+    raw_ids = sorted({p.item_id for ln in lines if ln.kind == "raw" for p in ln.chosen}
+                     | {i for ln in lines if ln.kind == "raw" and ln.auto for i in ln.option_ids})
     pools: Dict[int, List[Inventory]] = {}
     if raw_ids:
         if lock:
@@ -619,21 +638,103 @@ def _load_consumed(db: Session, lines: List[Line], lock: bool,
     return cards, pools
 
 
+def _source_valid(ln: Line, card: Optional[Item], domain: str) -> bool:
+    """Kilit sonrası kart hâlâ bu satırın kaynağı olabilir mi — panel, tüketim
+    türü, birim; reçete kartı dışındaysa aktif ve satırın grubunda."""
+    valid = (card is not None and card.domain == domain
+             and consumption_kind(card) == ln.kind
+             and _unit_norm(card.unit) == _unit_norm(ln.unit))
+    if valid and card.id != ln.item_id:
+        valid = bool(card.is_active and ln.group
+                     and card.material_group_id == ln.group["id"])
+    return valid
+
+
 def _check_consumed_cards(lines: List[Line], cards: Dict[int, Item], domain: str) -> None:
     """Seçenek okumasıyla kart kilidi arasında düzenlenen/silinen kartı
     reddet; kilit sonrası gerçek tür, birim ve panel üzerinden tüketilir."""
     for ln in lines:
         for p in ln.chosen:
-            card = cards.get(p.item_id)
-            valid = (card is not None and card.domain == domain
-                     and consumption_kind(card) == ln.kind
-                     and _unit_norm(card.unit) == _unit_norm(ln.unit))
-            if valid and p.item_id != ln.item_id:
-                valid = bool(card.is_active and ln.group
-                             and card.material_group_id == ln.group["id"])
-            if not valid:
+            if not _source_valid(ln, cards.get(p.item_id), domain):
                 raise PlanError(400, "Seçilen kaynak kart değişmiş veya artık uygun değil. "
                                 "Üretim önizlemesini yenileyin.", INVALID_SOURCE)
+
+
+def _auto_pick(lines: List[Line], cards: Dict[int, Item], pools: Dict[int, List[Inventory]],
+               lot_filter, domain: str) -> None:
+    """`auto` satırların seçimi — KİLİTLİ kart/lot değerleriyle, öneri
+    sırasıyla (`options` zaten sıralı: bitirilecek/alma → reçete kartı →
+    tercih → diğer), bütün satırlarda ORTAK havuz.
+
+    Kartın verebileceği = max(0, kart stoğu); hammaddede `lot_filter`
+    varsa en çok süzgeçten geçen lotların toplamı (B2B sıkı havuzu — lotsuz
+    ya da SKT'siz stok partiye giremez).  Önce sabit satırların (seçim
+    gerektirmeyen ya da kaynağı gönderilen) payı düşülür, sonra `auto`
+    satırlar sırayla açgözlü doldurulur.  Karşılanamayan kalan, öneri
+    sırasındaki İLK geçerli seçeneğe yazılır ki SÜZGEÇSİZ kart stoğunun
+    artanı (max(0, stok) − bu planın bütün satırlarda o karttan aldığı)
+    kalanı karşılasın: kapı geçer, FIFO o kartta `uncovered` bırakır →
+    B2B `lot_missing` ASIL engeli (kardeş kartın SKT'si / QC'si) adıyla
+    söyler.  (Eskiden kalan hep reçete kartına yazılıyordu: kardeşin stoğu
+    var ama lotu sıkı süzgeçten geçmiyorsa reçete kartı için yanıltıcı
+    `insufficient_stock` "Mevcut: 60 g" çıkıyor, satın alma planı da
+    kardeşin stoğunu saydığı için alınacak bir şey bulmuyordu.)  Hiçbir
+    seçenek karşılamıyorsa kalan REÇETE KARTINA yazılır → `_gate`
+    `insufficient_stock` (sessizce eksik üretim yok).  Toplam = brüt (son
+    pay kalana oturur)."""
+    def stock(cid: int) -> float:
+        card = cards.get(cid)
+        return 0.0 if card is None else max(0.0, float(card.current_stock or 0.0))
+
+    def avail(cid: int, kind: str) -> float:
+        have = stock(cid)
+        if have > 0 and kind == "raw" and lot_filter is not None:
+            have = min(have, sum(float(lot.quantity or 0.0) for lot in pools.get(cid, [])
+                                 if lot_filter(lot)))
+        return have
+
+    pool: Dict[int, float] = {}            # süzgeçli verilebilir (sıkı lot havuzu)
+    raw_left: Dict[int, float] = {}        # süzgeçsiz kart stoğunun artanı
+    for ln in lines:
+        for cid in (ln.option_ids if ln.auto else [p.item_id for p in ln.chosen]):
+            if cid not in pool:
+                pool[cid] = avail(cid, ln.kind)
+                raw_left[cid] = stock(cid)
+    for ln in lines:
+        if not ln.auto:
+            for p in ln.chosen:
+                pool[p.item_id] = pool.get(p.item_id, 0.0) - p.quantity
+                raw_left[p.item_id] = raw_left.get(p.item_id, 0.0) - p.quantity
+    for ln in lines:
+        if not ln.auto:
+            continue
+        remaining, takes = ln.gross, {}
+        for o in ln.options:
+            if remaining <= EPS:
+                break
+            cid = o["item_id"]
+            if not _source_valid(ln, cards.get(cid), domain):
+                continue
+            take = _r6(min(max(0.0, pool.get(cid, 0.0)), remaining))
+            if take > EPS:
+                takes[cid] = take
+                pool[cid] = pool.get(cid, 0.0) - take
+                raw_left[cid] = raw_left.get(cid, 0.0) - take
+                remaining = _r6(remaining - take)
+        ln.shortfall = _r6(max(0.0, remaining))
+        if remaining > EPS or not takes:
+            rest_on = ln.item_id
+            if remaining > EPS:
+                rest_on = next((o["item_id"] for o in ln.options
+                                if _source_valid(ln, cards.get(o["item_id"]), domain)
+                                and raw_left.get(o["item_id"], 0.0) + EPS >= remaining),
+                               ln.item_id)
+            takes[rest_on] = _r6(takes.get(rest_on, 0.0) + remaining)
+            pool[rest_on] = pool.get(rest_on, 0.0) - remaining
+            raw_left[rest_on] = raw_left.get(rest_on, 0.0) - remaining
+        picks = [Pick(item_id=cid, quantity=q) for cid, q in takes.items()]
+        picks[-1].quantity = _r6(ln.gross - sum(p.quantity for p in picks[:-1]))
+        ln.chosen = picks
 
 
 def _allocate_lots(db: Session, lines: List[Line], cards: Dict[int, Item],
@@ -718,7 +819,7 @@ def _gate(lines: List[Line], cards: Dict[int, Item], recipe: Recipe) -> Tuple[Li
 
 def plan(db: Session, recipe: Recipe, qty: float, lang: str, *, domain: str,
          sources: Optional[dict] = None, lot_choices: Optional[dict] = None,
-         lock: bool = False, lot_filter=None) -> Plan:
+         lock: bool = False, lot_filter=None, auto_sources: bool = False) -> Plan:
     """Reçeteden `qty` adet üretimin tam planı — hiçbir şey yazmaz.
 
     `sources` — {reçete kartı id (str): [{item_id, quantity, inventory_id?}]}
@@ -726,6 +827,8 @@ def plan(db: Session, recipe: Recipe, qty: float, lang: str, *, domain: str,
     `lock` — başlatmada True: düşülecek kartlar + lotları FOR UPDATE.
     `lot_filter` — FIFO'nun hammadde lotu başına ek koşulu (B2B sipariş
     partisinin sıkı havuzu); elenen lot atlanır, eksik `uncovered` kalır.
+    `auto_sources` — cevapsız seçim satırı `source_choice_required` yerine
+    öneri sırasıyla çözülür (`_auto_pick`; B2B sipariş partisi).
     """
     lang = "EN" if (lang or "").strip().upper().startswith("EN") else "TR"
     recs, items, sibs = load_recipe_recs(db, [recipe.id], domain, active_only=False)
@@ -753,8 +856,13 @@ def plan(db: Session, recipe: Recipe, qty: float, lang: str, *, domain: str,
     _attach_options(db, domain, lines, opt_cards, orm, groups, enabled)
     _suggest(lines, orm)
 
-    errors = _resolve_choices(lines, orm, sources, lot_choices)
+    errors = _resolve_choices(lines, orm, sources, lot_choices, auto=auto_sources)
     cards, pools = _load_consumed(db, lines, lock, recipe.target_item_id)
+    if any(ln.auto for ln in lines):
+        _auto_pick(lines, cards, pools, lot_filter, domain)
+        used = {p.item_id for ln in lines for p in ln.chosen}
+        cards = {i: c for i, c in cards.items() if i in used}
+        pools = {i: v for i, v in pools.items() if i in used}
     _check_consumed_cards(lines, cards, domain)
     errors += _allocate_lots(db, lines, cards, pools, lot_filter)
     per_card, gate_errors = _gate(lines, cards, recipe)
@@ -864,6 +972,7 @@ def preview_payload(pl: Plan) -> dict:
             "group": ln.group,
             "needs_choice": ln.needs_choice,
             "answered": ln.answered,
+            "auto": ln.auto,
             "options": ln.options,
             "suggested": [dict(s, name=pl.names.get(s["item_id"], "")) for s in ln.suggested],
             "chosen": [_pick_view(p, pl.names, ln) for p in ln.chosen],

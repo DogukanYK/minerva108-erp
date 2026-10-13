@@ -17,7 +17,9 @@ Satın Alma Planı — Excel çıktısı.
         K (Tutar)    = IF(J="", "", ROUND(G*J, 0))   (Excel ROUND = round_half_up)
     + bölüm ara toplamları ve GENEL TOPLAM (SUM).  Lab Excel'de fiyatı ya da
     elimizdekini değiştirince tutar kendiliğinden güncellenir.  "Not" (X)
-    sonrasında Y "Aynı malzeme (diğer kartlar)" ve Z "Sipariş geçmişi".
+    sonrasında Y "Aynı malzeme (diğer kartlar)", Z "Sipariş geçmişi" ve AA
+    "Grup stoğu (kart dökümü)" (`purchase_plan.stock_note`, önizleme/PDF ile
+    aynı metin).
   • "Tedarikçiler" — seçilen + aday firmalar, iletişim, kart adları, K
     "İlişki türleri" (stok kartı / alım / numune / sipariş / eşdeğer kart …).
   • "Ürünler"      — hedef adet, bitmiş stok, kapasite, kısıtlayan malzeme.
@@ -46,7 +48,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from io import BytesIO
 from typing import Dict, List, Optional
 
-from core.purchase_plan import _amount_near
+from core.purchase_plan import _amount_near, stock_note
 from core.purchase_pricing import (CURRENCY_SYMBOL, REL_TYPE_TEXT, alt_texts, contact_line, money, notes_lines,
                                    offer_tags, order_texts, round_half_up, sections, unpriced_offer_text)
 from core.xlsx_cache import inject_cached_values
@@ -64,10 +66,12 @@ MANUAL_SECTION_TEXT = {"label": "Etiket", "shipping": "Koli / palet", "other": "
 MATERIAL_SECTIONS = ("raw_priced", "raw_unpriced", "pkg_priced", "pkg_unpriced", "labels")
 
 # Alım listesi sütunları (spec C4 tablosu).  "Not" X'te (24) sabit; "Aynı
-# malzeme (diğer kartlar)" Y ve "Sipariş geçmişi" Z onun SONRASINA eklendi —
-# formüller D–K, eski sütunlar kaymaz.
-COLS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-WIDTHS = (10, 22, 34, 12, 12, 10, 12, 7, 20, 11, 11, 24, 18, 9, 10, 18, 9, 18, 9, 22, 24, 24, 40, 60, 50, 40)
+# malzeme (diğer kartlar)" Y, "Sipariş geçmişi" Z ve "Grup stoğu (kart
+# dökümü)" AA (27, 13.10.2026) onun SONRASINA eklendi — formüller D–K, eski
+# sütunlar kaymaz.
+COLS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + ["AA"]
+WIDTHS = (10, 22, 34, 12, 12, 10, 12, 7, 20, 11, 11, 24, 18, 9, 10, 18, 9, 18, 9, 22, 24, 24, 40, 60, 50, 40,
+          50)
 
 
 def _excel_round(x: float, digits: int) -> float:
@@ -181,7 +185,8 @@ def _sheet_list(wb, report: dict, secs: List[dict], cache: Dict[str, object]) ->
                "Alınacak", "Birim", "Seçilen tedarikçi", f"Birim fiyat ({sym})", f"Tutar ({sym})",
                "Fiyat kaynağı", "T1", f"Fiyat 1 ({sym})", "Ambalaj 1", "T2", f"Fiyat 2 ({sym})",
                "T3", f"Fiyat 3 ({sym})", "Stok kartında yazan", "Son alım", "Numune",
-               "Kullanıldığı ürünler", "Not", "Aynı malzeme (diğer kartlar)", "Sipariş geçmişi"])
+               "Kullanıldığı ürünler", "Not", "Aynı malzeme (diğer kartlar)", "Sipariş geçmişi",
+               "Grup stoğu (kart dökümü)"])
     _style_header(ws)
 
     subtotal_cells: List[str] = []
@@ -209,7 +214,7 @@ def _sheet_list(wb, report: dict, secs: List[dict], cache: Dict[str, object]) ->
                     _offer_name(o[1]), o[1]["price"] if o[1] else None,
                     _offer_name(o[2]), o[2]["price"] if o[2] else None,
                     card, last_t, samples, _products_text(m), _note_text(m, cur),
-                    "; ".join(alt_texts(m)), "; ".join(order_texts(m))]
+                    "; ".join(alt_texts(m)), "; ".join(order_texts(m)), stock_note(m) or ""]
             r = _append_as_text(ws, vals)
             first = first or r
             # G — Alınacak

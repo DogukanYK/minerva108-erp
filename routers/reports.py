@@ -124,6 +124,70 @@ def _rows_live(db: Session, eom: _dt.datetime, category_key: str,
     return out
 
 
+def _attach_groups(db: Session, sections: list, domain: str) -> bool:
+    """Aylık rapor satırlarına kartın BUGÜNKÜ "aynı malzeme" grubunu ekle
+    (13.10.2026).  Yalnız görünüm — bölüm toplamları DEĞİŞMEZ.
+
+    Bir bölümde aynı aktif gruptan ≥2 satır varsa `sec["groups"]`'a grup
+    girdisi (taban birimde toplam + kart dökümü, sunucu biçimli) eklenir,
+    satırlar `group_id` alır ve üyeler ilk üyenin yerinde ARDIŞIK dizilir
+    (ekran ve Excel aynı sırayı okur).  Toplam o ayın satır stoklarından
+    `core.group_stock` kuralıyla (g↔kg, ml↔l; başka aile `aside_text`).
+    Dondurulmuş eski aylarda grup bilgisi yoktur — bugünkü gruplama
+    uygulanır (ekranda dipnot).  Döner: herhangi bir bölümde grup var mı."""
+    from core import group_stock as GS
+    from database import MaterialGroup
+
+    ids = {r["item_id"] for sec in sections for r in sec["rows"] if r.get("item_id")}
+    info = {}
+    if ids:
+        q = (db.query(Item.id, Item.material_group_id, MaterialGroup.name, Supplier.name)
+             .join(MaterialGroup, MaterialGroup.id == Item.material_group_id)
+             .outerjoin(Supplier, Supplier.id == Item.supplier_id)
+             .filter(Item.id.in_(ids), Item.domain == domain,
+                     MaterialGroup.domain == domain, MaterialGroup.is_active == True))  # noqa: E712
+        info = {iid: (gid, gname or f"Grup #{gid}", sname) for iid, gid, gname, sname in q.all()}
+    any_group = False
+    for sec in sections:
+        by_gid: dict = {}
+        for r in sec["rows"]:
+            r["group_id"] = None
+            inf = info.get(r.get("item_id"))
+            if inf:
+                by_gid.setdefault(inf[0], []).append(r)
+        groups = {}
+        for gid, rws in by_gid.items():
+            if len(rws) < 2:
+                continue
+            members = [GS.GroupMember(
+                id=r["item_id"], name=r["name"], unit=r["unit"], stock=max(0.0, float(r["stock"])),
+                raw_stock=float(r["stock"]), min_stock=0.0, category="", pkg_type=r.get("pkg_type") or None,
+                supplier_id=None, supplier_name=info[r["item_id"]][2]) for r in rws]
+            g = GS.build_group(gid, info[rws[0]["item_id"]][1], sec["category"], members)
+            for r in rws:
+                r["group_id"] = gid
+            groups[gid] = {
+                "group_id": gid, "name": g.name, "base_unit": g.base_unit,
+                "total": round(g.total, 4), "total_text": g.total_text,
+                "breakdown_text": g.breakdown_text, "aside_text": g.aside_text,
+                "member_count": len(rws),
+            }
+        # Üyeler ilk üyenin yerinde ardışık — ad sırası bölüm içinde korunur
+        ordered, done = [], set()
+        for r in sec["rows"]:
+            gid = r["group_id"]
+            if gid is None:
+                ordered.append(r)
+            elif gid not in done:
+                done.add(gid)
+                ordered.extend(x for x in sec["rows"] if x["group_id"] == gid)
+        sec["rows"] = ordered
+        sec["groups"] = [groups[gid] for gid in
+                         dict.fromkeys(r["group_id"] for r in ordered if r["group_id"] is not None)]
+        any_group = any_group or bool(groups)
+    return any_group
+
+
 @router.get("/reports/monthly-stock")
 def report_monthly_stock(
     year:     int = Query(..., ge=2000, le=2100),
@@ -136,7 +200,9 @@ def report_monthly_stock(
     """
     Verilen ay sonunda mevcut stok dökümü.  Tarihçe rekonstrüksiyonu —
     Transaction'lardaki signed delta'ların kümülatif toplamı.  Aktif panele
-    (domain) göre süzülür.
+    (domain) göre süzülür.  Kartın bugünkü "aynı malzeme" grubu her zaman
+    eklenir (`_attach_groups`: `groups[]`, satırda `group_id`, `group_note`);
+    bölüm toplamları değişmez.
 
     category: all | hammadde | ambalaj | etiket | finished
     """
@@ -178,9 +244,20 @@ def report_monthly_stock(
             "total":    round(sum(r["stock"] for r in rows), 4),
         })
 
+    # Kartın BUGÜNKÜ "aynı malzeme" grubu (her zaman — yalnız görünüm)
+    has_groups = _attach_groups(db, result, domain)
+    group_note = ""
+    if has_groups:
+        group_note = ("Aynı malzemenin tedarikçi kartları bugünkü «aynı malzeme» gruplarına göre "
+                      "toplandı (g↔kg, ml↔l çevrilir; başka birim ayrı yazılır). Bölüm toplamları değişmez.")
+        if use_snapshot:
+            group_note += (" Dondurulmuş kayıtta grup bilgisi yoktur — eski ay bugünkü gruplamayla "
+                           "gösterilir.")
+
     return {
         "year":         year,
         "month":        month,
+        "group_note":   group_note,
         # Verinin kaynağı: dondurulmuş snapshot mu, canlı hesap mı?
         "source":       "snapshot" if use_snapshot else "canlı",
         # Raporun fiilen oluşturulduğu an — "Rapor tarihi" olarak gösterilir.
@@ -229,22 +306,49 @@ def report_monthly_stock_export(
                     f"{sec['row_count']} kalem  ·  toplam {sec['total']}")
         ws["A2"].font = Font(italic=True, color="6b7280")
 
-        headers = ["#", "Ürün Adı", "Birim", "Alt-Tip", "Dil", "Stok"]
+        if data.get("group_note"):
+            ws["A3"] = data["group_note"]
+            ws["A3"].font = Font(italic=True, color="6b7280", size=9)
+
+        headers = ["#", "Ürün Adı", "Birim", "Alt-Tip", "Dil", "Stok", "Grup dökümü"]
         for ci, h in enumerate(headers, 1):
             c = ws.cell(row=4, column=ci, value=h)
             c.font = bold; c.fill = fill; c.border = box
             c.alignment = Alignment(horizontal="center")
 
-        for ri, r in enumerate(sec["rows"], start=5):
-            ws.cell(row=ri, column=1, value=ri - 4).border = box
-            ws.cell(row=ri, column=2, value=r["name"]).border = box
+        # Grup satırı (kalın) + girintili üyeler.  Grup toplamı F'de METİN —
+        # SUM(F) kartları iki kez saymasın; bölüm TOPLAM'ı değişmez.
+        groups = {g["group_id"]: g for g in sec.get("groups") or []}
+        ri, n, done = 5, 0, set()
+        bold_plain = Font(bold=True)
+        for r in sec["rows"]:
+            gid = r.get("group_id")
+            if gid in groups and gid not in done:
+                done.add(gid)
+                g = groups[gid]
+                dok = g["breakdown_text"] + (f" · ayrı birim: {g['aside_text']}" if g["aside_text"] else "")
+                vals = ["", f"{g['name']} (aynı malzeme, {g['member_count']} kart)", g["base_unit"],
+                        "", "", g["total_text"], dok]
+                for ci, v in enumerate(vals, 1):
+                    c = ws.cell(row=ri, column=ci, value=v)
+                    c.border = box; c.font = bold_plain
+                ws.cell(row=ri, column=6).alignment = Alignment(horizontal="right")
+                ri += 1
+            n += 1
+            ws.cell(row=ri, column=1, value=n).border = box
+            name_c = ws.cell(row=ri, column=2, value=r["name"])
+            name_c.border = box
+            if gid in groups:
+                name_c.alignment = Alignment(indent=2)
             ws.cell(row=ri, column=3, value=r["unit"]).border = box
             ws.cell(row=ri, column=4, value=r["pkg_type"]).border = box
             ws.cell(row=ri, column=5, value=r["language"]).border = box
             ws.cell(row=ri, column=6, value=r["stock"]).border = box
+            ws.cell(row=ri, column=7, value="").border = box
+            ri += 1
 
         # TOPLAM satırı
-        total_row = 5 + sec["row_count"]
+        total_row = ri
         ws.cell(row=total_row, column=2, value="TOPLAM").font = Font(bold=True)
         ws.cell(row=total_row, column=6, value=sec["total"]).font = Font(bold=True)
 
@@ -254,6 +358,7 @@ def report_monthly_stock_export(
         ws.column_dimensions["D"].width = 12
         ws.column_dimensions["E"].width = 8
         ws.column_dimensions["F"].width = 14
+        ws.column_dimensions["G"].width = 60
 
     if not wb.worksheets:
         wb.create_sheet(title="Boş")["A1"] = "Bu ay için kayıt yok."
@@ -363,7 +468,9 @@ def stock_gaps_report(
 
     core/stock_gaps.py TEK KAYNAK. `current_stock<=0 and min_stock_level=0`
     (min. tanımsız) hiçbir alarma girmiyordu — `include_undefined_min=1` ile
-    görünür kılınır."""
+    görünür kılınır.  Üretimde kaynak seçimi açıkken (`group_stock_enabled`)
+    "aynı malzeme" grubu toplamla değerlendirilir: eksik grup tek satır
+    (`kind="group"`, `members[]`), grubu yeterli kart düşer."""
     from core.stock_gaps import assemble
     statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
     return assemble(db, domain, category=category, statuses=statuses,
@@ -440,7 +547,7 @@ def stock_gaps_export(
     `ids` verilirse kategori/durum/arama yok sayılır — lab yalnız istediği
     uçucu yağları, yalnız istediği ambalajları ya da ikisini birlikte tek
     Excel'de alabilsin diye (10.09.2026 talebi)."""
-    from core.stock_gaps import assemble, build_workbook, render_pdf, export_filename
+    from core.stock_gaps import assemble, build_workbook, flat_rows, render_pdf, export_filename
     from core.supplier_prices import prices_for_items, today_rates_or_none
     from core.delivery_note import content_disposition
     statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
@@ -460,7 +567,8 @@ def stock_gaps_export(
             content = render_pdf(report)
             media = "application/pdf"
         else:
-            order_ids = [r["item_id"] for r in report["rows"] if r.get("order")]
+            # bayrak KART başına — grup satırının siparişli üyeleri dahil
+            order_ids = [r["item_id"] for r in flat_rows(report) if r.get("order")]
             # para birimi karışık malzemede bugünün kuruyla sıralı (kur tembel)
             prices = prices_for_items(db, order_ids, domain, rates=today_rates_or_none)
             content = build_workbook(report, prices=prices)
@@ -485,12 +593,27 @@ def dashboard_stats(
     total_items     = db.query(Item).filter(Item.is_active == True, Item.domain == domain).count()
     total_suppliers = db.query(Supplier).filter(Supplier.is_active == True, Supplier.domain == domain).count()
     total_recipes   = db.query(Recipe).filter(Recipe.is_active == True, Recipe.domain == domain).count()
-    zero_stock_raw_count = (
-        db.query(Item)
+    # "Aynı malzeme" grup kuralı — yalnız üretimdeki kaynak seçimi açıkken
+    # (core.group_stock TEK ANAHTAR; kapalı → eski kart başı sayım birebir).
+    # ≥2 sayılan kartlı grubun kartları grup TOPLAMIYLA değerlendirilir:
+    # grup toplamı ≤ 0 → tek "sıfır", toplam ≤ grup min → tek kritik satır.
+    from core.stock_gaps import group_index
+    agg = group_index(db, domain)[2]
+
+    zero_rows = (
+        db.query(Item.id)
         .filter(Item.is_active == True, Item.domain == domain,
                 Item.current_stock <= 0, Item.category.notin_(("Ambalaj", "Bitmiş Ürün")))
-        .count()
+        .all()
     )
+    zero_cards, zero_groups = 0, set()
+    for (iid,) in zero_rows:
+        g = agg.get(iid)
+        if g is None:
+            zero_cards += 1
+        elif g.total <= 1e-9:
+            zero_groups.add((g.group_id, g.bucket))     # grubun tamamı sıfır → bir kez
+    zero_stock_raw_count = zero_cards + len(zero_groups)
 
     # ── Critical stock: items at or below min level ────────────────────────
     critical_items_raw = (
@@ -504,19 +627,50 @@ def dashboard_stats(
         .order_by(Item.current_stock.asc())
         .all()
     )
-    critical_stock_list = [
-        {
-            "id":              i.id,
-            "name":            i.name,
-            "sku":             i.sku or "—",
+    # Kritik grup en az bir kritik üye içerir (toplam ≥ en büyük minimumlu
+    # üyenin stoğu) → yalnız bu listeyi taramak tüm kritik grupları bulur.
+    from core.group_stock import amount_exact
+    critical_stock_list, seen_groups = [], set()
+    for i in critical_items_raw:
+        g = agg.get(i.id)
+        if g is None:
+            critical_stock_list.append({
+                "id":              i.id,
+                "name":            i.name,
+                "sku":             i.sku or "—",
+                "category":        i.category or "—",
+                "unit":            i.unit,
+                "current_stock":   round(i.current_stock, 4),
+                "min_stock_level": round(i.min_stock_level, 4),
+                "deficit":         round(i.min_stock_level - i.current_stock, 4),
+                "group":           None,
+            })
+            continue
+        gk = (g.group_id, g.bucket)
+        if gk in seen_groups:
+            continue
+        seen_groups.add(gk)
+        if not (g.min_stock > 1e-9 and g.total <= g.min_stock + 1e-9):
+            continue                                  # grubu yeterli → kart uyarısı düşer
+        critical_stock_list.append({
+            "id":              None,
+            "name":            g.name,
+            "sku":             "",
             "category":        i.category or "—",
-            "unit":            i.unit,
-            "current_stock":   round(i.current_stock, 4),
-            "min_stock_level": round(i.min_stock_level, 4),
-            "deficit":         round(i.min_stock_level - i.current_stock, 4),
-        }
-        for i in critical_items_raw
-    ]
+            "unit":            g.base_unit,
+            "current_stock":   round(g.total, 4),
+            "min_stock_level": round(g.min_stock, 4),
+            "deficit":         round(g.min_stock - g.total, 4),
+            "group": {
+                "id": g.group_id, "name": g.name, "member_count": len(g.counted),
+                # kesin metin: 999,6 g / 1.000 g "1 kg / 1 kg · 0 g" görünmesin
+                "total_text": amount_exact(g.total, g.base_unit),
+                "min_text": amount_exact(g.min_stock, g.base_unit),
+                "deficit_text": amount_exact(max(0.0, g.min_stock - g.total), g.base_unit),
+                "breakdown_text": g.breakdown_text,
+            },
+        })
+    critical_stock_list.sort(key=lambda r: r["current_stock"])
 
     # ── Recent transactions (last 5) ───────────────────────────────────────
     recent_txs = (

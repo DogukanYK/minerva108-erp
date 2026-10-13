@@ -31,6 +31,7 @@ from core.production_cancel import preview as cancel_preview
 from core.brands import cabinet_of
 from core.permissions import require_internal_user, require_permission
 from core.notifications import notify_low_stock
+from core.group_stock import low_stock_alerts
 from core.domain import active_domain
 from core.retention import (CFG_EXTRA, CFG_SHELF_LIFE, DEFAULT_EXTRA_MONTHS,
                             DEFAULT_SHELF_LIFE_MONTHS)
@@ -775,13 +776,16 @@ def start_production(
         #     queues exactly one notification (one per ingredient line, not one
         #     per stock unit). Snapshots primitive values now; the BackgroundTask
         #     fires after the response is sent so the user sees no extra latency.
-        #     Fiilen düşülen KART başına (bölünmüş satırda iki kart da bakılır).
-        for item in pl.cards.values():
-            if (item.min_stock_level or 0) > 0 and item.current_stock <= item.min_stock_level:
-                background_tasks.add_task(
-                    notify_low_stock,
-                    item.name, item.current_stock, item.min_stock_level, item.unit or "",
-                )
+        #     Fiilen düşülen KART başına (bölünmüş satırda iki kart da bakılır);
+        #     "aynı malzeme" grubu yeterliyse sessiz, değilse grup başına tek
+        #     uyarı (core.group_stock.low_stock_alerts — ayar kapalı → eski kural).
+        try:
+            alerts = low_stock_alerts(db, list(pl.cards.values()), rec_domain)
+        except Exception:   # üretim commit'li — bildirim hesabı yanıtı bozmasın
+            logger.exception("low stock alert failed")
+            alerts = []
+        for args in alerts:
+            background_tasks.add_task(notify_low_stock, *args)
 
         # ── Stoktan düşülen kalem özeti — lab "ne düştü" diye sormasın ─────
         # Tüketilen REÇETE SATIRI sayısı (eskisi gibi; aynı kart iki satırdaysa

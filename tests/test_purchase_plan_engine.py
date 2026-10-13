@@ -16,6 +16,13 @@ dökümü · bitmiş stok düşme · kapsam metni · DB yükleyici (domain kapsa
 "bitirilecek" tedarikçi kartının grup stoğu (ihtiyaçtan düşülür, satırlar
 arası ortak havuz, seçenek kapalı / brüt / planda kendi satırı → eski
 davranış, "alma" tercihi, DB yükleyicide firma anahtarı düzeyinde durum).
+Eski kural testleri `count_group_stock=False` ile kilitli.  "Aynı malzeme"
+grup stoğu (count_group_stock, 13.10.2026): XHANTAN (180 g + 24,7 kg →
+alınacak 0), iki satırda çift sayım yok (fazla verilen satır kendi − verilen),
+plan sırası, bitirilecek → tercih → diğer, bekletilen / hariç ne verir ne
+alır, g↔kg ve g/ml yalnız bilgi (aside), etiket şişeyi karşılamaz, açık
+sipariş birim çevirisi + havuz kartının siparişi yolda, kapasite grup
+toplamıyla, brüt mod değişmez, eski senaryo varsayılanı, toplam korunur (ızgara).
 """
 from datetime import datetime, timedelta
 
@@ -741,7 +748,7 @@ def test_group_same_name_cards_not_merged_need_never_drops():
     grp = {30: 5, 31: 5}
     plain = compute(inputs([GLY_A, GLY_B], [R_GLY]), req([{"recipe_id": 110, "qty": 100}]))
     res = compute(inputs([GLY_A, GLY_B], [R_GLY], mgroup_of=grp, mgroup_names={5: "Gliserin"}),
-                  req([{"recipe_id": 110, "qty": 100}]))
+                  req([{"recipe_id": 110, "qty": 100}], count_group_stock=False))
     a, m = mat(plain, 30), mat(res, 30)
     assert a["member_ids"] == [30, 31]                      # grupsuz: aynı ad + birim birleşir
     assert m["member_ids"] == [30] and m["stock"] == pytest.approx(100)   # grupta: birleşmez
@@ -769,7 +776,7 @@ def test_group_suppresses_lookalike_and_flags_unit_mismatch():
     assert "lookalike" in codes(mat(res, 50))               # grupsuz: farklı birim → benzer kart uyarısı
     assert mat(res, 50)["material_group"] is None
     res = compute(inputs([used, other], [r], mgroup_of={50: 1, 51: 1}, mgroup_names={1: "Lauryl"}),
-                  req([{"recipe_id": 112, "qty": 100}]))
+                  req([{"recipe_id": 112, "qty": 100}], count_group_stock=False))
     m = mat(res, 50)
     assert "lookalike" not in codes(m)
     assert m["material_group"]["alts"][0]["unit_mismatch"] is True
@@ -783,7 +790,7 @@ def test_stearyl_group_alternatives_and_need_unchanged():
     base = compute(inputs([STEARYL_TD, STEARYL_YK, STEARYL_VS], [r]), req([{"recipe_id": 120, "qty": 1000}]))
     inp = inputs([STEARYL_TD, STEARYL_YK, STEARYL_VS], [r], mgroup_of=STEARYL_GROUP,
                  mgroup_names={7: "Setil stearil alkol"})
-    m = mat(compute(inp, req([{"recipe_id": 120, "qty": 1000}])), 126)
+    m = mat(compute(inp, req([{"recipe_id": 120, "qty": 1000}], count_group_stock=False)), 126)
     assert m["need"] == mat(base, 126)["need"] and m["buy"] == mat(base, 126)["buy"]
     assert m["display"]["buy_text"] == mat(base, 126)["display"]["buy_text"]
     mg = m["material_group"]
@@ -795,7 +802,7 @@ def test_stearyl_group_alternatives_and_need_unchanged():
     r2 = rec(121, "Krem B", [(599, 2)])
     m2 = mat(compute(inputs([STEARYL_TD, STEARYL_YK, STEARYL_VS], [r2], mgroup_of=STEARYL_GROUP,
                             mgroup_names={7: "Setil stearil alkol"}),
-                     req([{"recipe_id": 121, "qty": 10}])), 599)
+                     req([{"recipe_id": 121, "qty": 10}], count_group_stock=False)), 599)
     assert m2["need"] == pytest.approx(20) and m2["buy"] == pytest.approx(20)
     c = next(c for c in m2["cautions"] if c["code"] == "group_alt_stock")
     assert "«SETİL STEARİL ALKOL» kartında stok var (3,9 kg; birimi farklı)" in c["text"]
@@ -863,7 +870,7 @@ R_JJ_NAT = rec(302, "Serum", [(203, 4)])          # 100 adet → 400 g
 
 
 def test_phase_out_alt_stock_reduces_buy_with_caution():
-    res = compute(inputs(JJ, [R_JJ_KRK], **JJ_PO), req([{"recipe_id": 301, "qty": 100}]))
+    res = compute(inputs(JJ, [R_JJ_KRK], **JJ_PO), req([{"recipe_id": 301, "qty": 100}], count_group_stock=False))
     m = mat(res, 201)
     assert m["need"] == pytest.approx(400)
     assert m["stock_phase_out"] == pytest.approx(300) and m["stock"] == pytest.approx(400)   # 100 + 300
@@ -885,7 +892,7 @@ def test_phase_out_label_stock_does_not_cover_packaging_need():
     po = dict(mgroup_of={221: 7, 222: 7}, mgroup_names={7: "Şişe"}, card_supplier={222: 2},
               supplier_status={2: "phase_out"}, supplier_names={2: "Eski tedarikçi"})
     m = mat(compute(inputs([bottle, label], [rec(312, "Serum", [(221, 1)])], **po),
-                    req([{"recipe_id": 312, "qty": 10}])), 221)
+                    req([{"recipe_id": 312, "qty": 10}], count_group_stock=False)), 221)
     assert m["kind"] == "packaging" and m["need"] == 10
     assert m["stock"] == 2 and m["stock_phase_out"] == 0
     assert m["buy"] == 8 and m["status"] == "to_buy"
@@ -894,7 +901,7 @@ def test_phase_out_label_stock_does_not_cover_packaging_need():
 
 def test_phase_out_pool_shared_between_rows_counted_once():
     res = compute(inputs(JJ, [R_JJ_KRK, R_JJ_NAT], **JJ_PO),
-                  req([{"recipe_id": 301, "qty": 100}, {"recipe_id": 302, "qty": 100}]))
+                  req([{"recipe_id": 301, "qty": 100}, {"recipe_id": 302, "qty": 100}], count_group_stock=False))
     krk, nat = mat(res, 201), mat(res, 203)
     assert krk["stock_phase_out"] == pytest.approx(300) and krk["buy"] == pytest.approx(0)
     assert nat["stock_phase_out"] == pytest.approx(200)                 # 500 − 300: kalan havuz
@@ -907,7 +914,8 @@ def test_phase_out_pool_shared_between_rows_counted_once():
 def test_phase_out_option_off_or_gross_or_alt_in_plan_keeps_old_behaviour():
     base = mat(compute(inputs(JJ, [R_JJ_KRK]), req([{"recipe_id": 301, "qty": 100}])), 201)
     off = mat(compute(inputs(JJ, [R_JJ_KRK], **JJ_PO),
-                      req([{"recipe_id": 301, "qty": 100}], count_phase_out_stock=False)), 201)
+                      req([{"recipe_id": 301, "qty": 100}], count_phase_out_stock=False,
+                          count_group_stock=False)), 201)
     assert off["buy"] == base["buy"] == pytest.approx(300) and off["stock_phase_out"] == 0
     assert "phase_out_stock" not in codes(off)
     assert "«JOJOBA YAĞI — HAMMADDE SEPETİ» (500 gram)" in next(
@@ -916,19 +924,19 @@ def test_phase_out_option_off_or_gross_or_alt_in_plan_keeps_old_behaviour():
                         req([{"recipe_id": 301, "qty": 100}], stock_mode="gross")), 201)
     assert gross["stock_phase_out"] == 0 and gross["buy"] == pytest.approx(400)
     both = compute(inputs(JJ, [rec(303, "İkili", [(201, 4), (202, 1)])], **JJ_PO),
-                   req([{"recipe_id": 303, "qty": 100}]))
+                   req([{"recipe_id": 303, "qty": 100}], count_group_stock=False))
     assert mat(both, 201)["stock_phase_out"] == 0 and mat(both, 201)["buy"] == pytest.approx(300)
     assert mat(both, 202)["buy"] == pytest.approx(0)                   # kendi satırında kullanılıyor
 
 
 def test_avoid_pref_card_counts_like_phase_out():
     po = dict(JJ_PO, supplier_status={1: "normal", 2: "normal", 3: "normal"}, avoid={201: {2}})
-    m = mat(compute(inputs(JJ, [R_JJ_KRK], **po), req([{"recipe_id": 301, "qty": 100}])), 201)
+    m = mat(compute(inputs(JJ, [R_JJ_KRK], **po), req([{"recipe_id": 301, "qty": 100}], count_group_stock=False)), 201)
     assert m["stock_phase_out"] == pytest.approx(300)
     assert "(HAMMADDE SEPETİ, bu malzemede alınmayacak tedarikçi)" in next(
         c for c in m["cautions"] if c["code"] == "phase_out_stock")["text"]
     # "alma" kararı yalnız o satırın kartları için: NATURALYA satırında 202 normal
-    n = mat(compute(inputs(JJ, [R_JJ_NAT], **po), req([{"recipe_id": 302, "qty": 100}])), 203)
+    n = mat(compute(inputs(JJ, [R_JJ_NAT], **po), req([{"recipe_id": 302, "qty": 100}], count_group_stock=False)), 203)
     assert n["stock_phase_out"] == 0 and n["buy"] == pytest.approx(400)
 
 
@@ -955,6 +963,7 @@ def test_load_inputs_supplier_status_by_firm_and_avoid_expanded(db_session):
     assert inp.supplier_status[a.id] == inp.supplier_status[a2.id] == "phase_out"   # aynı firma anahtarı
     assert inp.supplier_status[nat.id] == "normal"
     assert inp.avoid == {ids["oil"]: {nat.id}}
+    assert inp.prefer == {ids["oil2"]: {nat.id: 1}}                    # grup havuzu sırası için
     m = mat(compute(inp, PlanRequest(lines=[{"recipe_id": ids["new"], "qty": 50}])), ids["oil"])
     assert m["need"] == pytest.approx(500) and m["stock_phase_out"] == pytest.approx(50)   # oil2 bitirilecek
     assert m["buy"] == pytest.approx(50)                                # 500 − 400 − 50
@@ -978,7 +987,7 @@ def test_phase_out_pool_covering_need_leaves_nothing_to_buy_after_safe_rounding(
     po = dict(mgroup_of={211: 8, 212: 8}, mgroup_names={8: "Gliserin"}, card_supplier={212: 2},
               supplier_status={2: "phase_out"}, supplier_names={2: "HAMMADDE SEPETİ"})
     m = mat(compute(inputs([gli, gli_po], [rec(311, "Krem", [(211, 1.2345)])], **po),
-                    req([{"recipe_id": 311, "qty": 1000}])), 211)
+                    req([{"recipe_id": 311, "qty": 1000}], count_group_stock=False)), 211)
     assert m["need"] == pytest.approx(1234.5) and m["status"] == "yeterli"
     assert m["stock_phase_out"] == pytest.approx(1235)                 # tam birime yukarı
     assert (m["display"]["buy_text"], m["display"]["buy_num"]) == ("0 gram", 0)
@@ -988,7 +997,7 @@ def test_phase_out_pool_covering_need_leaves_nothing_to_buy_after_safe_rounding(
     cap_po = it(222, "KAPAK PO", cat="Ambalaj", unit="adet", stock=50)
     po = dict(po, mgroup_of={221: 7, 222: 7}, mgroup_names={7: "Kapak"}, card_supplier={222: 2})
     m = mat(compute(inputs([cap, cap_po], [rec(312, "Krem", [(221, 0.0105)])], **po),
-                    req([{"recipe_id": 312, "qty": 1000}])), 221)
+                    req([{"recipe_id": 312, "qty": 1000}], count_group_stock=False)), 221)
     assert m["status"] == "yeterli" and m["stock_phase_out"] == pytest.approx(11)
     assert m["display"]["buy_text"] == "0 adet"
     # kg kartı: 0,001 kg'a (1 g) yukarı
@@ -996,7 +1005,7 @@ def test_phase_out_pool_covering_need_leaves_nothing_to_buy_after_safe_rounding(
     oil_po = it(232, "YAĞ PO", unit="kg", stock=4)
     po = dict(po, mgroup_of={231: 6, 232: 6}, mgroup_names={6: "Yağ"}, card_supplier={232: 2})
     m = mat(compute(inputs([oil, oil_po], [rec(313, "Krem", [(231, 0.0012345)])], **po),
-                    req([{"recipe_id": 313, "qty": 1000}])), 231)
+                    req([{"recipe_id": 313, "qty": 1000}], count_group_stock=False)), 231)
     assert m["status"] == "yeterli" and m["stock_phase_out"] == pytest.approx(0.935)
     assert m["display"]["buy_num"] == 0
     # havuz yetmiyorsa hepsi alınır, kalan eksik normal yuvarlanır
@@ -1004,5 +1013,325 @@ def test_phase_out_pool_covering_need_leaves_nothing_to_buy_after_safe_rounding(
     m = mat(compute(inputs([gli, gli_po2], [rec(311, "Krem", [(211, 1.2345)])],
                            mgroup_of={211: 8, 212: 8}, mgroup_names={8: "Gliserin"}, card_supplier={212: 2},
                            supplier_status={2: "phase_out"}, supplier_names={2: "HAMMADDE SEPETİ"}),
-                    req([{"recipe_id": 311, "qty": 1000}])), 211)
+                    req([{"recipe_id": 311, "qty": 1000}], count_group_stock=False)), 211)
     assert m["stock_phase_out"] == pytest.approx(1000) and m["display"]["buy_text"] == "235 gram"
+
+
+# ─── "Aynı malzeme" grup stoğu (count_group_stock, 13.10.2026) ───────────────
+
+# Canlıdaki grup #5: kart 105 HAMMADDESEPETİ 180,31 g (reçetede) + kart 636
+# YİĞİTOGLU KİMYA 24.687,81 g.  Plan "elimizde 180 g" diyordu.
+XH_A = it(105, "XHANTAN GUM", unit="g", stock=180.31)
+XH_B = it(636, "XANTHAN GUM", unit="g", stock=24687.81)
+XH = dict(mgroup_of={105: 5, 636: 5}, mgroup_names={5: "XHANTAN GUM"}, card_supplier={105: 1, 636: 2},
+          supplier_names={1: "HAMMADDESEPETİ", 2: "YİĞİTOGLU KİMYA"})
+
+
+def test_group_stock_xhantan_counts_other_supplier_card_nothing_to_buy():
+    res = compute(inputs([XH_A, XH_B], [rec(401, "Jel", [(105, 2)])], **XH),
+                  req([{"recipe_id": 401, "qty": 100}]))
+    m = mat(res, 105)
+    assert m["need"] == pytest.approx(200) and m["member_ids"] == [105]
+    assert m["stock"] == pytest.approx(24868.12) and m["buy"] == 0 and m["status"] == "yeterli"
+    # güvenli yuvarlama stoğu AŞAĞI yuvarlar: ≈ 24,8 kg (alınacak 0 → triple5 küçük birimde yazar)
+    d = m["display"]
+    assert (d["stock_text"], d["stock_num"], d["buy_text"], d["buy_num"]) == ("24.868 gram", 24.868, "0 gram", 0)
+    gs = m["group_stock"]
+    assert gs["own"] == pytest.approx(180.31) and gs["total"] == pytest.approx(24868.12)
+    assert [(t["item_id"], t["qty"], t["used"], t["reason"]) for t in gs["taken"]] == [
+        (636, pytest.approx(24687.81), pytest.approx(19.69), "normal")]
+    assert gs["given"] == [] and gs["aside_text"] == ""
+    assert gs["breakdown_text"] == "HAMMADDESEPETİ 180 g · YİĞİTOGLU KİMYA 24,7 kg"
+    assert gs["note"] == "HAMMADDESEPETİ 180 g · YİĞİTOGLU KİMYA 24,7 kg"
+    c = next(c for c in m["cautions"] if c["code"] == "group_stock_counted")
+    assert c["severity"] == "info"
+    assert c["text"] == ("Aynı malzeme grubunun stoğu toplandı: «XHANTAN GUM» (HAMMADDESEPETİ) 180 g + "
+                         "«XANTHAN GUM» (YİĞİTOGLU KİMYA) 24,7 kg — üretimde birbirinin yerine kullanılabilir.")
+    assert "group_alt_stock" not in codes(m) and "phase_out_stock" not in codes(m)
+    assert m["material_group"]["alts"] == [{"item_id": 636, "name": "XANTHAN GUM", "unit": "g",
+                                            "unit_mismatch": False, "stock": 24687.81, "in_plan": False}]
+    # büyük ihtiyaçta yalnız eksik kadarı alınır, kalan yine bu satırda görünür
+    big = mat(compute(inputs([XH_A, XH_B], [rec(401, "Jel", [(105, 2)])], **XH),
+                      req([{"recipe_id": 401, "qty": 20000}])), 105)
+    assert big["need"] == pytest.approx(40000) and big["stock"] == pytest.approx(24868.12)
+    assert big["display"]["buy_text"] == "15,2 kg"                    # 40,0 − 24,8
+    # seçenek kapalı → eski davranış (180 g, bilgi uyarısı)
+    off = mat(compute(inputs([XH_A, XH_B], [rec(401, "Jel", [(105, 2)])], **XH),
+                      req([{"recipe_id": 401, "qty": 100}], count_group_stock=False)), 105)
+    assert off["stock"] == pytest.approx(180.31) and off["group_stock"] is None
+    assert off["display"]["buy_text"] == "20 gram" and "group_alt_stock" in codes(off)
+
+
+def test_group_stock_two_rows_never_double_counted():
+    a = it(411, "GLİ A", unit="g", stock=100)
+    b = it(412, "GLI B", unit="g", stock=1000)
+    c = it(413, "GLI C", unit="g", stock=100)
+    grp = dict(mgroup_of={411: 9, 412: 9, 413: 9}, mgroup_names={9: "Gliserin"})
+    res = compute(inputs([a, b, c], [rec(421, "P1", [(411, 4)]), rec(422, "P2", [(412, 2)])], **grp),
+                  req([{"recipe_id": 421, "qty": 100}, {"recipe_id": 422, "qty": 100}]))
+    ra, rb = mat(res, 411), mat(res, 412)
+    # A: 400 gerek, 100 kendi + C'nin 100'ü + B'nin ihtiyaç fazlasından 200
+    assert ra["stock"] == pytest.approx(400) and ra["buy"] == 0
+    assert [(t["item_id"], t["qty"], t["reason"], t["row_key"]) for t in ra["group_stock"]["taken"]] == [
+        (413, 100.0, "normal", None), (412, 200.0, "surplus", "i:412")]
+    # B: 200 gerek, 1000 kendi − 200 verilen
+    assert rb["stock"] == pytest.approx(800) and rb["buy"] == 0
+    assert rb["group_stock"]["given"] == [{"key": "i:411", "name": "GLİ A", "qty": 200.0, "qty_text": "200 gram"}]
+    assert rb["group_stock"]["note"] == "GLI B 1,0 kg; 200 g «GLİ A» satırında sayıldı"
+    assert "group_stock_given" in codes(rb) and "group_stock_counted" not in codes(rb)
+    assert "«GLI B» fazlası 200 g" in next(c for c in ra["cautions"] if c["code"] == "group_stock_counted")["text"]
+    total = ra["group_stock"]["total"]
+    assert total == rb["group_stock"]["total"] == pytest.approx(1200)
+    assert ra["stock"] + rb["stock"] == pytest.approx(total)            # çift sayım yok
+    # havuz bolsa fazla alınmaz, artan SON satıra yazılır; toplam yine aşılmaz
+    c_big = it(413, "GLI C", unit="g", stock=5000)
+    res = compute(inputs([a, b, c_big], [rec(421, "P1", [(411, 4)]), rec(422, "P2", [(412, 2)])], **grp),
+                  req([{"recipe_id": 421, "qty": 100}, {"recipe_id": 422, "qty": 100}]))
+    ra, rb = mat(res, 411), mat(res, 412)
+    assert ra["stock"] == pytest.approx(400) and rb["stock"] == pytest.approx(5700)
+    assert rb["group_stock"]["given"] == [] and ra["stock"] + rb["stock"] == pytest.approx(6100)
+    assert [(t["item_id"], t["qty"], t["used"]) for t in rb["group_stock"]["taken"]] == [(413, 4700.0, 0.0)]
+
+
+def test_group_stock_shortage_split_across_rows_in_plan_order():
+    a = it(431, "YAĞ A", unit="g", stock=0)
+    b = it(432, "YAĞ B", unit="g", stock=0)
+    pool = it(433, "YAĞ HAVUZ", unit="g", stock=500)
+    grp = dict(mgroup_of={431: 3, 432: 3, 433: 3}, mgroup_names={3: "Yağ"})
+    res = compute(inputs([a, b, pool], [rec(441, "P1", [(431, 4)]), rec(442, "P2", [(432, 4)])], **grp),
+                  req([{"recipe_id": 441, "qty": 100}, {"recipe_id": 442, "qty": 100}]))
+    ra, rb = mat(res, 431), mat(res, 432)
+    assert (ra["stock"], ra["buy"]) == (pytest.approx(400), 0)            # ilk satır önce alır
+    assert (rb["stock"], rb["buy"]) == (pytest.approx(100), pytest.approx(300))
+    assert ra["stock"] + rb["stock"] == pytest.approx(500)
+
+
+def test_group_stock_phase_out_first_then_preferred_then_others():
+    nat = it(203, "JOJOBA OIL", unit="g", stock=600)
+    items_ = [JJ_KRK, JJ_SEPET, nat, JJ_KG]
+    m = mat(compute(inputs(items_, [R_JJ_KRK], **JJ_PO), req([{"recipe_id": 301, "qty": 100}])), 201)
+    assert m["buy"] == 0 and m["stock"] == pytest.approx(1200)          # 100 + 500 + 600
+    assert m["stock_phase_out"] == pytest.approx(300)                   # eksik önce bitirilecekten
+    assert m["phase_out_from"] == [{"item_id": 202, "name": "JOJOBA YAĞI — HAMMADDE SEPETİ", "supplier_id": 2,
+                                    "supplier": "HAMMADDE SEPETİ", "reason": "phase_out", "qty": 300.0,
+                                    "qty_text": "300 gram"}]
+    assert [(t["item_id"], t["used"], t["reason"]) for t in m["group_stock"]["taken"]] == [
+        (202, 300.0, "phase_out"), (203, 0.0, "normal")]
+    assert next(c for c in m["cautions"] if c["code"] == "phase_out_stock")["text"] == (
+        "«JOJOBA YAĞI — HAMMADDE SEPETİ» (HAMMADDE SEPETİ, bitirilecek tedarikçi) kartındaki "
+        "300 gram önce kullanılacak — ihtiyaçtan düşüldü.")
+    # bitirilecek kutusu kapalı olsa da grup sayımı onu kapsar
+    m2 = mat(compute(inputs(items_, [R_JJ_KRK], **JJ_PO),
+                     req([{"recipe_id": 301, "qty": 100}], count_phase_out_stock=False)), 201)
+    assert m2["stock_phase_out"] == pytest.approx(300) and m2["buy"] == 0
+    # tercih edilen tedarikçi addan önce gelir ("JOJOBA OIL" adı önce sıralanırdı)
+    pref = dict(JJ_PO, supplier_status={1: "normal", 2: "normal", 3: "normal"}, prefer={201: {2: 1}})
+    m3 = mat(compute(inputs(items_, [R_JJ_KRK], **pref), req([{"recipe_id": 301, "qty": 100}])), 201)
+    assert [(t["item_id"], t["used"], t["reason"]) for t in m3["group_stock"]["taken"]] == [
+        (202, 300.0, "preferred"), (203, 0.0, "normal")]
+    assert m3["stock_phase_out"] == 0 and "phase_out_stock" not in codes(m3)
+    plain = dict(JJ_PO, supplier_status={1: "normal", 2: "normal", 3: "normal"})
+    m4 = mat(compute(inputs(items_, [R_JJ_KRK], **plain), req([{"recipe_id": 301, "qty": 100}])), 201)
+    assert [(t["item_id"], t["used"]) for t in m4["group_stock"]["taken"]] == [(203, 300.0), (202, 0.0)]
+
+
+def test_group_stock_held_and_excluded_neither_give_nor_take():
+    a = it(451, "KİL A", unit="g", stock=0)
+    b = it(452, "KİL B", unit="g", stock=1000)
+    pool = it(453, "KİL C", unit="g", stock=700)
+    grp = dict(mgroup_of={451: 4, 452: 4, 453: 4}, mgroup_names={4: "Kil"})
+    rs = [rec(461, "P1", [(451, 4)]), rec(462, "P2", [(452, 1)])]
+    lines = [{"recipe_id": 461, "qty": 100}, {"recipe_id": 462, "qty": 100}]
+    # bekletilen B satırı fazlasını vermez; havuz kartı C hariç → hiç sayılmaz
+    res = compute(inputs([a, b, pool], rs, **grp),
+                  req(lines, held_items=[{"item_id": 452, "reason": "teyit"}], excluded_item_ids=[453]))
+    ra, hb = mat(res, 451), mat(res, 452, "held")
+    assert ra["stock"] == 0 and ra["buy"] == pytest.approx(400) and ra["group_stock"]["taken"] == []
+    assert hb["stock"] == pytest.approx(1000) and hb["group_stock"]["given"] == []
+    g = next(c for c in ra["cautions"] if c["code"] == "group_alt_stock")
+    assert "«KİL C» kartında stok var (700 gram; hariç tutuldu); ihtiyaçtan düşülmedi." in g["text"]
+    # satırı olmayan bekletilen kart da havuza girmez
+    res = compute(inputs([a, b, pool], rs[:1], **grp),
+                  req(lines[:1], held_items=[{"item_id": 453, "reason": "kalite"}], excluded_item_ids=[]))
+    ra = mat(res, 451)
+    assert [t["item_id"] for t in ra["group_stock"]["taken"]] == [452]
+    assert ra["stock"] == pytest.approx(1000)
+    assert "(700 gram; bekletiliyor)" in next(c for c in ra["cautions"] if c["code"] == "group_alt_stock")["text"]
+    # bekletilen satır havuzdan pay almaz (C bütünüyle A'ya)
+    res = compute(inputs([a, b, pool], rs, **grp),
+                  req(lines, held_items=[{"item_id": 451, "reason": "teyit"}], excluded_item_ids=[]))
+    assert mat(res, 451, "held")["group_stock"]["taken"] == []
+    assert [t["item_id"] for t in mat(res, 452)["group_stock"]["taken"]] == [453]
+
+
+def test_group_stock_kg_card_info_only_and_g_ml_aside():
+    row = it(471, "GÜL HİDROSOLÜ", unit="g", stock=100)
+    kg = it(472, "GÜL HİDROSOLÜ ESKİ", unit="kg", stock=3)
+    ml = it(473, "ROSE WATER", unit="ml", stock=900)
+    grp = dict(mgroup_of={471: 12, 472: 12, 473: 12}, mgroup_names={12: "Gül hidrosolü"},
+               card_supplier={471: 1, 473: 2}, supplier_names={1: "KRK", 2: "NATURALYA"})
+    m = mat(compute(inputs([row, kg, ml], [rec(481, "Tonik", [(471, 4)])], **grp),
+                    req([{"recipe_id": 481, "qty": 100}])), 471)
+    # üretim birim çevirmez: g satırına kg ve ml kartı düşülmez
+    assert m["stock"] == pytest.approx(100) and m["buy"] == pytest.approx(300)
+    gs = m["group_stock"]
+    assert gs["taken"] == [] and gs["total"] == pytest.approx(100)
+    assert gs["aside_text"] == "GÜL HİDROSOLÜ ESKİ 3,0 kg · NATURALYA 900 ml — üretimde kullanılamaz (birim farklı)"
+    assert gs["note"] == "ayrı: " + gs["aside_text"]
+    c = next(c for c in m["cautions"] if c["code"] == "group_alt_stock")
+    assert c["text"] == ("Aynı malzeme grubundaki «GÜL HİDROSOLÜ ESKİ» (3,0 kg; üretimde kullanılamaz "
+                         "(birim farklı)), «ROSE WATER» (900 ml; üretimde kullanılamaz (birim farklı)) kartlarında "
+                         "stok var; ihtiyaçtan düşülmedi.")
+    assert "group_stock_counted" not in codes(m)
+
+
+def test_group_stock_label_never_covers_bottle_and_label_rows_not_counted():
+    bottle = it(491, "50 ML ŞİŞE", cat="Ambalaj", unit="adet", stock=2, pkg="şişe")
+    bottle2 = it(492, "50 ML ŞİŞE B", cat="Ambalaj", unit="adet", stock=3, pkg="şişe")
+    label = it(493, "50 ML ŞİŞE ÖN ETİKET", cat="Ambalaj", unit="adet", stock=50, pkg="etiket")
+    label2 = it(494, "50 ML ŞİŞE ÖN ETİKET B", cat="Ambalaj", unit="adet", stock=40, pkg="etiket")
+    grp = dict(mgroup_of={491: 7, 492: 7, 493: 7, 494: 7}, mgroup_names={7: "Şişe"})
+    res = compute(inputs([bottle, bottle2, label, label2], [rec(501, "Serum", [(491, 1), (493, 1)])], **grp),
+                  req([{"recipe_id": 501, "qty": 10}]))
+    m = mat(res, 491)
+    assert m["kind"] == "packaging" and m["stock"] == 5 and m["buy"] == 5      # 2 + şişe B'nin 3'ü
+    assert [t["item_id"] for t in m["group_stock"]["taken"]] == [492]
+    lb = mat(res, 493)
+    assert lb["kind"] == "label" and lb["stock"] == 50 and lb["group_stock"]["taken"] == []
+    assert "(40 adet; etiket — üretimde yerine geçmez)" in next(
+        c for c in lb["cautions"] if c["code"] == "group_alt_stock")["text"]
+    g = next(c for c in m["cautions"] if c["code"] == "group_alt_stock")["text"]
+    assert g == ("Aynı malzeme grubundaki «50 ML ŞİŞE ÖN ETİKET B» kartında stok var (40 adet; türü farklı); "
+                 "ihtiyaçtan düşülmedi.")                 # planda satırı olan etiket (493) yazılmaz
+    only_bottle = mat(compute(inputs([bottle, label2], [rec(502, "Serum", [(491, 1)])],
+                                     mgroup_of={491: 7, 494: 7}, mgroup_names={7: "Şişe"}),
+                              req([{"recipe_id": 502, "qty": 10}])), 491)
+    assert only_bottle["stock"] == 2 and only_bottle["buy"] == 8
+    assert "(40 adet; türü farklı)" in next(c for c in only_bottle["cautions"] if c["code"] == "group_alt_stock")["text"]
+
+
+def test_open_orders_converted_to_row_unit_and_group_orders_count_as_on_the_way():
+    a = it(511, "GLİ A", unit="g", stock=100)
+    c = it(512, "GLI C", unit="g", stock=200)
+    oo = {511: [OpenOrderRec(item_id=511, quantity=0.05, unit="kg", supplier_name="UMAY"),
+                OpenOrderRec(item_id=511, quantity=3, unit="adet", supplier_name="X")],
+          512: [OpenOrderRec(item_id=512, quantity=2, unit="kg", supplier_name="KRK")]}
+    r = [rec(521, "P1", [(511, 10)])]
+    # grupsuz: kendi kg siparişi g'ye çevrilir (eskiden 0,05 "g" sayılırdı), adet siparişi sayılmaz
+    m = mat(compute(inputs([a, c], r, open_orders=oo), req([{"recipe_id": 521, "qty": 100}],
+                                                          subtract_open_orders=True)), 511)
+    assert m["open_orders"] == pytest.approx(50) and m["buy"] == pytest.approx(850)
+    bad = next(x for x in m["cautions"] if x["code"] == "open_order_unit_mismatch")
+    assert bad["text"] == ("Açık siparişin birimi bu satırın birimine (g) çevrilemiyor; yolda sayılmadı: "
+                           "X 3 adet. Sipariş işaretindeki birim teyit edilmeli.")
+    # grupta: havuz kartının stoğu elimizde, açık siparişi yolda
+    m = mat(compute(inputs([a, c], r, open_orders=oo, mgroup_of={511: 9, 512: 9}, mgroup_names={9: "Gli"}),
+                    req([{"recipe_id": 521, "qty": 100}], subtract_open_orders=True)), 511)
+    assert m["stock"] == pytest.approx(300) and m["open_orders"] == pytest.approx(2050)
+    assert m["buy"] == 0 and m["display"]["open_text"] == "2.050 gram"
+    assert m["group_stock"]["open_from"] == [{"item_id": 512, "name": "GLI C", "supplier": None, "qty": 2000.0,
+                                              "qty_text": "2,0 kg"}]
+    assert m["open_orders_info"][-1] == {"quantity": 2, "unit": "kg", "supplier": "KRK", "expected_date": None,
+                                         "item_id": 512, "card": "GLI C"}
+    assert m["group_stock"]["note"] == "GLİ A 100 g · GLI C 200 g; yolda: «GLI C» 2,0 kg"
+    assert "«GLI C» (2,0 kg) açık siparişi yolda sayıldı" in next(
+        x for x in m["cautions"] if x["code"] == "group_stock_counted")["text"]
+    # yoldaki seçeneği kapalı → havuz siparişi de sayılmaz
+    off = mat(compute(inputs([a, c], r, open_orders=oo, mgroup_of={511: 9, 512: 9}),
+                      req([{"recipe_id": 521, "qty": 100}])), 511)
+    assert off["open_orders"] == 0 and off["group_stock"]["open_from"] == []
+
+
+def test_group_stock_capacity_uses_group_total_in_isolation():
+    a = it(531, "A", unit="g", stock=100)
+    b = it(532, "B", unit="g", stock=900)
+    grp = dict(mgroup_of={531: 2, 532: 2}, mgroup_names={2: "AB"})
+    rs = [rec(541, "P1", [(531, 10)]), rec(542, "P2", [(532, 10)])]
+    res = compute(inputs([a, b], rs, **grp), req([{"recipe_id": 541, "qty": 1}, {"recipe_id": 542, "qty": 1}]))
+    p1, p2 = res["products"]
+    assert p1["capacity"]["producible"] == p2["capacity"]["producible"] == 100       # 1000 g / 10 g
+    assert p1["capacity"]["limiting"] == [{"name": "A", "stock": 1000.0, "unit": "g"}]
+    off = compute(inputs([a, b], rs, **grp), req([{"recipe_id": 541, "qty": 1}, {"recipe_id": 542, "qty": 1}],
+                                                 count_group_stock=False))
+    assert [p["capacity"]["producible"] for p in off["products"]] == [10, 90]
+
+
+def test_group_stock_capacity_same_product_two_group_cards_shares_pool_once():
+    """Reçetede aynı grubun İKİ kartı: havuz bir kez harcanır (200 g ÷ 20 g)."""
+    a = it(571, "GLİSERİN A", unit="g", stock=100)
+    b = it(572, "GLİSERİN B", unit="g", stock=100)
+    water = it(573, "SU", unit="ml", stock=0)
+    rs = [rec(581, "P", [(571, 10), (572, 10), (573, 1)])]
+    grp = dict(mgroup_of={571: 9, 572: 9}, mgroup_names={9: "Gliserin"})
+    res = compute(inputs([a, b, water], rs, **grp), req([{"recipe_id": 581, "qty": 1}], excluded_item_ids=[573]))
+    cap = res["products"][0]["capacity"]
+    assert cap["producible"] == 10
+    assert cap["limiting"] == [{"name": "GLİSERİN A + GLİSERİN B", "stock": 200.0, "unit": "g"}]
+    off = compute(inputs([a, b, water], rs, **grp),
+                  req([{"recipe_id": 581, "qty": 1}], excluded_item_ids=[573], count_group_stock=False))
+    assert off["products"][0]["capacity"]["producible"] == 10
+    # üçüncü (planda satırı olmayan) kart havuza bir kez eklenir
+    c = it(574, "GLİSERİN C", unit="g", stock=400)
+    grp3 = dict(mgroup_of={571: 9, 572: 9, 574: 9}, mgroup_names={9: "Gliserin"})
+    res = compute(inputs([a, b, c, water], rs, **grp3), req([{"recipe_id": 581, "qty": 1}], excluded_item_ids=[573]))
+    assert res["products"][0]["capacity"]["producible"] == 30                      # 600 g / 20 g
+
+
+def test_group_stock_donor_with_long_decimal_stock_never_shows_buy_one_gram():
+    """Bağışçı kartın stoğu 13 ondalıklı (Excel stok içe aktarımı): görünüm
+    listelerinin _r6 yuvarlaması satırı tavanın altına itmemeli."""
+    a = it(591, "A", unit="g", stock=0)
+    b = it(592, "B", unit="g", stock=2725.6128236408604)
+    res = compute(inputs([a, b], [rec(601, "P1", [(591, 50)]), rec(602, "P2", [(592, 4.27)])],
+                         mgroup_of={591: 9, 592: 9}),
+                  req([{"recipe_id": 601, "qty": 100}, {"recipe_id": 602, "qty": 250}]))
+    rb = mat(res, 592)
+    assert rb["status"] == "yeterli" and rb["group_stock"]["given"]
+    assert rb["display"]["stock_text"] == "1.068 gram" and rb["display"]["buy_num"] == 0
+
+
+def test_group_stock_gross_mode_unchanged():
+    res = compute(inputs([XH_A, XH_B], [rec(401, "Jel", [(105, 2)])], **XH),
+                  req([{"recipe_id": 401, "qty": 100}], stock_mode="gross"))
+    m = mat(res, 105)
+    assert m["group_stock"] is None and m["stock"] == pytest.approx(180.31)
+    assert m["buy"] == pytest.approx(200) and m["display"]["stock_text"] == "180 gram"
+    assert "group_alt_stock" in codes(m) and "lab ayrı ürün saydığı" in next(
+        c for c in m["cautions"] if c["code"] == "group_alt_stock")["text"]
+    assert res["products"][0]["capacity"]["producible"] == 90           # brüt: kendi stoğu
+
+
+def test_old_scenario_options_default_to_group_stock_on():
+    old = {"lines": [{"recipe_id": 1, "qty": 5}],
+           "options": {"count_phase_out_stock": True, "respect_supplier_status": True}}
+    assert PlanRequest.model_validate(old).options.count_group_stock is True
+    assert PlanRequest.model_validate({"lines": [{"recipe_id": 1, "qty": 5}]}).options.count_group_stock is True
+
+
+@pytest.mark.parametrize("safe", [True, False])
+def test_group_stock_conserves_group_total_over_grid(safe):
+    """Değişmez: grup satırlarının stokları toplamı grup toplamına EŞİT
+    (havuzun tamamı dağıtılır, hiçbir stok iki kez sayılmaz); toplam alınacak
+    grubun gerçek eksiğinden az olamaz; kendi ihtiyacını karşılayan satır
+    fazlasını verince "alınacak"a düşmez."""
+    import itertools
+    for s1, s2, pool_s, q1, q2 in itertools.product((0, 150.4, 1000), (0, 999.6), (0, 300, 5000.5),
+                                                     (1, 37), (1, 250)):
+        a = it(551, "A", unit="g", stock=s1)
+        b = it(552, "B", unit="g", stock=s2)
+        p = it(553, "P", unit="g", stock=pool_s)
+        res = compute(inputs([a, b, p], [rec(561, "P1", [(551, 4.27)]), rec(562, "P2", [(552, 3.3)])],
+                             mgroup_of={551: 1, 552: 1, 553: 1}),
+                      req([{"recipe_id": 561, "qty": q1}, {"recipe_id": 562, "qty": q2}], safe_rounding=safe))
+        ra, rb = mat(res, 551), mat(res, 552)
+        total = s1 + s2 + pool_s
+        assert ra["group_stock"]["total"] == pytest.approx(total)
+        assert ra["stock"] + rb["stock"] == pytest.approx(total)
+        short = max(0.0, ra["need"] + rb["need"] - total)
+        assert ra["buy"] + rb["buy"] >= short - 1e-6
+        if short <= 1e-6:
+            assert ra["status"] == rb["status"] == "yeterli"
+            assert ra["display"]["buy_num"] == rb["display"]["buy_num"] == 0
+        for r in (ra, rb):
+            if r["group_stock"]["given"]:
+                assert r["status"] == "yeterli" and r["display"]["buy_num"] == 0

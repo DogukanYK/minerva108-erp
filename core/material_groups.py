@@ -17,7 +17,9 @@ bilmiyordu — numune yanlış tedarikçinin kartına çevrildi (Naturalya jojob
 KRK GIDA kartına), satın alma planı alternatif tedarikçiyi göstermedi.
 
 Grup stok ya da defter BİRLEŞTİRMEZ (o iş core/item_merge'ün); yalnız "bu
-kartlar aynı malzeme" bilgisini taşır.  Kart en fazla tek grupta
+kartlar aynı malzeme" bilgisini taşır.  13.10.2026'dan beri bu bilgi
+"eşdeğer" demektir: stok raporlarda toplanır, Satın Alma ve üretim kartları
+birbirinin yerine kullanır — kural ve toplam `core/group_stock.py`'de.  Kart en fazla tek grupta
 (`Item.material_group_id`).  Ad AKTİF kayıtlarda panel içinde TR-katlanmış
 tekil (`core.supplier_prices.normalize`).
 

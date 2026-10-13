@@ -66,13 +66,15 @@ def sheet_doc(db, order, detail, *, show_prices, generated_by=""):
             "started": f"{b.started_by or ''} · {b2b._when(b.started_at)}",
             "completed": f"{b.completed_by or ''} · {b2b._when(b.completed_at)}" if b.completed_at else "",
             "cancel_reason": b.cancel_reason or "",
-            "rows": [{"item_id": r["item_id"], "kind": r.get("kind"), "lot_number": r.get("lot_number") or "",
+            "rows": [{"item_id": r["item_id"], "kind": r.get("kind"),
+                      "recipe_item_id": r.get("recipe_item_id"), "lot_number": r.get("lot_number") or "",
                       "supplier": r.get("supplier_name") or "", "quantity": r.get("quantity"),
                       "unit": r.get("unit") or "", "phase": r.get("phase") or ""} for r in snap.get("rows", [])],
             "returned": ret,
         })
     if batches:
-        ids = {b["item_id"] for b in batches} | {r["item_id"] for b in batches for r in b["rows"]}
+        ids = ({b["item_id"] for b in batches} | {r["item_id"] for b in batches for r in b["rows"]}
+               | {r["recipe_item_id"] for b in batches for r in b["rows"] if r.get("recipe_item_id")})
         names = {i.id: i.name for i in db.query(Item).filter(Item.id.in_(list(ids)))}
     o = detail["order"]
     return {
@@ -89,6 +91,16 @@ def sheet_doc(db, order, detail, *, show_prices, generated_by=""):
         "show_prices": bool(show_prices),
         "generated": f"{tr_now().strftime('%d.%m.%Y %H:%M')} · {generated_by}".strip(" ·"),
     }
+
+
+def _material_cell(r, names) -> str:
+    """Tüketim satırının malzeme adı — "aynı malzeme" grubundaki başka karttan
+    düşüldüyse reçetedeki kart parantezde (etiket dil kardeşi hariç)."""
+    name = names.get(r["item_id"], f"#{r['item_id']}")
+    rid = r.get("recipe_item_id")
+    if rid and rid != r["item_id"] and r.get("kind") != "label":
+        name += f" (reçetede: {names.get(rid, f'#{rid}')})"
+    return name
 
 
 def _mm(*cols):
@@ -240,7 +252,7 @@ def render_technical_sheet(doc: dict) -> bytes:
                                                                if b["completed"] else "")
                            + (f" · İptal gerekçesi: {esc(b['cancel_reason'])}" if b["cancel_reason"] else ""),
                            p_small)]
-        rows = [[names.get(r["item_id"], f"#{r['item_id']}"), r["phase"] or "—", r["lot_number"] or "lotsuz",
+        rows = [[_material_cell(r, names), r["phase"] or "—", r["lot_number"] or "lotsuz",
                  r["supplier"] or "—", _num(r["quantity"], 4), r["unit"]] for r in b["rows"]]
         if rows:
             block.append(table(["Malzeme", "Faz", "Kaynak lot", "Tedarikçi", "Tüketilen", "Birim"], rows,

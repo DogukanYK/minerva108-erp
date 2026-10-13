@@ -71,8 +71,10 @@ Kurallar:
   • "Aynı malzeme" grubu (`material_group`, motor) → `relations.
     alternatives`: gruptaki diğer kartlar, tedarikçileri, stok/numune, son
     alım.  Fiyatsız kalemlerin aday firmalarına "eşdeğer kart" sebebiyle
-    girer; ihtiyacı DEĞİŞTİRMEZ.  `relation_texts(m)` önizleme / PDF / Excel
-    metnini tek kaynaktan üretir.
+    girer.  İhtiyacı bu katman değiştirmez; motor grup stoğunu saydıysa
+    (`group_stock.taken`) kart `counted` işaretlenir ve metne "— stoğu
+    sayıldı" eklenir.  `relation_texts(m)` önizleme / PDF / Excel metnini
+    tek kaynaktan üretir.
 """
 import math
 import re
@@ -778,6 +780,10 @@ def _relations(m: dict, ri: _RelIndex) -> dict:
                                   alnum_fold(f["name"])))
 
     mg = m.get("material_group") or None
+    # Motor bu kartın stoğunu satırda saydıysa (grup stoğu) — kart başına miktar
+    counted: Dict[int, float] = {}
+    for t in (m.get("group_stock") or {}).get("taken") or []:
+        counted[t["item_id"]] = counted.get(t["item_id"], 0.0) + float(t.get("qty") or 0.0)
     alternatives = []
     for a in (mg or {}).get("alts") or []:
         aid = a["item_id"]
@@ -793,7 +799,9 @@ def _relations(m: dict, ri: _RelIndex) -> dict:
             "supplier": snm if sk else None, "supplier_key": sk or None, "supplier_id": sid if sk else None,
             "stock": stock, "stock_text": _amount_near(stock, a.get("unit")) if stock > 0 else "yok",
             "sample_text": f"{_amount_near(sq, a.get('unit'))} numune" if sq > 0 else "",
-            "last": asm["last"], "samples": asm["samples"], "in_plan": bool(a.get("in_plan"))})
+            "last": asm["last"], "samples": asm["samples"], "in_plan": bool(a.get("in_plan")),
+            "counted": aid in counted, "counted_qty": round(counted.get(aid, 0.0), 6),
+            "counted_text": (_amount_near(counted[aid], unit) if aid in counted else "")})
     return {"card": sm["card"], "last": sm["last"], "samples": sm["samples"],
             "firms": firm_list, "orders": orders, "alternatives": alternatives,
             "group": {"id": mg["id"], "name": mg["name"]} if mg else None}
@@ -1433,14 +1441,26 @@ def order_text(o: dict) -> str:
     return (o.get("name") or "firma yazılmamış") + (f" {d}" if d else "")
 
 
+def counted_suffix(a: dict) -> str:
+    """Grup stoğu sayılan eşdeğer kartın eki: ' — stoğu sayıldı' (kartın
+    tamamı bu satırda) ya da ' — 300 gram sayıldı' (bir kısmı; fazlası /
+    kalanı başka satırda)."""
+    if not a.get("counted"):
+        return ""
+    if a.get("in_plan") or abs(float(a.get("stock") or 0.0) - float(a.get("counted_qty") or 0.0)) > 1e-6:
+        return f" — {a.get('counted_text') or 'bir kısmı'} sayıldı"
+    return " — stoğu sayıldı"
+
+
 def alt_text(a: dict) -> str:
-    """'«CETYL STEARYL ALCOHOL» (YİĞİTOĞLU KİMYA, stok yok, birimi adet)'."""
+    """'«CETYL STEARYL ALCOHOL» (YİĞİTOĞLU KİMYA, stok yok, birimi adet)';
+    grup stoğu sayıldıysa sonuna ' — stoğu sayıldı'."""
     parts = [a.get("supplier") or "tedarikçi yazılmamış",
              f"stok {a['stock_text']}" if (a.get("stock") or 0) > 0 else "stok yok"]
     if a.get("unit_mismatch"):
         parts.append(f"birimi {a.get('unit') or '—'}")
     parts += _alt_history(a)
-    return f"«{a.get('name') or '—'}» (" + ", ".join(parts) + ")"
+    return f"«{a.get('name') or '—'}» (" + ", ".join(parts) + ")" + counted_suffix(a)
 
 
 def _alt_history(a: dict) -> List[str]:
@@ -1548,6 +1568,7 @@ def alt_lines(a: dict, row_unit=None) -> List[str]:
     out = [f"stok {a['stock_text']}" if (a.get("stock") or 0) > 0 else "stok yok"]
     if a.get("in_plan"):
         out[0] += " (bu planda kendi satırında)"
+    out[0] += counted_suffix(a)
     if a.get("unit_mismatch"):
         out.append(f"birimi {a.get('unit') or '—'}" + (f", bu satır {row_unit}" if row_unit else "")
                    + " — miktarlar doğrudan karşılaştırılamaz")
@@ -1647,10 +1668,20 @@ def notes_lines(result: dict) -> List[str]:
     out.append("Numune lotları stoğa dahil değildir; eksi stoklu kartlar 0 sayıldı.")
     rows_all = (result.get("materials") or []) + (result.get("held") or [])
     po_used = any((m.get("stock_phase_out") or 0) > 0 for m in rows_all)
+    group_on = bool(opts.get("count_group_stock", True)) and opts.get("stock_mode", "net") == "net"
     if any((m.get("material_group") or {}).get("alts") for m in rows_all):
-        out.append("“Aynı malzeme” grubundaki diğer tedarikçi kartları (eşdeğer kartlar) satırlarda bilgi "
-                   "olarak yazıldı; lab bunları ayrı ürün saydığı için stokları ihtiyaçtan düşülmedi"
-                   + (" (bitirilecek tedarikçi kartları hariç)." if po_used else "."))
+        if group_on:
+            used = any((m.get("group_stock") or {}).get("taken") for m in rows_all)
+            out.append("“Aynı malzeme” grubundaki diğer tedarikçi kartları (eşdeğer kartlar) satırlarda "
+                       "yazıldı; üretimde yerine kullanılabilen kartların (aynı birim ve tür, aktif) stoğu "
+                       "ihtiyaçtan düşüldü — aynı stok iki satırda sayılmadı"
+                       + ("; hangi karttan ne kadar olduğu stok sütununun altında yazıyor" if used else "")
+                       + ". Birimi ya da türü farklı kartlar (g ↔ kg dahil; üretim birim çevirmez) "
+                       "yalnız bilgi olarak gösterildi.")
+        else:
+            out.append("“Aynı malzeme” grubundaki diğer tedarikçi kartları (eşdeğer kartlar) satırlarda bilgi "
+                       "olarak yazıldı; lab bunları ayrı ürün saydığı için stokları ihtiyaçtan düşülmedi"
+                       + (" (bitirilecek tedarikçi kartları hariç)." if po_used else "."))
     if po_used:
         out.append("“Bitirilecek” (ya da bu malzemede alınmayacak) tedarikçinin aynı malzeme kartındaki stok "
                    "önce kullanılacağı için ihtiyaçtan düşüldü; satırda hangi karttan ne kadar olduğu yazıyor.")

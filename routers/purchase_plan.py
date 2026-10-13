@@ -20,6 +20,9 @@ Kurallar:
     `PlanInputError`).  Hiçbir satırın reçetesi yoksa → 400.
   • Kur (TCMB) YALNIZ rapor para biriminden farklı fiyatlı teklif varsa
     çekilir — USD fiyat listesi + USD rapor ağ isteği yapmaz.
+  • Üretimde kaynak seçimi kapalıysa (`production.source_choice.enabled=0`)
+    `count_group_stock` + `count_phase_out_stock` bu hesap için kapatılır,
+    `source_choice_disabled` uyarısı döner; senaryo değişmez.
   • Senaryolar (`purchase_plans`): ad aktif kayıtlarda panel içinde tekil
     (TR-katlanmış karşılaştırma + kısmi tekil indeks); düzenleme/silme sahibi,
     SuperAdmin ya da Manager (rol DB'den CANLI okunur, JWT'deki eski rol
@@ -231,17 +234,22 @@ def build_report(db: Session, req: PlanRequest, domain: str) -> dict:
     from core import purchase_pricing as pricing
     from core.production_plan import source_choice_enabled
 
+    # TEK ANAHTAR (core.group_stock.group_stock_enabled): üretimde kaynak
+    # seçimi kapalıysa üretim gruptaki başka karttan düşemez → grup stoğu da
+    # bitirilecek kart stoğu da ihtiyaçtan DÜŞÜLMEZ (istek/senaryo değişmez,
+    # yalnız bu hesabın kopyası).
     sources_enabled = source_choice_enabled(db)
     effective_req = req if sources_enabled else req.model_copy(update={
-        "options": req.options.model_copy(update={"count_phase_out_stock": False})})
+        "options": req.options.model_copy(update={"count_phase_out_stock": False,
+                                                  "count_group_stock": False})})
     inputs = pp.load_inputs(db, effective_req, domain)
     res = pp.compute(inputs, effective_req)
     if not sources_enabled:
         res["meta"]["warning_codes"] = ["source_choice_disabled"]
         res["meta"]["warnings"].append(
-            "Üretimde kaynak seçimi kapalı olduğu için bitirilecek tedarikçilerin alternatif "
-            "kart stokları ihtiyaçtan düşülmedi. Fiyat ve tedarikçi tercihleri rapor ayarlarına "
-            "göre hesaplanmaya devam eder.")
+            "Üretimde kaynak seçimi kapalı olduğu için aynı malzeme grubundaki diğer kartların "
+            "stokları (bitirilecek tedarikçilerin kartları dahil) ihtiyaçtan düşülmedi. Fiyat ve "
+            "tedarikçi tercihleri rapor ayarlarına göre hesaplanmaya devam eder.")
     prods = res.get("products") or []
     if not prods or all(any(c["code"] == "recipeless_product" for c in p["cautions"]) for p in prods):
         raise pp.PlanInputError(
@@ -282,13 +290,17 @@ def _sup_lines(m: dict, cur: str) -> List[dict]:
 
 def _preview_view(res: dict) -> dict:
     """Önizleme yanıtı: rapor + `sections` (malzeme bölümlerinde `row_keys`)
-    + malzeme başına sunucuda biçimlenmiş `ui` (tedarikçi hücresi, tutar) —
+    + malzeme başına sunucuda biçimlenmiş `ui` (tedarikçi hücresi, tutar,
+    `stock_note` = grup stoğu kart dökümü) —
     TR sayı biçimi tek kaynakta (Python) kalsın, JS yeniden yazmasın."""
+    from core.purchase_plan import stock_note
     from core.purchase_pricing import firms_view, money, sections
     cur = (res.get("pricing") or {}).get("currency") or "USD"
     for m in (res.get("materials") or []) + (res.get("held") or []):
         m["ui"] = {"sup": _sup_lines(m, cur),
                    "amount": money(m["amount"], cur) if m.get("amount") is not None else None,
+                   # Grup stoğu kart dökümü — stok hücresinin altına (PDF/Excel ile tek kaynak)
+                   "stock_note": stock_note(m),
                    "name_notes": [c["text"] for c in m.get("cautions") or [] if c["code"] in _NAME_CAUTIONS],
                    # "Tedarikçiler (N)" açılır listesi: firma dökümü + aynı malzemenin diğer kartları
                    "firms": firms_view(m, cur)}

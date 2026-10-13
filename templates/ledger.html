@@ -179,6 +179,21 @@
     .loc-group { margin: 0 0 0.85rem; padding: 0.5rem 0.8rem; border-radius: 8px;
       background: #f5f3ff; border: 1px solid #ddd6fe; font-size: 0.8rem; color: #4c1d95; }
     :root[data-theme="dark"] .loc-group { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+    /* "Aynı malzeme" grup satırı (13.10.2026) — toplam + kart dökümü sunucudan */
+    tr.grp-row { background: #f8f6fe; cursor: pointer; }
+    tr.grp-row:hover { background: #f1edfc; }
+    .grp-caret { display: inline-flex; width: 1.1rem; color: #7c6bb8; font-size: 0.72rem; transition: transform 0.15s; }
+    tr.grp-row.open .grp-caret { transform: rotate(90deg); }
+    .grp-tag { display: inline-block; margin-left: 0.5rem; padding: 1px 8px; border-radius: 20px; background: #ede9fe; color: #5b21b6; font-size: 0.64rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; vertical-align: middle; }
+    .grp-sup { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.82rem; color: #5b21b6; font-weight: 600; }
+    .grp-break { font-size: 0.74rem; color: #6b7280; font-weight: 400; margin-top: 2px; }
+    .grp-aside { font-size: 0.72rem; color: #b45309; margin-top: 1px; }
+    tr.grp-member { background: #fdfcff; }
+    tr.grp-member td.td-name { padding-left: 2.6rem; position: relative; font-weight: 500; }
+    tr.grp-member td.td-name::before { content: '↳'; position: absolute; left: 1.35rem; color: #a78bfa; }
+    :root[data-theme="dark"] tr.grp-row, :root[data-theme="dark"] tr.grp-member { background: var(--surface-2); }
+    :root[data-theme="dark"] .grp-tag { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+    :root[data-theme="dark"] .grp-sup { color: var(--text); }
     .cat-kimyasal  { background: #fefce8; color: #a16207; }
     .cat-yardimci  { background: #fdf4ff; color: #7e22ce; }
     .cat-bitmisurun{ background: #fff7ed; color: #c2410c; }
@@ -338,7 +353,7 @@
         <div class="kpi-card kpi-navy">
           <div class="kpi-label">Toplam Kalem</div>
           <div class="kpi-value" id="kpiTotalItems">—</div>
-          <div class="kpi-sub">aktif ürün</div>
+          <div class="kpi-sub" id="kpiTotalSub">aktif ürün</div>
         </div>
         <div class="kpi-card kpi-gold">
           <div class="kpi-label">Hammadde</div>
@@ -353,7 +368,7 @@
         <div class="kpi-card kpi-amber">
           <div class="kpi-label">Bitmiş Ürün</div>
           <div class="kpi-value" id="kpiFinishedCount">—</div>
-          <div class="kpi-sub">kalem</div>
+          <div class="kpi-sub" id="kpiFinishedSub">kalem</div>
         </div>
       </div>
 
@@ -530,6 +545,7 @@
     /* ── Data ── */
     let allStock = [];
     let allTx    = [];
+    let allGroups = [];   // /api/inventory/groups-summary — "aynı malzeme" grupları
     let stockFilter = 'all';
 
     /* ── Toast ── */
@@ -561,15 +577,21 @@
       return `<span class="tx-badge tx-other">${escHtml(type)}</span>`;
     }
 
-    /* ── Load all data ── */
+    /* ── Load all data ──
+       "Aynı malzeme" grupları (13.10.2026) ayrı uçtan gelir; o uç düşse de
+       stok listesi grupsuz açılır (sayfa kırılmasın). */
     async function loadAll() {
       try {
         const [sRes, tRes] = await Promise.all([
           fetch('/api/inventory/summary'),
           fetch('/api/transactions'),
         ]);
+        const gPromise = fetch('/api/inventory/groups-summary')
+          .then(r => r.ok ? r.json() : null).catch(() => null);
         allStock = await sRes.json();
         allTx    = await tRes.json();
+        const g  = await gPromise;
+        allGroups = (g && Array.isArray(g.groups)) ? g.groups : [];
         updateKPIs();
         renderStock();
         renderTx();
@@ -580,7 +602,8 @@
 
     /* ── Kategori sınıflandırıcı: tek doğru kaynak ─────────────────────────
        Etiket, Ambalaj (category) altında pkg_type='etiket' olan satırlardır.
-       Bu helper hem KPI hem filter tarafında kullanılır — divergence yok. */
+       Bu helper hem KPI hem filter tarafında kullanılır — divergence yok.
+       Sunucu ikizi: core/group_stock.classify (grup kovaları) — BİREBİR. */
     function classify(i) {
       const cat = i.category || '';
       const pkg = (i.pkg_type || '').toLowerCase();
@@ -590,32 +613,40 @@
       return 'other';
     }
 
-    /* ── KPIs ── */
+    /* ── KPIs ── kart sayar (eskisi gibi) + "· X grup" */
     function updateKPIs() {
       const counts = { hammadde: 0, ambalaj: 0, etiket: 0, finished: 0, other: 0 };
       allStock.forEach(i => counts[classify(i)]++);
+      const gCounts = { hammadde: 0, ambalaj: 0, etiket: 0, finished: 0, other: 0 };
+      allGroups.forEach(g => { if (g.bucket in gCounts) gCounts[g.bucket]++; });
+      const gTxt = n => n ? ` · ${n} grup` : '';
       document.getElementById('kpiTotalItems').textContent  = allStock.length;
       document.getElementById('kpiRawCount').textContent    = counts.hammadde;
       document.getElementById('kpiPkgCount').textContent    = counts.ambalaj + counts.etiket;
       document.getElementById('kpiFinishedCount').textContent = counts.finished;
-      const sub = document.getElementById('kpiPkgSub');
-      if (sub) sub.textContent = `${counts.ambalaj} ambalaj · ${counts.etiket} etiket`;
+      const setSub = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+      setSub('kpiTotalSub', 'aktif ürün' + gTxt(allGroups.length));
+      setSub('kpiRawSub', 'kalem' + gTxt(gCounts.hammadde));
+      setSub('kpiPkgSub', `${counts.ambalaj} ambalaj · ${counts.etiket} etiket` + gTxt(gCounts.ambalaj + gCounts.etiket));
+      setSub('kpiFinishedSub', 'kalem' + gTxt(gCounts.finished));
     }
 
-    /* ── Render stock table ── */
-    function renderStock() {
-      const q = document.getElementById('stockSearch').value.toLowerCase();
-      let data = allStock;
+    /* ── "Aynı malzeme" grubu aç/kapa ──
+       Açık durumu elle seçilmediyse aramada üye eşleşince grup açık gelir. */
+    const groupOpen = new Map();
+    let _renderedOpen = {};
+    function toggleStockGroup(key) {
+      groupOpen.set(key, !_renderedOpen[key]);
+      renderStock();
+    }
 
-      if (stockFilter !== 'all') {
-        // 'hammadde' | 'ambalaj' | 'etiket' | 'finished'  — classify() ile tek kaynak
-        data = data.filter(i => classify(i) === stockFilter);
-      }
-      if (q) data = data.filter(i =>
-        i.name.toLowerCase().includes(q) ||
-        (i.category || '').toLowerCase().includes(q) ||
-        (i.supplier_name || '').toLowerCase().includes(q)
-      );
+    /* ── Render stock table ──
+       Gruplu kartlar kovalarında TEK grup satırında toplanır (ilk üyenin
+       yerinde): toplam + kart dökümü SUNUCUDA biçimli; açınca üyeler
+       girintili, kendi "Düzelt" düğmesi ve lot penceresiyle. */
+    function renderStock() {
+      const fold = s => window.trFold ? window.trFold(String(s || '')) : String(s || '').toLowerCase();
+      const q = fold(document.getElementById('stockSearch').value.trim());
 
       const tbody = document.getElementById('stockBody');
       const info  = document.getElementById('stockInfo');
@@ -623,18 +654,60 @@
       const canAdjust = !!(window.can && window.can('inventory', 'adjust'));
       const colCount  = canAdjust ? 6 : 5;
 
-      if (!data.length) {
+      const groupByKey = {};
+      allGroups.forEach(g => { groupByKey[g.key] = g; });
+      const cardById = {};
+      allStock.forEach(i => { cardById[i.item_id] = i; });
+      // 'hammadde' | 'ambalaj' | 'etiket' | 'finished'  — classify() ile tek kaynak
+      const inFilter = i => stockFilter === 'all' || classify(i) === stockFilter;
+      const cardHit = i => !q || fold(i.name).includes(q) || fold(i.category).includes(q) ||
+                           fold(i.supplier_name).includes(q);
+
+      const entries = [];
+      const emitted = new Set();
+      let cardCount = 0, groupCount = 0;
+      _renderedOpen = {};
+      allStock.forEach(i => {
+        if (!inFilter(i)) return;
+        const g = i.group_key ? groupByKey[i.group_key] : null;
+        if (!g) {
+          if (cardHit(i)) { entries.push({ type: 'card', card: i }); cardCount++; }
+          return;
+        }
+        if (emitted.has(g.key)) return;
+        emitted.add(g.key);
+        const members = (g.member_ids || []).map(id => cardById[id]).filter(Boolean);
+        const memberHit = !!q && members.some(cardHit);
+        if (q && !memberHit && !fold(g.name).includes(q)) return;
+        const open = groupOpen.has(g.key) ? groupOpen.get(g.key) : memberHit;
+        _renderedOpen[g.key] = open;
+        entries.push({ type: 'group', group: g, members, open });
+        groupCount++;
+        cardCount += members.length;
+      });
+
+      if (!entries.length) {
         tbody.innerHTML = `<tr><td colspan="${colCount}"><div class="empty-state"><i class="bi bi-boxes"></i><p>Bu filtre için kayıt bulunamadı.</p></div></td></tr>`;
         info.textContent = '0 kayıt';
         return;
       }
 
-      // max stock for relative bar
-      const maxStock = Math.max(...data.map(i => i.total_stock), 1);
-
-      tbody.innerHTML = data.map(i => {
-        const pct = Math.min(100, (i.total_stock / maxStock) * 100);
+      // Çubuk: yalnız AYNI birim ailesi içinde kıyas (g/kg · ml/l · adet) —
+      // sunucu `bar_value`'yu ailenin küçük biriminde verir.
+      const maxFam = {};
+      const bump = (fam, v) => { maxFam[fam] = Math.max(maxFam[fam] || 0, Number(v) || 0); };
+      entries.forEach(e => {
+        if (e.type === 'card') { bump(e.card.unit_family, e.card.bar_value); return; }
+        bump(e.group.unit_family, e.group.bar_value);
+        e.members.forEach(m => bump(m.unit_family, m.bar_value));
+      });
+      const barHtml = (fam, v) => {
+        const pct = Math.min(100, ((Number(v) || 0) / Math.max(maxFam[fam] || 0, 1)) * 100);
         const barClass = pct < 15 ? 'critical' : pct < 30 ? 'low' : '';
+        return `<span class="stock-bar-wrap"><span class="stock-bar ${barClass}" style="width:${pct.toFixed(1)}%;"></span></span>`;
+      };
+
+      const cardRow = (i, member) => {
         const adjustCell = canAdjust ? `
           <td style="text-align:right;">
             <button class="btn-adjust"
@@ -648,7 +721,7 @@
                <i class="bi bi-truck" style="color:var(--gold);"></i>${escHtml(i.supplier_name)}
              </span>`
           : `<span style="color:#d1d5db;font-size:0.78rem;">—</span>`;
-        return `<tr class="stock-row" style="cursor:pointer;"
+        return `<tr class="stock-row${member ? ' grp-member' : ''}" style="cursor:pointer;"
               onclick="showStockLocations(${i.item_id})"
               title="Lokasyon kırılımını gör (Showroom / Şahit Numune…)">
           <td class="td-name">${escHtml(i.name)}</td>
@@ -657,12 +730,39 @@
           <td style="color:#6b7280;">${escHtml(i.unit)}</td>
           <td style="text-align:right;">
             <span class="td-num">${i.total_stock.toLocaleString('tr-TR', {maximumFractionDigits:4})}</span>
-            <span class="stock-bar-wrap"><span class="stock-bar ${barClass}" style="width:${pct.toFixed(1)}%;"></span></span>
+            ${barHtml(i.unit_family, i.bar_value)}
           </td>
           ${adjustCell}
         </tr>`;
+      };
+
+      const groupRow = e => {
+        const g = e.group;
+        const first = e.members[0] || {};
+        const aside = g.aside_text
+          ? `<div class="grp-aside" title="Başka birim ailesi — toplama katılmadı (g ile ml toplanmaz)">ayrı birim: ${escHtml(g.aside_text)}</div>`
+          : '';
+        return `<tr class="grp-row${e.open ? ' open' : ''}" data-group-key="${escHtml(g.key)}"
+              onclick="toggleStockGroup(this.dataset.groupKey)"
+              title="Aynı malzemenin tedarikçi kartları — göster / gizle">
+          <td class="td-name"><span class="grp-caret"><i class="bi bi-caret-right-fill"></i></span>${escHtml(g.name)}<span class="grp-tag">Aynı malzeme</span></td>
+          <td>${catBadge(first.category || '', first.pkg_type)}</td>
+          <td><span class="grp-sup"><i class="bi bi-diagram-3"></i>${escHtml(g.members_label)}</span></td>
+          <td style="color:#6b7280;">${escHtml(g.base_unit)}</td>
+          <td style="text-align:right;">
+            <span class="td-num">${escHtml(g.total_text)}</span>
+            ${barHtml(g.unit_family, g.bar_value)}
+            <div class="grp-break">${escHtml(g.breakdown_text)}</div>${aside}
+          </td>
+          ${canAdjust ? '<td></td>' : ''}
+        </tr>`;
+      };
+
+      tbody.innerHTML = entries.map(e => {
+        if (e.type === 'card') return cardRow(e.card, false);
+        return groupRow(e) + (e.open ? e.members.map(m => cardRow(m, true)).join('') : '');
       }).join('');
-      info.textContent = `${data.length} ürün listeleniyor`;
+      info.textContent = `${cardCount} ürün listeleniyor` + (groupCount ? ` · ${groupCount} aynı malzeme grubu` : '');
     }
 
     /* ── Stok lokasyon detayı — satıra tıklayınca ──────────────────────────
@@ -926,7 +1026,8 @@
     });
 
     /* ── Search ── */
-    document.getElementById('stockSearch').addEventListener('input', renderStock);
+    // Yeni arama: elle aç/kapa seçimleri sıfırlanır, üye eşleşen grup açık gelir
+    document.getElementById('stockSearch').addEventListener('input', () => { groupOpen.clear(); renderStock(); });
     document.getElementById('txSearch').addEventListener('input', renderTx);
 
     /* ── Logout ── */

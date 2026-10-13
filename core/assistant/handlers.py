@@ -53,7 +53,7 @@ from database import (CrmCompany, CrmContact, CrmDeal, DriveFile, DriveFolder, I
                       MaterialGroup, MaterialSupplierPref, ProductionHistory, Recipe,
                       RetentionSample, StockOrderFlag, Supplier, SupplierPrice, to_tr, tr_now)
 from core import drive as D
-from core import material_groups, stock_gaps
+from core import group_stock, material_groups, stock_gaps
 from core.assistant import help_docs, prompt
 from core.brands import cabinet_of
 from core.items_report import tr_key
@@ -252,6 +252,20 @@ def item_detail(ctx: "ToolContext", db: Session, args: dict) -> dict:
                  "members": [{"id": m["item_id"], "name": m["name"], "stock": m["stock"],
                               "supplier": m.get("supplier_name") or ""}
                              for m in grp["members"] if m["is_active"] and m["item_id"] != item.id]}
+        # Grup TOPLAMI (core.group_stock — Stoklar/Aylık rapordaki sayı; g↔kg,
+        # ml↔l çevrilir, başka birim ailesi `aside`).  `rule_active`: grup
+        # toplamı eksik/kritik kararına giriyor mu (üretimde kaynak seçimi ayarı).
+        gs = group_stock.index_by_item(group_stock.load_groups(
+            db, ctx.domain, group_ids=[item.material_group_id])).get(item.id)
+        if gs is not None:
+            group.update({
+                "group_total": _r(gs.total), "group_unit": gs.base_unit,
+                "group_total_text": gs.total_text, "breakdown": gs.breakdown_text,
+                "aside": gs.aside_text, "counted": item.id in gs.counted_ids,
+                "group_min_text": (group_stock.amount_short(gs.min_stock, gs.base_unit)
+                                   if gs.min_stock > 0 else ""),
+                "rule_active": group_stock.group_stock_enabled(db),
+            })
     flag = (db.query(StockOrderFlag).options(joinedload(StockOrderFlag.supplier))
             .filter(StockOrderFlag.item_id == item.id, StockOrderFlag.domain == ctx.domain,
                     StockOrderFlag.closed_at.is_(None))
@@ -580,18 +594,41 @@ def stock_gaps_tool(ctx: "ToolContext", db: Session, args: dict) -> dict:
     rep = stock_gaps.assemble(db, ctx.domain, category="hammadde",
                               statuses=None if status == "all" else [status],
                               q=_text(args.get("q")) or None)
-    rows = [{
-        "item_id": r["item_id"], "name": r["name"], "status": r["status"],
-        "status_label": r["status_label"], "current_stock": r["current_stock"],
-        "min_stock_level": r["min_stock_level"], "unit": r["unit"],
-        "sample_qty": r["sample_qty"], "last_supplier": r.get("last_supplier") or "",
-        "ordered": ({"qty": r["order"]["quantity"], "unit": r["order"]["unit"],
-                     "expected_date": r["order"]["expected_date"],
-                     "supplier": r["order"]["supplier_name"] or ""} if r.get("order") else None),
-    } for r in rep["rows"][:GAPS_MAX]]
+    def _ordered(r):
+        o = r.get("order")
+        return ({"qty": o["quantity"], "unit": o["unit"], "expected_date": o["expected_date"],
+                 "supplier": o["supplier_name"] or ""} if o else None)
+
+    def _row(r):
+        out = {
+            "item_id": r["item_id"], "name": r["name"], "status": r["status"],
+            "status_label": r["status_label"], "current_stock": r["current_stock"],
+            "min_stock_level": r["min_stock_level"], "unit": r["unit"],
+            "sample_qty": r["sample_qty"], "last_supplier": r.get("last_supplier") or "",
+            "ordered": _ordered(r),
+        }
+        if r.get("kind") == "group":
+            # "Aynı malzeme" grubu TEK satır: miktarlar grubun taban biriminde
+            # toplam, kartlar `members` altında (sipariş bayrağı kart başına).
+            out.update({
+                "kind": "group", "group_id": r["group_id"], "total_text": r["current_text"],
+                "min_text": r["min_text"], "breakdown": r["breakdown_text"],
+                "ordered_cards": r.get("ordered_count", 0),
+                "members": [{"item_id": m["item_id"], "name": m["name"],
+                             "stock_text": m.get("stock_text") or "", "unit": m["unit"],
+                             "supplier": m.get("supplier_name") or "", "ordered": _ordered(m)}
+                            for m in r.get("members") or []],
+            })
+        return out
+
+    rows = [_row(r) for r in rep["rows"][:GAPS_MAX]]
     sm = rep["summary"]
-    return {"summary": {k: sm.get(k, 0) for k in ("sifir", "kritik", "numune", "open_orders", "total")},
-            "rows": rows, "rows_total": len(rep["rows"]), "link": "/reports#stock-gaps"}
+    out = {"summary": {k: sm.get(k, 0) for k in ("sifir", "kritik", "numune", "open_orders", "total")},
+           "rows": rows, "rows_total": len(rep["rows"]), "link": "/reports#stock-gaps"}
+    if rep.get("group_rule"):
+        out["group_rule"] = ("Aynı malzeme grupları toplam stokla değerlendirildi; "
+                             "grubu yeterli kartlar listede yok.")
+    return out
 
 
 def expiring_lots(ctx: "ToolContext", db: Session, args: dict) -> dict:

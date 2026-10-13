@@ -18,6 +18,7 @@ from typing import Optional, List
 from database import get_db, BankProfile, Item, Transaction, Quotation, QuotationItem, to_tr
 from core.permissions import require_internal_user, require_permission
 from core.notifications import notify_low_stock
+from core.group_stock import low_stock_alerts
 from core.domain import active_domain
 from core import bank_accounts, fx, proforma_template
 from core.consumption import parse_ml
@@ -407,13 +408,16 @@ def confirm_quotation(
         # ── Low-stock alert: any line that crossed its threshold queues a
         #     single notification. Primitive snapshots — the BackgroundTask
         #     fires after the response, no extra latency for the caller.
-        for line in quote.items:
-            item = item_lookup[line.item_id]
-            if item.min_stock_level > 0 and item.current_stock <= item.min_stock_level:
-                background_tasks.add_task(
-                    notify_low_stock,
-                    item.name, item.current_stock, item.min_stock_level, item.unit or "",
-                )
+        #     "Aynı malzeme" grubu yeterliyse sessiz (core.group_stock).
+        try:
+            alerts = low_stock_alerts(db, [item_lookup[line.item_id] for line in quote.items],
+                                      quote.domain or "cosmetics")
+        except Exception:   # onay commit'li — bildirim hesabı 500'e dönmesin
+            import logging
+            logging.getLogger("minerva108.notifications").exception("low stock alert failed")
+            alerts = []
+        for args in alerts:
+            background_tasks.add_task(notify_low_stock, *args)
 
         return {
             "message":         f"Sipariş onaylandı — Teklif #{quote.quote_number} stoktan düşüldü.",

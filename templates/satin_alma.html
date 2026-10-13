@@ -142,6 +142,7 @@
     .sap-check { display: inline-flex; align-items: flex-start; gap: 0.45rem; font-size: 0.86rem; color: var(--sap-ink); cursor: pointer; line-height: 1.35; }
     .sap-check input { accent-color: var(--navy); margin-top: 0.2rem; }
     .sap-check small { display: block; color: var(--sap-muted); font-size: 0.76rem; }
+    .sap-check.sap-check-off { opacity: 0.55; cursor: default; }
 
     /* Senaryo çubuğu */
     .sap-scbar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.85rem 1.25rem; }
@@ -176,6 +177,7 @@
     .sap-tbl th { position: sticky; top: 0; z-index: 1; background: var(--sap-soft2); color: var(--sap-muted); text-align: left; padding: 0.5rem 0.65rem; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; border-bottom: 2px solid var(--sap-line); }
     .sap-tbl td { padding: 0.45rem 0.65rem; border-bottom: 1px solid var(--sap-line); vertical-align: top; color: var(--sap-ink); }
     .sap-tbl td.num, .sap-tbl th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .sap-tbl td.num .sap-stock-note { white-space: normal; min-width: 8rem; max-width: 15rem; margin: 0.15rem 0 0 auto; font-size: 0.72rem; line-height: 1.3; color: var(--sap-muted); font-variant-numeric: normal; }
     .sap-tbl tr.sap-row-on td { background: rgba(35,46,110,0.045); }
     :root[data-theme="dark"] .sap-tbl tr.sap-row-on td { background: rgba(217,190,133,0.07); }
     .sap-tbl input[type=checkbox] { accent-color: var(--navy); width: 16px; height: 16px; }
@@ -543,9 +545,12 @@
                 <label class="sap-check"><input type="checkbox" id="sapRespect">
                   <span>Tedarikçi tercihlerine uy
                     <small>“Bitirilecek” ve bu malzemede “alma” firmalar seçilmez; malzeme tercihi ve “tercih edilen” firma en ucuzdan önce gelir. Kapalıysa yalnız en ucuz.</small></span></label>
+                <label class="sap-check"><input type="checkbox" id="sapGroupStock">
+                  <span>Aynı malzeme grubundaki stokları say
+                    <small>Gruptaki, üretimde yerine kullanılabilen kartların (aynı birim ve tür) stoğu ihtiyaçtan düşülür; önce “bitirilecek” firmanınki. Birimi farklı kartlar yalnız bilgi. Üretimde kaynak seçimi kapalıysa uygulanmaz.</small></span></label>
                 <label class="sap-check"><input type="checkbox" id="sapPhaseOut">
                   <span>Bitirilecek firmanın stoğunu önce kullan
-                    <small>Aynı malzeme grubunda “bitirilecek” (ya da bu malzemede “alma”) firmanın kartındaki stok ihtiyaçtan düşülür.</small></span></label>
+                    <small>Aynı malzeme grubunda “bitirilecek” (ya da bu malzemede “alma”) firmanın kartındaki stok ihtiyaçtan düşülür. Grup stoğu sayılırken buna gerek kalmaz.</small></span></label>
                 <div>
                   <label class="sap-lbl" for="sapCurrency">Para birimi</label>
                   <select id="sapCurrency" class="sap-sel">
@@ -623,7 +628,7 @@
 
   <div id="toast-container"></div>
 
-  <script src="/static/satin-alma.js?v=3" defer></script>
+  <script src="/static/satin-alma.js?v=4" defer></script>
   <script>
     document.getElementById('logoutBtn').addEventListener('click', async function () {
       try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}

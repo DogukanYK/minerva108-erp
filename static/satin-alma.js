@@ -39,7 +39,10 @@
     merge_duplicates: true, safe_rounding: true, round_to_package: false,
     currency: 'USD', lookalike_check: true, checklist_owner: '',
     // Tedarikçi tercihleri (07.10.2026) — sunucu varsayılanı da açık
-    count_phase_out_stock: true, respect_supplier_status: true
+    count_phase_out_stock: true, respect_supplier_status: true,
+    // "Aynı malzeme" grup stoğu (13.10.2026) — sunucu varsayılanı da açık;
+    // açıkken "bitirilecek" kutusunu da kapsar
+    count_group_stock: true
   };
 
   // ─── Yardımcılar ───────────────────────────────────────────────────────────
@@ -231,6 +234,7 @@
         currency: o.currency, lookalike_check: !!o.lookalike_check,
         count_phase_out_stock: o.count_phase_out_stock !== false,
         respect_supplier_status: o.respect_supplier_status !== false,
+        count_group_stock: o.count_group_stock !== false,
         item_notes: itemNotes, notes: notes,
         checklist_owner: (o.checklist_owner || '').trim() || null
       }
@@ -288,7 +292,7 @@
     S.options = clone(DEFAULT_OPTIONS);
     ['stock_mode', 'subtract_open_orders', 'subtract_finished_stock', 'label_mode', 'new_label_title',
       'merge_duplicates', 'safe_rounding', 'round_to_package', 'currency', 'lookalike_check',
-      'count_phase_out_stock', 'respect_supplier_status'].forEach(function (k) {
+      'count_phase_out_stock', 'respect_supplier_status', 'count_group_stock'].forEach(function (k) {
       if (o[k] !== undefined && o[k] !== null) S.options[k] = o[k];
     });
     S.options.checklist_owner = o.checklist_owner || '';
@@ -793,7 +797,8 @@
     $('sapSafe').checked = !!o.safe_rounding;
     $('sapPkgRound').checked = !!o.round_to_package;
     $('sapLookalike').checked = !!o.lookalike_check;
-    if ($('sapPhaseOut')) $('sapPhaseOut').checked = o.count_phase_out_stock !== false;
+    if ($('sapGroupStock')) $('sapGroupStock').checked = o.count_group_stock !== false;
+    syncPhaseOutBox();
     if ($('sapRespect')) $('sapRespect').checked = o.respect_supplier_status !== false;
     $('sapCurrency').value = o.currency || 'USD';
     $('sapTitle').value = S.title || '';
@@ -804,6 +809,19 @@
     renderManual();
   }
 
+  // Grup stoğu sayılırken "bitirilecek firmanın stoğu" zaten kapsanır (önce
+  // o kullanılır): kutu işaretli + pasif görünür, kendi değeri korunur ki
+  // grup kutusu kapatılınca eski seçim geri gelsin.
+  function syncPhaseOutBox() {
+    var po = $('sapPhaseOut');
+    if (!po) return;
+    var grp = S.options.count_group_stock !== false;
+    po.checked = grp || S.options.count_phase_out_stock !== false;
+    po.disabled = grp;
+    var lbl = po.closest('label');
+    if (lbl) lbl.classList.toggle('sap-check-off', grp);
+  }
+
   function bindOptions() {
     document.querySelectorAll('input[name="sapStockMode"]').forEach(function (el) {
       el.addEventListener('change', function () { if (el.checked) { S.options.stock_mode = el.value; touch(); } });
@@ -811,10 +829,14 @@
     var flags = { sapOpenOrders: 'subtract_open_orders', sapFinished: 'subtract_finished_stock',
       sapMerge: 'merge_duplicates', sapSafe: 'safe_rounding', sapPkgRound: 'round_to_package',
       sapLookalike: 'lookalike_check', sapPhaseOut: 'count_phase_out_stock',
-      sapRespect: 'respect_supplier_status' };
+      sapRespect: 'respect_supplier_status', sapGroupStock: 'count_group_stock' };
     Object.keys(flags).forEach(function (id) {
       if (!$(id)) return;
-      $(id).addEventListener('change', function (e) { S.options[flags[id]] = e.target.checked; touch(); });
+      $(id).addEventListener('change', function (e) {
+        S.options[flags[id]] = e.target.checked;
+        if (id === 'sapGroupStock') syncPhaseOutBox();
+        touch();
+      });
     });
     document.querySelectorAll('input[name="sapLabel"]').forEach(function (el) {
       el.addEventListener('change', function () {
@@ -1275,6 +1297,13 @@
     }).join('') + '</ul></details>';
   }
 
+  // Grup stoğu kart dökümü — metin sunucuda biçimli (m.ui.stock_note,
+  // core/purchase_plan.stock_note); TR sayı biçimi burada yeniden yazılmaz.
+  function stockNoteHtml(m) {
+    var t = m.ui && m.ui.stock_note;
+    return t ? '<div class="sap-stock-note">' + esc(t) + '</div>' : '';
+  }
+
   function matTable(rows, rep, opts) {
     var gross = rep.meta.options.stock_mode === 'gross';
     var openOn = !!rep.meta.options.subtract_open_orders;
@@ -1285,7 +1314,7 @@
       var d = m.display || {};
       var nameNotes = ((m.ui && m.ui.name_notes) || []).map(function (t) { return ' <span class="sap-faint">(' + esc(t.replace(/\.$/, '').toLocaleLowerCase('tr')) + ')</span>'; }).join('');
       return '<tr><td><b>' + esc(m.name) + '</b>' + nameNotes + cautionsHtml(m.cautions, ['estimated']) + perProductHtml(m) + '</td>' +
-        '<td class="num">' + esc(d.need_text) + '</td><td class="num">' + esc(d.stock_text) + '</td>' +
+        '<td class="num">' + esc(d.need_text) + '</td><td class="num">' + esc(d.stock_text) + stockNoteHtml(m) + '</td>' +
         (openOn ? '<td class="num">' + esc(d.open_text) + '</td>' : '') +
         '<td class="num"><b>' + esc(d.buy_text) + '</b></td>' +
         (opts.noSup ? '' : '<td>' + supHtml(m) + firmsHtml(m) + '</td><td class="num">' + (m.ui && m.ui.amount ? '<b>' + esc(m.ui.amount) + '</b>' : '—') + '</td>') + '</tr>';

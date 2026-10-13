@@ -947,3 +947,158 @@ def test_fifo_fractional_lots_and_uncovered_keep_full_consumption(authed_client,
     assert db_session.get(Item, raw.id).current_stock == 0
     assert db_session.get(Inventory, first.id).quantity >= 0
     assert db_session.get(Inventory, second.id).quantity >= 0
+
+
+# ─── auto_sources (B2B sipariş partisi — arayüz kaynak soramaz) ─────────────
+
+def _pl_line(pl, key):
+    return next(ln for ln in pl.lines if ln.key == str(key))
+
+
+def _picks(ln):
+    return [(p.item_id, p.quantity) for p in ln.chosen]
+
+
+def test_auto_sources_follow_suggestion_order_and_explicit_sources_win(db_session):
+    from core.production_plan import preview_payload
+    w = _world(db_session)
+    rec = db_session.get(Recipe, w["rec"])
+    # auto yok → eski sözleşme: seçim istenir
+    pl = plan_production(db_session, rec, 20, "TR", domain="cosmetics")
+    assert pl.first_error()["code"] == "source_choice_required"
+    # auto → öneri sırası (bitirilecek → reçete kartı), hata yok        brüt 44 g
+    pl = plan_production(db_session, rec, 20, "TR", domain="cosmetics", auto_sources=True)
+    assert pl.errors == [] and pl.can_start
+    ln = _pl_line(pl, w["rc"])
+    assert ln.auto and ln.answered and ln.shortfall == 0
+    assert _picks(ln) == [(w["po"], 30), (w["rc"], 14)]
+    assert [(lot.lot_number, q) for p in ln.chosen for lot, q in p.allocations] == [
+        ("PO-1", 10), ("PO-2", 20), ("RC-1", 14)]
+    # Kullanılmayan seçenek kartı (tercih) düşülecek kartlara karışmaz
+    assert set(pl.cards) == {w["po"], w["rc"], w["water"], w["bottle"], w["ltr"]}
+    pv = preview_payload(pl)
+    pvl = next(x for x in pv["lines"] if x["key"] == str(w["rc"]))
+    assert pvl["auto"] is True and pvl["ok"] is True
+    assert next(x for x in pv["lines"] if x["key"] == str(w["water"]))["auto"] is False
+    # Gönderilen kaynak her zaman önceliklidir
+    pl = plan_production(db_session, rec, 20, "TR", domain="cosmetics", auto_sources=True,
+                         sources={str(w["rc"]): [{"item_id": w["pref"], "quantity": 44}]})
+    ln = _pl_line(pl, w["rc"])
+    assert not ln.auto and _picks(ln) == [(w["pref"], 44)] and pl.errors == []
+    db_session.rollback()
+
+
+def test_auto_sources_respect_lot_filter_and_keep_shortfall_on_recipe_card(db_session):
+    w = _world(db_session)
+    rec = db_session.get(Recipe, w["rec"])
+
+    def strict(lot):
+        return lot.lot_number in ("PO-2", "PF-1")
+
+    # brüt 88 g: PO yalnız süzgeçten geçen PO-2 (20), reçete kartının lotu yok
+    # (0), tercih 50 → kalan 18 g reçete kartında, lot kaydı dışı (B2B → lot_missing)
+    pl = plan_production(db_session, rec, 40, "TR", domain="cosmetics", auto_sources=True,
+                         lot_filter=strict)
+    ln = _pl_line(pl, w["rc"])
+    assert _picks(ln) == [(w["po"], 20), (w["pref"], 50), (w["rc"], 18)]
+    assert ln.shortfall == 18
+    assert [lot.lot_number for lot, _ in ln.chosen[0].allocations] == ["PO-2"]
+    assert ln.chosen[-1].allocations == [] and ln.chosen[-1].uncovered == pytest.approx(18)
+    assert pl.errors == []                       # kart stoğu yeter; sıkı lot kapısı B2B'de
+    # Kart stoğu da yetmezse kalan reçete kartında → insufficient_stock
+    pl = plan_production(db_session, rec, 100, "TR", domain="cosmetics", auto_sources=True)
+    ln = _pl_line(pl, w["rc"])                   # brüt 220 g, grup toplamı 180 g
+    assert _picks(ln) == [(w["po"], 30), (w["rc"], 140), (w["pref"], 50)]
+    assert ln.shortfall == 40
+    err = pl.first_error()
+    assert err["code"] == "insufficient_stock" and err["item_id"] == w["rc"]
+    db_session.rollback()
+
+
+def test_auto_sources_rest_goes_to_sibling_whose_card_stock_covers_it(db_session):
+    """Süzgeç kardeşin lotlarını eler ama kart stoğu kalanı karşılıyorsa kalan
+    O kartta kalır (kapı geçer, FIFO `uncovered` → B2B lot_missing kardeşi
+    söyler); reçete kartına yazılsaydı yanıltıcı insufficient_stock olurdu."""
+    w = _world(db_session)
+    rec = db_session.get(Recipe, w["rec"])
+
+    def strict(lot):                             # bitirilecek kartın (PO) lotları geçmez
+        return not lot.lot_number.startswith("PO-")
+
+    # brüt 176 g: PO 0 (süzgeç), reçete kartı 100, tercih 50 → kalan 26 g;
+    # PO'nun kart stoğu 30 g ≥ 26 → kalan PO'da (öneri sırasında ilk)
+    pl = plan_production(db_session, rec, 80, "TR", domain="cosmetics", auto_sources=True,
+                         lot_filter=strict)
+    ln = _pl_line(pl, w["rc"])
+    assert _picks(ln) == [(w["rc"], 100), (w["pref"], 50), (w["po"], 26)]
+    assert ln.shortfall == 26 and pl.errors == []
+    po = next(p for p in ln.chosen if p.item_id == w["po"])
+    assert po.allocations == [] and po.uncovered == pytest.approx(26)
+    # Kalan PO'nun stoğunu aşarsa (brüt 198 g → kalan 48 > 30) kimse karşılamaz →
+    # eski davranış: reçete kartında insufficient_stock
+    pl = plan_production(db_session, rec, 90, "TR", domain="cosmetics", auto_sources=True,
+                         lot_filter=strict)
+    ln = _pl_line(pl, w["rc"])
+    assert _picks(ln) == [(w["rc"], 148), (w["pref"], 50)]
+    err = pl.first_error()
+    assert err["code"] == "insufficient_stock" and err["item_id"] == w["rc"]
+    db_session.rollback()
+
+
+def test_auto_sources_rest_counts_other_lines_takes_on_sibling(db_session):
+    """Kalanı karşılayan kart aranırken bu planın ÖTEKİ satırlarda o karttan
+    aldığı düşülür: ikinci satır aynı kardeşe sığmıyorsa sıradakine geçer."""
+    w = _world(db_session, rc_stock=0)
+    g = db_session.get(MaterialGroup, w["group"])
+    other = _card(db_session, "CETOSTEARYL ALCOHOL", stock=0, group=g)
+    rec = Recipe(name="İki Kart Oto Süzgeç", output_quantity=1, output_unit="adet",
+                 target_item_id=w["tgt"], waste_percentage=0)
+    db_session.add(rec); db_session.flush()
+    db_session.add(RecipeIngredient(recipe_id=rec.id, item_id=w["rc"], quantity=20, unit="g"))
+    db_session.add(RecipeIngredient(recipe_id=rec.id, item_id=other.id, quantity=20, unit="g"))
+    db_session.commit()
+    pl = plan_production(db_session, rec, 1, "TR", domain="cosmetics", auto_sources=True,
+                         lot_filter=lambda lot: False)
+    # 1. satır: PO 30 g ≥ 20 → PO;  2. satır: PO'da 10 g kaldı → tercih (50 g)
+    assert _picks(_pl_line(pl, w["rc"])) == [(w["po"], 20)]
+    assert _picks(_pl_line(pl, other.id)) == [(w["pref"], 20)]
+    assert pl.errors == []
+    assert all(c["ok"] for c in pl.per_card)
+    db_session.rollback()
+
+
+def test_auto_sources_share_one_pool_across_lines(db_session):
+    """İki satır aynı bitirilecek kartı isterse ikinci satır kalanı alır;
+    kapı ve lot rezervasyonu toplamı aşmaz."""
+    w = _world(db_session)
+    g = db_session.get(MaterialGroup, w["group"])
+    other = _card(db_session, "CETOSTEARYL ALCOHOL", stock=0, group=g)
+    rec = Recipe(name="İki Kart Oto", output_quantity=1, output_unit="adet",
+                 target_item_id=w["tgt"], waste_percentage=0)
+    db_session.add(rec); db_session.flush()
+    db_session.add(RecipeIngredient(recipe_id=rec.id, item_id=w["rc"], quantity=20, unit="g"))
+    db_session.add(RecipeIngredient(recipe_id=rec.id, item_id=other.id, quantity=20, unit="g"))
+    db_session.commit()
+    pl = plan_production(db_session, rec, 1, "TR", domain="cosmetics")
+    assert {e["code"] for e in pl.errors} == {"source_choice_required"}
+    pl = plan_production(db_session, rec, 1, "TR", domain="cosmetics", auto_sources=True)
+    assert pl.errors == []
+    assert _picks(_pl_line(pl, w["rc"])) == [(w["po"], 20)]
+    assert _picks(_pl_line(pl, other.id)) == [(w["po"], 10), (w["pref"], 10)]
+    po_card = next(c for c in pl.per_card if c["item_id"] == w["po"])
+    assert po_card["requested"] == 30 and po_card["ok"] is True
+    lots = [(lot.lot_number, q) for ln in pl.lines for p in ln.chosen if p.item_id == w["po"]
+            for lot, q in p.allocations]
+    assert lots == [("PO-1", 10), ("PO-2", 10), ("PO-2", 10)]
+    db_session.rollback()
+
+
+def test_auto_sources_kill_switch_off_uses_recipe_card_only(db_session):
+    w = _world(db_session)
+    db_session.add(AppSetting(key=CFG_ENABLED, value="0"))
+    db_session.commit()
+    rec = db_session.get(Recipe, w["rec"])
+    pl = plan_production(db_session, rec, 20, "TR", domain="cosmetics", auto_sources=True)
+    ln = _pl_line(pl, w["rc"])
+    assert not ln.needs_choice and not ln.auto and _picks(ln) == [(w["rc"], 44)]
+    db_session.rollback()

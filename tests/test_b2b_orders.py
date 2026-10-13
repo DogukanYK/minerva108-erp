@@ -970,3 +970,234 @@ def test_insufficient_stock_at_start_writes_nothing_and_refreshes_shortages(worl
     db.commit()
     _ok(_start(w, oid, w["cream"], 10))
     assert _stock(db, w["raw"]) == pytest.approx(0)
+
+
+# ─── "Aynı malzeme" kaynak seçimi açıkken parti (13.10.2026) ────────────────
+
+def _group_sibling(w, *, qc_stock=30.0):
+    """Baz yağ kartını bir "aynı malzeme" grubuna koy + bitirilecek tedarikçinin
+    kartı: 50 g sıkı lot (KS-1) + QC bekleyen lot (sıkı havuzda yok)."""
+    from database import MaterialGroup
+    db = w["db"]
+    small = Supplier(name="Küçük Satıcı B2B", domain="cosmetics", purchase_status="phase_out")
+    grp = MaterialGroup(name="Sentetik baz yağ grubu", domain="cosmetics")
+    db.add_all([small, grp])
+    db.flush()
+    db.get(Item, w["raw"].id).material_group_id = grp.id
+    sib = Item(name="Sentetik Baz Yağ Küçük", sku="B2B-RAW-2", unit="g", category="Hammadde",
+               current_stock=50 + qc_stock, supplier_id=small.id, domain="cosmetics",
+               material_group_id=grp.id)
+    db.add(sib)
+    db.flush()
+    ok = Inventory(item_id=sib.id, supplier_id=small.id, lot_number="KS-1", quantity=50,
+                   expiry_date=FUTURE, status="APPROVED", qc_required=False, is_sample=False,
+                   domain="cosmetics")
+    db.add(ok)
+    if qc_stock:
+        db.add(Inventory(item_id=sib.id, supplier_id=small.id, lot_number="KS-QC", quantity=qc_stock,
+                         expiry_date=FUTURE, status="APPROVED", qc_required=True, is_sample=False,
+                         domain="cosmetics"))
+    db.commit()
+    return sib, ok, grp
+
+
+def test_source_choice_on_batch_auto_picks_group_card_snapshot_cancel_and_complete(world):
+    """Ayar açıkken B2B partisi `source_choice_required`'a takılmaz: bitirilecek
+    grup kartı öneri sırasıyla, YALNIZ sıkı lot havuzu kadar kullanılır, kalan
+    reçete kartından; not "Kaynak kart" taşır; kaynaklar snapshot + audit'te;
+    iptal/iade kaynak karta, tamamlama dökümü recipe_item_id ≠ item_id; föy
+    reçete kartını gösterir."""
+    from database import AdminAuditLog
+    w = world
+    db = w["db"]
+    db.add(AppSetting(key="production.source_choice.enabled", value="1"))
+    db.commit()
+    sib, sib_lot, grp = _group_sibling(w)
+    oid = _approved_order(w)
+    _ok(_pay(w, oid, 50))
+    _ok(_prepare(w, oid))
+
+    # Parti 1: 5 adet = 55 g → küçük satıcının sıkı lotu 50 g (QC bekleyen 30 g
+    # havuzda yok) + reçete kartı 5 g
+    _ok(_start(w, oid, w["cream"], 5))
+    b1 = db.query(B2BOrderBatch).one()
+    assert _stock(db, sib) == pytest.approx(30) and _stock(db, w["raw"]) == pytest.approx(495)
+    db.expire_all()
+    assert db.get(Inventory, sib_lot.id).quantity == pytest.approx(0)
+    assert db.query(Inventory).filter_by(lot_number="KS-QC").one().quantity == pytest.approx(30)
+    out = db.query(Transaction).filter_by(item_id=sib.id, transaction_type="Output").one()
+    assert out.quantity == pytest.approx(50) and out.lot_number == "KS-1"
+    assert "| Kaynak kart: Sentetik Baz Yağ Küçük (reçetede: Sentetik Baz Yağ) |" in out.notes
+    assert out.notes.endswith(f"Üretim Lot: {b1.lot_number}")
+    snap = json.loads(b1.plan_snapshot)
+    assert snap["sources"] == [{
+        "recipe_item_id": w["raw"].id, "recipe_item_name": "Sentetik Baz Yağ", "auto": True,
+        "group": {"id": grp.id, "name": "Sentetik baz yağ grubu"}, "unit": "g",
+        "sources": [{"item_id": sib.id, "name": "Sentetik Baz Yağ Küçük", "quantity": 50.0},
+                    {"item_id": w["raw"].id, "name": "Sentetik Baz Yağ", "quantity": 5.0}]}]
+    sib_rows = [r for r in snap["rows"] if r["item_id"] == sib.id]
+    assert len(sib_rows) == 1 and sib_rows[0]["recipe_item_id"] == w["raw"].id
+    assert sib_rows[0]["supplier_name"] == "Küçük Satıcı B2B"
+    log = (db.query(AdminAuditLog).filter_by(action="b2b_order.batch_start", target_id=oid)
+           .order_by(AdminAuditLog.id.desc()).first())
+    assert json.loads(log.details)["sources"] == [
+        {"recipe_item_id": w["raw"].id, "auto": True, "picks": [[sib.id, 50.0], [w["raw"].id, 5.0]]}]
+
+    # İptal + fiziksel iade kaynak (küçük satıcı) kartına ve onun ilk lotuna
+    _ok(w["tech"].post(f"{API}/{oid}/batches/{b1.id}/cancel", json={"reason": "Kazan arızası"},
+                       headers=HDR))
+    _ok(w["tech"].post(f"{API}/{oid}/batches/{b1.id}/returns", headers=HDR,
+                       json={"item_id": sib.id, "quantity": 20, "reason": "Kova kullanılmadı"}))
+    assert _stock(db, sib) == pytest.approx(50)
+    assert db.get(Inventory, sib_lot.id).quantity == pytest.approx(20)
+    _err(w["tech"].post(f"{API}/{oid}/batches/{b1.id}/returns", headers=HDR,
+                        json={"item_id": sib.id, "quantity": 31, "reason": "fazla iade"}),
+         409, "over_consumed")
+    d = _ok(w["tech"].get(f"{API}/{oid}"))
+    consumed = {c["item_id"]: c for c in d["batches"][0]["consumed"]}
+    assert consumed[sib.id]["quantity"] == pytest.approx(50) and consumed[sib.id]["returned"] == 20
+
+    # Parti 2: 4 adet = 44 g → iade edilen 20 g sıkı lottan + 24 g reçete kartı;
+    # tamamlama dökümü kaynak kartı + reçete kartını ayrı tutar
+    _ok(_start(w, oid, w["cream"], 4))
+    b2 = db.query(B2BOrderBatch).filter_by(status="STARTED").one()
+    assert _stock(db, sib) == pytest.approx(30) and _stock(db, w["raw"]) == pytest.approx(471)
+    _ok(_complete(w, oid, b2.id, 4))
+    db.expire_all()
+    b2 = db.get(B2BOrderBatch, b2.id)
+    cons = (db.query(ProductionConsumption)
+            .filter_by(production_id=b2.production_history_id, kind="raw")
+            .order_by(ProductionConsumption.id).all())
+    assert [(c.item_id, c.recipe_item_id, c.lot_number, c.quantity) for c in cons] == [
+        (sib.id, w["raw"].id, "KS-1", 20), (w["raw"].id, w["raw"].id, "HM-B2B-1", 24)]
+    sheet = _ok(w["owner"].get(f"/api/production/{b2.production_history_id}"))
+    row = next(i for i in sheet["ingredients"] if i["recipe_item_id"] == w["raw"].id)
+    assert row["substituted"] is True and row["gross"] == pytest.approx(44)
+    assert _stock(db, w["raw"]) == pytest.approx(471) and _stock(db, sib) == pytest.approx(30)
+    r = w["tech"].get(f"{API}/{oid}/technical-sheet")
+    assert r.status_code == 200, r.text
+    flat = "".join(" ".join(p.extract_text() or "" for p in PdfReader(BytesIO(r.content)).pages).split())
+    assert "(reçetede:SentetikBazYağ)" in flat and "KS-1" in flat
+
+
+def test_source_choice_off_batch_uses_recipe_card_only(world):
+    w = world
+    db = w["db"]
+    db.add(AppSetting(key="production.source_choice.enabled", value="0"))
+    db.commit()
+    sib, sib_lot, _ = _group_sibling(w)
+    oid = _approved_order(w)
+    _ok(_pay(w, oid, 50))
+    _ok(_prepare(w, oid))
+    _ok(_start(w, oid, w["cream"], 5))
+    b1 = db.query(B2BOrderBatch).one()
+    assert _stock(db, w["raw"]) == pytest.approx(445) and _stock(db, sib) == pytest.approx(80)
+    assert json.loads(b1.plan_snapshot)["sources"] == []
+    assert db.query(Transaction).filter_by(item_id=sib.id).count() == 0
+
+
+def test_source_choice_on_group_shortfall_stays_on_recipe_card(world):
+    """Grup sıkı lotlarla yetmezse kalan, süzgeçsiz stoğu onu karşılayan İLK
+    seçenekte kalır (lot_missing o kartı adıyla söyler); hiçbiri karşılamazsa
+    reçete kartında → insufficient_stock; hiçbir şey yazılmaz."""
+    w = world
+    db = w["db"]
+    sib, _, _ = _group_sibling(w)
+    oid = _approved_order(w)
+    _ok(_pay(w, oid, 50))
+    _ok(_prepare(w, oid))
+    raw = db.get(Item, w["raw"].id)
+    raw.current_stock = 100                       # kart stoğu 100, sıkı lot yalnız 40
+    db.get(Inventory, w["raw_lot"].id).quantity = 40
+    db.commit()
+    before = db.query(Transaction).count()
+    # 10 adet = 110 g: küçük satıcı 50 + reçete kartı 40 sıkı; kalan 20 g küçük
+    # satıcının QC bekleyen 30 g'ına (öneride önce o) → lot_missing onu söyler
+    body = _err(_start(w, oid, w["cream"], 10), 409, "lot_missing")
+    assert body["detail"].startswith("Sentetik Baz Yağ Küçük:")
+    # 9 adet = 99 g → 50 + 40 + 9 (QC bekleyen) → yine lot_missing
+    _err(_start(w, oid, w["cream"], 9), 409, "lot_missing")
+    raw = db.get(Item, w["raw"].id)
+    raw.current_stock = 30
+    db.get(Inventory, w["raw_lot"].id).quantity = 30
+    db.commit()
+    # 10 adet = 110 g → 50 + 30 sıkı, kalan 30 g = küçük satıcının QC bekleyen
+    # stoğu: asıl engel QC — eskiden reçete kartında yanıltıcı insufficient_stock
+    body = _err(_start(w, oid, w["cream"], 10), 409, "lot_missing")
+    assert [e["item_id"] for e in body["errors"]] == [sib.id]
+    assert "shortages_refreshed" not in body
+    # Kimse kalanı karşılamıyor (QC bekleyen 10 g) → reçete kartında insufficient_stock
+    db.get(Item, sib.id).current_stock = 60
+    db.query(Inventory).filter_by(lot_number="KS-QC").one().quantity = 10
+    db.commit()
+    body = _err(_start(w, oid, w["cream"], 10), 409, "insufficient_stock")
+    assert any(e.get("item_id") == w["raw"].id for e in body["errors"])
+    assert "Mevcut: 30" in body["detail"]
+    db.get(Item, sib.id).current_stock = 80
+    db.query(Inventory).filter_by(lot_number="KS-QC").one().quantity = 30
+    db.commit()
+    db.expire_all()
+    assert db.query(Transaction).count() == before and db.query(B2BOrderBatch).count() == 0
+    assert _stock(db, sib) == pytest.approx(80)
+    # 7 adet = 77 g → 50 + 27 sığar
+    _ok(_start(w, oid, w["cream"], 7))
+    assert _stock(db, sib) == pytest.approx(30) and _stock(db, w["raw"]) == pytest.approx(3)
+
+
+def test_source_choice_sibling_with_bad_lots_reports_lot_missing_on_sibling(world):
+    """Reçete kartı 60 g (sıkı lotlu); gruptaki kardeşin 100 g stoğu var ama
+    lotlarından biri SKT'si geçmiş, diğeri SKT'siz → sıkı havuzda yok.  10 adet
+    = 110 g: kalan 50 g reçete kartına yazılsaydı kapı "Mevcut: 60 g"
+    insufficient_stock verirdi (asıl engel kardeşin lotları; satın alma planı
+    da kardeşi saydığı için alınacak bir şey bulmazdı).  Şimdi kalan kardeşte
+    kalır → lot_missing kardeşi adıyla söyler; lotlar düzelince parti başlar."""
+    from database import MaterialGroup
+    w = world
+    db = w["db"]
+    grp = MaterialGroup(name="Sentetik baz yağ grubu", domain="cosmetics")
+    db.add(grp)
+    db.flush()
+    raw = db.get(Item, w["raw"].id)
+    raw.material_group_id = grp.id
+    raw.current_stock = 60
+    db.get(Inventory, w["raw_lot"].id).quantity = 60
+    sib = Item(name="Sentetik Baz Yağ Eski Parti", sku="B2B-RAW-OLD", unit="g", category="Hammadde",
+               current_stock=30, domain="cosmetics", material_group_id=grp.id)
+    db.add(sib)
+    db.flush()
+    expired = Inventory(item_id=sib.id, lot_number="ESK-1", quantity=60, expiry_date=PAST,
+                        status="APPROVED", qc_required=False, is_sample=False, domain="cosmetics")
+    no_skt = Inventory(item_id=sib.id, lot_number="ESK-2", quantity=40, expiry_date=None,
+                       status="APPROVED", qc_required=False, is_sample=False, domain="cosmetics")
+    db.add_all([expired, no_skt])
+    db.commit()
+    oid = _approved_order(w)
+    _ok(_pay(w, oid, 50))
+    _ok(_prepare(w, oid))
+    before = db.query(Transaction).count()
+
+    # Kardeşin kart stoğu 30 g < kalan 50 g → kimse karşılamıyor: eski davranış
+    body = _err(_start(w, oid, w["cream"], 10), 409, "insufficient_stock")
+    assert [e["item_id"] for e in body["errors"]] == [w["raw"].id] and "Mevcut: 60" in body["detail"]
+
+    # Kardeşin stoğu 100 g → kalan 50 g kardeşte; kapı geçer, sıkı lot yok → lot_missing
+    db.get(Item, sib.id).current_stock = 100
+    db.commit()
+    body = _err(_start(w, oid, w["cream"], 10), 409, "lot_missing")
+    assert body["detail"].startswith("Sentetik Baz Yağ Eski Parti:") and "SKT" in body["detail"]
+    assert [e["item_id"] for e in body["errors"]] == [sib.id]
+    assert "shortages_refreshed" not in body
+    db.expire_all()
+    assert db.query(Transaction).count() == before and db.query(B2BOrderBatch).count() == 0
+    assert _stock(db, sib) == pytest.approx(100) and _stock(db, w["raw"]) == pytest.approx(60)
+
+    # Lab SKT'leri düzeltir → aynı parti başlar: reçete kartı 60 + kardeş 50 (FIFO)
+    for lot in (expired, no_skt):
+        db.get(Inventory, lot.id).expiry_date = FUTURE
+    db.commit()
+    _ok(_start(w, oid, w["cream"], 10))
+    assert _stock(db, w["raw"]) == pytest.approx(0) and _stock(db, sib) == pytest.approx(50)
+    b = db.query(B2BOrderBatch).one()
+    assert json.loads(b.plan_snapshot)["sources"][0]["sources"] == [
+        {"item_id": w["raw"].id, "name": "Sentetik Baz Yağ", "quantity": 60.0},
+        {"item_id": sib.id, "name": "Sentetik Baz Yağ Eski Parti", "quantity": 50.0}]
