@@ -1885,6 +1885,200 @@ class ShopifyOrder(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+# ─── Trendyol pazaryeri — YALNIZ OKUMA senkronu (core/trendyol.py) ──────────
+# Tek satıcı hesabı (tüm markalar).  Tablolar create_all ile gelir (migration
+# c3e5a7b9d1f2 kayıt için).  Cross-cutting: domain kolonu YOK — bir sipariş
+# iki panelin ürününü içerebilir, kargo/ücret panele bölünemez; panel süzgeci
+# eşleşen kartın domain'inden türetilir.  KVKK: müşteri adı/adresi/telefonu/
+# vergi no SAKLANMAZ (parser alan beyaz listesi, ham JSON yok).  Satırlarda
+# item_id YOK — barkod → kart eşlemesi her istekte çözülür (~100 bitmiş ürün;
+# eşleme bayatlamaz).  Trendyol'a hiçbir şey yazılmaz; IMS stoğu ve defter
+# (Transaction) bu tablolardan ETKİLENMEZ.
+
+class TrendyolPackage(Base):
+    """Trendyol sipariş paketi (shipmentPackageId).  Sipariş bölünürse aynı
+    orderNumber birden çok paket olur; bölünen paketin aslı `UnPacked` kalır
+    ve hiçbir toplama girmez.  Güncelleme yalnız gelen lastModified ≥ kayıtlı
+    olan ise yazılır (eski veri yeniyi ezmesin)."""
+    __tablename__ = "trendyol_packages"
+
+    id               = Column(Integer, primary_key=True)
+    package_id       = Column(BigInteger, nullable=False, unique=True)
+    order_number     = Column(String(40), nullable=False, index=True)
+    status           = Column(String(30), nullable=True, index=True)
+    order_date       = Column(DateTime, nullable=True, index=True)       # UTC
+    last_modified_at = Column(DateTime, nullable=True)                   # UTC
+    last_modified_ms = Column(BigInteger, nullable=True)                 # ham değer (karşılaştırma)
+    gross_amount     = Column(Float, nullable=True)                      # packageGrossAmount
+    seller_discount  = Column(Float, nullable=True)                      # packageSellerDiscount
+    ty_discount      = Column(Float, nullable=True)                      # packageTyDiscount
+    total_price      = Column(Float, nullable=True)                      # packageTotalPrice (net)
+    currency         = Column(String(8), nullable=True)
+    cargo_provider   = Column(String(80), nullable=True)
+    cargo_tracking   = Column(String(64), nullable=True, index=True)
+    origin_package_ids = Column(String(255), nullable=True)              # bölünmeden gelen paketler
+    cancelled_by     = Column(String(40), nullable=True)
+    cancel_reason    = Column(String(255), nullable=True)
+    first_seen_at    = Column(DateTime, default=datetime.utcnow)
+    synced_at        = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    lines = relationship("TrendyolLine", back_populates="package", order_by="TrendyolLine.id",
+                         cascade="all, delete-orphan", passive_deletes=True)
+
+
+class TrendyolLine(Base):
+    """Paket satırı.  Trendyol satır tutarlarını BİRİM verir (lineGrossAmount,
+    lineUnitPrice); `*_total` alanları adet × birim — discountDetails varsa
+    birim kayıtlarının toplamı.  `commission_rate` bir ORANDIR (%), tutar
+    değil; kesin komisyon hakediş satırlarından (trendyol_fin_rows) gelir."""
+    __tablename__ = "trendyol_lines"
+    __table_args__ = (UniqueConstraint("package_row_id", "line_id", name="uq_trendyol_lines_pkg_line"),)
+
+    id                    = Column(Integer, primary_key=True)
+    package_row_id        = Column(Integer, ForeignKey("trendyol_packages.id", ondelete="CASCADE"),
+                                   nullable=False, index=True)
+    line_id               = Column(BigInteger, nullable=False)
+    barcode               = Column(String(64), nullable=True, index=True)
+    stock_code            = Column(String(100), nullable=True)
+    product_name          = Column(String(300), nullable=True)
+    content_id            = Column(BigInteger, nullable=True)
+    quantity              = Column(Integer, nullable=False, default=1)
+    unit_gross            = Column(Float, nullable=True)     # birim brüt (indirimsiz)
+    unit_price            = Column(Float, nullable=True)     # birim net (müşterinin ödediği)
+    gross_total           = Column(Float, nullable=True)
+    seller_discount_total = Column(Float, nullable=True)
+    ty_discount_total     = Column(Float, nullable=True)
+    net_total             = Column(Float, nullable=True)
+    vat_rate              = Column(Float, nullable=True)
+    commission_rate       = Column(Float, nullable=True)
+    line_status           = Column(String(30), nullable=True)
+    currency              = Column(String(8), nullable=True)
+
+    package = relationship("TrendyolPackage", back_populates="lines")
+
+
+class TrendyolFinRow(Base):
+    """Cari hesap ekstresi satırı — `source`: settlement (satış/iade/indirim/
+    komisyon…) | other (kargo faturası, platform hizmet bedeli, stopaj,
+    ödeme…).  `type_param` bizim İSTEDİĞİMİZ enum (Sale, DeductionInvoices…);
+    Trendyol yanıttaki `transactionType`'ı Türkçe ETİKET olarak döner
+    (`type_label`), kova eşlemesi enum'dan yapılır.  `sub_type`
+    PlatformServiceFee etiketi.  Kargo faturası satırının `row_id`'si fatura
+    seri numarasıdır; kalemleri çekilince `detail_fetched_at` damgalanır."""
+    __tablename__ = "trendyol_fin_rows"
+    __table_args__ = (UniqueConstraint("source", "row_id", name="uq_trendyol_fin_rows_source_row"),)
+
+    id                = Column(Integer, primary_key=True)
+    source            = Column(String(12), nullable=False)            # settlement | other
+    row_id            = Column(String(64), nullable=False)
+    type_param        = Column(String(40), nullable=False, index=True)
+    sub_type          = Column(String(40), nullable=True)
+    type_label        = Column(String(80), nullable=True)
+    description       = Column(String(255), nullable=True)
+    transaction_date  = Column(DateTime, nullable=True, index=True)   # UTC
+    order_number      = Column(String(40), nullable=True, index=True)
+    package_id        = Column(BigInteger, nullable=True, index=True)
+    barcode           = Column(String(64), nullable=True)
+    debt              = Column(Float, nullable=True)
+    credit            = Column(Float, nullable=True)
+    commission_rate   = Column(Float, nullable=True)
+    commission_amount = Column(Float, nullable=True)
+    seller_revenue    = Column(Float, nullable=True)
+    receipt_id        = Column(BigInteger, nullable=True)
+    payment_order_id  = Column(BigInteger, nullable=True, index=True)
+    payment_date      = Column(DateTime, nullable=True)
+    order_date        = Column(DateTime, nullable=True)
+    commission_invoice_serial = Column(String(64), nullable=True)
+    detail_fetched_at = Column(DateTime, nullable=True)
+    synced_at         = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TrendyolCargoItem(Base):
+    """Kargo faturası kalemi (cargo-invoice/{seri}/items).  Fatura başına
+    toptan yenilenir.  Paket kimliği yok — sipariş no + parcelUniqueId (kargo
+    takip no olabilir) ile siparişe bağlanır."""
+    __tablename__ = "trendyol_cargo_items"
+    __table_args__ = (UniqueConstraint("invoice_serial", "seq", name="uq_trendyol_cargo_items_serial_seq"),)
+
+    id               = Column(Integer, primary_key=True)
+    invoice_serial   = Column(String(64), nullable=False, index=True)
+    seq              = Column(Integer, nullable=False)
+    parcel_unique_id = Column(String(40), nullable=True, index=True)
+    order_number     = Column(String(40), nullable=True, index=True)
+    kind             = Column(String(60), nullable=True)               # "Gönderi Kargo Bedeli" / "İade Kargo Bedeli"
+    is_return        = Column(Boolean, nullable=False, default=False)
+    amount           = Column(Float, nullable=True)
+    desi             = Column(Float, nullable=True)
+    synced_at        = Column(DateTime, default=datetime.utcnow)
+
+
+class TrendyolProduct(Base):
+    """Trendyol kataloğundaki onaylı ürün varyantı (barkod başına tek satır).
+    Başlık/marka/KDV/durum `products/approved`'dan, stok ve fiyat
+    `products/approved/inventory-and-price`'tan gelir.  Satır silinmez; son
+    senkronda görülmeyen `last_seen_at` ile ayırt edilir."""
+    __tablename__ = "trendyol_products"
+
+    id              = Column(Integer, primary_key=True)
+    barcode         = Column(String(64), nullable=False, unique=True)
+    content_id      = Column(BigInteger, nullable=True)
+    product_main_id = Column(String(100), nullable=True)
+    stock_code      = Column(String(100), nullable=True)
+    title           = Column(String(300), nullable=True)
+    brand           = Column(String(100), nullable=True)
+    category        = Column(String(150), nullable=True)
+    sale_price      = Column(Float, nullable=True)
+    list_price      = Column(Float, nullable=True)
+    quantity        = Column(Integer, nullable=True)                   # Trendyol'daki satılabilir stok
+    vat_rate        = Column(Float, nullable=True)
+    on_sale         = Column(Boolean, nullable=True)
+    archived        = Column(Boolean, nullable=True)
+    locked          = Column(Boolean, nullable=True)
+    blacklisted     = Column(Boolean, nullable=True)
+    product_url     = Column(String(500), nullable=True)
+    first_seen_at   = Column(DateTime, default=datetime.utcnow)
+    last_seen_at    = Column(DateTime, nullable=True, index=True)
+    synced_at       = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TrendyolBarcodeMap(Base):
+    """Elle barkod eşlemesi — otomatik eşleşmenin ÖNÜNE geçer.  Bir barkoda
+    birden çok satır = set ürün (bileşen kart × adet).  Yalnız aktif "Bitmiş
+    Ürün" kartına eşlenebilir; kart sonradan pasifleşirse eşleme "geçersiz"
+    görünür, kendiliğinden başka karta kaymaz."""
+    __tablename__ = "trendyol_barcode_map"
+    __table_args__ = (UniqueConstraint("barcode", "item_id", name="uq_trendyol_barcode_map_bc_item"),)
+
+    id         = Column(Integer, primary_key=True)
+    barcode    = Column(String(64), nullable=False, index=True)
+    item_id    = Column(Integer, ForeignKey("items.id", ondelete="CASCADE"), nullable=False, index=True)
+    qty        = Column(Float, nullable=False, default=1.0)
+    note       = Column(String(255), nullable=True)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TrendyolSyncState(Base):
+    """Akış başına senkron durumu (orders / finance / catalog) —
+    CrmIntegrationState kalıbı.  `watermark`: orders için tamamen taranmış
+    lastModified sınırı (UTC).  `consecutive_failures` + `last_notified_at`
+    bildirim politikasını taşır; başarıda sıfırlanır.  `meta` JSON: son
+    çalıştırmanın sayaçları, desteklenmeyen türler, kargo faturası hataları."""
+    __tablename__ = "trendyol_sync_state"
+
+    id                   = Column(Integer, primary_key=True)
+    stream               = Column(String(20), nullable=False, unique=True)
+    watermark            = Column(DateTime, nullable=True)
+    last_run_at          = Column(DateTime, nullable=True)
+    last_ok_at           = Column(DateTime, nullable=True)
+    last_status          = Column(String(255), nullable=True)
+    last_error           = Column(String(500), nullable=True)
+    consecutive_failures = Column(Integer, nullable=False, default=0)
+    last_notified_at     = Column(DateTime, nullable=True)
+    meta                 = Column(Text, nullable=True)
+    updated_at           = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 # ─── Ürün yorumları (Shopify mağaza vitrini) — sesli not destekli ───────────
 # Cross-cutting (CRM/Drive/PDKS gibi): IMS domain kolonuyla İLGİSİZ — bu,
 # Shopify ürünlerine (ims Item değil) bağlı bir mağaza-vitrini özelliği.
@@ -3294,6 +3488,70 @@ def _backfill_perm_assistant():
         db.close()
 
 
+def _backfill_perm_trendyol():
+    """Override'lı kullanıcılara yeni `trendyol.*` — rol varsayılanı, KOŞULLU.
+
+    `_backfill_perm_assistant` kalıbı.  Trendyol sayfası ciro ve (profit ile)
+    maliyet/kâr gösterdiği için kapı finanstır: override'ında `finance.view`
+    AÇIK olana rol varsayılanı (Manager'da üçü de True) yazılır, olmayana
+    açıkça False — kimse sessizce ciro/kâr görmeye başlamaz; gerekirse yetki
+    matrisinden verilir.  Var olan anahtara dokunulmaz; SuperAdmin atlanır;
+    kullanıcı başına `permissions.backfill` audit'i.  BİR KEZ (sentinel)."""
+    import json as _json
+    from core.permissions import _DEFAULT_PERMISSIONS, PERMISSION_CATEGORIES
+
+    SENTINEL = "backfill.perm.trendyol.v1"
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter(AppSetting.key == SENTINEL).first():
+            return
+        n = 0
+        for u in (db.query(User)
+                  .filter(User.permissions.isnot(None), User.role != "SuperAdmin")
+                  .order_by(User.id).all()):
+            try:
+                perms = _json.loads(u.permissions)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(perms, dict):
+                continue
+            cat = perms.get("trendyol")
+            if not isinstance(cat, dict):
+                cat = {}
+            role_def = ((_DEFAULT_PERMISSIONS.get(u.role) or _DEFAULT_PERMISSIONS["Staff"])
+                        .get("trendyol") or {})
+            fin = perms.get("finance")
+            ok = bool(isinstance(fin, dict) and fin.get("view", False))
+            added, gated = {}, {}
+            for act in PERMISSION_CATEGORIES["trendyol"]:
+                if act in cat:
+                    continue
+                default = bool(role_def.get(act, False))
+                if default and not ok:
+                    gated[f"trendyol.{act}"] = "finance.view"
+                cat[act] = added[act] = default and ok
+            if not added:
+                continue
+            perms["trendyol"] = cat
+            u.permissions = _json.dumps(perms, ensure_ascii=False)
+            db.add(AdminAuditLog(
+                actor_name="sistem", action="permissions.backfill",
+                target_type="user", target_id=u.id, target_name=u.username,
+                details=_json.dumps({"keys": {f"trendyol.{k}": v for k, v in added.items()},
+                                     "gated": gated, "role": u.role, "sentinel": SENTINEL},
+                                    ensure_ascii=False)))
+            n += 1
+        db.add(AppSetting(key=SENTINEL, value=str(n)))
+        db.commit()
+        if n:
+            print(f"[init_db] trendyol.* yetki backfill: {n} özel yetkili kullanıcı")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 # Proforma şablonunda (templates/quotations.html) sabit duran üç hesap — B2B
 # sipariş proforması bunları kayıtlı profillerden okur.  Bir kez tohumlanır;
 # sonrası yönetim ekranından düzenlenir.
@@ -3725,6 +3983,14 @@ def init_db():
     # False) — sentinel'li, bir kez.  Tablolar yukarıdaki create_all'dan gelir.
     try:
         _backfill_perm_assistant()
+    except Exception:
+        pass
+
+    # Trendyol modülü: yeni `trendyol.*` — override'lı kullanıcılara rol
+    # varsayılanı yalnız override'da finance.view varsa (ciro/kâr finans
+    # verisidir) — sentinel'li, bir kez.  trendyol_* tabloları create_all'dan.
+    try:
+        _backfill_perm_trendyol()
     except Exception:
         pass
 

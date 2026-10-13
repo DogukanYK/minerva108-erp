@@ -12,7 +12,7 @@
  * Bump CACHE_NAME any time you ship a breaking static-asset change so users
  * pick it up on next reload instead of being stuck on stale CSS/JS.
  */
-const CACHE_NAME = 'minerva108-v40';     // Minerva Asistan: search_help aracı (assistant.js?v=3)
+const CACHE_NAME = 'minerva108-v41';     // Trendyol sayfası (trendyol.js?v=1) + nav linki
 
 const PRECACHE = [
   '/static/dark.css',

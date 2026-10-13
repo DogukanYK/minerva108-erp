@@ -292,6 +292,9 @@ def startup_event():
     # Her açılışı sistem olay defterine yaz — aylık raporun restart/downtime
     # bölümü bu kayıtlardan üretilir.  log_system_event asla exception atmaz.
     log_system_event("app_start", "uygulama başlatıldı")
+    # Trendyol senkronlarının kapanış bayrağı — önceki kapanıştan kalmasın.
+    from core import trendyol as _T
+    _T.reset_stop()
     # Test ortamında DISABLE_SCHEDULER=true → APScheduler atla.
     # Lifespan async cleanup'ı TestClient teardown'unda event loop
     # kapanırken hata atıyordu; testler için bu güvenli kapı.
@@ -303,6 +306,13 @@ def startup_event():
 def shutdown_event():
     if os.getenv("DISABLE_SCHEDULER", "false").lower() not in ("1", "true", "yes"):
         stop_scheduler()
+    # Süren Trendyol senkronu (elle ya da zamanlayıcı) bir istek/bekleme içinde
+    # dursun — yeniden başlatma uzun bir geçmiş çekimini beklemesin.
+    try:
+        from core import trendyol as _T
+        _T.request_stop()
+    except Exception:
+        pass
 
 
 # ─── Mount domain routers ───────────────────────────────────────────────────
@@ -361,6 +371,10 @@ app.include_router(suppliers_router.prefs_router)
 # edilir — api_main anahtarsız/SDK'sız ortamda da aynı hızda açılır.
 from routers import assistant as assistant_router   # noqa: E402
 app.include_router(assistant_router.router)
+# Trendyol pazaryeri — /api/trendyol/* (trendyol.*; cross-cutting, Faz 1 YALNIZ
+# OKUMA senkron + eşleştirme/stok — core/trendyol.py).
+from routers import trendyol as trendyol_router   # noqa: E402
+app.include_router(trendyol_router.router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────
@@ -785,6 +799,24 @@ def shopify_sync_page(request: Request, db: Session = Depends(get_db)):
     if not _user_can(user, "admin", "view"):
         return RedirectResponse(url="/", status_code=302)
     return templates.TemplateResponse("shopify_sync.html", _page_ctx(request, payload, user))
+
+
+@app.get("/trendyol", response_class=HTMLResponse)
+def trendyol_page(request: Request, db: Session = Depends(get_db)):
+    """Trendyol — siparişler, eşleştirme & stok, bağlantı durumu (trendyol.view).
+    Cross-cutting: panel cookie'si yok sayılır.  API: routers/trendyol.py."""
+    payload = _get_user_context(request)
+    if not payload:
+        return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not user or user.role == "Distributor" or not _user_can(user, "trendyol", "view"):
+        return RedirectResponse(url="/", status_code=302)
+    from core import trendyol as _T
+    ctx = _page_ctx(request, payload, user)
+    ctx["ty_cfg"] = {"can_profit": _T.can_profit(user),
+                     "can_manage": _user_can(user, "trendyol", "manage"),
+                     "is_superadmin": user.role == "SuperAdmin"}
+    return templates.TemplateResponse("trendyol.html", ctx)
 
 
 @app.get("/receiving", response_class=HTMLResponse)

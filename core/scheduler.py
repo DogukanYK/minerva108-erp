@@ -248,6 +248,49 @@ def parasut_invoice_retry() -> None:
         db.close()
 
 
+def _trendyol_job(kind: str) -> None:
+    """Trendyol akışı (YALNIZ OKUMA).  Yapılandırma yoksa ya da UI'dan otomatik
+    senkron kapatılmışsa sessizce atlar.  Elle senkron/backfill çalışıyorsa
+    süreç içi kilit yüzünden bu tur atlanır (bir sonraki tetikte devam).
+    Hata bildirim politikası core.trendyol.alerts_due'da."""
+    from core import trendyol as T
+    if not T.is_configured():
+        return
+    db = SessionLocal()
+    try:
+        if not T.get_enabled(db):
+            return
+        res = T.run(kind, db=db, trigger="scheduler")
+        if res.get("skipped"):
+            logger.info("trendyol_%s_sync atlandı: başka bir senkron çalışıyor", kind)
+            return
+        logger.info("trendyol_%s_sync tamam: %s", kind,
+                    {s: r.get("ok") for s, r in (res.get("results") or {}).items()})
+        from core.notifications import notify_trendyol_sync_failure
+        for stream, detail in T.alerts_due(db, res.get("results") or {}):
+            notify_trendyol_sync_failure(stream, detail)
+    except Exception:
+        logger.exception("trendyol_%s_sync failed", kind)   # scheduler'ı asla düşürme
+    finally:
+        db.close()
+
+
+def trendyol_orders_sync() -> None:
+    """30 dk'da bir: lastModified penceresiyle artımlı sipariş senkronu."""
+    _trendyol_job("orders")
+
+
+def trendyol_catalog_sync() -> None:
+    """Saatte bir: onaylı ürünler + Trendyol stok/fiyat."""
+    _trendyol_job("catalog")
+
+
+def trendyol_finance_sync() -> None:
+    """Günde bir (02:23 UTC = 05:23 TR): son 45 günün hakediş + diğer finans
+    kayıtları (veri gecikmeli gelir) + yeni kargo faturası kalemleri."""
+    _trendyol_job("finance")
+
+
 def kommo_nightly_full_sync() -> None:
     """
     Gecelik job (03:00): Kommo yapılandırılmışsa TAM içe aktarma çalıştırır —
@@ -380,6 +423,21 @@ def start_scheduler() -> None:
             )
     except Exception:
         logger.exception("parasut retry job kaydı atlandı")
+
+    # Trendyol (YALNIZ OKUMA) — env yoksa iş yok.  Dakikalar mevcut */5, */10,
+    # */15 işleriyle çakışmasın diye kaydırıldı; finans gece (UTC 02:23).
+    try:
+        from core import trendyol as _T
+        if _T.is_configured():
+            for fn, trigger, job_id in (
+                (trendyol_orders_sync, CronTrigger(minute="7,37"), "trendyol_orders_sync"),
+                (trendyol_catalog_sync, CronTrigger(minute=52), "trendyol_catalog_sync"),
+                (trendyol_finance_sync, CronTrigger(hour=2, minute=23), "trendyol_finance_sync"),
+            ):
+                scheduler.add_job(fn, trigger, id=job_id, replace_existing=True,
+                                  max_instances=1, coalesce=True)
+    except Exception:
+        logger.exception("trendyol sync job kaydı atlandı")
 
     scheduler.add_job(
         monthly_stock_snapshot,

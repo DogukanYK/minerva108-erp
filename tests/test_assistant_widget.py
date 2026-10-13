@@ -34,7 +34,7 @@ WIDGET_RE = re.compile(r'<script src="/static/assistant\.js(\?v=\d+)?" defer></s
 PORTAL = "distributor_portal.html"
 PUBLIC_TEMPLATES = ["login.html", "share.html", "yorum.html", "basvuru.html",
                     "basvuru_claim.html", "pdks_qr.html", "pdks_qr_yazdir.html", PORTAL]
-EXPECTED_INTERNAL = 28
+EXPECTED_INTERNAL = 29
 
 
 def _templates_with_idle():

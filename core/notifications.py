@@ -272,6 +272,20 @@ def notify_shopify_sync_failure(store: str, detail: str) -> None:
     })
 
 
+def notify_trendyol_sync_failure(stream: str, detail: str) -> None:
+    """Trendyol senkron hatası → yöneticilere (SuperAdmin+Manager).  Eşik ve
+    24 saatlik tekrar sınırı çağıran tarafta (core.trendyol.alerts_due)."""
+    _emit("error", "TRENDYOL-SYNC",
+          f"Trendyol senkron hatası: {stream} — {detail}", stream=stream)
+    _send_push("managers", {
+        "title": "⚠️ Trendyol Senkron Hatası",
+        "body":  f"{stream}: {detail}"[:240],
+        "tag":   f"trendyol-sync-{stream}",       # akış başına tek bildirim
+        "url":   "/trendyol",
+        "requireInteraction": True,
+    })
+
+
 def notify_export_order_manual(order_no: str, country: str) -> None:
     """Yurt dışı (ihracat) Shopify siparişi — otomatik fatura kesilmez, MANUEL."""
     _emit("warning", "SHOPIFY-EXPORT",

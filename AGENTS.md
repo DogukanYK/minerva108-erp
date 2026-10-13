@@ -297,6 +297,20 @@ audit; numune/fason lotu 400; stok ve defter DEĞİŞMEZ). SKT ayrıştırıcı 
 aynısını kullanır (rapordaki karar = havuzdaki karar). Sayfa `tr-datetime.js` yükler
 (tarih girişi gg.aa.yyyy). Testler `tests/test_expiry_report.py`.
 
+**Trendyol pazaryeri — Faz 1, YALNIZ OKUMA** (`/trendyol`; `core/trendyol.py`,
+`routers/trendyol.py`, `templates/trendyol.html` + `static/trendyol.js`, 13.10.2026).
+Tek satıcı hesabından siparişler (`orders/stream`), cari hesap ekstresi
+(`settlements` + `otherfinancials`, tür başına ayrı istek — yanıt türü Türkçe etiket
+döner), kargo faturası kalemleri ve onaylı katalog (`products/approved` + stok/fiyat
+için `inventory-and-price`) çekilir; Trendyol'a hiçbir şey yazılmaz (`Api`'nin tek HTTP
+metodu `get`), IMS stoğu/defteri değişmez. Env: `TRENDYOL_SELLER_ID` /
+`TRENDYOL_API_KEY` / `TRENDYOL_API_SECRET` (çağrı anında; DB'ye/loga yazılmaz).
+Cross-cutting (domain kolonu yok, panel süzgeci eşleşen kartın domain'inden). Barkod
+eşleşmesi: elle eşleme (set = çok satır) → aktif bitmiş üründe tek barkod → ≥2 kart
+"belirsiz" (tahmin yok). Kâr/maliyet alanları yalnız `trendyol.profit` + finans rolü +
+`finance.view`. Müşteri kişisel verisi saklanmaz. Ayrıntı ve tuzaklar: CLAUDE.md
+"Trendyol". Testler `tests/test_trendyol_{client,sync,api}.py`.
+
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +
 low-stock alerts + CRM task reminders), `scheduler.py` (APScheduler — daily 08:00 CRM

@@ -812,6 +812,113 @@ seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `lo
   Deploy öncesi canlı `.env`'e `ANTHROPIC_API_KEY` eklenir (sohbete yapıştırılmaz);
   tablolar `init_db()` ile gelir, alembic için `stamp head`.
 
+**Trendyol pazaryeri — Faz 1, YALNIZ OKUMA** (`/trendyol`; `core/trendyol.py`,
+`routers/trendyol.py`, `templates/trendyol.html` + `static/trendyol.js`, 13.10.2026).
+TPro360 gibi SaaS yerine kendi mağazamızın verisi: tek satıcı hesabından siparişler,
+cari hesap ekstresi (hakediş + diğer finans), kargo faturası kalemleri ve onaylı katalog
+(stok + fiyat) çekilir.  **Trendyol'a hiçbir şey yazılmaz** — `Api` sınıfının tek HTTP
+metodu `get` (`test_api_is_read_only_by_construction` kilitler); IMS `current_stock` ve
+`Transaction` defteri bu modülden ETKİLENMEZ.  Rakip/pazar verisi (scraping) kapsam dışı.
+Kâr motoru (`core/trendyol_profit.py`, Özet/Ürün Kârlılığı sekmeleri) Teslimat B'dir.
+
+- **Yapılandırma** env'den çağrı anında: `TRENDYOL_SELLER_ID` (yalnız rakam),
+  `TRENDYOL_API_KEY`, `TRENDYOL_API_SECRET`; isteğe bağlı `TRENDYOL_BASE_URL` (https,
+  varsayılan `https://apigw.trendyol.com/integration`) ve `TRENDYOL_STOREFRONT_CODE`.
+  Değerler satıcı panelinde yalnız ana kullanıcıya açık (Hesap Bilgilerim → Entegrasyon
+  Bilgileri); DB'ye yazılmaz, loglanmaz, hata metnine girmez, UI yalnız eksik ADLARI
+  gösterir.  Basic auth + `User-Agent: "{satıcı id} - SelfIntegration"` (yoksa 403).
+  Canlıda IP izni gerekmez; stage ortamı (IP izinli, ayrı anahtar) KULLANILMAZ.
+  systemd `.env`'i yalnız restart'ta okur ve işler açılışta kaydedilir → anahtar
+  eklendikten sonra restart (deploy) şart.
+- **Uçlar (13.10.2026):** eski `/orders` ve Product V1 **15.10.2026'da kapanıyor** —
+  yalnız `orders/stream`, `finance/che/.../settlements|otherfinancials|cargo-invoice`,
+  `products/approved` + `products/approved/inventory-and-price` kullanılır.
+  **TUZAK — `products/approved` stok ve komisyon VERMEZ**; stok/fiyat ayrı
+  `inventory-and-price` ucundan sayfalı çekilip barkodla birleştirilir.
+  **TUZAK — hakediş yanıtındaki `transactionType` Türkçe ETİKETTİR** ("Satış", "İade"):
+  her tür AYRI istenir, `type_param` = istenen enum, kova eşlemesi enum'dan.
+  **TUZAK — sipariş satırı tutarları BİRİMDİR** (`lineGrossAmount`, `lineUnitPrice`);
+  toplamlar `discountDetails`'ten (birim başına kayıt), yoksa birim × adet.
+  `commission` satırda ORANDIR, tutar değil (kesin tutar hakediş satırında).
+- **Senkron** (`run(kind)` — orders | finance | catalog | all; süreç içi
+  `threading.Lock`, elle/backfill/zamanlayıcı aynı kilitten geçer, dolu ise
+  `{"skipped": "running"}` / uçta 409).  Siparişler: lastModified penceresi ≤13 gün,
+  ilk çalıştırma 89 gün geriye (stream verisi ~3 ay), sonra watermark − 6 sa örtüşme;
+  `lookback_days` başlangıcı yalnız DAHA GERİYE çeker — watermark'ın gerisindeki
+  taranmamış boşluğun üstünden atlatmaz; her sayfadan sonra commit, watermark yalnız
+  TAMAMLANAN pencereyle ve yalnız ileri (restart kaldığı yerden sürer, backfill geri
+  sarmaz); aynı imleç tekrar ederse durur; eski `lastModified` yeniyi ezmez; satırlar
+  yerinde güncellenir.  **Yanıt doğrulaması:** 3xx (yönlendirme izlenmez) ve `content`
+  alanı olmayan gövde HATADIR — "boş sayfa" sayılsaydı pencere tamamlanmış sayılıp
+  paketler sessizce kaçardı (yalnız 204/boş gövde boş sayfadır).  Finans: tür × 14
+  günlük pencere, EN YENİDEN eskiye; en yeni pencerede 400 = tür kabul edilmedi
+  (`rejected`), eski pencerede 400 = geçmiş sınırı; hiçbir tür kabul edilmezse akış
+  HATA.  Kapsam: ilk çalıştırma 90 gün, sonrası **son BAŞARIDAN bu yana gün + 45**
+  (uzun kesinti/duraklatma sonrası boşluk kalmaz; açıkça istenen gün bunun altına
+  inemez), en fazla 365.  Aynı id iki türün sorgusundan gelirse ilk kayıt OLDUĞU GİBİ
+  kalır (`conflict` sayacı).  `DeductionInvoices` bir kez de
+  `transactionSubType=PlatformServiceFee` ile çekilip `sub_type` etiketlenir (sonraki
+  genel çekim silmez).  Etiketi "Kargo Fatura(sı)" olan satırın id'si fatura serisidir;
+  kalemleri bir kez çekilir (`detail_fetched_at`); hata FATURA BAŞINA yalıtılır —
+  400/404/422 damgalanıp atlanır, geçici hata (5xx/429/ağ) yalnız o faturayı sonraki
+  çalıştırmaya bırakır, kimlik hatası akışı durdurur.  Katalog: görülmeyen ürün
+  silinmez (`last_seen_at` eski kalır, görünümde adedi karşılaştırılmaz); stok
+  yanıtında olmayan varyantın adedi `None` yazılır (bayat stok yanlış "fazla stok"
+  uyarısı üretmesin).  Bölünen paketin aslı (`UnPacked`) liste/toplam/sayımlara
+  girmez (yalnız durum süzgecinde ayrıca seçilirse görünür).
+- **Kapanış — TUZAK.**  Elle senkron/geçmiş çekme istekten BAĞIMSIZ daemon iş
+  parçacığında (`start_in_background`), **FastAPI BackgroundTasks DEĞİL**: uvicorn
+  kapanışta süren arka plan görevini süresiz bekler, 365 günlük bir geçmiş çekimi
+  deploy'u systemd'nin 90 sn'lik SIGKILL'ine kadar ERP kesintisine çevirirdi.
+  `api_main` shutdown'ı `request_stop()` çağırır: süren iş (zamanlayıcınınki dahil)
+  bir istek ya da bekleme içinde `TrendyolStopped` ile durur — bu HATA SAYILMAZ
+  (ardışık hata sayacı ve bildirim yok), watermark sayesinde sonraki çalıştırma
+  kaldığı yerden sürer; startup `reset_stop()` ile bayrağı temizler.  Testlerde her
+  TestClient kapanışı bayrağı açar → Trendyol test modülleri
+  `trendyol_stop_reset` (autouse, `tests/trendyol_fakes.py`) import eder.
+- **Zaman:** Trendyol epoch ms ("GMT+3" notlu) → tek dönüşüm `ty_ts`/`to_ty_ms`;
+  `TS_TR_WALLCLOCK` (varsayılan False = standart epoch) ilk gerçek siparişin saati
+  panelle karşılaştırılarak kalibre edilir (`/probe`).
+- **Tablolar** `trendyol_packages`/`_lines`/`_fin_rows`/`_cargo_items`/`_products`/
+  `_barcode_map`/`_sync_state` — create_all (migration `c3e5a7b9d1f2` kayıt için).
+  **KVKK:** parser alan beyaz listesiyle çalışır; müşteri adı/adresi/telefonu/e-postası/
+  vergi no ve ham JSON SAKLANMAZ (`test_parse_package_whitelists_and_totals`).
+- **Cross-cutting — domain kuralının BİLİNÇLİ istisnası.**  Tek satıcı hesabı iki
+  panelin ürününü birlikte satar, kargo/ücret panele bölünemez: tablolarda `domain`
+  yok, `active_domain` cookie'si yok sayılır; "Panel" süzgeci eşleşen kartın
+  domain'inden türetilir (Kozmetik / Food Supplement / Karma / Eşleşmemiş).
+- **Eşleştirme** (`Resolver`, satırlarda `item_id` YOK — her istekte çözülür):
+  elle eşleme (`trendyol_barcode_map`; çok satır = set ürün, bileşen × adet) →
+  aktif "Bitmiş Ürün" kartlarında (iki panel) TEK birebir barkod → ≥2 kart =
+  "Belirsiz" (asla tahmin yok, Shopify ile aynı) → yoksa "Eşleşmedi"
+  (`data/barcode_aliases.json` eski barkodu ise yalnız ÖNERİ).  Elle eşlenen kart
+  pasifleşirse "Eşleme geçersiz".  Set stoğu = min ⌊stok / adet⌋.  Eşleme yalnız aktif
+  bitmiş ürüne; audit `trendyol.mapping` / `trendyol.mapping_delete`.
+- **RBAC** kategori `trendyol` (`view` / `profit` / `manage`; Manager üçü, diğer roller
+  hiçbiri; Distributor `require_internal_user` ile 403).  **Kâr/maliyet alanları**
+  (satır komisyon oranı, kart maliyeti, finans/kargo satırları, kalibrasyon) yalnız
+  `core.trendyol.can_profit` = `trendyol.profit` + rol ∈ `_FINANCE_ROLES` +
+  `finance.view` (asistan kuralı) — koşul yoksa alan yanıtta HİÇ yoktur.  Override'lı
+  kullanıcılara `_backfill_perm_trendyol` (sentinel `backfill.perm.trendyol.v1`) rol
+  varsayılanını yalnız override'da `finance.view` varsa yazar.  `/probe` (maskeli ham
+  örnek) yalnız SuperAdmin.
+- **Zamanlayıcı** (yalnız env tanımlıysa kaydolur; UI'daki "Otomatik senkron"
+  AppSetting `trendyol.enabled` deploysuz durdurur): `trendyol_orders_sync` dakika
+  7,37 · `trendyol_catalog_sync` dakika 52 · `trendyol_finance_sync` 02:23 UTC (05:23 TR).
+  Bildirim (`alerts_due` → `notify_trendyol_sync_failure`, yöneticilere): kimlik hatası
+  ilk seferde, orders/catalog üst üste 3 hatada, finans ilk hatada; en sık 24 sa'te bir;
+  başarı sayacı sessizce sıfırlar.
+- **Nav** `scripts/add_trendyol_nav.py` (idempotent, Satın Alma linkinin altı,
+  `trendyol.view` kapılı; CRM atlanır).  Testler `tests/test_trendyol_{client,sync,api}.py`
+  (`tests/trendyol_fakes.py` — sahte API, AĞ YOK).
+- **Yayına alma:** anahtarlar prod `.env`'e (sohbete yapıştırılmaz) → `./deploy.sh` →
+  `alembic stamp head` → ilk çalıştırmalar 89 gün sipariş + 90 gün finansı kendiliğinden
+  çeker; durum Bağlantı sekmesinde.  Kalibrasyon (Teslimat B'den önce): `/test`,
+  `/probe` ile alan adları + zaman damgası, kapanmış bir ayın Kalibrasyon toplamlarını
+  panelden indirilen Cari Hesap Ekstresi ile tür tür karşılaştır, kargo faturası
+  "oran"ı (fatura/kalemler) ile KDV durumunu teyit et, KDV varsayımlarını muhasebeciyle
+  doğrula.
+
 **Middleware stack** (api_main.py): `SecurityHeadersMiddleware` (CSP + headers),
 `CSRFMiddleware` (Origin/Referer check on mutating verbs; exempts `/api/login`,
 `/api/logout`), `SlowAPIMiddleware` (rate limiting). Auth is JWT in an HttpOnly +

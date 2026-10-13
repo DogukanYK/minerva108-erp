@@ -32,6 +32,7 @@ PAGES = [
     "/ledger",
     "/reports",
     "/satin-alma",
+    "/trendyol",
     "/traceability",
     "/quotations",
     "/admin",

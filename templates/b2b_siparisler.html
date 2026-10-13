@@ -155,6 +155,7 @@
       {% if can('b2b','view') %}<a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklif</a>{% endif %}
       <a href="/b2b-siparisler" class="nav-link-item active" aria-current="page"><i class="bi bi-clipboard2-check nav-icon"></i>B2B Siparişleri</a>
       {% if can('reports','view') %}<a href="/satin-alma" class="nav-link-item"><i class="bi bi-cart-check nav-icon"></i>Satın Alma</a>{% endif %}
+      {% if can('trendyol','view') %}<a href="/trendyol" class="nav-link-item"><i class="bi bi-shop-window nav-icon"></i>Trendyol</a>{% endif %}
       {% if can('inventory','view') %}<a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>{% endif %}
     </nav>
     <div class="sidebar-footer"><button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir"><i class="bi bi-moon-stars-fill"></i><i class="bi bi-sun-fill"></i></button><p class="sidebar-footer-text">Minerva 108 · 2026</p></div>

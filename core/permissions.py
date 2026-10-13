@@ -141,6 +141,12 @@ PERMISSION_CATEGORIES = {
     # (items.view, inventory.view, …) yeniden denetler; bayi (Distributor)
     # ve yalnız pdks.kiosk taşıyan kiosk tableti kapalıdır.
     "assistant":     ["use"],
+    # Trendyol pazaryeri (core/trendyol.py) — Faz 1 YALNIZ OKUMA, cross-cutting.
+    # view = siparişler + eşleştirme/stok karşılaştırması (ciro dahil),
+    # profit = komisyon/kargo/ücret/maliyet/kâr alanları (ayrıca finans rolü
+    # + finance.view şart — core.trendyol.can_profit), manage = senkron
+    # tetikleme, geçmişi çekme, elle barkod eşleme, otomatik senkron anahtarı.
+    "trendyol":      ["view", "profit", "manage"],
 }
 
 # Default permission set per role — used when a user's `permissions` JSON is null.
@@ -172,6 +178,7 @@ _DEFAULT_PERMISSIONS = {
         # Gerekirse yetki matrisinden kişiye açılır.
         "suppliers":     {"status": True,  "prices": True,  "merge": False},
         "assistant":     {"use": True},
+        "trendyol":      {"view": True, "profit": True, "manage": True},
     },
     "LabLead": {
         "items":      {"view": True,  "create": True,  "edit": True,  "delete": True,  "import": True},
@@ -192,6 +199,7 @@ _DEFAULT_PERMISSIONS = {
         "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
         "suppliers":     {"status": True,  "prices": True,  "merge": True},
         "assistant":     {"use": True},
+        "trendyol":      {"view": False, "profit": False, "manage": False},
     },
     "LabTech": {
         "items":      {"view": True,  "create": True,  "edit": False, "delete": False, "import": False},
@@ -212,6 +220,7 @@ _DEFAULT_PERMISSIONS = {
         "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
         "suppliers":     {"status": False, "prices": False, "merge": False},
         "assistant":     {"use": True},
+        "trendyol":      {"view": False, "profit": False, "manage": False},
     },
     "Staff": {
         # Read-only baseline
@@ -233,6 +242,7 @@ _DEFAULT_PERMISSIONS = {
         "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
         "suppliers":     {"status": False, "prices": False, "merge": False},
         "assistant":     {"use": True},
+        "trendyol":      {"view": False, "profit": False, "manage": False},
     },
     "Distributor": {
         # Dışa dönük distribütör — YALNIZ sipariş portalı, ERP'ye hiçbir erişim yok.
@@ -256,6 +266,7 @@ _DEFAULT_PERMISSIONS = {
         "influencer":    {"view": False, "edit": False, "approve": False, "ship": False, "links": False, "payout": False, "settings": False},
         "suppliers":     {"status": False, "prices": False, "merge": False},
         "assistant":     {"use": False},
+        "trendyol":      {"view": False, "profit": False, "manage": False},
     },
 }
 

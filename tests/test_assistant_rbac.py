@@ -209,5 +209,9 @@ def test_alembic_migration_chains_to_single_head():
     script = ScriptDirectory.from_config(Config(os.path.join(root, "alembic.ini")))
     rev = script.get_revision(REVISION)
     assert rev.down_revision == PARENT
-    assert script.get_heads() == [REVISION], "yeni migration mevcut head'e zincirlenmeli (çoklu head yok)"
+    # Sonradan eklenen migration'lar (ör. Trendyol c3e5a7b9d1f2) bunun üstüne
+    # zincirlenir: şart TEK head olması ve bu revizyonun o zincirde kalması.
+    heads = script.get_heads()
+    assert len(heads) == 1, "çoklu head yok — yeni migration mevcut head'e zincirlenmeli"
+    assert REVISION in {r.revision for r in script.walk_revisions("base", heads[0])}
     assert "deploy.sh" in (rev.longdoc or "") and "alembic" in (rev.longdoc or "")   # docstring notu
