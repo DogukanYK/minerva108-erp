@@ -848,8 +848,9 @@ eklerken güvenlik başlıklarını oraya da yazdığını `curl -sI` ile DOĞRU
 
 **Minerva Asistan** (`core/assistant/`, `routers/assistant.py`, `static/assistant.js`,
 `docs/assistant/*.md`, `templates/admin.html` kartı) — IMS içi, **yalnız okuma** yapan
-Claude tabanlı soru-cevap + nasıl-yapılır asistanı (sağ alttaki düğme; 28 iç sayfa,
-public/kiosk/portal yollarında yok). SDK `anthropic==0.125.0` (son Py3.9 uyumlu
+Claude tabanlı soru-cevap + nasıl-yapılır asistanı (üst çubukta "Ara ya da sor" kutusu +
+yan cevap paneli, sol menüde "Yapay Zekâ" bölümü, `/asistan` sayfası; 29 iç sayfa +
+`asistan.html`, public/kiosk/portal yollarında yok). SDK `anthropic==0.125.0` (son Py3.9 uyumlu
 seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `low`.
 
 - **Mimari.** `settings.py` (AppSetting `assistant.*`, `Settings` frozen dataclass) ·
@@ -898,6 +899,37 @@ seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `lo
   eklerken `tests/test_assistant_ops_tools.py::SECRETS` kalıbıyla "iletişim sızmaz"
   testini yaz; B2B/fason araç testleri `tests/test_assistant_ops_{b2b,outsourcing}.py`
   (o modüllerin `world` fikstürünü içe aktarır — aynı ad, ayrı dosya).
+- **Arayüz (13.10.2026 yeniden tasarım — kullanıcı: "AI slop gibi duruyor").** Sağ alttaki
+  yuvarlak düğme + lacivert balonlu panel KALKTI. `static/assistant.js` (`?v=4`) üç parça:
+  (1) `.topnav-title` yanına "Ara ya da Minerva'ya sor" kutusu (ARIA combobox; Ctrl/⌘K —
+  `/crm`'de Ctrl+K CRM aramasına ait, orada yalnız "/"; mobilde büyüteç → tam ekran katman).
+  Yazdıkça `GET /api/assistant/search` (`core/assistant/search.py`, kullanıcı başı 120/dk):
+  **YAPAY ZEKÂ ÇAĞRISI YOK** — `find_item`/`find_recipe`/`find_supplier` `run_tool` ile (izin +
+  panel aynen) + lot no araması (`inventory.view`) + `PAGES` sayfa listesi; asistan kapalıyken
+  de çalışır. `PAGES` izinleri `api_main` sayfa route'larının `_user_can` kapısıyla BİREBİR
+  (`test_page_registry_matches_page_route_guards` AST ile karşılaştırır — yeni sayfa route'u =
+  `PAGES`'e satır). Soru gibi metinde (soru eki / "?" / 4+ kelime) Enter sorar, Ctrl+Enter her
+  zaman. (2) Yan cevap paneli (navbar altından, 480 px; mobilde tam ekran + `aria-modal` + odak
+  tuzağı): belge gibi cevap, tek etkinlik satırı, "Kaynak:" bağlantıları, Kopyala, "Asistanda
+  aç" → `/asistan?c=<id>`; panel kapalıyken üst çubuktan gelen soru YENİ sohbet açar (kısa
+  geçmiş = ucuz), panelin kendi kutusu takip sorusudur. (3) `window.M108AI` — `/asistan`
+  sayfasının (`templates/asistan.html` + `static/asistan-page.js`; route `assistant.use`,
+  sekmeler `/asistan`, `/asistan/belge`, `/asistan/yaz`) paylaştığı çekirdek (`createThread`:
+  akış + markdown; ikinci kopya YOK); o sayfada üst çubuk soruları panel yerine sayfa akışına
+  gider (`setAskHandler`). Son kullanıcıya dolar gösterilmez (sınıra yaklaşınca kibar uyarı;
+  aylık rakam yalnız `can_see_usage`). Sol menü bölümü `scripts/add_ai_nav.py` (idempotent):
+  "Sistem" başlığının üstüne, başlık bir yetki bloğundaysa (`{% if can('admin'…) %}`) o
+  bloğun ÜSTÜNE — yoksa yalnız yöneticiler görürdü (17 şablonda öyleydi);
+  `test_ai_nav_section_in_every_internal_template_outside_other_guards` kilitler. Derin
+  bağlantılar: `/items?q=&id=` (kartın sekmesine geçer + satırı vurgular — barkod taramayla
+  ortak `jumpToItem`), `/suppliers?q=`, `/recipes?q=`, `/traceability?lot=&item_id=`.
+  **TUZAK — dark.css `div/span/p/li/strong` rengini `inherit`e zorlar (özgüllük 0,2,1)**:
+  widget'ta renk taşıyan öğe ya div/span DIŞI etiket (section/aside/header/a/button/label/
+  h2/kbd/time) ya da `m108-ai-c-*` yardımcı sınıfı (koyu temada `:root[data-theme]` önekli
+  kopyası var); ham `<input>`'a `type` VERİLMEZ (dark.css `input[type=…]` !important kuralı)
+  ve kenarlık kutudan gelir (`bareField` satır içi !important). **TUZAK — undo-watch.js
+  düğmesi** satır içi `right:1.25rem; z-index:9999`: panel açıkken gönder düğmesini örtüyordu
+  → `body.m108-ai-sheet-on #undoFloatBtn` ile sola kaydırılır (mobilde gizlenir).
 - **Rehber `search_help` aracında, önekte DEĞİL.** 13.10.2026 `count_tokens` ölçümü:
   önek 19.661 token (SSS bloğu 14.196, araçlar 3.533, kurallar 1.924; Türkçe ≈1,8
   karakter/token), soğuk 1h yazma ≈0,16 $ → konu metinleri araca taşındı, önek ≈7K
@@ -944,7 +976,7 @@ seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `lo
   TTL'i gözden geçir. Beklenen: ay ≈ 30 $ (günde ~30 soru).
 - **Test.** SDK tamamen sahte (`tests/assistant_fakes.py`, ağ YOK, gerçek anahtar
   gerekmez); `tests/test_assistant_{tools,runner,api,budget_history,rbac,widget}.py` +
-  `tests/test_assistant_ops_{tools,b2b,outsourcing}.py`.
+  `tests/test_assistant_ops_{tools,b2b,outsourcing}.py` + `tests/test_assistant_search.py`.
   Deploy öncesi canlı `.env`'e `ANTHROPIC_API_KEY` eklenir (sohbete yapıştırılmaz);
   tablolar `init_db()` ile gelir, alembic için `stamp head`.
 

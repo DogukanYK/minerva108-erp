@@ -223,7 +223,8 @@ def test_stream_sequence_real_tool_and_persistence(client, db_session, monkeypat
     assert conv.turns == 2 and len(_rows(db, conv.id)) == 8
     assert client.get(CONVS).json()[0] == {"id": conv.id, "title": "Jojoba kaç kg?", "turns": 2,
                                            "model": "claude-opus-5-5",
-                                           "updated_at": client.get(CONVS).json()[0]["updated_at"]}
+                                           "updated_at": client.get(CONVS).json()[0]["updated_at"],
+                                           "updated_date": client.get(CONVS).json()[0]["updated_date"]}
     detail = client.get(f"{CONVS}/{conv.id}").json()
     assert [(m["role"], m["text"]) for m in detail["messages"]] == [
         ("user", "Jojoba kaç kg?"), ("assistant", ""), ("assistant", "Jojoba yağı 12,5 kg."),

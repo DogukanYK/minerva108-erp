@@ -819,6 +819,28 @@ def trendyol_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse("trendyol.html", ctx)
 
 
+ASISTAN_TABS = {"": "soru", "belge": "belge", "yaz": "yaz"}
+
+
+@app.get("/asistan", response_class=HTMLResponse)
+@app.get("/asistan/{tab}", response_class=HTMLResponse)
+def asistan_page(request: Request, tab: str = "", db: Session = Depends(get_db)):
+    """Minerva Asistan çalışma alanı — Soru · Belge Oku · Metin Yaz sekmeleri
+    (assistant.use).  Sayfa yalnız iskelet: geçmiş/akış `static/asistan-page.js`
+    + `static/assistant.js` çekirdeğiyle, API `routers/assistant.py`."""
+    payload = _get_user_context(request)
+    if not payload:
+        return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not user or user.role == "Distributor" or not _user_can(user, "assistant", "use"):
+        return RedirectResponse(url="/", status_code=302)
+    if tab not in ASISTAN_TABS:
+        return RedirectResponse(url="/asistan", status_code=302)
+    ctx = _page_ctx(request, payload, user)
+    ctx["ai_tab"] = ASISTAN_TABS[tab]
+    return templates.TemplateResponse("asistan.html", ctx)
+
+
 @app.get("/receiving", response_class=HTMLResponse)
 def receiving_page(request: Request, db: Session = Depends(get_db)):
     payload = _get_user_context(request)

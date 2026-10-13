@@ -9,7 +9,8 @@ Minerva Asistan router'ı — `/api/assistant/*` (çekirdek: `core/assistant/`).
 
 Uçlar (hepsi `require_internal_user`; sohbet/bootstrap ayrıca `assistant.use`):
   POST   /chat                 NDJSON akışı (aşağıda) — kullanıcı bazlı 20/dk
-  GET    /conversations        son 20 sohbetim
+  GET    /search?q=            üst çubuk araması — YAPAY ZEKÂ ÇAĞRISI YOK (core/assistant/search.py)
+  GET    /conversations        son sohbetlerim (`limit` 1–100, varsayılan 20)
   GET    /conversations/{id}   sohbet + widget mesajları (yalnız sahibi; 404)
   DELETE /conversations/{id}   sert silme (yalnız sahibi; 204 / 404)
   GET    /bootstrap            widget açılış bilgisi (enabled/sebep, model, günlük kalan…)
@@ -96,6 +97,7 @@ STREAM_HEADERS = {"X-Accel-Buffering": "no", "Cache-Control": "no-cache, no-stor
 QUESTIONS_LIST_MAX = 50
 TOP_TOOLS_MAX = 10
 CONVERSATIONS_MAX = 20
+CONVERSATIONS_PAGE_MAX = 100     # /asistan sayfasının geçmiş listesi
 
 _END = object()                 # kuyruk sonu nöbetçisi
 _BACKGROUND = set()             # bitmemiş görevlere güçlü referans (GC önlemi)
@@ -415,11 +417,29 @@ async def chat(
                              media_type="application/x-ndjson", headers=dict(STREAM_HEADERS))
 
 
+# ─── Üst çubuk araması (yapay zekâ çağrısı YOK) ──────────────────────────────
+
+@router.get("/search")
+@limiter.limit("120/minute", key_func=_user_key)
+def quick_search(request: Request, q: str = Query("", max_length=200),
+                 db: Session = Depends(get_db), current_user: dict = Depends(_USER),
+                 domain: str = Depends(active_domain)):
+    """Yazdıkça arama: ürün / lot / reçete / tedarikçi / sayfa.  Asistanın araç
+    işlevleri + izin + panel denetimi aynen (`core.assistant.search`); bütçe
+    harcamaz, `assistant_usage`'a yazmaz.  Asistan kapalıyken (bütçe / ayar)
+    de çalışır — yalnız "Minerva'ya sor" satırı istemcide kapanır."""
+    from core.assistant import search as quick
+    user = _load_user(db, current_user)
+    ctx = ToolContext.from_user(user, domain, db)
+    return quick.search(ctx, db, q)
+
+
 # ─── Sohbet listesi / detay / silme (yalnız sahibi) ──────────────────────────
 
 @router.get("/conversations")
-def list_conversations(db: Session = Depends(get_db), current_user: dict = Depends(_USER)):
-    return history.list_conversations(db, int(current_user["sub"]), CONVERSATIONS_MAX)
+def list_conversations(limit: int = Query(CONVERSATIONS_MAX, ge=1, le=CONVERSATIONS_PAGE_MAX),
+                       db: Session = Depends(get_db), current_user: dict = Depends(_USER)):
+    return history.list_conversations(db, int(current_user["sub"]), limit)
 
 
 @router.get("/conversations/{conv_id}")

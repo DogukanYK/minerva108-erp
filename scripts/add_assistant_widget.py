@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 
 TPL = Path(__file__).resolve().parent.parent / "templates"
-LINE = '<script src="/static/assistant.js?v=3" defer></script>'
+LINE = '<script src="/static/assistant.js?v=4" defer></script>'
 PAT = re.compile(r'^([ \t]*)<script src="/static/idle-watch\.js" defer></script>[ \t]*$', re.M)
 SKIP = {"distributor_portal.html"}
 

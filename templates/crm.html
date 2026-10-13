@@ -258,7 +258,7 @@
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/toast.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
-  <script src="/static/assistant.js?v=3" defer></script>
+  <script src="/static/assistant.js?v=4" defer></script>
   <script src="/static/push.js" defer></script>
 </head>
 <body>
@@ -275,6 +275,10 @@
       <button class="nav-link-item" data-tab="pipeline"><i class="bi bi-kanban nav-icon"></i>Pipeline</button>
       <button class="nav-link-item" data-tab="tasks"><i class="bi bi-check2-square nav-icon"></i>Görevler<span class="nav-badge" id="navTaskBadge" style="display:none;">0</span></button>
       <button class="nav-link-item" data-tab="reports"><i class="bi bi-graph-up-arrow nav-icon"></i>Raporlar</button>
+      {% if can('assistant','use') %}<div class="nav-section-label" style="margin-top:1rem;">Yapay Zekâ</div>
+      <a href="/asistan" class="nav-link-item"><i class="bi bi-chat-left-text nav-icon"></i>Asistan</a>
+      <a href="/asistan/belge" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>Belge Oku</a>
+      <a href="/asistan/yaz" class="nav-link-item"><i class="bi bi-pencil-square nav-icon"></i>Metin Yaz</a>{% endif %}
       {% if can('admin','view') %}
       <div class="nav-section-label" style="margin-top:0.8rem;">Sistem</div>
       <button class="nav-link-item" data-tab="integrations"><i class="bi bi-plug nav-icon"></i>Entegrasyonlar</button>

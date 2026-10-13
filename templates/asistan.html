@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minerva108 ERP — Minerva Asistan</title>
+  <script src="/static/theme.js"></script>
+  <script>
+    window.PERMS = {{ permissions | tojson }};
+    window.DOMAIN = {{ domain | tojson }};
+    window.can = function (category, action) { return !!(window.PERMS && window.PERMS[category] && window.PERMS[category][action]); };
+    window.AI_TAB = {{ ai_tab | tojson }};
+  </script>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <link rel="manifest" href="/static/manifest.json" />
+  <meta name="theme-color" content="#232E6E" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/dark.css" />
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <style>
+    :root { --navy:#232E6E; --navy-dark:#1A2456; --gold:#C9AC6F; --gold2:#D9BE85; --cream:#f5f0e8; --white:#fff; --sidebar-width:240px; --navbar-height:64px;
+            --aip-ink:#1f2937; --aip-muted:#6b7280; --aip-line:#e8e3d9; --aip-line2:#d8d0c0; --aip-soft:#faf8f3; --aip-head:#232E6E; --aip-hover:rgba(201,172,111,.14); }
+    :root[data-theme="dark"] { --aip-ink:#e2e5ec; --aip-muted:#9aa3ba; --aip-line:#2a3454; --aip-line2:#36426a; --aip-soft:#151b30; --aip-head:#e6cfa0; --aip-hover:rgba(217,190,133,.12); }
+    *, *::before, *::after { box-sizing:border-box; }
+    body { margin:0; font-family:'Jost',sans-serif; background:var(--cream); color:var(--aip-ink); }
+    .sidebar { position:fixed; inset:0 auto 0 0; width:var(--sidebar-width); background:var(--navy); display:flex; flex-direction:column; z-index:100; }
+    .sidebar-brand { padding:1.4rem 1.25rem; border-bottom:1px solid #ffffff14; text-align:center; }
+    .sidebar-brand-logo { width:168px; max-width:100%; }
+    .sidebar-nav { flex:1; padding:1.25rem .75rem; overflow-y:auto; }
+    .nav-section-label { font-size:0.65rem; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:rgba(255,255,255,0.3); padding:0.5rem 0.75rem 0.4rem; margin-top:0.5rem; }
+    .nav-link-item { display:flex; align-items:center; gap:.75rem; padding:.62rem .85rem; border-radius:8px; color:#ffffffa6; font-size:.88rem; text-decoration:none; margin-bottom:2px; }
+    .nav-link-item:hover { color:#fff; background:#ffffff12; }
+    .nav-link-item.active { color:var(--gold2); background:#b8965a2e; }
+    .nav-icon { width:18px; text-align:center; }
+    .sidebar-footer { padding:1rem 1.25rem; border-top:1px solid #ffffff14; display:flex; align-items:center; justify-content:space-between; }
+    .sidebar-footer-text { margin:0; color:#ffffff60; font-size:.7rem; }
+    .topnav { position:fixed; top:0; left:var(--sidebar-width); right:0; height:var(--navbar-height); background:var(--white); border-bottom:1px solid var(--aip-line); display:flex; align-items:center; justify-content:space-between; gap:.7rem; padding:0 1.75rem; z-index:90; }
+    .topnav-title { font-family:'Playfair Display',serif; font-size:1.15rem; font-weight:600; color:var(--aip-head); white-space:nowrap; }
+    .topnav-right { display:flex; align-items:center; gap:.6rem; }
+    .user-chip { display:flex; align-items:center; background:var(--cream); border-radius:20px; padding:.35rem .8rem; font-size:.82rem; color:var(--aip-ink); white-space:nowrap; }
+    .aip-topbtn { display:inline-flex; align-items:center; gap:.4rem; height:36px; padding:0 .8rem; border:1px solid var(--aip-line); border-radius:8px; background:var(--white); color:var(--aip-head); font:600 .8rem 'Jost',sans-serif; cursor:pointer; white-space:nowrap; }
+    .aip-topbtn:hover { border-color:var(--gold); }
+    .main-content { margin-left:var(--sidebar-width); padding-top:var(--navbar-height); min-height:100vh; }
+    .content-inner { padding:1.6rem 2rem 1.5rem; max-width:1440px; margin:0 auto; }
+
+    /* ── Sayfa başlığı + sekmeler ── */
+    .aip-head { display:flex; align-items:flex-end; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:.9rem; }
+    .aip-title { font-family:'Playfair Display',serif; font-weight:600; font-size:1.55rem; color:var(--aip-head); margin:0 0 .25rem; }
+    .aip-sub { margin:0; font-size:.88rem; color:var(--aip-muted); max-width:70ch; }
+    .aip-tabs { display:flex; gap:1.4rem; border-bottom:1px solid var(--aip-line); margin-bottom:1.1rem; overflow-x:auto; }
+    .aip-tab { display:inline-flex; align-items:center; gap:.45rem; padding:.55rem .1rem .6rem; margin-bottom:-1px; border-bottom:2px solid transparent; color:var(--aip-muted); font-size:.9rem; font-weight:500; text-decoration:none; white-space:nowrap; }
+    .aip-tab:hover { color:var(--aip-ink); }
+    .aip-tab[aria-current="page"] { color:var(--aip-head); border-bottom-color:var(--gold); font-weight:600; }
+    .aip-tab:focus-visible, .aip-new:focus-visible, .aip-hopen:focus-visible, .aip-hdel:focus-visible, .aip-histtoggle:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+
+    /* ── Soru sekmesi: geçmiş + akış ── */
+    .aip-ask { display:grid; grid-template-columns:280px minmax(0,1fr); gap:1rem; height:calc(100vh - var(--navbar-height) - 12rem); min-height:520px; }
+    .aip-history, .aip-main { background:var(--white); border:1px solid var(--aip-line); border-radius:12px; overflow:hidden; display:flex; flex-direction:column; min-height:0; color:var(--aip-ink); }
+    .aip-hhead { padding:.8rem .8rem .6rem; border-bottom:1px solid var(--aip-line); display:flex; flex-direction:column; gap:.55rem; }
+    .aip-new { display:flex; align-items:center; justify-content:center; gap:.45rem; height:38px; border:0; border-radius:9px; background:var(--navy); color:#fff; font:600 .84rem 'Jost',sans-serif; cursor:pointer; }
+    .aip-new:hover { background:var(--navy-dark); }
+    :root[data-theme="dark"] .aip-new { background:var(--gold); color:#131B40; }
+    .aip-hsearch { height:36px; padding:0 .7rem; border:1px solid var(--aip-line); border-radius:8px; background:var(--aip-soft); color:var(--aip-ink); font:400 .84rem 'Jost',sans-serif; }
+    .aip-hsearch:focus { outline:none; border-color:var(--gold); box-shadow:0 0 0 3px rgba(201,172,111,.25); }
+    .aip-hlist { flex:1; overflow-y:auto; padding:.3rem .45rem .8rem; }
+    .aip-hgroup { font-size:.66rem; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:var(--aip-muted); padding:.8rem .5rem .3rem; }
+    .aip-hitem { display:flex; align-items:center; gap:.2rem; border-radius:8px; position:relative; }
+    .aip-hitem:hover, .aip-hitem.is-active { background:var(--aip-hover); }
+    .aip-hitem.is-active::before { content:""; position:absolute; left:0; top:8px; bottom:8px; width:2px; border-radius:2px; background:var(--gold); }
+    .aip-hopen { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; padding:.5rem .55rem .5rem .7rem; border:0; background:transparent; color:var(--aip-ink); text-align:left; cursor:pointer; font-family:'Jost',sans-serif; }
+    .aip-htitle { font-size:.85rem; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .aip-hmeta { font-size:.72rem; color:var(--aip-muted); }
+    .aip-hdel { flex:none; width:30px; height:30px; display:flex; align-items:center; justify-content:center; border:0; border-radius:7px; background:transparent; color:var(--aip-muted); cursor:pointer; opacity:0; }
+    .aip-hitem:hover .aip-hdel, .aip-hdel:focus-visible { opacity:1; }
+    .aip-hdel:hover { color:#b91c1c; background:rgba(185,28,28,.08); }
+    .aip-hempty { padding:1.2rem .7rem; font-size:.82rem; color:var(--aip-muted); text-align:center; }
+    #aipThreadHost { flex:1; min-height:0; display:flex; flex-direction:column; }
+    .aip-mhead { display:none; align-items:center; justify-content:space-between; padding:.55rem .8rem; border-bottom:1px solid var(--aip-line); }
+    .aip-histtoggle { display:inline-flex; align-items:center; gap:.4rem; height:34px; padding:0 .7rem; border:1px solid var(--aip-line); border-radius:8px; background:var(--white); color:var(--aip-ink); font:500 .82rem 'Jost',sans-serif; cursor:pointer; }
+
+    /* ── Belge Oku / Metin Yaz ── */
+    .aip-pane { background:var(--white); border:1px solid var(--aip-line); border-radius:12px; padding:1.4rem 1.5rem; color:var(--aip-ink); }
+
+    #toast-container { position:fixed; bottom:1.5rem; right:1.5rem; z-index:9999; display:flex; flex-direction:column; gap:.6rem; }
+    .toast-msg { min-width:260px; max-width:360px; padding:.8rem 1rem; border-radius:10px; font-family:'Jost',sans-serif; font-size:.88rem; font-weight:500; box-shadow:0 4px 20px rgba(0,0,0,.12); display:flex; align-items:center; gap:.6rem; }
+    .toast-error   { background:#fff1f1; color:#b91c1c; border-left:4px solid #ef4444; }
+    .toast-success { background:#f0fdf4; color:#15803d; border-left:4px solid #22c55e; }
+    .toast-info    { background:#eff6ff; color:#1d4ed8; border-left:4px solid #3b82f6; }
+    [hidden] { display:none !important; }
+    @media (max-width:991px) {
+      .sidebar { transform:translateX(-100%); transition:transform .2s; z-index:200; } .sidebar.mobile-open { transform:translateX(0); }
+      .topnav { left:0; padding:0 .9rem; } .main-content { margin-left:0; } .content-inner { padding:1.1rem .9rem 1rem; }
+      .aip-ask { grid-template-columns:1fr; height:calc(100vh - var(--navbar-height) - 10.5rem); }
+      .aip-history { display:none; position:fixed; inset:var(--navbar-height) 0 0 0; z-index:1030; border-radius:0; border:0; }
+      .aip-ask.show-history .aip-history { display:flex; }
+      .aip-mhead { display:flex; }
+      .user-chip { display:none; }
+    }
+    @media (max-width:575px) { .aip-title { font-size:1.3rem; } .aip-sub { display:none; } .aip-tabs { gap:1rem; } }
+  </style>
+  <script src="/static/mobile.js" defer></script>
+  <script src="/static/toast.js" defer></script>
+  <script src="/static/fetch-guard.js" defer></script>
+  <script src="/static/idle-watch.js" defer></script>
+  <script src="/static/assistant.js?v=4" defer></script>
+  <script src="/static/asistan-page.js?v=1" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand"><img src="/static/images/logo_sidebar.png" alt="Minerva 108" class="sidebar-brand-logo" /></div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      {% if can('items','view') %}<a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>{% endif %}
+      {% if can('items','view') %}<a href="/suppliers" class="nav-link-item"><i class="bi bi-truck nav-icon"></i>Tedarikçiler</a>{% endif %}
+      {% if can('inventory','view') %}<a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>{% endif %}
+      {% if can('recipes','view') %}<a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>{% endif %}
+      {% if can('production','view') %}<a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>{% endif %}
+      {% if can('outsourcing','view') %}<a href="/outsourcing" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Fason Üretim</a>{% endif %}
+      {% if can('b2b_orders','view') %}<a href="/b2b-siparisler" class="nav-link-item"><i class="bi bi-clipboard2-check nav-icon"></i>B2B Siparişleri</a>{% endif %}
+      {% if can('qc','view') %}<a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>{% endif %}
+      {% if can('inventory','view') %}<a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>{% endif %}
+      {% if can('inventory','view') %}<a href="/delivery" class="nav-link-item"><i class="bi bi-box-arrow-up nav-icon"></i>Teslimat</a>{% endif %}
+      {% if can('inventory','view') %}<a href="/returns" class="nav-link-item"><i class="bi bi-arrow-return-left nav-icon"></i>İadeler</a>{% endif %}
+      {% if can('reports','view') %}<a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>{% endif %}
+      {% if can('inventory','view') %}<a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>{% endif %}
+      <a href="/drive" class="nav-link-item"><i class="bi bi-folder-fill nav-icon"></i>Dosya Paylaşım</a>
+      {% if can('assistant','use') %}<div class="nav-section-label" style="margin-top:1rem;">Yapay Zekâ</div>
+      <a href="/asistan" class="nav-link-item{% if ai_tab == 'soru' %} active{% endif %}"{% if ai_tab == 'soru' %} aria-current="page"{% endif %}><i class="bi bi-chat-left-text nav-icon"></i>Asistan</a>
+      <a href="/asistan/belge" class="nav-link-item{% if ai_tab == 'belge' %} active{% endif %}"{% if ai_tab == 'belge' %} aria-current="page"{% endif %}><i class="bi bi-file-earmark-text nav-icon"></i>Belge Oku</a>
+      <a href="/asistan/yaz" class="nav-link-item{% if ai_tab == 'yaz' %} active{% endif %}"{% if ai_tab == 'yaz' %} aria-current="page"{% endif %}><i class="bi bi-pencil-square nav-icon"></i>Metin Yaz</a>{% endif %}
+      <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>
+      {% if can('admin','view') %}<a href="/admin" class="nav-link-item"><i class="bi bi-shield-lock nav-icon"></i>Yönetim Paneli</a>{% endif %}
+      {% if role == 'SuperAdmin' %}<a href="/system" class="nav-link-item"><i class="bi bi-activity nav-icon"></i>Sistem Durumu</a>{% endif %}
+    </nav>
+    <div class="sidebar-footer"><button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir"><i class="bi bi-moon-stars-fill"></i><i class="bi bi-sun-fill"></i></button><p class="sidebar-footer-text">Minerva 108 · 2026</p></div>
+  </aside>
+
+  <header class="topnav">
+    <span class="topnav-title">Minerva Asistan</span>
+    <div class="topnav-right">
+      <button id="domainSwitchBtn" type="button" class="aip-topbtn" title="Panel değiştir (Kozmetik ↔ Food Supplement)"
+        onclick="fetch('/api/domain/switch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:(window.DOMAIN==='supplement'?'cosmetics':'supplement')})}).then(function(r){if(r.ok)location.reload();})">
+        <i class="bi bi-arrow-left-right"></i><span>{{ domain_label }}</span>
+      </button>
+      <div class="user-chip">{{ full_name }} · {{ role_label }}</div>
+      <button type="button" class="aip-topbtn" id="aipLogout"><i class="bi bi-box-arrow-right"></i><span>Çıkış</span></button>
+    </div>
+  </header>
+
+  <main class="main-content"><div class="content-inner">
+    <header class="aip-head">
+      <div>
+        <h1 class="aip-title">Minerva Asistan</h1>
+        <p class="aip-sub">Sistem kayıtlarına bakarak cevap verir, belge okur ve metin taslağı yazar. Hiçbir kaydı değiştirmez; kaydı siz yaparsınız.</p>
+      </div>
+    </header>
+    <nav class="aip-tabs" aria-label="Asistan bölümleri">
+      <a href="/asistan" class="aip-tab"{% if ai_tab == 'soru' %} aria-current="page"{% endif %}><i class="bi bi-chat-left-text"></i>Soru</a>
+      <a href="/asistan/belge" class="aip-tab"{% if ai_tab == 'belge' %} aria-current="page"{% endif %}><i class="bi bi-file-earmark-text"></i>Belge Oku</a>
+      <a href="/asistan/yaz" class="aip-tab"{% if ai_tab == 'yaz' %} aria-current="page"{% endif %}><i class="bi bi-pencil-square"></i>Metin Yaz</a>
+    </nav>
+
+    {% if ai_tab == 'soru' %}
+    <section class="aip-ask" id="aipAsk">
+      <aside class="aip-history" id="aipHistory" aria-label="Sohbet geçmişi">
+        <div class="aip-hhead">
+          <button type="button" class="aip-new" id="aipNew"><i class="bi bi-plus-lg"></i>Yeni soru</button>
+          <input class="aip-hsearch" id="aipHistQ" placeholder="Geçmişte ara" aria-label="Geçmişte ara" autocomplete="off" />
+        </div>
+        <div class="aip-hlist" id="aipHistList" role="list" aria-live="polite"><div class="aip-hempty">Yükleniyor…</div></div>
+      </aside>
+      <section class="aip-main" aria-label="Sohbet">
+        <div class="aip-mhead"><button type="button" class="aip-histtoggle" id="aipHistToggle" aria-controls="aipHistory" aria-expanded="false"><i class="bi bi-clock-history"></i>Geçmiş</button></div>
+        <div id="aipThreadHost"></div>
+      </section>
+    </section>
+    {% elif ai_tab == 'belge' %}
+    <section class="aip-pane" id="aipDocPane" aria-label="Belge Oku"></section>
+    {% else %}
+    <section class="aip-pane" id="aipWritePane" aria-label="Metin Yaz"></section>
+    {% endif %}
+  </div></main>
+  <div id="toast-container" aria-live="polite"></div>
+</body>
+</html>

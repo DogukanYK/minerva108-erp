@@ -320,7 +320,11 @@ hareketi, tüketim, ay sonu stoğu, üretim kapasitesi, şahit/numune analizi, T
 Shopify, creator, yorumlar). Veri sınırı (13.10.2026 kullanıcı kararı): kişisel iletişim
 verisi, PDKS ve CRM verisi modele GÖNDERİLMEZ — CRM/PDKS araçları kaldırıldı. Sistem
 istemi dondurulmuştur (önbellek; değişince sohbetler rotasyonla yenilenir). Ayrıntı ve
-tuzaklar: CLAUDE.md "Minerva Asistan". Testler `tests/test_assistant_*.py` (sahte SDK).
+tuzaklar: CLAUDE.md "Minerva Asistan". Arayüz (13.10.2026): sağ alttaki düğme yok — üst
+çubukta "Ara ya da sor" (`GET /api/assistant/search`, yapay zekâ çağrısı YOK; sayfa listesi
+`core/assistant/search.PAGES` route izinleriyle birebir), yan cevap paneli, sol menüde
+"Yapay Zekâ" bölümü (`scripts/add_ai_nav.py`) ve `/asistan` sayfası (`window.M108AI`
+çekirdeğini paylaşır). Testler `tests/test_assistant_*.py` (sahte SDK).
 
 **`core/`** — cross-cutting helpers: `auth.py` (JWT + `require_role`),
 `permissions.py` (RBAC), `audit.py` (`admin_audit_log`), `notifications.py` (web push +

@@ -38,6 +38,9 @@ PAGES = [
     "/admin",
     "/system",
     "/influencer",
+    "/asistan",
+    "/asistan/belge",
+    "/asistan/yaz",
 ]
 
 

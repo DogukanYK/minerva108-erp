@@ -9,5 +9,6 @@ Sayfa: sol menü
 5. Dashboard: "Kritik Stok Uyarıları", "Son İşlemler", "Son Üretim Faaliyetleri" ve "Benden bekleyen işler" (B2B sipariş adımları + fason onayları).
 6. Panel: ürün verisi aktif panele göre süzülür; kayıt görünmüyorsa üst çubuktaki "Panel değiştir" düğmesiyle diğer panele geç. PDKS, Dosya Paylaşım, CRM panelden bağımsızdır.
 7. Yönetim: kullanıcılar, roller ve yetki matrisi "Yönetim Paneli"nde (admin.*); "Sistem Durumu" yalnız SuperAdmin.
+8. Hızlı arama: üst çubuktaki "Ara ya da Minerva'ya sor" kutusu (Ctrl+K ya da "/"; CRM sayfasında yalnız "/") yazdıkça ürün, lot, reçete, tedarikçi ve sayfa bulur; satıra tıklamak sayfayı o kayıtla açar (Ürünler'de kart kendi sekmesinde vurgulanır, İzlenebilirlik'te lot izi açılır). Soru gibi görünen metinde Enter Minerva'ya sorar (Ctrl+Enter her zaman sorar); cevap aynı sayfada sağdaki panelde gelir, "Asistanda aç" tam sayfaya taşır.
 
 Dikkat: Menüde görünmeyen sayfa = o yetki yok; yöneticiye başvur. Sayfa adresleri giriş bölümündeki listede.

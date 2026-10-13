@@ -836,7 +836,7 @@
   <script src="/static/undo-watch.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
-  <script src="/static/assistant.js?v=3" defer></script>
+  <script src="/static/assistant.js?v=4" defer></script>
   <script src="/static/lot-move.js?v=1" defer></script>
 </head>
 <body>
@@ -899,6 +899,10 @@
         <i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler
       </a>
       {% endif %}
+      {% if can('assistant','use') %}<div class="nav-section-label" style="margin-top:1rem;">Yapay Zekâ</div>
+      <a href="/asistan" class="nav-link-item"><i class="bi bi-chat-left-text nav-icon"></i>Asistan</a>
+      <a href="/asistan/belge" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>Belge Oku</a>
+      <a href="/asistan/yaz" class="nav-link-item"><i class="bi bi-pencil-square nav-icon"></i>Metin Yaz</a>{% endif %}
     </nav>
     <div class="sidebar-footer">
       <div class="sidebar-footer-row">
@@ -3226,40 +3230,61 @@
         }
 
         const item = matches[0];
-
-        // 1) Eşleşen ürünün kendi tab'ına atla — Bitmiş Ürün'deki bir ürünü
-        //    Hammadde tab'ında ararsak boş tablo görünür. Tab click handler
-        //    activeTab'ı set eder ve searchInput'u sıfırlar.
-        const tab = item.category === 'Ambalaj'    ? 'ambalaj'
-                 : item.category === 'Bitmiş Ürün' ? 'bitmis_urun'
-                 : 'hammadde';
-        if (activeTab !== tab) {
-          document.querySelector(`.tab-btn[data-tab="${tab}"]`)?.click();
-        }
-
-        // 2) Tab atlamadan SONRA search'i set et + filtrele
-        document.getElementById('searchInput').value = scanned;
-        applyFiltersAndSort();
-
-        // 3) Variation ise parent'ı accordion'da aç + satıra scroll + 1.8s gold highlight
-        setTimeout(() => {
-          if (item.parent_id) {
-            const parentRow = document.querySelector(`tr.row-parent[data-id="${item.parent_id}"]`);
-            if (parentRow && parentRow.dataset.expanded !== 'true') {
-              parentRow.click();   // attachAccordionHandlers handler'ını tetikler
-            }
-          }
-          const row = document.querySelector(`tr[data-id="${item.id}"]`);
-          if (row) {
-            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            row.style.transition = 'background-color 0.4s';
-            row.style.backgroundColor = 'rgba(184,150,90,0.25)';
-            setTimeout(() => { row.style.backgroundColor = ''; }, 1800);
-          }
-          showToast(`Eşleşme: ${item.name}`, 'success');
-        }, 80);
+        jumpToItem(item, scanned, () => showToast(`Eşleşme: ${item.name}`, 'success'));
       });
     });
+
+    /* Ürünü kendi sekmesinde göster — barkod tarama ve ?q=&id= derin bağlantısı
+       (üst çubuk araması, asistan cevaplarındaki [Ürünler](/items?q=…)) ortak.
+       1) Eşleşen ürünün kendi tab'ına atla — Bitmiş Ürün'deki bir ürünü
+          Hammadde tab'ında ararsak boş tablo görünür.  Tab click handler
+          activeTab'ı set eder ve searchInput'u sıfırlar.
+       2) Tab atlamadan SONRA search'i set et + filtrele.
+       3) Variation ise parent'ı accordion'da aç + satıra scroll + 1.8s gold highlight. */
+    function jumpToItem(item, query, onShown) {
+      const tab = item.category === 'Ambalaj'    ? 'ambalaj'
+               : item.category === 'Bitmiş Ürün' ? 'bitmis_urun'
+               : 'hammadde';
+      if (activeTab !== tab) {
+        document.querySelector(`.tab-btn[data-tab="${tab}"]`)?.click();
+      }
+      document.getElementById('searchInput').value = query;
+      applyFiltersAndSort();
+      setTimeout(() => {
+        if (item.parent_id) {
+          const parentRow = document.querySelector(`tr.row-parent[data-id="${item.parent_id}"]`);
+          if (parentRow && parentRow.dataset.expanded !== 'true') {
+            parentRow.click();   // attachAccordionHandlers handler'ını tetikler
+          }
+        }
+        const row = document.querySelector(`tr[data-id="${item.id}"]`);
+        if (row) {
+          row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          row.style.transition = 'background-color 0.4s';
+          row.style.backgroundColor = 'rgba(184,150,90,0.25)';
+          setTimeout(() => { row.style.backgroundColor = ''; }, 1800);
+        }
+        if (onShown) onShown();
+      }, 80);
+    }
+
+    /* Derin bağlantı: /items?q=AD[&id=ID] — id varsa o kart, yoksa adı birebir
+       (Türkçe katlamalı) eşleşen, o da yoksa adında/TR adında geçen ilk kart. */
+    function applyDeepLink() {
+      try {
+        const p = new URLSearchParams(location.search);
+        const q = (p.get('q') || '').trim();
+        const id = parseInt(p.get('id') || '', 10);
+        if (!q && !(id > 0)) return;
+        const fold = s => (window.trFold ? window.trFold(String(s || '')) : String(s || '').toLowerCase());
+        const fq = fold(q);
+        const item = (id > 0 && allItems.find(i => i.id === id))
+          || (fq && allItems.find(i => fold(i.name) === fq))
+          || (fq && allItems.find(i => fold(i.name).includes(fq) || fold(i.name_tr).includes(fq) || fold(i.sku) === fq));
+        if (item) jumpToItem(item, q || item.name);
+        else { document.getElementById('searchInput').value = q; applyFiltersAndSort(); }
+      } catch (e) { /* derin bağlantı sayfayı bozmasın */ }
+    }
 
     document.getElementById('scanItemModalBtn')?.addEventListener('click', () => {
       if (typeof openBarcodeScanner !== 'function') {
@@ -4432,7 +4457,7 @@
       });
     })();
 
-    loadItems().then(mgSugLoad);     // öneri sayısı liste geldikten sonra (ağır uç)
+    loadItems().then(applyDeepLink).then(mgSugLoad);     // öneri sayısı liste geldikten sonra (ağır uç)
     loadDupDecisions(true);
   </script>
 

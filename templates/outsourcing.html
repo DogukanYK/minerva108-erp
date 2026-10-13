@@ -128,7 +128,7 @@
   <script src="/static/toast.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
-  <script src="/static/assistant.js?v=3" defer></script>
+  <script src="/static/assistant.js?v=4" defer></script>
   <script src="/static/outsourcing.js?v=2" defer></script>
 </head>
 <body>
@@ -148,6 +148,10 @@
       {% if can('reports','view') %}<a href="/satin-alma" class="nav-link-item"><i class="bi bi-cart-check nav-icon"></i>Satın Alma</a>{% endif %}
       {% if can('trendyol','view') %}<a href="/trendyol" class="nav-link-item"><i class="bi bi-shop-window nav-icon"></i>Trendyol</a>{% endif %}
       {% if can('inventory','view') %}<a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>{% endif %}
+      {% if can('assistant','use') %}<div class="nav-section-label" style="margin-top:1rem;">Yapay Zekâ</div>
+      <a href="/asistan" class="nav-link-item"><i class="bi bi-chat-left-text nav-icon"></i>Asistan</a>
+      <a href="/asistan/belge" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>Belge Oku</a>
+      <a href="/asistan/yaz" class="nav-link-item"><i class="bi bi-pencil-square nav-icon"></i>Metin Yaz</a>{% endif %}
     </nav>
     <div class="sidebar-footer"><button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir"><i class="bi bi-moon-stars-fill"></i><i class="bi bi-sun-fill"></i></button><p class="sidebar-footer-text">Minerva 108 · 2026</p></div>
   </aside>

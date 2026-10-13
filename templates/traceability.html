@@ -359,7 +359,7 @@
   <script src="/static/undo-watch.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
-  <script src="/static/assistant.js?v=3" defer></script>
+  <script src="/static/assistant.js?v=4" defer></script>
   <!-- SKT düzeltme + denetim tarih filtreleri: TR gg.aa.yyyy (value daima ISO) -->
   <script src="/static/tr-datetime.js?v=1" defer></script>
 </head>
@@ -401,6 +401,10 @@
       {% if can('b2b', 'view') %}
       <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
       {% endif %}
+      {% if can('assistant','use') %}<div class="nav-section-label" style="margin-top:1rem;">Yapay Zekâ</div>
+      <a href="/asistan" class="nav-link-item"><i class="bi bi-chat-left-text nav-icon"></i>Asistan</a>
+      <a href="/asistan/belge" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>Belge Oku</a>
+      <a href="/asistan/yaz" class="nav-link-item"><i class="bi bi-pencil-square nav-icon"></i>Metin Yaz</a>{% endif %}
       {% if can('admin', 'view') %}
       <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>
       <a href="/admin" class="nav-link-item"><i class="bi bi-shield-lock nav-icon"></i>Yönetim Paneli</a>
@@ -1106,6 +1110,18 @@
     document.getElementById('lotSearchInput').addEventListener('keypress', e => {
       if (e.key === 'Enter') { e.preventDefault(); searchLot(); }
     });
+
+    /* Derin bağlantı: /traceability?lot=LOT[&item_id=ID] (üst çubuk araması,
+       asistan cevaplarındaki [İzlenebilirlik](/traceability?lot=…)).  Lot no
+       ürün bazlıdır — item_id varsa doğrudan o ürünün izi açılır. */
+    (function () {
+      const p = new URLSearchParams(location.search);
+      const lot = (p.get('lot') || '').trim();
+      if (!lot) return;
+      document.getElementById('lotSearchInput').value = lot;
+      const iid = parseInt(p.get('item_id') || '', 10);
+      searchLot(iid > 0 ? iid : undefined);
+    })();
 
     /* ── Logout ── */
     document.getElementById('logoutBtn').addEventListener('click', async function () {

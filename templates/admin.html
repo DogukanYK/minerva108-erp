@@ -416,7 +416,7 @@
   <script src="/static/undo-watch.js" defer></script>
   <script src="/static/fetch-guard.js" defer></script>
   <script src="/static/idle-watch.js" defer></script>
-  <script src="/static/assistant.js?v=3" defer></script>
+  <script src="/static/assistant.js?v=4" defer></script>
 </head>
 <body>
 
@@ -456,6 +456,10 @@
       {% if can('b2b', 'view') %}
       <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
       {% endif %}
+      {% if can('assistant','use') %}<div class="nav-section-label" style="margin-top:1rem;">Yapay Zekâ</div>
+      <a href="/asistan" class="nav-link-item"><i class="bi bi-chat-left-text nav-icon"></i>Asistan</a>
+      <a href="/asistan/belge" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>Belge Oku</a>
+      <a href="/asistan/yaz" class="nav-link-item"><i class="bi bi-pencil-square nav-icon"></i>Metin Yaz</a>{% endif %}
       {% if can('admin', 'view') %}
       <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>
       <a href="/admin"     class="nav-link-item active"><i class="bi bi-shield-lock nav-icon"></i>Yönetim Paneli</a>
@@ -672,7 +676,7 @@
       <div class="import-panel" id="m108AiAdminCard" style="margin-top:2rem;border-left:4px solid var(--navy);">
         <div class="import-panel-header">
           <span class="import-panel-icon" style="background:rgba(35,46,110,0.10);color:var(--navy);">
-            <i class="bi bi-stars"></i>
+            <i class="bi bi-chat-left-text"></i>
           </span>
           <div style="flex:1;min-width:0;">
             <h2 class="import-panel-title">Minerva Asistan</h2>
@@ -1403,7 +1407,7 @@
       reviews:      { tr: 'Ürün Yorumları',  icon: 'bi-chat-quote' },
       influencer:   { tr: 'Influencer',      icon: 'bi-megaphone' },
       suppliers:    { tr: 'Tedarikçiler',    icon: 'bi-truck' },
-      assistant:    { tr: 'Minerva Asistan', icon: 'bi-stars' },
+      assistant:    { tr: 'Minerva Asistan', icon: 'bi-chat-left-text' },
       trendyol:     { tr: 'Trendyol',        icon: 'bi-shop-window' },
     };
     const _ACTION_LABELS = {

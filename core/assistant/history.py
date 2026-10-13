@@ -211,7 +211,9 @@ def list_conversations(db: Session, user_id: int, limit: int = 20) -> List[dict]
             .order_by(AssistantConversation.updated_at.desc(), AssistantConversation.id.desc())
             .limit(limit).all())
     return [{"id": c.id, "title": c.title or "—", "turns": c.turns, "model": c.model,
-             "updated_at": to_tr(c.updated_at).strftime("%d.%m.%Y %H:%M") if c.updated_at else ""}
+             "updated_at": to_tr(c.updated_at).strftime("%d.%m.%Y %H:%M") if c.updated_at else "",
+             # /asistan geçmişi Bugün / Dün / Bu hafta diye gruplar (TR takvim günü)
+             "updated_date": to_tr(c.updated_at).date().isoformat() if c.updated_at else ""}
             for c in rows]
 
 

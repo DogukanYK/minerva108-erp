@@ -14,6 +14,12 @@ Kilitlenenler:
   • scripts/add_assistant_widget.py idempotent ve bayi portalını atlar
     (geçici kopya üzerinde çalıştırılır).
   • Render edilen sayfalarda script var; login'de yok; sohbet uçları ağa çıkmaz.
+  • 13.10.2026 yeniden tasarım: sağ alttaki yuvarlak düğme (FAB) YOK; üst
+    çubukta ARIA combobox arama (`/api/assistant/search`), yan cevap paneli,
+    /crm'de Ctrl+K CRM aramasına bırakılır.  Sol menüde `assistant.use` kapılı
+    "Yapay Zekâ" bölümü her iç şablonda, hiçbir yetki bloğunun İÇİNDE değil
+    (scripts/add_ai_nav.py idempotent).  /asistan sayfası static/asistan-page.js
+    ile aynı güvenlik kurallarına uyar.
 """
 import pathlib
 import re
@@ -34,7 +40,8 @@ WIDGET_RE = re.compile(r'<script src="/static/assistant\.js(\?v=\d+)?" defer></s
 PORTAL = "distributor_portal.html"
 PUBLIC_TEMPLATES = ["login.html", "share.html", "yorum.html", "basvuru.html",
                     "basvuru_claim.html", "pdks_qr.html", "pdks_qr_yazdir.html", PORTAL]
-EXPECTED_INTERNAL = 29
+EXPECTED_INTERNAL = 30          # 29 + templates/asistan.html (13.10.2026)
+NAV_SCRIPT = ROOT / "scripts" / "add_ai_nav.py"
 
 
 def _templates_with_idle():
@@ -179,7 +186,7 @@ def test_sw_cache_name_bumped():
 
 def test_rendered_pages_include_widget(authed_client: TestClient):
     """Gerçek render: iç sayfalarda script etiketi var, script dengesi bozulmadı."""
-    for path in ("/", "/items", "/pdks", "/drive", "/crm"):
+    for path in ("/", "/items", "/pdks", "/drive", "/crm", "/asistan"):
         r = authed_client.get(path)
         assert r.status_code == 200, f"{path}: HTTP {r.status_code}"
         assert WIDGET_RE.search(r.text), f"{path}: assistant.js yok"
@@ -190,3 +197,101 @@ def test_login_page_has_no_widget(client: TestClient):
     r = client.get("/login")
     assert r.status_code == 200
     assert "/static/assistant.js" not in r.text
+
+
+# ─── Yeniden tasarım (13.10.2026): üst arama + yan panel, FAB yok ────────────
+
+def _code(path):
+    src = path.read_text(encoding="utf-8")
+    code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    return re.sub(r"^\s*//.*$", "", code, flags=re.M)
+
+
+def test_widget_is_top_search_and_side_panel_without_fab():
+    code = _code(STATIC / "assistant.js")
+    assert "'fab'" not in code and "spark" not in code and "m108-ai-fab" not in code
+    assert "'combobox'" in code and "aria-activedescendant" in code and "'listbox'" in code
+    assert "API + '/search?q='" in code and "'aria-modal'" in code
+    assert "!ON_CRM" in code                                      # Ctrl+K /crm'de CRM aramasının
+    assert "window.M108AI" in code and "createThread" in code
+    assert "Günlük kalan" not in code                             # son kullanıcıya dolar sayacı yok
+    assert "bi-stars" not in code
+
+
+def test_asistan_page_js_is_safe():
+    path = STATIC / "asistan-page.js"
+    node = shutil.which("node")
+    if node:
+        r = subprocess.run([node, "--check", str(path)], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, r.stderr
+    code = _code(path)
+    assert code.lstrip().startswith("(function ()") and "'use strict'" in code
+    assert "createElement" in code and "textContent" in code
+    assert ".innerHTML" not in code and "insertAdjacentHTML" not in code and "document.write" not in code
+    assert not re.search(r"['\"][^'\"]*\bbtn-", code), "btn-* sınıf adı yasak"
+
+
+def _jinja_stack_at(text, pos):
+    """`pos` noktasında açık kalan {% if %} koşulları (sidebar başından)."""
+    stack = []
+    for m in re.finditer(r"\{%-?\s*(if\b[^%]*|endif)\s*-?%\}", text[text.index('class="sidebar'):pos]):
+        if m.group(1).startswith("if"):
+            stack.append(m.group(1))
+        elif stack:
+            stack.pop()
+    return stack
+
+
+def test_ai_nav_section_in_every_internal_template_outside_other_guards():
+    head = "{% if can('assistant','use') %}<div class=\"nav-section-label\""
+    bad = []
+    for f in sorted(TPL.glob("*.html")):
+        src = f.read_text(encoding="utf-8")
+        if not WIDGET_RE.search(src) or f.name == "asistan.html":
+            continue
+        i = src.find(head)
+        if i == -1 or ">Yapay Zekâ</div>" not in src[i:i + 300]:
+            bad.append(f"{f.name}: bölüm yok")
+            continue
+        block = src[i:src.index("{% endif %}", i)]
+        for href in ('href="/asistan"', 'href="/asistan/belge"', 'href="/asistan/yaz"'):
+            if href not in block:
+                bad.append(f"{f.name}: {href} yok")
+        if _jinja_stack_at(src, i):
+            bad.append(f"{f.name}: bölüm başka bir yetki bloğunun içinde: {_jinja_stack_at(src, i)}")
+        n = src.count('href="/asistan"')        # f-string içinde \" Python 3.9'da SyntaxError
+        if n != 1:
+            bad.append(f"{f.name}: /asistan bağlantısı {n} kez")
+    assert not bad, "\n".join(bad)
+
+
+def test_ai_nav_script_is_idempotent_and_skips_admin_block(tmp_path):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "templates").mkdir()
+    shutil.copy(NAV_SCRIPT, tmp_path / "scripts" / NAV_SCRIPT.name)
+    widget = '  <script src="/static/assistant.js?v=4" defer></script>\n'
+    guarded = ("<style>.nav-section-label{}</style>\n" + widget + '<aside class="sidebar"><nav>\n'
+               '      <a href="/items" class="nav-link-item">Ürünler</a>\n'
+               "      {% if can('admin', 'view') %}\n"
+               '      <div class="nav-section-label" style="margin-top:1rem;">Sistem</div>\n'
+               '      <a href="/admin" class="nav-link-item">Yönetim</a>\n'
+               "      {% endif %}\n    </nav></aside>\n")
+    bare = (widget + '<aside class="sidebar"><nav>\n      <a href="/items" class="nav-link-item">Ürünler</a>\n'
+            "    </nav></aside>\n")
+    (tmp_path / "templates" / "a.html").write_text(guarded, encoding="utf-8")
+    (tmp_path / "templates" / "b.html").write_text(bare, encoding="utf-8")
+    (tmp_path / "templates" / "c.html").write_text(bare.replace(widget, ""), encoding="utf-8")   # widget'sız
+    r1 = subprocess.run([sys.executable, str(tmp_path / "scripts" / NAV_SCRIPT.name)],
+                        capture_output=True, text=True, timeout=30)
+    assert r1.returncode == 0, r1.stderr
+    a = (tmp_path / "templates" / "a.html").read_text(encoding="utf-8")
+    b = (tmp_path / "templates" / "b.html").read_text(encoding="utf-8")
+    opener = a.index("{% if can('assistant','use') %}")
+    assert opener < a.index("{% if can('admin', 'view') %}") and not _jinja_stack_at(a, opener)
+    assert 'style="margin-top:1rem;">Yapay Zekâ' in a                    # şablon CSS'i var → kısa stil
+    assert b.index("Yapay Zekâ") < b.index("</nav>") and "text-transform:uppercase" in b
+    assert "Yapay Zekâ" not in (tmp_path / "templates" / "c.html").read_text(encoding="utf-8")
+    r2 = subprocess.run([sys.executable, str(tmp_path / "scripts" / NAV_SCRIPT.name)],
+                        capture_output=True, text=True, timeout=30)
+    assert r2.returncode == 0 and "Toplam: 0" in r2.stdout
+    assert (tmp_path / "templates" / "a.html").read_text(encoding="utf-8") == a
