@@ -1,23 +1,29 @@
 """Minerva Asistan — araç kataloğu ve işleyiciler (core/assistant/tools.py,
-handlers.py, prompt.py).
+handlers.py, prompt.py, help_docs.py).
 
 Sözleşmeler:
-  • 14 araç, ada göre sıralı, her çağrıda byte-aynı; strict şema
+  • 15 araç, ada göre sıralı, her çağrıda byte-aynı; strict şema
     (additionalProperties False, tüm özellikler required, opsiyoneller null'lu).
   • TR katlama + eşanlamlı eşleşme ("stearil alkol" → STEARYL ALCOHOL / SETİL
     STEARİL ALKOL / CETEARYL ALCOHOL), SKU tam eşleşme önde, ≤8 + more.
   • Panel izolasyonu; finans alanı YALNIZ rol ∈ finans VE finance.view.
   • İzin reddi is_error + DB'ye dokunmaz; lot belirsizliği; raf etiketi;
     kategori sayımı + varsayılan TR ayı; kırpma bayrağı JSON'u bozmaz.
+  • Rehber: önekte yalnız giriş + konu dizini (≤ GUIDE_MAX_CHARS, byte-sabit);
+    konu metinleri search_help ile gelir (DB'siz, birinci konu kırpılmaz, her
+    konu gerçekçi bir Türkçe soruyla bulunur).
 """
 import copy
 import dataclasses
 import datetime as dt
 import json
+import pathlib
 
 import bcrypt
 import pytest
 
+from core.assistant import handlers as H
+from core.assistant import help_docs as HD
 from core.assistant import prompt as P
 from core.assistant import tools as T
 from core.assistant.handlers import score_item
@@ -79,13 +85,14 @@ def _run(ctx, name, args):
 
 # ─── Katalog ─────────────────────────────────────────────────────────────────
 
-def test_registry_fourteen_tools_sorted_strict_and_stable():
-    assert len(TOOL_NAMES) == 14
+def test_registry_fifteen_tools_sorted_strict_and_stable():
+    assert len(TOOL_NAMES) == 15
     assert TOOL_NAMES == tuple(sorted(TOOL_NAMES))
     assert set(TOOL_NAMES) == {"find_item", "item_detail", "find_lot", "find_recipe", "recipe_detail",
                                "production_summary", "recent_productions", "find_supplier",
                                "supplier_detail", "stock_gaps", "expiring_lots", "drive_search",
-                               "my_pdks_today", "crm_search"}
+                               "my_pdks_today", "crm_search", "search_help"}
+    assert TOOL_NAMES.index("search_help") == TOOL_NAMES.index("recipe_detail") + 1
     specs = tool_specs()
     assert [s["name"] for s in specs] == list(TOOL_NAMES)
     for s in specs:
@@ -117,18 +124,219 @@ def test_registry_fourteen_tools_sorted_strict_and_stable():
             assert act in PERMISSION_CATEGORIES[cat], (n, cat, act)
 
 
-def test_prompt_hash_faq_limit_and_system_blocks():
+DOCS_DIR = pathlib.Path(__file__).resolve().parent.parent / "docs" / "assistant"
+
+
+def test_prompt_hash_guide_block_limits_and_system_blocks():
     assert len(PROMPT_HASH) == 12 and int(PROMPT_HASH, 16) >= 0
-    assert len(P.FAQ_TEXT) <= P.FAQ_MAX_CHARS
+    # İki blok: [kurallar, rehber]; breakpoint YALNIZ son blokta
+    assert len(P.SYSTEM_BLOCKS) == 2 and P.SYSTEM_BLOCKS[0]["text"] == P.SYSTEM_RULES
     assert P.SYSTEM_BLOCKS[-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
     assert "cache_control" not in P.SYSTEM_BLOCKS[0]
-    assert P.SYSTEM_BLOCKS[-1]["text"].startswith("<sss>") and P.SYSTEM_BLOCKS[-1]["text"].endswith("</sss>")
+    guide = P.SYSTEM_BLOCKS[-1]["text"]
+    assert guide == P.GUIDE_TEXT and guide.startswith("<rehber>\n") and guide.endswith("\n</rehber>")
+    assert len(guide) <= P.GUIDE_MAX_CHARS, len(guide)
     b5 = P.system_blocks("5m")
     assert b5[-1]["cache_control"]["ttl"] == "5m" and P.SYSTEM_BLOCKS[-1]["cache_control"]["ttl"] == "1h"
     assert P.system_blocks("bogus")[-1]["cache_control"]["ttl"] == "1h"
     assert P.system_blocks()[0] is not P.SYSTEM_BLOCKS[0]
-    # SSS girişi yüklenmiş (docs/assistant/00_giris.md)
-    assert "## Minerva Asistan — SSS girişi" in P.FAQ_TEXT
+    # Giriş (menü haritası + panel değiştirme) önekte, tam metin
+    assert P.HELP_INTRO is not None and P.HELP_INTRO.id == "giris"
+    assert P.HELP_INTRO.body in guide
+    assert "Dashboard → /" in guide and "Panel değiştir" in guide
+    # Konu dizini: docs 01..17'nin HEPSİ, dosya sırasıyla, satır başına "- id: başlık"
+    stems = sorted(f.stem for f in DOCS_DIR.glob("*.md") if not f.name.startswith("00_"))
+    assert [d.filename for d in P.HELP_TOPICS] == [f"{st}.md" for st in stems]
+    assert [d.id for d in P.HELP_TOPICS] == [HD.doc_id(st) for st in stems]
+    assert len(P.HELP_TOPICS) == 17 and P.HELP_TOPICS[1].id == "lot_tasima"
+    lines = [ln for ln in guide.splitlines() if ln.startswith("- ")]
+    assert lines == [f"- {d.id}: {d.title}" for d in P.HELP_TOPICS]
+    for d in P.HELP_TOPICS:
+        # konu metni önekte DEĞİL (search_help'te); tek konu araç sonucuna sığar
+        assert d.body and d.body[:80] not in guide, d.id
+        assert d.yetki and d.sayfa, d.id
+        assert len(d.text) <= P.HELP_DOC_MAX_CHARS, (d.id, len(d.text))
+    # Sınırdaki bir konu (tırnak + satır sonu kaçışlarıyla) tek başına araç sonucuna sığar
+    body = ('1. "Kaydet"e bas; “Sil” değil.\n' * 200)[:P.HELP_DOC_MAX_CHARS - 40]
+    big = HD.HelpDoc(id="sinir_konu", filename="99_sinir_konu.md", title="Sınır konu", yetki="a.b",
+                     sayfa="/x", body=body)
+    assert len(big.text) <= P.HELP_DOC_MAX_CHARS
+    r = HD.search((big,) + P.HELP_TOPICS, "sinir_konu", limit=T.MAX_RESULT_CHARS)
+    assert r["topics"][0]["text"] == big.text and len(T.compact_json(r)) <= T.MAX_RESULT_CHARS
+    # Kurallar SSS'yi değil rehber + search_help akışını anlatır
+    assert "SSS" not in P.SYSTEM_RULES and "<sss>" not in guide
+    assert P.SYSTEM_RULES.count("search_help") >= 2
+    assert '"bu konuda rehber yok, yöneticinize sorun"' in P.SYSTEM_RULES
+
+
+def test_guide_block_is_byte_stable_and_context_free():
+    """İki bağımsız kurulum byte-aynı; tarih/kullanıcı/panel metni yok."""
+    intro, topics = P.load_help()
+    assert P.guide_block_text(intro, topics) == P.GUIDE_TEXT
+    assert P.guide_block_text(*P.load_help(DOCS_DIR)) == P.GUIDE_TEXT
+    assert json.dumps(P.system_blocks(), ensure_ascii=False) == json.dumps(P.system_blocks(), ensure_ascii=False)
+    today = dt.datetime.utcnow() + dt.timedelta(hours=3)
+    for bad in (today.strftime("%d.%m.%Y"), today.strftime("%Y-%m-%d"), "Songül", "Kozmetik",
+                "Food Supplement", "Lab Sorumlusu"):
+        assert bad not in P.GUIDE_TEXT, bad
+    # PROMPT_HASH rehber bloğunu kapsar
+    assert P.GUIDE_TEXT in P.system_text()
+
+
+def test_load_help_missing_dir_and_parsing(tmp_path):
+    assert P.load_help(tmp_path / "yok") == (None, ())
+    assert P.guide_block_text(None, ()) == "<rehber>\n\n</rehber>"
+    (tmp_path / "00_giris.md").write_text("# Giriş\nYetki: assistant.use\n\nMenü haritası.\n", encoding="utf-8")
+    (tmp_path / "02_ikinci-konu.md").write_text("# İkinci\nYetki: a.b\nSayfa: /x\n\n1. Adım.\n", encoding="utf-8")
+    (tmp_path / "01_birinci.md").write_text("Başlıksız gövde.\n", encoding="utf-8")
+    (tmp_path / "03_bos.md").write_text("  \n", encoding="utf-8")
+    intro, topics = P.load_help(tmp_path)
+    assert intro.title == "Giriş" and intro.text == "Yetki: assistant.use\n\nMenü haritası."
+    assert [(d.id, d.title, d.yetki, d.sayfa) for d in topics] == [
+        ("birinci", "01_birinci", "", ""), ("ikinci_konu", "İkinci", "a.b", "/x")]
+    assert topics[1].text == "Yetki: a.b\nSayfa: /x\n\n1. Adım."
+    g = P.guide_block_text(intro, topics)
+    assert g.endswith("- birinci: 01_birinci\n- ikinci_konu: İkinci\n</rehber>") and "Menü haritası." in g
+    assert "1. Adım." not in g
+
+
+def test_help_fold_matches_supplier_prices_normalize():
+    from core.supplier_prices import normalize
+    for s in ("Şahit NUMUNE dolabı", "İzİn  ıIğüşöç ÇĞÖŞÜ", "  SKT  düzelt ", "", None, "Lot-Taşıma"):
+        assert HD.fold(s) == normalize(s), s
+    assert HD.doc_id("02_lot_tasima") == "lot_tasima" and HD.doc_id("Lot Taşıma") == "lot_tasima"
+
+
+# ─── search_help ─────────────────────────────────────────────────────────────
+
+def _help(q):
+    """İşleyici doğrudan — ctx ve db KULLANILMAZ (None)."""
+    return H.search_help(None, None, {"q": q})
+
+
+#: Lab'ın gerçekçi soruları → beklenen ilk konu (her konu en az bir kez).
+HELP_CASES = {
+    "numune stoğa nasıl çevrilir": "numune_stoga_cevir",
+    "alternatif tedarikçi numunesini stoğa çevir": "numune_stoga_cevir",
+    "lotu başka karta taşı": "lot_tasima",
+    "yanlış karta girilen lotu nasıl taşırım": "lot_tasima",
+    "üretimi iptal": "uretim_iptali",
+    "yanlış üretimi nasıl iptal ederim": "uretim_iptali",
+    "skt düzelt": "skt_duzeltme",
+    "son kullanma tarihi yanlış girilmiş lot": "skt_duzeltme",
+    "rapor bildirimi": "pdks_izin_rapor_bildirimi",
+    "izin nasıl girilir": "pdks_izin_rapor_bildirimi",
+    "giriş yapmayı unuttum": "pdks_izin_rapor_bildirimi",
+    "qc onay": "qc_onayi",
+    "karantinadaki lotu onaylama": "qc_onayi",
+    "aynı malzeme": "ayni_malzeme_gruplari",
+    "kartları aynı malzeme olarak grupla": "ayni_malzeme_gruplari",
+    "tedarikçi fiyat": "tedarikci_tercihleri_ve_fiyat",
+    "tedarikçiyi bitirilecek yap": "tedarikci_tercihleri_ve_fiyat",
+    "satın alma planı": "satin_alma_plani",
+    "alım listesi excel indir": "satin_alma_plani",
+    "şahit numune": "sahit_numune_dolabi",
+    "şahit numune imha": "sahit_numune_dolabi",
+    "mal kabul": "mal_kabul",
+    "hammadde girişi nasıl yapılır": "mal_kabul",
+    "teslimat": "teslimat_iade",
+    "müşteriden gelen iade": "teslimat_iade",
+    "kargo ile gönderim": "teslimat_iade",
+    "drive": "drive",
+    "dosya paylaşım linki oluştur": "drive",
+    "üretim başlat": "uretim_baslatma",
+    "yeni üretim nasıl başlatılır": "uretim_baslatma",
+    "fason": "fason_uretim",
+    "dış üretime malzeme gönder": "fason_uretim",
+    "b2b sipariş": "b2b_siparis",
+    "teklifi siparişe dönüştür": "b2b_siparis",
+    "hangi iş hangi sayfada": "genel_navigasyon",
+    "stoğu elle nasıl düzeltirim": "genel_navigasyon",
+    "stok düzeltme nasıl yapılır": "genel_navigasyon",      # SKT/numune başlığına kaymasın
+    "elle stok düzeltme": "genel_navigasyon",
+    "yeni ürün kartı nasıl açılır": "genel_navigasyon",
+    "üretim nasıl yapılır": "uretim_baslatma",              # eşit skorda iptal öne geçmesin
+    "üretimi geri al": "uretim_iptali",                     # "geri al" → "iptal" eşanlamı
+    "müşteriye ürün gönderme": "teslimat_iade",             # rehber "Alıcı"/"Kargo" diyor
+}
+
+
+def test_help_cases_cover_every_doc():
+    assert set(HELP_CASES.values()) == {d.id for d in P.HELP_TOPICS}
+
+
+@pytest.mark.parametrize("q,want", sorted(HELP_CASES.items()))
+def test_search_help_turkish_queries(q, want):
+    p = _help(q)
+    assert p["topics"], (q, p.get("others"))
+    assert p["topics"][0]["id"] == want, (q, [t["id"] for t in p["topics"]])
+    doc = next(d for d in P.HELP_TOPICS if d.id == want)
+    assert p["topics"][0]["text"] == doc.text and p["topics"][0]["title"] == doc.title
+    assert len(p["topics"]) <= HD.TOPICS_MAX and len(p["others"]) <= HD.OTHERS_MAX
+    ids = [t["id"] for t in p["topics"]] + [o["id"] for o in p["others"]]
+    assert len(ids) == len(set(ids))
+    assert len(T.compact_json(p)) <= T.MAX_RESULT_CHARS and "truncated" not in p
+    assert p["query"] == q
+
+
+@pytest.mark.parametrize("q", ["lot_tasima", "lot-tasima", "Lot Taşıma", "02_lot_tasima", "LOT_TAŞIMA.md"])
+def test_search_help_exact_id_is_single_topic(q):
+    p = _help(q)
+    assert [t["id"] for t in p["topics"]] == ["lot_tasima"]
+    assert "lot_tasima" not in [o["id"] for o in p["others"]]
+
+
+def test_search_help_every_doc_fits_untruncated():
+    for d in P.HELP_TOPICS:
+        p = _help(d.id)
+        assert p["topics"] == [{"id": d.id, "title": d.title, "text": d.text}], d.id
+        assert len(T.compact_json(p)) <= T.MAX_RESULT_CHARS, d.id
+
+
+def test_search_help_second_topic_yields_to_limit(monkeypatch):
+    q = "numuneyi stoka ekle"
+    p = _help(q)
+    assert len(p["topics"]) == 2 and p["topics"][0]["id"] == "numune_stoga_cevir"
+    one = len(T.compact_json({"query": q, "topics": p["topics"][:1], "others": []}))
+    monkeypatch.setattr(T, "MAX_RESULT_CHARS", one + 10)
+    small = _help(q)
+    assert [t["id"] for t in small["topics"]] == ["numune_stoga_cevir"]
+    assert small["topics"][0]["text"] == p["topics"][0]["text"]          # birinci konu kırpılmaz
+    assert len(T.compact_json(small)) <= one + 10 and "truncated" not in small
+
+
+def test_search_help_no_match_weak_match_and_short_query():
+    p = _help("uzay gemisi rotası")
+    assert p == {"query": "uzay gemisi rotası", "topics": [], "others": [], "note": "rehberde bu konu yok"}
+    weak = _help("fatura kes")                      # tek seyrek gövde eşleşmesi → konu değil
+    assert weak["topics"] == [] and weak["note"] == "rehberde bu konu yok"
+    assert [o["id"] for o in weak["others"]] == ["teslimat_iade"]
+    with pytest.raises(H.ToolError):
+        _help(" a ")
+    assert HD.query_tokens("nasıl yapılır") == []
+
+
+def test_search_help_via_run_tool_never_touches_db(db_session, monkeypatch):
+    ctx = _ctx(db_session, "Staff")                 # varsayılan Staff: assistant.use açık
+    denied = _ctx(db_session, "Staff", {"items": {"view": True}}, username="no_assistant")
+
+    class _NoDB:
+        def close(self):
+            pass
+
+        def __getattr__(self, name):
+            raise AssertionError(f"search_help DB'ye dokunmamalı ({name})")
+    monkeypatch.setattr(T, "SessionLocal", _NoDB)
+    res, p = _run(ctx, "search_help", {"q": "lot_tasima"})
+    assert not res.is_error and p["topics"][0]["id"] == "lot_tasima"
+    assert res.summary == "Rehber: Lotu başka karta taşıma" and res.links == []
+    res, p = _run(ctx, "search_help", {"q": "uzay gemisi"})
+    assert not res.is_error and res.summary == "Rehber: konu yok" and p["topics"] == []
+    res, p = _run(ctx, "search_help", {"q": "x"})
+    assert res.is_error and "2 karakter" in p["error"]
+    res, p = _run(denied, "search_help", {"q": "lot_tasima"})
+    assert res.is_error and p == {"error": "yetkiniz yok", "permission": "assistant.use"}
+    assert "search_help" in T.allowed_tools(ctx) and ("search_help", "assistant.use") in T.denied_tools(denied)
 
 
 def test_score_item_pure_function():

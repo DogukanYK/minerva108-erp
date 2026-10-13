@@ -8,8 +8,9 @@
 Asistan döngüsü — bir soru için Claude çağrıları, araç turları ve olay akışı.
 
 İstek yapısı (`build_params`, bkz. claude-api/prompt-caching):
-  tools (ada göre sıralı, dondurulmuş) → system (dondurulmuş kurallar + SSS,
-  son blokta `cache_control` ephemeral TTL=ayar) → messages (geçmiş + soru +
+  tools (ada göre sıralı, dondurulmuş; rehber metinleri `search_help` aracında)
+  → system (dondurulmuş kurallar + rehber girişi/konu dizini, son blokta
+  `cache_control` ephemeral TTL=ayar) → messages (geçmiş + soru +
   oturum bağlamı `role:"system"`).  Üst düzey `cache_control` 5 dk kuyruk —
   1h önce / 5m sonra sırası izinli.  `tool_choice` DAİMA auto (değişirse
   tools+system önbelleği düşer).  Opus 5.5: thinking adaptive (varsayılan),

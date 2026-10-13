@@ -1,4 +1,4 @@
-# Teslimat ve iade
+# Teslimat (müşteriye gönderim, kargo) ve iade
 Yetki: inventory.view (görme) · inventory.adjust (teslimat / iade kaydı)
 Sayfa: /delivery · /returns
 

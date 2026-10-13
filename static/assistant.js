@@ -73,7 +73,8 @@
     production_summary: 'Üretim özeti', recent_productions: 'Son üretimler',
     find_supplier: 'Tedarikçi arama', supplier_detail: 'Tedarikçi detayı',
     stock_gaps: 'Stok eksikleri', expiring_lots: 'SKT yaklaşan lotlar',
-    drive_search: 'Drive arama', my_pdks_today: 'PDKS bugün', crm_search: 'CRM arama'
+    drive_search: 'Drive arama', my_pdks_today: 'PDKS bugün', crm_search: 'CRM arama',
+    search_help: 'Rehber'
   };
   var ROTATION_LABELS = {
     too_long: 'sohbet uzadı', model_changed: 'model değişti',

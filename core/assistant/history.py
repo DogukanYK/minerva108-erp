@@ -29,7 +29,10 @@ from sqlalchemy.orm import Session
 
 from database import AssistantConversation, AssistantMessage, to_tr
 
-STATIC_PREFIX_DEFAULT = 11000      # araçlar 3.5K + kurallar 2.5K + SSS 5K (tahmin)
+# Statik önek tahmini (token): araçlar ~3,9K + kurallar ~2K + rehber (giriş + dizin) ~1,3K.
+# 13.10.2026 canlı ölçüm: SSS önekteyken 19.661; search_help'e taşındıktan sonra
+# beklenen ≈7,2K.  Gerçek değer ilk çağrının usage'ından gözlenir (`observe_prefix_tokens`).
+STATIC_PREFIX_DEFAULT = 7200
 TITLE_MAX = 60
 SEED_TURNS = 3
 SEED_CHARS = 400

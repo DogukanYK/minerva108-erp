@@ -5,7 +5,7 @@
 # Bkz. LICENSE ve AUTHORS.md.
 # ─────────────────────────────────────────────────────────────────────────────
 """
-Minerva Asistan araç işleyicileri (Faz 1 — 14 araç, HEPSİ salt-okunur).
+Minerva Asistan araç işleyicileri (15 araç, HEPSİ salt-okunur; `search_help` DB'siz).
 
 Her işleyici `fn(ctx, db, args) -> dict`:
   • `ctx`  — tools.ToolContext (kullanıcı, panel, etkin yetkiler, can_finance)
@@ -54,6 +54,7 @@ from database import (CrmCompany, CrmContact, CrmDeal, DriveFile, DriveFolder, I
                       RetentionSample, StockOrderFlag, Supplier, SupplierPrice, to_tr, tr_now)
 from core import drive as D
 from core import material_groups, stock_gaps
+from core.assistant import help_docs, prompt
 from core.brands import cabinet_of
 from core.items_report import tr_key
 from core.lots import expiry_today, normalize_lot, parse_expiry
@@ -718,3 +719,18 @@ def crm_search(ctx: "ToolContext", db: Session, args: dict) -> dict:
         "more": len(companies) > CRM_MAX or len(contacts) > CRM_MAX,
         "link": "/crm",
     }
+
+
+# ─── search_help ─────────────────────────────────────────────────────────────
+
+def search_help(ctx: "ToolContext", db: Session, args: dict) -> dict:
+    """Nasıl-yapılır rehberinde arama (`help_docs.search`) — DB'ye DOKUNMAZ
+    (`db` yok sayılır), kullanıcı metninden dosya yolu kurmaz; konular import
+    anında bir kez okunmuş `prompt.HELP_TOPICS`'tir.  Sonuç `MAX_RESULT_CHARS`'a
+    işleyicide sığdırılır (birinci konunun metni kırpılmaz)."""
+    # döngüsel import: tools bu modülü import eder — sınır çağrı anında okunur
+    from core.assistant.tools import MAX_RESULT_CHARS
+    q = _text(args.get("q"))
+    if len(q) < 2:
+        raise ToolError("En az 2 karakter gir")
+    return help_docs.search(prompt.HELP_TOPICS, q, limit=MAX_RESULT_CHARS)

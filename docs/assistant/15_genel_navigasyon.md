@@ -1,4 +1,4 @@
-# Hangi iş hangi sayfada
+# Hangi iş hangi sayfada (kart arama, lot takibi, stok düzeltme, raporlar, yetkiler)
 Yetki: her sayfanın kendi görme yetkisi
 Sayfa: sol menü
 

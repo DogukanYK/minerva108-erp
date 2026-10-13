@@ -8,8 +8,10 @@
 Araç kayıt defteri — ad, Türkçe açıklama, STRICT şema, izin, işleyici.
 
 Kurallar (bkz. spec §1.4 / §2):
-  • 14 araç HER istekte HER kullanıcıya aynı sırayla (ada göre) bildirilir —
+  • 15 araç HER istekte HER kullanıcıya aynı sırayla (ada göre) bildirilir —
     önek deterministik kalsın; kim neyi kullanabilir, oturum bağlamı söyler.
+    `search_help` nasıl-yapılır rehberini (docs/assistant) istek anında getirir;
+    rehber metinleri önekte değil (önekte yalnız giriş + konu dizini).
   • Strict şema: `additionalProperties: False`, TÜM özellikler `required`,
     opsiyoneller `["string","null"]` / `["integer","null"]` tipli; `strict: True`.
   • İzin "herhangi biri" (any-of) — yoksa `is_error` `{"error":"yetkiniz yok",
@@ -150,6 +152,7 @@ P_DRIVE = (("items", "view"), ("inventory", "view"), ("reports", "view"),
            ("production", "view"), ("qc", "view"), ("recipes", "view"))
 P_PDKS = (("pdks", "view_own"),)
 P_CRM = (("crm", "view"),)
+P_HELP = (("assistant", "use"),)
 # supplier_detail'in `prices` alanı: sistemdeki `GET /api/suppliers/{id}/prices`
 # kuralıyla AYNI (items.view | reports.view; routers/suppliers.py) — yalnız
 # inventory.view taşıyan hesap iletişimi görür, fiyat listesini görmez.
@@ -205,6 +208,11 @@ def _sum_pdks(p: dict) -> str:
 
 def _sum_crm(p: dict) -> str:
     return f"{len(p.get('companies') or [])} firma · {len(p.get('contacts') or [])} kişi"
+
+
+def _sum_help(p: dict) -> str:
+    topics = p.get("topics") or []
+    return "Rehber: " + (topics[0].get("title") or topics[0].get("id") or "") if topics else "Rehber: konu yok"
 
 
 # ─── Kayıt defteri ───────────────────────────────────────────────────────────
@@ -320,6 +328,16 @@ _TOOLS: List[Tool] = [
         "Müşteri/firma yetkilisi sorulduğunda çağır (yalnız CRM yetkisi olan kullanıcıda çalışır).",
         _schema({"q": _s("Firma ya da kişi adı / telefon / e-posta (en az 2 karakter)")}),
         P_CRM, H.crm_search, "CRM", _sum_crm,
+    ),
+    Tool(
+        "search_help",
+        "Nasıl-yapılır rehberinde ara: bir işlemin adımları, hangi sayfada hangi düğmeye basılacağı, "
+        "gereken yetki ve dikkat notları. 'Nasıl yapılır', 'hangi düğme', 'adımlar neler', 'hangi "
+        "yetki gerekir' sorularında cevaplamadan ÖNCE çağır. q = rehber dizinindeki konu id'si (ör. "
+        "lot_tasima) ya da Türkçe anahtar kelimeler. En uygun en fazla 2 konunun tam metnini ve diğer "
+        "aday başlıkları (others) döner; topics boşsa rehberde bu konu yoktur.",
+        _schema({"q": _s("Konu id'si (rehber dizininden) ya da Türkçe anahtar kelimeler")}),
+        P_HELP, H.search_help, "Rehber", _sum_help,
     ),
 ]
 

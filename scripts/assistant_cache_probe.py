@@ -13,7 +13,9 @@ Ne doğrular (prompt-caching.md "verify after every change" kuralı):
   A) Canlı istek yapısıyla (`core.assistant.runner.build_params` — tools →
      system[1h breakpoint] → messages, `tool_choice` auto, Opus 5.5 beta
      alanları) BİR soru gönderir; usage alanlarını basar.  Beklenen:
-     `cache_creation` (1h) > 0 = statik önek (araçlar + kurallar + SSS).
+     `cache_creation` (1h) > 0 = statik önek (araçlar + kurallar + rehber
+     girişi/konu dizini; konu metinleri `search_help` aracında — beklenen ≈7K
+     token, SSS önekteyken 19,7K'ydı).
   B) Byte-aynı ikinci istek.  Beklenen: `cache_read_input_tokens` > 0.
      0 ise sessiz bir önbellek bozucu var (tarih/isim/sırasız JSON…) →
      çıkış kodu 1.  Bu, canlıdaki her istek için fazladan ~0,05 $ demektir.

@@ -743,8 +743,12 @@ seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `lo
 - **Mimari.** `settings.py` (AppSetting `assistant.*`, `Settings` frozen dataclass) ·
   `client.py` (süreç başına TEK `AsyncAnthropic`, anahtar YALNIZ `ANTHROPIC_API_KEY`
   env'den çağrı anında; `max_retries=1`, connect 5 s / read 60 s) · `prompt.py`
-  (DONDURULMUŞ Türkçe kurallar + `docs/assistant/*.md` SSS → `SYSTEM_BLOCKS`;
-  `FAQ_MAX_CHARS=27_000` testle kilitli) · `tools.py` + `handlers.py` (14 araç,
+  (DONDURULMUŞ Türkçe kurallar + `<rehber>` bloğu = `00_giris.md` gövdesi (menü
+  haritası + panel değiştirme) + 01..17 konu DİZİNİ `- id: başlık` → `SYSTEM_BLOCKS`;
+  `GUIDE_MAX_CHARS=4500`, konu başına `HELP_DOC_MAX_CHARS=2800` testle kilitli) ·
+  `help_docs.py` (DB'siz rehber yükleme + `search_help` araması: id tam eşleşme,
+  TR-katlı ağırlıklı puan, ≤2 konu tam metin + ≤4 aday; birinci konu kırpılmaz) ·
+  `tools.py` + `handlers.py` (15 araç,
   `REGISTRY` ada göre sıralı, strict şema, araç başına any-of izin, her araç kendi
   `SessionLocal()`'ını thread'de açar, çıktı ≤ `MAX_RESULT_CHARS`) · `budget.py`
   (`PRICES`, `compute_cost`, ay/gün toplamları TR takvimde, `check_budget`,
@@ -759,6 +763,12 @@ seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `lo
   Alembic `b4d6f8a0c2e4`); yetki kategorisi `assistant.use` (iç roller True, Distributor
   False; override'lı hesaplara `_backfill_perm_assistant` sentinel'i dağıtır).
   SDK yalnız sohbet ucunda TEMBEL import edilir (`api_main` import'u `anthropic`'i yüklemez).
+- **Rehber `search_help` aracında, önekte DEĞİL.** 13.10.2026 `count_tokens` ölçümü:
+  önek 19.661 token (SSS bloğu 14.196, araçlar 3.533, kurallar 1.924; Türkçe ≈1,8
+  karakter/token), soğuk 1h yazma ≈0,16 $ → konu metinleri araca taşındı, önek ≈7K
+  (araçlar ~3,9K + kurallar ~2K + rehber ~1,3K). Yeni konu = `docs/assistant/NN_id.md`
+  (`# Başlık`, `Yetki:`, `Sayfa:`, gövde) — dizine kendiliğinden girer, `PROMPT_HASH`
+  değişir (rotasyon); `tests/test_assistant_tools.py::HELP_CASES`'e gerçekçi bir soru ekle.
 - **Önbellek disiplini (prompt-caching.md).** İstek sırası tools → system → messages;
   araçlar ve sistem istemi her istekte byte-aynı (tarih/isim/panel/rol istemde YOK —
   `PROMPT_HASH` sohbete yazılır, değişince rotasyon). Son sistem bloğunda

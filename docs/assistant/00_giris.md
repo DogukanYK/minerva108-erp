@@ -1,8 +1,8 @@
-# Minerva Asistan — SSS girişi
+# Minerva Asistan — rehber girişi
 Yetki: assistant.use
 Sayfa: her iç sayfanın sağ altındaki asistan düğmesi
 
-Bu bölümdeki her konu bir "nasıl yapılır" rehberidir: gereken yetki, ilgili sayfa, adımlar ve dikkat notu. Yol tarif ederken sayfa ve düğme adlarını aynen kullan; kullanıcının yetkisi yoksa gereken yetkiyi söyle.
+Aşağıdaki konu dizinindeki her başlık bir "nasıl yapılır" rehberidir (gereken yetki, ilgili sayfa, adımlar, dikkat notu); tam metni search_help aracıyla alınır. Yol tarif ederken sayfa ve düğme adlarını aynen kullan; kullanıcının yetkisi yoksa gereken yetkiyi söyle.
 
 Sol menü (ad → yol): Dashboard → / · Ürünler → /items · Tedarikçiler → /suppliers · Mal Kabul → /receiving · Reçeteler → /recipes · Üretim → /production · Fason Üretim → /outsourcing · B2B Siparişleri → /b2b-siparisler · Kalite Kontrol → /qc · Stoklar → /stocks · Teslimat → /delivery · İadeler → /returns · Numune Analizi → /numune-analiz · Şahit Numune → /sahit-numune · Ürün Görselleri → /urun-gorselleri · PDKS → /pdks · Yorumlar → /yorumlar · Creator Programı → /influencer · İşlem Defteri → /ledger · Raporlar → /reports · Satın Alma → /satin-alma · İzlenebilirlik → /traceability · Dosya Paylaşım → /drive · CRM → /crm · Distribütörler → /distributors · B2B Teklifler → /quotations · Yönetim Paneli → /admin · Sistem Durumu → /system. Menüde yalnız yetkisi olan sayfalar görünür.
 
