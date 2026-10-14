@@ -38,9 +38,11 @@ Zaman: Trendyol epoch ms döner ("GMT+3" notuyla).  Tek dönüşüm noktası
 `ty_ts`/`to_ty_ms`; `TS_TR_WALLCLOCK` kalibrasyonda bir siparişin panel saatiyle
 karşılaştırılarak belirlenir.  Sözleşmenin tamamı: CLAUDE.md "Trendyol".
 """
+import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections import Counter
@@ -55,8 +57,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from core.supplier_prices import normalize as _fold
 from database import (AppSetting, Item, SessionLocal, TR_OFFSET, TrendyolBarcodeMap,
-                      TrendyolCargoItem, TrendyolFinRow, TrendyolLine, TrendyolPackage,
-                      TrendyolProduct, TrendyolSyncState, to_tr)
+                      TrendyolCargoItem, TrendyolCategoryAttr, TrendyolFinRow, TrendyolLine,
+                      TrendyolPackage, TrendyolProduct, TrendyolQuestion, TrendyolSyncState, to_tr)
 
 logger = logging.getLogger("minerva108.trendyol")
 
@@ -69,7 +71,10 @@ REQUIRED_ENV = ("TRENDYOL_SELLER_ID", "TRENDYOL_API_KEY", "TRENDYOL_API_SECRET")
 TS_TR_WALLCLOCK = False
 
 # Grup başına çağrılar arası en az bekleme (sn) — stream ≥5 sn şartı.
-PACING = {"orders": 5.0, "finance": 0.7, "products": 0.35}
+PACING = {"orders": 5.0, "finance": 0.7, "products": 0.35, "qna": 0.35}
+
+#: POST atılabilecek TEK yollar — sorgu niteliğinde (veri değiştirmez).
+QUERY_PATHS = (re.compile(r"^/product/sellers/\d+/products/buybox-information$"),)
 RETRY_429 = (10, 30, 60)
 RETRY_5XX = (2, 5, 15)
 MAX_RETRY_AFTER = 120
@@ -108,10 +113,12 @@ PLATFORM_FEE = "PlatformServiceFee"
 #  paketler ayrı shipmentPackageId ile gelir; ikisini saymak çift sayımdır).
 UNPACKED = "UnPacked"
 
-STREAMS = ("orders", "finance", "catalog")
+STREAMS = ("orders", "finance", "catalog", "questions")
 KINDS = STREAMS + ("all",)
-STREAM_LABELS = {"orders": "Siparişler", "finance": "Finans (hakediş + kargo)", "catalog": "Ürün kataloğu"}
-SCHEDULE_TEXT = {"orders": "30 dakikada bir", "finance": "Her gün 05:23", "catalog": "Saatte bir"}
+STREAM_LABELS = {"orders": "Siparişler", "finance": "Finans (hakediş + kargo)",
+                 "catalog": "Ürün kataloğu (+ içerik, buybox)", "questions": "Müşteri soruları"}
+SCHEDULE_TEXT = {"orders": "30 dakikada bir", "finance": "Her gün 05:23", "catalog": "Saatte bir",
+                 "questions": "Saatte bir"}
 
 STATUS_LABELS = {
     "Awaiting": "Ödeme bekleniyor", "Verified": "Ödeme doğrulandı", "Created": "Yeni",
@@ -123,7 +130,7 @@ STATUS_LABELS = {
 
 #: Bildirim politikası — üst üste kaç hatada (kimlik hatası hep ilkinde) ve
 #  en sık ne kadarda bir.
-NOTIFY_AFTER = {"orders": 3, "catalog": 3, "finance": 1}
+NOTIFY_AFTER = {"orders": 3, "catalog": 3, "finance": 1, "questions": 3}
 NOTIFY_EVERY = timedelta(hours=24)
 
 ALIAS_FILE = Path(__file__).resolve().parent.parent / "data" / "barcode_aliases.json"
@@ -172,6 +179,11 @@ def request_stop() -> None:
 
 def reset_stop() -> None:
     _STOP.clear()
+
+
+def stop_requested() -> bool:
+    """Uygulama kapanıyor mu (uzun işler adım aralarında bakar)."""
+    return _STOP.is_set()
 
 
 def _interruptible_sleep(seconds: float) -> None:
@@ -282,8 +294,8 @@ def _body_snippet(r: httpx.Response) -> str:
 
 
 class Api:
-    """Trendyol satıcı API istemcisi.  Yalnız `get` vardır (okuma-yalnızlık kod
-    yapısıyla).  Grup başına bekleme, 429/5xx için sınırlı tekrar; 401/403/400
+    """Trendyol satıcı API istemcisi.  Yalnız `get` + izin listeli SORGU
+    `query`'si (buybox) vardır — okuma-yalnızlık kod yapısıyla.  Grup başına bekleme, 429/5xx için sınırlı tekrar; 401/403/400
     anlaşılır hatalara çevrilir.  Kimlik bilgisi yalnız httpx Basic auth'ta
     durur — hiçbir mesaja, log'a girmez.  Testler `transport=httpx.MockTransport`
     ve `sleep=` enjekte eder (ağ yok, bekleme yok)."""
@@ -327,6 +339,17 @@ class Api:
 
     def get(self, group: str, path: str, params: Optional[dict] = None):
         params = {k: v for k, v in (params or {}).items() if v is not None}
+        return self._send(group, lambda: self._http.get(path, params=params))
+
+    def query(self, group: str, path: str, body: dict):
+        """İzin listeli SORGU POST'u — yalnız `QUERY_PATHS` (bugün: buybox
+        kontrolü).  Trendyol'da hiçbir şeyi değiştirmez; başka bir yola POST
+        atmak ValueError'dır (okuma-yalnızlık testi kilitler)."""
+        if not any(rx.match(path) for rx in QUERY_PATHS):
+            raise ValueError(f"İzin verilmeyen sorgu yolu: {path}")
+        return self._send(group, lambda: self._http.post(path, json=body))
+
+    def _send(self, group: str, call: Callable[[], httpx.Response]):
         n429 = n5xx = 0
         while True:
             if _STOP.is_set():
@@ -334,7 +357,7 @@ class Api:
             self._pace(group)
             err = None
             try:
-                r = self._http.get(path, params=params)
+                r = call()
             except httpx.TimeoutException:
                 err = "zaman aşımı"
             except httpx.TransportError as e:
@@ -692,8 +715,13 @@ def _summary(stream: str, res: dict) -> str:
         c = res.get("cargo") or {}
         return (f"{res.get('new', 0)} yeni, {res.get('updated', 0)} güncellenen satır · "
                 f"{c.get('invoices', 0)} kargo faturası ({res.get('days')} gün)")
+    if stream == "questions":
+        return (f"{res.get('new', 0)} yeni, {res.get('updated', 0)} güncellenen soru"
+                + (" · 90 gün tarandı" if res.get("full") else ""))
+    bb = res.get("buybox") or {}
     return (f"{res.get('products', 0)} ürün ({res.get('new', 0)} yeni) · "
-            f"{res.get('with_stock', 0)} stoklu kayıt")
+            f"{res.get('with_stock', 0)} stoklu kayıt"
+            + (f" · buybox {bb.get('checked', 0)} kontrol" if bb.get("checked") else ""))
 
 
 def _mark_ok(db: Session, stream: str, res: dict) -> None:
@@ -1014,6 +1042,19 @@ def sync_catalog(db: Session, api, *, now: Optional[datetime] = None) -> dict:
                 "blacklisted": _bool(v.get("blacklisted")),
                 "product_url": _txt(v.get("productUrl"), 500),
             })
+            images = c.get("images") if isinstance(c.get("images"), list) else []
+            dopt = v.get("deliveryOptions") if isinstance(v.get("deliveryOptions"), dict) else {}
+            desc = c.get("description")
+            d.update({
+                "description": desc[:DESCRIPTION_MAX] if isinstance(desc, str) else None,
+                "attributes_json": json.dumps(parse_attributes(c.get("attributes"), v.get("attributes")),
+                                              ensure_ascii=False),
+                "image_count": len(images),
+                "category_id": _int(cat.get("id")) if isinstance(cat, dict) else None,
+                "delivery_duration": _int(dopt.get("deliveryDuration")),
+                "rush_delivery": _bool(dopt.get("isRushDelivery")),
+            })
+            d["content_hash"] = content_hash(d)
             price = v.get("price") if isinstance(v.get("price"), dict) else {}
             for key, src in (("sale_price", "salePrice"), ("list_price", "listPrice")):
                 val = _num(price.get(src))
@@ -1060,7 +1101,317 @@ def sync_catalog(db: Session, api, *, now: Optional[datetime] = None) -> dict:
     db.flush()
     missing = sum(1 for bc, p in existing.items() if bc not in found)
     db.commit()
-    return {"products": len(found), "new": new, "with_stock": with_stock, "missing": missing}
+    out = {"products": len(found), "new": new, "with_stock": with_stock, "missing": missing}
+    # Satış artırma alt işleri — geçici hata katalog akışını DÜŞÜRMEZ (sonuçta
+    # görünür), kimlik hatası ve kapanış durdurur.
+    for key, fn in (("category_attrs", sync_category_attrs), ("buybox", sync_buybox)):
+        try:
+            out[key] = fn(db, api, now=now)
+        except (TrendyolAuthError, TrendyolStopped):
+            raise
+        except TrendyolError as e:
+            db.rollback()
+            out[key] = {"error": str(e)[:200]}
+    try:
+        from core.trendyol_boost import snapshot_scores
+        out["scores"] = snapshot_scores(db, now=now)
+    except Exception as e:                           # puan geçmişi senkronu düşürmesin
+        db.rollback()
+        logger.exception("trendyol puan anlık görüntüsü başarısız")
+        out["scores"] = {"error": f"{type(e).__name__}: {str(e)[:160]}"}
+    return out
+
+
+# ─── Satış artırma: içerik, kategori özellikleri, buybox, müşteri soruları ───
+
+DESCRIPTION_MAX = 30_000
+CATEGORY_ATTR_TTL = timedelta(days=7)
+BUYBOX_TTL = timedelta(hours=20)
+BUYBOX_BATCH = 10
+QNA_WINDOW = timedelta(days=13)              # sınır 2 hafta
+QNA_BACKFILL = timedelta(days=90)
+QNA_FULL_EVERY = timedelta(hours=24)         # günde bir 90 gün yeniden (geç cevaplananlar)
+WAITING = "WAITING_FOR_ANSWER"
+
+
+def parse_attributes(content_attrs, variant_attrs) -> List[dict]:
+    """İçerik + varyant özellikleri → [{"id","name","values":[…],"value_ids":[…]}]
+    (özellik başına tek kayıt)."""
+    merged: Dict[int, dict] = {}
+
+    def slot(aid, name):
+        d = merged.setdefault(aid, {"id": aid, "name": name, "values": [], "value_ids": []})
+        if name and not d["name"]:
+            d["name"] = name
+        return d
+
+    for a in content_attrs or []:
+        if not isinstance(a, dict):
+            continue
+        aid = _int(a.get("attributeId"))
+        if aid is None:
+            continue
+        d = slot(aid, _txt(a.get("attributeName"), 150))
+        for v in a.get("attributeValues") or []:
+            if isinstance(v, dict):
+                val, vid = _txt(v.get("attributeValue"), 200), _int(v.get("attributeValueId"))
+                if val and val not in d["values"]:
+                    d["values"].append(val)
+                if vid is not None and vid not in d["value_ids"]:
+                    d["value_ids"].append(vid)
+    for a in variant_attrs or []:
+        if not isinstance(a, dict):
+            continue
+        aid = _int(a.get("attributeId"))
+        if aid is None:
+            continue
+        d = slot(aid, _txt(a.get("attributeName"), 150))
+        val, vid = _txt(a.get("attributeValue"), 200), _int(a.get("attributeValueId"))
+        if val and val not in d["values"]:
+            d["values"].append(val)
+        if vid is not None and vid not in d["value_ids"]:
+            d["value_ids"].append(vid)
+    return sorted(merged.values(), key=lambda x: x["id"])
+
+
+def content_hash(d: dict) -> str:
+    """Liste içeriğinin özeti — değişmediyse yapay zekâ önerisi yeniden üretilmez."""
+    blob = json.dumps({"t": d.get("title"), "d": d.get("description"), "a": d.get("attributes_json"),
+                       "i": d.get("image_count"), "c": d.get("category_id")},
+                      ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def sync_category_attrs(db: Session, api, *, now: Optional[datetime] = None, force: bool = False) -> dict:
+    """Katalogdaki kategorilerin özellik listesi — haftalık (ya da yeni
+    kategori belirince).  Listeden çıkan özellik silinir; değerler tembeldir."""
+    now = now or datetime.utcnow()
+    cat_ids = {cid for (cid,) in db.query(TrendyolProduct.category_id)
+               .filter(TrendyolProduct.category_id.isnot(None)).distinct().all()}
+    fetched = dict(db.query(TrendyolCategoryAttr.category_id, func.min(TrendyolCategoryAttr.fetched_at))
+                   .group_by(TrendyolCategoryAttr.category_id).all())
+    todo = sorted(c for c in cat_ids
+                  if force or fetched.get(c) is None or now - fetched[c] > CATEGORY_ATTR_TTL)
+    errors: Dict[str, str] = {}
+    for cid in todo:
+        _progress(detail=f"Kategori özellikleri {cid}")
+        try:
+            data = api.get("products", f"/product/categories/{cid}/attributes")
+        except TrendyolBadRequest as e:
+            errors[str(cid)] = str(e)[:160]
+            continue
+        rows = data.get("categoryAttributes") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            errors[str(cid)] = "categoryAttributes alanı yok"
+            continue
+        name = _txt((data.get("displayName") or data.get("name")), 150)
+        existing = {a.attribute_id: a for a in
+                    db.query(TrendyolCategoryAttr).filter(TrendyolCategoryAttr.category_id == cid).all()}
+        seen = set()
+        for ca in rows:
+            if not isinstance(ca, dict):
+                continue
+            attr = ca.get("attribute") if isinstance(ca.get("attribute"), dict) else {}
+            aid = _int(attr.get("id"))
+            if aid is None or aid in seen:
+                continue
+            seen.add(aid)
+            row = existing.get(aid)
+            if row is None:
+                row = TrendyolCategoryAttr(category_id=cid, attribute_id=aid)
+                db.add(row)
+            row.category_name = name
+            row.name = _txt(attr.get("name"), 150)
+            row.required = bool(_bool(ca.get("required")))
+            row.slicer = bool(_bool(ca.get("slicer")))
+            row.varianter = bool(_bool(ca.get("varianter")))
+            row.allow_custom = bool(_bool(ca.get("allowCustom")))
+            row.allow_multiple = bool(_bool(ca.get("allowMultipleAttributeValues")))
+            row.fetched_at = now
+        for aid, row in existing.items():
+            if aid not in seen:
+                db.delete(row)
+        db.commit()
+    return {"categories": len(cat_ids), "refreshed": len(todo) - len(errors), "errors": errors}
+
+
+def ensure_attribute_values(db: Session, api, category_id: int, attribute_id: int, *,
+                            now: Optional[datetime] = None, max_pages: int = 5) -> List[dict]:
+    """Bir özelliğin izin verilen değerleri — yalnız gerektiğinde çekilir,
+    haftalık önbellek (`values_json`)."""
+    now = now or datetime.utcnow()
+    row = (db.query(TrendyolCategoryAttr)
+           .filter(TrendyolCategoryAttr.category_id == category_id,
+                   TrendyolCategoryAttr.attribute_id == attribute_id).first())
+    if row is None:
+        return []
+    if row.values_json and row.values_fetched_at and now - row.values_fetched_at < CATEGORY_ATTR_TTL:
+        try:
+            return json.loads(row.values_json)
+        except ValueError:
+            pass
+    values: List[dict] = []
+    path = f"/product/categories/{category_id}/attributes/{attribute_id}/values"
+    for page in range(max_pages):
+        data = api.get("products", path, {"page": page, "size": 1000})
+        content = _content(data)
+        for v in content:
+            vid, name = _int(v.get("attributeValueId")), _txt(v.get("attributeValueName"), 200)
+            if vid is not None and name:
+                values.append({"id": vid, "name": name})
+        total = _int(data.get("totalPages")) if isinstance(data, dict) else None
+        if not content or total is None or page + 1 >= total:
+            break
+    row.values_json = json.dumps(values, ensure_ascii=False)
+    row.values_fetched_at = now
+    db.commit()
+    return values
+
+
+def sync_buybox(db: Session, api, *, now: Optional[datetime] = None, force: bool = False) -> dict:
+    """Buybox kontrolü — son kontrolü 20 saatten eski (günde bir) arşivsiz
+    ürünler, 10'arlı izinli SORGU POST'uyla.  Buybox başkasına geçen (sıra > 1)
+    ürün için günde en fazla bir bildirim."""
+    now = now or datetime.utcnow()
+    latest = db.query(func.max(TrendyolProduct.last_seen_at)).scalar()
+    q = db.query(TrendyolProduct).filter(TrendyolProduct.archived.isnot(True))
+    if latest is not None:
+        q = q.filter(TrendyolProduct.last_seen_at == latest)
+    due = [p for p in q.all()
+           if force or p.buybox_checked_at is None or now - p.buybox_checked_at > BUYBOX_TTL]
+    if not due:
+        return {"checked": 0, "lost": 0}
+    by_bc = {p.barcode: p for p in due}
+    path = f"/product/sellers/{api.seller_id}/products/buybox-information"
+    lost, errors, checked = [], 0, 0
+    barcodes = list(by_bc)
+    for i in range(0, len(barcodes), BUYBOX_BATCH):
+        chunk = barcodes[i:i + BUYBOX_BATCH]
+        _progress(detail=f"Buybox {i + 1}–{i + len(chunk)} / {len(barcodes)}")
+        try:
+            data = api.query("products", path, {"barcodes": chunk})
+        except TrendyolBadRequest:
+            errors += 1
+            continue
+        infos = data.get("buyboxInfo") if isinstance(data, dict) else None
+        for info in infos or []:
+            if not isinstance(info, dict):
+                continue
+            p = by_bc.get(_txt(info.get("barcode"), 64) or "")
+            if p is None:
+                continue
+            p.buybox_order = _int(info.get("buyboxOrder"))
+            p.buybox_price = _num(info.get("buyboxPrice"))
+            p.buybox_second_price = _num(info.get("secondBuyboxPrice"))
+            p.buybox_third_price = _num(info.get("thirdBuyboxPrice"))
+            p.has_multiple_seller = _bool(info.get("hasMultipleSeller"))
+            p.buybox_checked_at = now
+            checked += 1
+            if (p.buybox_order or 0) > 1 and (p.buybox_alerted_at is None
+                                              or now - p.buybox_alerted_at >= NOTIFY_EVERY):
+                p.buybox_alerted_at = now
+                lost.append({"barcode": p.barcode, "title": p.title, "order": p.buybox_order,
+                             "buybox_price": p.buybox_price, "our_price": p.sale_price})
+        db.commit()
+    if lost:
+        try:
+            from core.notifications import notify_trendyol_buybox_lost
+            notify_trendyol_buybox_lost(lost)
+        except Exception:
+            logger.exception("buybox bildirimi gönderilemedi")
+    return {"checked": checked, "lost": len(lost), "errors": errors}
+
+
+def parse_question(raw: dict) -> Optional[dict]:
+    """Müşteri sorusu → beyaz listeli sözlük (`customerId`, `userName` ALINMAZ)."""
+    qid = _int(raw.get("id"))
+    if qid is None:
+        return None
+    ans = raw.get("answer") if isinstance(raw.get("answer"), dict) else {}
+    return {
+        "question_id": qid,
+        "product_main_id": _txt(raw.get("productMainId"), 100),
+        "product_name": _txt(raw.get("productName"), 300),
+        "text": (str(raw.get("text")).strip()[:4000] if raw.get("text") is not None else None),
+        "status": _txt(raw.get("status"), 30),
+        "asked_at": ty_ts(raw.get("creationDate")),
+        "answer_text": (str(ans.get("text")).strip()[:4000] if ans.get("text") else None),
+        "answered_at": ty_ts(ans.get("creationDate")),
+        "rejected_reason": _txt(raw.get("reason"), 255),
+        "web_url": _txt(raw.get("webUrl"), 500),
+    }
+
+
+_Q_FIELDS = ("product_main_id", "product_name", "text", "status", "asked_at", "answer_text",
+             "answered_at", "rejected_reason", "web_url")
+
+
+def upsert_question(db: Session, q: dict, pmid_to_barcode: Dict[str, str]) -> Tuple[str, TrendyolQuestion]:
+    row = db.query(TrendyolQuestion).filter(TrendyolQuestion.question_id == q["question_id"]).first()
+    outcome = "updated"
+    if row is None:
+        row = TrendyolQuestion(question_id=q["question_id"], first_seen_at=datetime.utcnow())
+        db.add(row)
+        outcome = "new"
+    for f in _Q_FIELDS:
+        setattr(row, f, q[f])
+    row.barcode = pmid_to_barcode.get(q["product_main_id"] or "") or row.barcode
+    row.synced_at = datetime.utcnow()
+    db.flush()
+    return outcome, row
+
+
+def sync_questions(db: Session, api, *, now: Optional[datetime] = None) -> dict:
+    """Müşteri soruları — her çalıştırmada son 13 gün; günde bir (ve ilk
+    çalıştırmada) 90 gün (geç cevaplanan eski sorular da güncellensin).  Yeni
+    cevap bekleyen sorular yöneticilere TEK bildirimle duyurulur."""
+    now = now or datetime.utcnow()
+    st = _state(db, "questions")
+    meta = _meta(st)
+    try:
+        full_at = datetime.fromisoformat(meta["full_at"]) if meta.get("full_at") else None
+    except ValueError:
+        full_at = None
+    full = st.last_ok_at is None or full_at is None or now - full_at > QNA_FULL_EVERY
+    start = now - (QNA_BACKFILL if full else QNA_WINDOW)
+    pmid = {pm: bc for bc, pm in db.query(TrendyolProduct.barcode, TrendyolProduct.product_main_id).all() if pm}
+    path = f"/qna/sellers/{api.seller_id}/questions/filter"
+    counts = Counter()
+    fresh_waiting: List[TrendyolQuestion] = []
+    for ws, we in _windows_forward(start, now, QNA_WINDOW):
+        _progress(detail=f"Müşteri soruları {_fmt(ws)} → {_fmt(we)}")
+        for page in range(MAX_PAGES):
+            data = api.get("qna", path, {"supplierId": api.seller_id, "startDate": to_ty_ms(ws),
+                                         "endDate": to_ty_ms(we), "page": page, "size": 200})
+            content = _content(data)
+            for raw in content:
+                q = parse_question(raw)
+                if not q:
+                    continue
+                outcome, row = upsert_question(db, q, pmid)
+                counts[outcome] += 1
+                if row.status == WAITING and row.notified_at is None and row not in fresh_waiting:
+                    fresh_waiting.append(row)
+            db.commit()
+            total = _int(data.get("totalPages")) if isinstance(data, dict) else None
+            if not content or total is None or page + 1 >= total:
+                break
+    if fresh_waiting:
+        try:
+            from core.notifications import notify_trendyol_questions
+            notify_trendyol_questions(len(fresh_waiting), [r.text or "" for r in fresh_waiting[:3]])
+        except Exception:
+            logger.exception("soru bildirimi gönderilemedi")
+        for r in fresh_waiting:
+            r.notified_at = now
+    st = _state(db, "questions")
+    if full:
+        meta = _meta(st)
+        meta["full_at"] = now.isoformat()
+        st.meta = json.dumps(meta, ensure_ascii=False, default=str)
+    db.commit()
+    return {"new": counts["new"], "updated": counts["updated"], "notified": len(fresh_waiting),
+            "full": full}
 
 
 # ─── Orkestrasyon ────────────────────────────────────────────────────────────
@@ -1099,6 +1450,8 @@ def run(kind: str, *, backfill_days: Optional[int] = None, db: Optional[Session]
                     res = sync_orders(db, api, lookback_days=backfill_days)
                 elif stream == "finance":
                     res = sync_finance(db, api, days=backfill_days)
+                elif stream == "questions":
+                    res = sync_questions(db, api)
                 else:
                     res = sync_catalog(db, api)
             except TrendyolStopped as e:                 # kapanış — hata SAYILMAZ
@@ -1353,6 +1706,8 @@ def status_summary(db: Session) -> dict:
         "cargo_items": db.query(func.count(TrendyolCargoItem.id)).scalar() or 0,
         "products": db.query(func.count(TrendyolProduct.id)).scalar() or 0,
         "mappings": db.query(func.count(func.distinct(TrendyolBarcodeMap.barcode))).scalar() or 0,
+        "questions_waiting": db.query(func.count(TrendyolQuestion.id))
+                               .filter(TrendyolQuestion.status == WAITING).scalar() or 0,
     }
     first = db.query(func.min(TrendyolPackage.order_date)).scalar()
     return {"configured": not problems, "missing": problems, "enabled": get_enabled(db),
@@ -1366,6 +1721,21 @@ def status_summary(db: Session) -> dict:
 def _match_q(q: str, *texts) -> bool:
     fq = _fold(q)
     return any(fq in _fold(t) for t in texts if t)
+
+
+def buybox_state(p: TrendyolProduct) -> dict:
+    """Buybox rozeti: ours (yeşil) · shared (turuncu — başka satıcı da var) ·
+    lost (kırmızı — buybox başkasında) · unknown (henüz sorgulanmadı)."""
+    base = {"order": p.buybox_order, "buybox_price": p.buybox_price, "our_price": p.sale_price,
+            "second_price": p.buybox_second_price, "third_price": p.buybox_third_price,
+            "checked_at": _fmt(p.buybox_checked_at)}
+    if p.buybox_checked_at is None:
+        return {**base, "state": "unknown", "label": "Kontrol edilmedi"}
+    if (p.buybox_order or 0) > 1:
+        return {**base, "state": "lost", "label": f"Buybox başkasında ({p.buybox_order}. sıra)"}
+    if p.has_multiple_seller:
+        return {**base, "state": "shared", "label": "Buybox bizde, başka satıcı da var"}
+    return {**base, "state": "ours", "label": "Buybox bizde"}
 
 
 def catalog_view(db: Session, *, panel: str = "all", q: Optional[str] = None,
@@ -1392,10 +1762,13 @@ def catalog_view(db: Session, *, panel: str = "all", q: Optional[str] = None,
             "resolution": public_resolution(r, show_cost=False),
             "ims_stock": stock, "diff": diff,
             "over": diff is not None and diff > 0,
+            "buybox": buybox_state(p),
         }
         summary[r["status"]] += 1
         if row["over"]:
             summary["over"] += 1
+        if row["buybox"]["state"] == "lost":
+            summary["buybox_lost"] += 1
         if panel != "all" and r["panel"] != panel:
             continue
         if q and not _match_q(q, p.title, p.barcode, p.stock_code, p.brand,

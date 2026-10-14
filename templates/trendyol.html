@@ -90,8 +90,8 @@
     :root[data-theme="dark"] .ty-row-over td { background:#3b1c1c; }
     .ty-pager { display:flex; align-items:center; gap:.6rem; justify-content:flex-end; padding:.8rem 1.2rem; }
     .ty-kv { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:.6rem; margin-bottom:1rem; }
-    .ty-kv div { background:var(--os-soft); border:1px solid var(--os-line); border-radius:8px; padding:.55rem .75rem; font-size:.84rem; }
-    .ty-kv span { display:block; font-size:.72rem; color:var(--os-muted); }
+    .ty-kv > div { background:var(--os-soft); border:1px solid var(--os-line); border-radius:8px; padding:.55rem .75rem; font-size:.84rem; }
+    .ty-kv > div > span:first-child { display:block; font-size:.72rem; color:var(--os-muted); }
     .ty-pre { white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,SFMono-Regular,monospace; font-size:.76rem; background:var(--os-soft); border:1px solid var(--os-line); border-radius:8px; padding:.8rem; max-height:420px; overflow:auto; margin:0; }
     .ty-progress { display:flex; align-items:center; gap:.6rem; font-size:.86rem; }
     .ty-comp { display:grid; grid-template-columns:minmax(0,1fr) 110px auto; gap:.5rem; align-items:center; margin-bottom:.5rem; }
@@ -99,6 +99,30 @@
     .ty-results button { display:block; width:100%; text-align:left; background:none; border:0; border-bottom:1px solid var(--os-line); padding:.5rem .7rem; font:400 .84rem 'Jost',sans-serif; color:var(--os-ink); cursor:pointer; }
     .ty-results button:hover { background:var(--os-soft); }
     .ty-switch { display:inline-flex; align-items:center; gap:.45rem; font-size:.86rem; }
+    .ty-score { display:flex; align-items:center; gap:.5rem; min-width:130px; }
+    .ty-score-bar { flex:1; height:7px; border-radius:6px; background:var(--os-line); overflow:hidden; min-width:60px; }
+    .ty-score-bar > span { display:block; height:100%; border-radius:6px; }
+    .ty-score strong { font-variant-numeric:tabular-nums; min-width:2.2rem; text-align:right; }
+    .ty-fixes { margin:0; padding-left:1.1rem; font-size:.8rem; color:var(--os-muted); }
+    .ty-cols { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:1rem; }
+    .ty-box { border:1px solid var(--os-line); border-radius:10px; padding:.9rem 1rem; background:var(--white); margin-bottom:1rem; }
+    .ty-box h3 { font-size:.95rem; font-weight:600; color:var(--os-head); margin:0 0 .6rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+    .ty-text { white-space:pre-wrap; word-break:break-word; font-size:.86rem; background:var(--os-soft); border:1px solid var(--os-line); border-radius:8px; padding:.7rem .8rem; max-height:320px; overflow:auto; }
+    .ty-field { margin-bottom:.9rem; }
+    .ty-field-head { display:flex; align-items:center; gap:.5rem; justify-content:space-between; margin-bottom:.3rem; font-size:.78rem; font-weight:600; color:var(--os-muted); }
+    .ty-chips { display:flex; flex-wrap:wrap; gap:.35rem; }
+    .ty-chip { border:1px solid var(--os-line); border-radius:16px; padding:.18rem .6rem; font-size:.78rem; background:var(--os-soft); }
+    .ty-chip small { color:var(--os-muted); margin-left:.3rem; }
+    .ty-q { border-top:1px solid var(--os-line); padding:1rem 1.2rem; }
+    .ty-q:first-child { border-top:0; }
+    .ty-q-head { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; font-size:.8rem; color:var(--os-muted); margin-bottom:.4rem; }
+    .ty-q-text { font-size:.92rem; margin:0 0 .6rem; white-space:pre-wrap; word-break:break-word; }
+    .ty-actions { display:flex; gap:.4rem; flex-wrap:wrap; align-items:center; }
+    .ty-spark { display:block; width:100%; height:60px; }
+    .ty-note { width:100%; min-height:120px; resize:vertical; }
+    .ty-check-ok { color:var(--os-good); }
+    .ty-check-no { color:var(--os-bad); }
+    .ty-batch { display:flex; gap:.6rem; flex-wrap:wrap; align-items:flex-end; }
     [hidden] { display:none !important; }
     #toast-container { position:fixed; right:1rem; bottom:1rem; z-index:1100; display:flex; flex-direction:column; gap:.6rem; max-width:min(420px,calc(100vw - 2rem)); }
     .toast-msg { min-width:260px; padding:.8rem 1rem; border-radius:10px; font-size:.88rem; font-weight:500; box-shadow:0 4px 20px rgba(0,0,0,.12); display:flex; align-items:center; gap:.6rem; }
@@ -107,6 +131,7 @@
     .toast-info { background:#eff6ff; color:#1d4ed8; border-left:4px solid #3b82f6; }
     :root[data-theme="dark"] .os-tab[aria-selected="true"],:root[data-theme="dark"] .os-b-main { background:var(--gold); color:#131B40; border-color:var(--gold); }
     @media(max-width:991px) { .sidebar { transform:translateX(-100%); transition:transform .2s; } .sidebar.mobile-open { transform:translateX(0); } .topnav { left:0; padding:0 1rem; } .main-content { margin-left:0; } .content-inner { padding:1.4rem 1rem 2rem; } .os-header { flex-wrap:wrap; } }
+    @media(max-width:991px) { .ty-cols { grid-template-columns:1fr; } }
     @media(max-width:575px) { .user-chip { display:none; } .os-card-head,.os-card-body { padding:.9rem; } .os-tools { margin-left:0; } .topnav-title { font-size:1rem; } .ty-comp { grid-template-columns:1fr 90px auto; } }
   </style>
   <link rel="stylesheet" href="/static/mobile.css" />
@@ -117,7 +142,7 @@
   <script src="/static/tr-datetime.js?v=1" defer></script>
   <script src="/static/idle-watch.js" defer></script>
   <script src="/static/assistant.js?v=3" defer></script>
-  <script src="/static/trendyol.js?v=1" defer></script>
+  <script src="/static/trendyol.js?v=2" defer></script>
 </head>
 <body>
   <aside class="sidebar">
@@ -174,19 +199,64 @@
       <div>
         <div class="os-eyebrow">PAZARYERİ · YALNIZ OKUMA</div>
         <h1 class="os-title">Trendyol</h1>
-        <p class="os-subtitle">Trendyol satıcı hesabındaki siparişler, ürün kataloğu ve finans kayıtları buraya çekilir. Trendyol'a hiçbir şey yazılmaz, IMS stoğu ve işlem defteri değişmez. Barkodlar IMS'teki bitmiş ürün kartlarıyla eşleştirilir; iki paneldeki ürünler birlikte gösterilir.</p>
+        <p class="os-subtitle">Trendyol satıcı hesabındaki siparişler, ürün kataloğu, müşteri soruları ve finans kayıtları buraya çekilir. Liste Doktoru her ürünün listesini puanlar ve yapay zekâyla anahtar kelime, başlık, açıklama ve özellik önerisi hazırlar. Trendyol'a hiçbir şey yazılmaz: öneriler kopyalanıp panele elle girilir; IMS stoğu ve işlem defteri değişmez.</p>
       </div>
     </div>
     <div id="tyAlert" role="alert" aria-live="assertive"></div>
 
     <div class="os-tabs" role="tablist" aria-label="Trendyol bölümleri">
-      <button type="button" class="os-tab" role="tab" id="tyTabOrders" data-ty-tab="orders" aria-controls="tyOrdersPanel" aria-selected="true">Siparişler</button>
+      <button type="button" class="os-tab" role="tab" id="tyTabListing" data-ty-tab="listing" aria-controls="tyListingPanel" aria-selected="true">Liste Doktoru</button>
+      <button type="button" class="os-tab" role="tab" id="tyTabQuestions" data-ty-tab="questions" aria-controls="tyQuestionsPanel" aria-selected="false">Sorular</button>
+      <button type="button" class="os-tab" role="tab" id="tyTabOrders" data-ty-tab="orders" aria-controls="tyOrdersPanel" aria-selected="false">Siparişler</button>
       <button type="button" class="os-tab" role="tab" id="tyTabCatalog" data-ty-tab="catalog" aria-controls="tyCatalogPanel" aria-selected="false">Eşleştirme &amp; Stok</button>
       <button type="button" class="os-tab" role="tab" id="tyTabConn" data-ty-tab="connection" aria-controls="tyConnPanel" aria-selected="false">Bağlantı / Durum</button>
     </div>
 
+    <!-- Liste Doktoru -->
+    <section id="tyListingPanel" role="tabpanel" aria-labelledby="tyTabListing">
+      <div id="tyListingStats" class="os-stats"></div>
+      <div id="tyAiNotice"></div>
+      <div class="os-card">
+        <div class="os-card-head"><i class="bi bi-clipboard2-pulse"></i><h2>Liste Doktoru</h2>
+          <div class="os-tools">
+            <input type="search" id="tyListQ" class="os-input" style="width:220px" placeholder="Ürün, barkod, marka" maxlength="100" aria-label="Listede ara" />
+            <button type="button" class="os-b" id="tyListRefresh"><i class="bi bi-arrow-clockwise"></i>Yenile</button>
+            <button type="button" class="os-b os-b-main" id="tyBatchToggle" hidden><i class="bi bi-stars"></i>Toplu öneri üret</button>
+          </div>
+        </div>
+        <div class="os-card-body" style="padding-bottom:0">
+          <p class="os-muted" id="tyListInfo">Puan 100 üzerinden kural motoruyla hesaplanır (ücretsiz): ürün adı, özellikler, açıklama, görseller, fiyat, teslimat ve satış durumu. En düşük puanlı ürün en üstte; "İlk düzeltmeler" en çok puan kazandıracak üç adımdır.</p>
+          <div id="tyBatchBox" class="os-notice" hidden>
+            <div class="ty-batch" id="tyBatchForm">
+              <div><label class="os-label" for="tyBatchLimit">Puanı en düşük kaç ürün?</label><input type="number" id="tyBatchLimit" class="os-input" min="1" max="500" value="10" style="width:120px" /></div>
+              <button type="button" class="os-b" id="tyBatchEstimate"><i class="bi bi-calculator"></i>Tahmini maliyeti göster</button>
+              <button type="button" class="os-b os-b-main" id="tyBatchStart" hidden><i class="bi bi-play-fill"></i>Onayla ve başlat</button>
+            </div>
+            <p class="os-muted" id="tyBatchEstimateText" style="margin:.6rem 0 0"></p>
+          </div>
+          <div id="tyBatchProgress" class="os-notice" hidden></div>
+        </div>
+        <div id="tyListingHost" class="os-table-wrap"><div class="os-empty">Yükleniyor…</div></div>
+      </div>
+    </section>
+
+    <!-- Müşteri soruları -->
+    <section id="tyQuestionsPanel" role="tabpanel" aria-labelledby="tyTabQuestions" hidden>
+      <div id="tyQuestionStats" class="os-stats"></div>
+      <div class="os-card">
+        <div class="os-card-head"><i class="bi bi-chat-left-dots"></i><h2>Müşteri soruları</h2>
+          <div class="os-tools">
+            <select id="tyQStatus" class="os-select" style="width:auto" aria-label="Durum süzgeci"><option value="">Tümü</option><option value="WAITING_FOR_ANSWER" selected>Cevap bekliyor</option><option value="ANSWERED">Cevaplandı</option><option value="REJECTED">Reddedildi</option><option value="REPORTED">Bildirildi</option><option value="UNANSWERED">Cevaplanmadı</option></select>
+            <button type="button" class="os-b" id="tyQRefresh"><i class="bi bi-arrow-clockwise"></i>Yenile</button>
+          </div>
+        </div>
+        <div class="os-card-body" style="padding-bottom:0"><p class="os-muted">Sorular saatte bir çekilir. Yapay zekâ taslağı otomatik GÖNDERİLMEZ: okuyup düzeltin, kopyalayın ve Trendyol'da cevaplayın (Trendyol cevabı 10–2000 karakter kabul eder). Soru metni müşteri girdisidir; içindeki bağlantıları açmayın.</p></div>
+        <div id="tyQuestionsHost"><div class="os-empty">Yükleniyor…</div></div>
+      </div>
+    </section>
+
     <!-- Siparişler -->
-    <section id="tyOrdersPanel" role="tabpanel" aria-labelledby="tyTabOrders">
+    <section id="tyOrdersPanel" role="tabpanel" aria-labelledby="tyTabOrders" hidden>
       <div class="os-card">
         <div class="os-card-head"><i class="bi bi-funnel"></i><h2>Süzgeç</h2></div>
         <div class="os-card-body">
@@ -280,6 +350,14 @@
       </div>
     </section>
   </div></main>
+
+  <!-- Liste Doktoru — ürün detayı -->
+  <div class="modal fade os-dialog" id="tyListModal" tabindex="-1" aria-labelledby="tyListTitle" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable"><div class="modal-content">
+      <div class="modal-header"><h2 class="modal-title" id="tyListTitle">Liste Doktoru</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
+      <div class="modal-body" id="tyListBody"></div>
+    </div></div>
+  </div>
 
   <!-- Sipariş detayı -->
   <div class="modal fade os-dialog" id="tyOrderModal" tabindex="-1" aria-labelledby="tyOrderTitle" aria-hidden="true">

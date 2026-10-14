@@ -291,6 +291,12 @@ def trendyol_finance_sync() -> None:
     _trendyol_job("finance")
 
 
+def trendyol_questions_sync() -> None:
+    """Saatte bir (dakika 22): müşteri soruları — son 13 gün, günde bir tam 90
+    gün; yeni cevap bekleyen soru yöneticilere bir kez push edilir."""
+    _trendyol_job("questions")
+
+
 def kommo_nightly_full_sync() -> None:
     """
     Gecelik job (03:00): Kommo yapılandırılmışsa TAM içe aktarma çalıştırır —
@@ -433,6 +439,7 @@ def start_scheduler() -> None:
                 (trendyol_orders_sync, CronTrigger(minute="7,37"), "trendyol_orders_sync"),
                 (trendyol_catalog_sync, CronTrigger(minute=52), "trendyol_catalog_sync"),
                 (trendyol_finance_sync, CronTrigger(hour=2, minute=23), "trendyol_finance_sync"),
+                (trendyol_questions_sync, CronTrigger(minute=22), "trendyol_questions_sync"),
             ):
                 scheduler.add_job(fn, trigger, id=job_id, replace_existing=True,
                                   max_instances=1, coalesce=True)

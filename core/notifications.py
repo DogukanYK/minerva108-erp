@@ -286,6 +286,49 @@ def notify_trendyol_sync_failure(stream: str, detail: str) -> None:
     })
 
 
+def notify_trendyol_buybox_lost(items) -> None:
+    """Buybox başka satıcıya geçti → yöneticilere.  `items`: [{"barcode",
+    "title", "order", "buybox_price", "our_price"}]; ürün başına günde en fazla
+    bir kez (sınır çağıran tarafta: core.trendyol.sync_buybox)."""
+    items = list(items or [])
+    if not items:
+        return
+    first = items[0]
+    name = (first.get("title") or first.get("barcode") or "?")[:80]
+    if len(items) == 1:
+        body = f"{name}: buybox {first.get('order') or '?'}. sırada"
+        if first.get("buybox_price") is not None and first.get("our_price") is not None:
+            body += f" (buybox {first['buybox_price']:.2f} TL · bizim {first['our_price']:.2f} TL)"
+    else:
+        body = f"{len(items)} üründe buybox başka satıcıda — ilk: {name}"
+    _emit("warning", "TRENDYOL-BUYBOX", f"Trendyol buybox kaybı: {len(items)} ürün", count=len(items))
+    _send_push("managers", {
+        "title": "Trendyol — buybox kaybı",
+        "body":  body[:240],
+        "tag":   "trendyol-buybox",
+        "url":   "/trendyol",
+    })
+
+
+def notify_trendyol_questions(count: int, samples) -> None:
+    """Yeni cevap bekleyen müşteri soruları → yöneticilere (soru başına bir kez;
+    `notified_at` çağıran tarafta: core.trendyol.sync_questions).  Soru metni
+    müşteri girdisidir — yalnız kısaltılmış önizleme gider."""
+    if not count:
+        return
+    first = next((str(x).strip() for x in (samples or []) if str(x or "").strip()), "")
+    body = f"{count} yeni soru cevap bekliyor"
+    if first:
+        body += f" — \"{first[:100]}\""
+    _emit("info", "TRENDYOL-QNA", f"Trendyol: {count} yeni müşteri sorusu", count=count)
+    _send_push("managers", {
+        "title": "Trendyol — yeni müşteri sorusu",
+        "body":  body[:240],
+        "tag":   "trendyol-questions",
+        "url":   "/trendyol#sorular",
+    })
+
+
 def notify_export_order_manual(order_no: str, country: str) -> None:
     """Yurt dışı (ihracat) Shopify siparişi — otomatik fatura kesilmez, MANUEL."""
     _emit("warning", "SHOPIFY-EXPORT",

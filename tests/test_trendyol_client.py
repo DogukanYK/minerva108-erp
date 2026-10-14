@@ -8,11 +8,13 @@ Kilitlenenler:
     hatası sınırlı tekrar.  401/403 → TrendyolAuthError, 400 → TrendyolBadRequest.
   • Grup başına bekleme (sipariş akışı ≥5 sn).
   • Kimlik bilgileri hiçbir hata mesajına / log satırına girmez.
-  • Okuma-yalnızlık kod yapısıyla: Api'nin tek HTTP metodu `get`; kaynakta
-    httpx/istemci post/put/patch/delete çağrısı yok.
+  • Okuma-yalnızlık kod yapısıyla: Api'nin HTTP metotları `get` + izin listeli
+    `query` (yalnız buybox SORGUSU POST'u); kaynakta başka post/put/patch/delete yok.
   • Ayarlar çağrı anında env'den; eksikler YALNIZ adlarıyla raporlanır.
 """
 import base64
+import inspect
+import json
 import logging
 import pathlib
 import re
@@ -147,10 +149,32 @@ def test_credentials_never_logged(caplog):
 
 
 def test_api_is_read_only_by_construction():
+    """Tek yazma-biçimli çağrı Api.query'deki izin listeli POST'tur (buybox
+    SORGUSU — Trendyol'da hiçbir şeyi değiştirmez); başka post/put/patch/delete yok."""
     public = sorted(n for n in dir(T.Api) if not n.startswith("_"))
-    assert public == ["close", "get"]
+    assert public == ["close", "get", "query"]
     src = pathlib.Path(T.__file__).read_text(encoding="utf-8")
-    assert not re.search(r"\b(httpx|self\._http|_http|client)\.(post|put|patch|delete|request|send|stream)\(", src)
+    hits = re.findall(r"\b(httpx|self\._http|_http|client)\.(post|put|patch|delete|request|send|stream)\(", src)
+    assert hits == [("self._http", "post")]
+    assert "self._http.post(" in inspect.getsource(T.Api.query)
+    assert [rx.pattern for rx in T.QUERY_PATHS] == [r"^/product/sellers/\d+/products/buybox-information$"]
+
+
+def test_query_only_allowlisted_paths():
+    seen = []
+
+    def handler(req):
+        seen.append((req.method, req.url.path, json.loads(req.content or b"{}")))
+        return httpx.Response(200, json={"buyboxInfo": []})
+
+    api, _ = _api(handler)
+    for bad in ("/product/sellers/123456/products", "/order/sellers/123456/orders/stream",
+                "/product/sellers/123456/products/buybox-information/x", "/qna/sellers/123456/questions/1/answers"):
+        with pytest.raises(ValueError):
+            api.query("products", bad, {"barcodes": ["1"]})
+    assert seen == []
+    api.query("products", "/product/sellers/123456/products/buybox-information", {"barcodes": ["868"]})
+    assert seen == [("POST", "/integration/product/sellers/123456/products/buybox-information", {"barcodes": ["868"]})]
 
 
 def test_config_read_at_call_time(monkeypatch):

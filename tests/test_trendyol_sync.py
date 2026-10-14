@@ -328,7 +328,7 @@ def test_run_all_marks_states_and_leaves_ims_untouched(db_session):
     res = T.run("all", db=db_session, api=_full_api())
     assert all(r["ok"] for r in res["results"].values())
     states = {s.stream: s for s in db_session.query(TrendyolSyncState).all()}
-    assert set(states) == {"orders", "finance", "catalog"}
+    assert set(states) == {"orders", "finance", "catalog", "questions"}
     assert all(s.last_ok_at and s.consecutive_failures == 0 for s in states.values())
     db_session.refresh(it)
     assert it.current_stock == 5.0 and db_session.query(Transaction).count() == 0

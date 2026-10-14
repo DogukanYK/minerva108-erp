@@ -2039,6 +2039,121 @@ class TrendyolProduct(Base):
     first_seen_at   = Column(DateTime, default=datetime.utcnow)
     last_seen_at    = Column(DateTime, nullable=True, index=True)
     synced_at       = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # ── Satış artırma (Liste Doktoru, 13.10.2026) — tablo canlıda olduğu için
+    # bu kolonlar init_db alter_safe + migration d5f7a9c1e3b6 ile gelir.
+    description         = Column(Text, nullable=True)        # Trendyol açıklaması (HTML olabilir)
+    attributes_json     = Column(Text, nullable=True)        # [{"id","name","values":[...],"value_ids":[...]}]
+    image_count         = Column(Integer, nullable=True)
+    category_id         = Column(BigInteger, nullable=True)
+    delivery_duration   = Column(Integer, nullable=True)     # gün (Trendyol deliveryOptions)
+    rush_delivery       = Column(Boolean, nullable=True)
+    content_hash        = Column(String(64), nullable=True)  # içerik değişti mi (öneri önbelleği)
+    buybox_order        = Column(Integer, nullable=True)     # 1 = buybox bizde
+    buybox_price        = Column(Float, nullable=True)
+    buybox_second_price = Column(Float, nullable=True)
+    buybox_third_price  = Column(Float, nullable=True)
+    has_multiple_seller = Column(Boolean, nullable=True)
+    buybox_checked_at   = Column(DateTime, nullable=True)
+    buybox_alerted_at   = Column(DateTime, nullable=True)    # kayıp bildirimi (günde en fazla bir)
+
+
+class TrendyolCategoryAttr(Base):
+    """Kategori özellik listesi (`/product/categories/{id}/attributes`) —
+    zorunlu mu, süzgeç (slicer) / varyant mı.  İzin verilen değerler yalnız
+    gerektiğinde (üründe eksik özellik için öneri) çekilip `values_json`'a
+    yazılır.  Haftalık yenilenir; kural puanı ve yapay zekâ önerisi buradan
+    beslenir."""
+    __tablename__ = "trendyol_category_attrs"
+    __table_args__ = (UniqueConstraint("category_id", "attribute_id", name="uq_trendyol_category_attrs_cat_attr"),)
+
+    id               = Column(Integer, primary_key=True)
+    category_id      = Column(BigInteger, nullable=False, index=True)
+    category_name    = Column(String(150), nullable=True)
+    attribute_id     = Column(BigInteger, nullable=False)
+    name             = Column(String(150), nullable=True)
+    required         = Column(Boolean, nullable=False, default=False)
+    slicer           = Column(Boolean, nullable=False, default=False)
+    varianter        = Column(Boolean, nullable=False, default=False)
+    allow_custom     = Column(Boolean, nullable=False, default=False)
+    allow_multiple   = Column(Boolean, nullable=False, default=False)
+    values_json      = Column(Text, nullable=True)       # [{"id","name"}] — tembel
+    values_fetched_at = Column(DateTime, nullable=True)
+    fetched_at       = Column(DateTime, default=datetime.utcnow)
+
+
+class TrendyolProductNote(Base):
+    """Ekibin ürün başına doldurduğu kısa bilgi notu (öne çıkan içerikler, cilt
+    tipi, kullanım).  Yapay zekâ YALNIZ bu not + Trendyol içeriği + IMS adından
+    bilgi kullanır — reçete/formül/maliyet/stok gönderilmez."""
+    __tablename__ = "trendyol_product_notes"
+
+    id         = Column(Integer, primary_key=True)
+    barcode    = Column(String(64), nullable=False, unique=True)
+    note       = Column(Text, nullable=False, default="")
+    updated_by = Column(String(100), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TrendyolListingSuggestion(Base):
+    """Claude'un ürün başına liste önerisi.  `input_hash` = içerik + not +
+    kategori özellik sürümü + istem sürümü + model; aynıysa yeniden üretilmez.
+    `flags_json` kod denetiminin bulguları (yasak iddia, izinsiz değer…);
+    `flagged` True ise UI kopyalamayı uyarıyla yapar.  Maliyet ayrıca
+    `assistant_usage`'a yazılır (ortak aylık tavan)."""
+    __tablename__ = "trendyol_listing_suggestions"
+    __table_args__ = (Index("ix_trendyol_suggestions_bc_created", "barcode", "created_at"),)
+
+    id             = Column(Integer, primary_key=True)
+    barcode        = Column(String(64), nullable=False)
+    input_hash     = Column(String(64), nullable=False, index=True)
+    prompt_version = Column(String(20), nullable=False)
+    model          = Column(String(60), nullable=False)
+    payload_json   = Column(Text, nullable=False)
+    flags_json     = Column(Text, nullable=True)
+    flagged        = Column(Boolean, nullable=False, default=False)
+    cost_usd       = Column(Float, nullable=False, default=0.0)
+    created_by     = Column(String(100), nullable=True)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+
+
+class TrendyolScoreHistory(Base):
+    """Günlük liste puanı (TR takvim günü) — iyileşme "önce → sonra" buradan."""
+    __tablename__ = "trendyol_score_history"
+    __table_args__ = (UniqueConstraint("barcode", "day", name="uq_trendyol_score_history_bc_day"),)
+
+    id             = Column(Integer, primary_key=True)
+    barcode        = Column(String(64), nullable=False, index=True)
+    day            = Column(Date, nullable=False)
+    score          = Column(Integer, nullable=False)
+    breakdown_json = Column(Text, nullable=True)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+
+
+class TrendyolQuestion(Base):
+    """Müşteri sorusu (`/qna/.../questions/filter`).  KVKK: `customerId` ve
+    `userName` SAKLANMAZ.  Taslak Claude'dandır ve OTOMATİK GÖNDERİLMEZ — ekip
+    kopyalayıp panelden cevaplar; bir sonraki çekimde soru kapanır."""
+    __tablename__ = "trendyol_questions"
+
+    id               = Column(Integer, primary_key=True)
+    question_id      = Column(BigInteger, nullable=False, unique=True)
+    product_main_id  = Column(String(100), nullable=True, index=True)
+    barcode          = Column(String(64), nullable=True)
+    product_name     = Column(String(300), nullable=True)
+    text             = Column(Text, nullable=True)
+    status           = Column(String(30), nullable=True, index=True)
+    asked_at         = Column(DateTime, nullable=True, index=True)     # UTC
+    answer_text      = Column(Text, nullable=True)
+    answered_at      = Column(DateTime, nullable=True)
+    rejected_reason  = Column(String(255), nullable=True)
+    web_url          = Column(String(500), nullable=True)
+    draft_text       = Column(Text, nullable=True)
+    draft_flags_json = Column(Text, nullable=True)
+    draft_at         = Column(DateTime, nullable=True)
+    draft_by         = Column(String(100), nullable=True)
+    notified_at      = Column(DateTime, nullable=True)
+    first_seen_at    = Column(DateTime, default=datetime.utcnow)
+    synced_at        = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class TrendyolBarcodeMap(Base):
@@ -3900,6 +4015,22 @@ def init_db():
             "ALTER TABLE quotations ADD COLUMN proforma_terms TEXT",
             "ALTER TABLE deliveries ADD COLUMN bank_profile_ids TEXT",
             "ALTER TABLE deliveries ADD COLUMN proforma_terms TEXT",
+            # Trendyol satış artırma (Liste Doktoru + buybox, 13.10.2026) —
+            # trendyol_products canlıda; yeni tablolar create_all ile gelir.
+            "ALTER TABLE trendyol_products ADD COLUMN description TEXT",
+            "ALTER TABLE trendyol_products ADD COLUMN attributes_json TEXT",
+            "ALTER TABLE trendyol_products ADD COLUMN image_count INTEGER",
+            "ALTER TABLE trendyol_products ADD COLUMN category_id BIGINT",
+            "ALTER TABLE trendyol_products ADD COLUMN delivery_duration INTEGER",
+            "ALTER TABLE trendyol_products ADD COLUMN rush_delivery BOOLEAN",
+            "ALTER TABLE trendyol_products ADD COLUMN content_hash VARCHAR(64)",
+            "ALTER TABLE trendyol_products ADD COLUMN buybox_order INTEGER",
+            "ALTER TABLE trendyol_products ADD COLUMN buybox_price DOUBLE PRECISION",
+            "ALTER TABLE trendyol_products ADD COLUMN buybox_second_price DOUBLE PRECISION",
+            "ALTER TABLE trendyol_products ADD COLUMN buybox_third_price DOUBLE PRECISION",
+            "ALTER TABLE trendyol_products ADD COLUMN has_multiple_seller BOOLEAN",
+            "ALTER TABLE trendyol_products ADD COLUMN buybox_checked_at TIMESTAMP",
+            "ALTER TABLE trendyol_products ADD COLUMN buybox_alerted_at TIMESTAMP",
         ):
             alter_safe(stmt)
 

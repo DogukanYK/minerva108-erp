@@ -269,7 +269,8 @@ def test_sync_runs_in_background_and_audits(authed_client: TestClient, db_sessio
     assert not T._THREAD.is_alive() and T._THREAD.daemon
     st = authed_client.get("/api/trendyol/status").json()
     assert st["counts"]["packages"] == 1 and st["counts"]["products"] == 1 and st["running"] is False
-    assert {s["stream"]: bool(s["last_ok_at"]) for s in st["streams"]} == {"orders": True, "finance": True, "catalog": True}
+    assert {s["stream"]: bool(s["last_ok_at"]) for s in st["streams"]} == {"orders": True, "finance": True, "catalog": True,
+                                                                         "questions": True}
     assert db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "trendyol.sync").count() == 1
     assert authed_client.post("/api/trendyol/sync", json={"kind": "nope"}, headers=_H).status_code == 422
     assert authed_client.post("/api/trendyol/sync", json={"kind": "all", "backfill_days": 999}, headers=_H).status_code == 422

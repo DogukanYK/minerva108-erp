@@ -53,6 +53,25 @@ class FakeApi:
                 return r
         return {}
 
+    def query(self, group, path, body):
+        """Gerçek Api.query gibi: yalnız izin listeli yol (buybox), aksi ValueError."""
+        from core import trendyol as T
+        if T._STOP.is_set():
+            raise T.TrendyolStopped(T.STOP_MSG)
+        if not any(rx.match(path) for rx in T.QUERY_PATHS):
+            raise ValueError(f"izin listesinde olmayan sorgu: {path}")
+        self.calls += 1
+        self.log.append((group, path, {"body": body}))
+        for key in sorted(self.routes, key=len, reverse=True):
+            if key in path:
+                r = self.routes[key]
+                if callable(r) and not isinstance(r, Exception):
+                    r = r(path, body)
+                if isinstance(r, Exception):
+                    raise r
+                return r
+        return {}
+
     def close(self):
         self.closed = True
 
@@ -136,3 +155,42 @@ def inventory(barcode="8680000000011", qty=12, sale=315.0, lst=350.0):
     return {"contentId": 111, "productMainId": "PM-1",
             "variants": [{"variantId": 9, "barcode": barcode, "salePrice": sale, "listPrice": lst,
                           "quantity": qty, "stockCode": "SKU-1", "stockLastModifiedDate": None}]}
+
+
+def content(barcode="8680000000011", title="Kırmızı Yonca Krem 50 ML", description="<p>Nemlendirici krem.</p>",
+            attributes=None, images=3, category_id=2, delivery=1, sale=315.0, lst=350.0):
+    """İçerikli onaylı ürün (açıklama, özellikler, görseller, kategori, teslimat)."""
+    d = approved(barcode=barcode, title=title, sale=sale, lst=lst)
+    d["category"] = {"id": category_id, "name": "Yüz Kremi"}
+    d["description"] = description
+    d["images"] = [{"url": f"https://cdn.dsmcdn.com/{i}.jpg"} for i in range(images)]
+    d["attributes"] = attributes if attributes is not None else [
+        {"attributeId": 47, "attributeName": "Hacim", "attributeValues": [{"attributeValueId": 501, "attributeValue": "50 ml"}]}]
+    d["variants"][0]["deliveryOptions"] = {"deliveryDuration": delivery, "isRushDelivery": False}
+    return d
+
+
+def category_attrs(cid=2, attrs=None):
+    """GET /product/categories/{id}/attributes yanıtı."""
+    attrs = attrs if attrs is not None else [
+        (47, "Hacim", True, False, False), (338, "Cilt Tipi", True, True, False), (60, "Menşei", False, False, False)]
+    return {"id": cid, "name": "Yüz Kremi", "displayName": "Yüz Kremi", "categoryAttributes": [
+        {"attribute": {"id": aid, "name": name}, "required": req, "slicer": slicer, "varianter": False,
+         "allowCustom": custom, "allowMultipleAttributeValues": False}
+        for aid, name, req, slicer, custom in attrs]}
+
+
+def buybox(barcode="8680000000011", order=1, price=315.0, second=None, third=None, multiple=False):
+    return {"barcode": barcode, "buyboxOrder": order, "buyboxPrice": price, "secondBuyboxPrice": second,
+            "thirdBuyboxPrice": third, "hasMultipleSeller": multiple}
+
+
+def question(qid=5001, text="Bu krem yağlı cilde uygun mu?", status="WAITING_FOR_ANSWER", pmid="PM-1",
+             created=1762865408581, answer=None):
+    d = {"id": qid, "text": text, "status": status, "productMainId": pmid, "productName": "Kırmızı Yonca Krem 50 ML",
+         "creationDate": created, "webUrl": f"https://www.trendyol.com/soru/{qid}",
+         # Kişisel veri — ALINMAMALI:
+         "customerId": 998877, "userName": "Ayşe Y.", "showUserName": True}
+    if answer:
+        d["answer"] = {"text": answer, "creationDate": created + 3_600_000}
+    return d
