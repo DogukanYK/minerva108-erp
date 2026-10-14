@@ -12,7 +12,7 @@
  * Bump CACHE_NAME any time you ship a breaking static-asset change so users
  * pick it up on next reload instead of being stuck on stale CSS/JS.
  */
-const CACHE_NAME = 'minerva108-v43';     // Trendyol Liste Doktoru + Sorular (trendyol.js?v=2); v42 = aynı malzeme grup stoğu; v41 = Trendyol
+const CACHE_NAME = 'minerva108-v44';     // Stoktan karşılanan değer (satin-alma.js?v=5); v43 = Trendyol Liste Doktoru + Sorular (trendyol.js?v=2); v42 = aynı malzeme grup stoğu; v41 = Trendyol
 
 const PRECACHE = [
   '/static/dark.css',

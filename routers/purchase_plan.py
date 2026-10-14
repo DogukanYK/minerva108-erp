@@ -291,14 +291,29 @@ def _sup_lines(m: dict, cur: str) -> List[dict]:
 def _preview_view(res: dict) -> dict:
     """Önizleme yanıtı: rapor + `sections` (malzeme bölümlerinde `row_keys`)
     + malzeme başına sunucuda biçimlenmiş `ui` (tedarikçi hücresi, tutar,
-    `stock_note` = grup stoğu kart dökümü) —
+    `stock_note` = grup stoğu kart dökümü, stoktan / yoldan karşılanan değer
+    + dayanağı) + `pricing.cost_summary.lines` / `.caveats` (özet kutusu) —
     TR sayı biçimi tek kaynakta (Python) kalsın, JS yeniden yazmasın."""
     from core.purchase_plan import stock_note
-    from core.purchase_pricing import firms_view, money, sections
-    cur = (res.get("pricing") or {}).get("currency") or "USD"
+    from core.purchase_pricing import (cost_summary_caveats, cost_summary_lines, cover_text, cover_value,
+                                       firms_view, money, sections, value_basis_text)
+    pr = res.get("pricing") or {}
+    cur = pr.get("currency") or "USD"
+
+    def _m(v):
+        return money(v, cur) if v is not None else None
+
     for m in (res.get("materials") or []) + (res.get("held") or []):
+        used = (m.get("stock_qty_used") or 0) > 0 or (m.get("open_qty_used") or 0) > 0
         m["ui"] = {"sup": _sup_lines(m, cur),
                    "amount": money(m["amount"], cur) if m.get("amount") is not None else None,
+                   # Stoktan / yoldan karşılanan değer (net mod) + dayanağı ("UMAYCHEM · 4,52 $/kg" /
+                   # "Fiyat yok") — "Yeterli" sekmesinin "Değer" sütunu ve Tutar altındaki soluk satırlar
+                   "stock_value": _m(m.get("stock_value")), "open_value": _m(m.get("open_value")),
+                   "value": _m(cover_value(m)),
+                   # "stoktan X · yoldan Y" — PDF ile aynı metin (tek yardımcı)
+                   "cover_text": cover_text(m, cur),
+                   "value_basis": value_basis_text(m, cur) if used else None,
                    # Grup stoğu kart dökümü — stok hücresinin altına (PDF/Excel ile tek kaynak)
                    "stock_note": stock_note(m),
                    "name_notes": [c["text"] for c in m.get("cautions") or [] if c["code"] in _NAME_CAUTIONS],
@@ -317,6 +332,9 @@ def _preview_view(res: dict) -> dict:
             d["total_text"] = money(s["total"], cur)
         secs.append(d)
     res["sections"] = secs
+    if pr.get("cost_summary") is not None:
+        pr["cost_summary"]["lines"] = cost_summary_lines(res)
+        pr["cost_summary"]["caveats"] = cost_summary_caveats(res)
     return res
 
 

@@ -15,7 +15,10 @@ sütununda, ondalıklı serbest miktar biçimi, kontrol karakterli ad Excel'i
 düşürmez; xlsx_cache hata ve tür durumları; "aynı malzeme" + sipariş
 satırları (PDF'te en çok 3 + "+N", Excel'de "Not"tan sonra Y/Z sütunları,
 Tedarikçiler K "İlişki türleri"); grup stoğu dökümü PDF stok hücresinde ve
-Excel AA (27.) sütununda (24–26 aynı).
+Excel AA (27.) sütununda (24–26 aynı); stoktan karşılanan değer —
+"Stoktan karşılananlar" sayfası (formül + önbellek + TOPLAM, açık siparişte
+L/M), Alım listesi GENEL TOPLAM'ı değişmez, Özet plan toplamı, PDF "Değer" /
+"stoktan" / "Planın toplam malzeme maliyeti" (brüt modda hiçbiri).
 Sondaki test `RUSYA_FIXTURE_DIR` varsa Rusya kabul senaryosunu iki çıktıya da
 basar (toplamlar PDF ↔ Excel ↔ rapor aynı).
 """
@@ -35,7 +38,7 @@ from core.consumption import IngredientRec, ItemRec, RecipeRec
 from core.purchase_plan import LotRec, OpenOrderRec, PlanInputs, compute
 from core.purchase_plan_models import PlanRequest
 from core.purchase_plan_pdf import render_pdf
-from core.purchase_plan_xlsx import SHEET_DETAIL, SHEET_LIST, SHEET_SUP, build_workbook
+from core.purchase_plan_xlsx import SHEET_DETAIL, SHEET_LIST, SHEET_STOCK, SHEET_SUP, build_workbook
 from core.purchase_pricing import (OfferRec, OrderRec, PriceInputs, ReceiptRec, SupplierRec, alt_texts, attach,
                                    money, order_texts)
 from core.xlsx_cache import inject_cached_values
@@ -172,7 +175,9 @@ def test_xlsx_sheets_formulas_and_cached_values():
     res = _report()
     data = build_workbook(res)
     wb = openpyxl.load_workbook(io.BytesIO(data))
-    assert wb.sheetnames == ["Alım listesi", "Tedarikçiler", "Ürünler", "Ürün detayı", "Özet"]
+    # "Stoktan karşılananlar" (14.10.2026) net modda Alım listesi'nden hemen sonra
+    assert wb.sheetnames == ["Alım listesi", "Stoktan karşılananlar", "Tedarikçiler", "Ürünler", "Ürün detayı",
+                             "Özet"]
     ws = wb[SHEET_LIST]
     assert ws.freeze_panes == "D2"
     r = _row_of(ws, "GLİSERİN")
@@ -215,8 +220,9 @@ def test_xlsx_gross_mode_g_equals_need():
 
 def test_xlsx_free_text_never_becomes_formula():
     data = build_workbook(_report())
-    allowed = re.compile(r'^(MAX\(0,ROUND\(D\d+-E\d+-F\d+,3\)\)|D\d+|IF\(J\d+="","",ROUND\(G\d+\*J\d+,0\)\)'
-                         r'|SUM\([A-Z]+\d+:[A-Z]+\d+\)|K\d+(\+K\d+)*)$')
+    allowed = re.compile(r'^(MAX\(0,ROUND\(D\d+-E\d+-F\d+,3\)\)|D\d+|IF\(J\d+="","",ROUND\([GL]\d+\*J\d+,0\)\)'
+                         r'|SUM\([A-Z]+\d+:[A-Z]+\d+\)|K\d+(\+K\d+)*'
+                         r'|MIN\(D\d+,E\d+\)|MIN\(F\d+,ROUND\(D\d+-G\d+,6\)\))$')   # + Stoktan karşılananlar
     z = zipfile.ZipFile(io.BytesIO(data))
     for n in z.namelist():
         if n.startswith("xl/worksheets/sheet"):
@@ -376,6 +382,136 @@ def test_xlsx_same_material_and_order_history_after_note():
     types = {sp.cell(x, 1).value: sp.cell(x, 11).value for x in range(2, sp.max_row + 1)}
     assert types["TATLIDİLİMLER"] == "stok kartı, alım, sipariş"
     assert types["YİĞİTOGLU KİMYA"] == types["VESER KİMYEVİ"] == "eşdeğer kart"
+
+
+# ─── Stoktan karşılanan değer (14.10.2026) ──────────────────────────────────
+
+def _sheet_rows(ws):
+    return {ws.cell(r, 3).value: r for r in range(2, ws.max_row + 1) if ws.cell(r, 3).value}
+
+
+def test_xlsx_stock_sheet_formulas_cache_and_total():
+    """GLİSERİN: 10 kg gerek, 0,5 kg stok (kısmi, 4,52 $) · KSANTAN: yeterli,
+    fiyatsız.  Yeni sayfa: önce yeterli, sonra kısmi; G = MIN(D,E), K =
+    IF(J="","",ROUND(G*J,0)) + önbellek; TOPLAM = stoktan değer.  Alım
+    listesi GENEL TOPLAM'ı değişmez; Özet plan toplamını gösterir."""
+    res = _report()
+    cs = res["pricing"]["cost_summary"]
+    assert (cs["buy_total"], cs["stock_total"], cs["plan_total"]) == (83, 2, 85)
+    data = build_workbook(res)
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    wv = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+    ws, sv = wb[SHEET_STOCK], wv[SHEET_STOCK]
+    assert [ws.cell(1, c).value for c in range(1, 14)] == [
+        "Durum", "Tür", "Malzeme", "Gereken", "Elimizde", "Yolda", "Stoktan kullanılan", "Birim",
+        "Seçilen tedarikçi", "Birim fiyat ($)", "Değer ($)", "Fiyat kaynağı", "Not"]
+    rows = _sheet_rows(ws)
+    assert list(rows)[:2] == ["KSANTAN GAM", "GLİSERİN"]                      # önce yeterli, sonra kısmi
+    k, g = rows["KSANTAN GAM"], rows["GLİSERİN"]
+    assert ws.cell(k, 1).value == "Yeterli" and ws.cell(g, 1).value == "Kısmen stoktan"
+    assert ws[f"G{g}"].value == f"=MIN(D{g},E{g})" and ws[f"K{g}"].value == f'=IF(J{g}="","",ROUND(G{g}*J{g},0))'
+    assert sv[f"G{g}"].value == pytest.approx(0.5) and sv[f"K{g}"].value == 2 == _mat(res, "GLİSERİN")["stock_value"]
+    assert sv[f"G{k}"].value == pytest.approx(3.0) and sv[f"K{k}"].value in (None, "")    # fiyatsız
+    assert "Fiyat yok" in ws.cell(k, 13).value
+    tot = rows["TOPLAM (fiyatı belli olanlar)"]
+    assert ws[f"K{tot}"].value == f"=SUM(K2:K{tot - 1})" and sv[f"K{tot}"].value == cs["stock_total"] == 2
+    xml = zipfile.ZipFile(io.BytesIO(data)).read("xl/worksheets/sheet2.xml").decode()
+    assert not re.search(r"<f>[^<]*</f><v ?/>", xml)                          # önbelleksiz formül yok
+    # Alım listesi GENEL TOPLAM'ı birebir aynı (stok değeri girmez)
+    lv = wv[SHEET_LIST]
+    gt = next(x for x in range(2, lv.max_row + 1) if lv.cell(x, 3).value == "GENEL TOPLAM (fiyatı belli olanlar)")
+    assert lv[f"K{gt}"].value == res["pricing"]["totals"]["all"] == 83
+    # Özet: GENEL TOPLAM'ın altında stoktan değer + PLANIN TOPLAM MALZEME MALİYETİ + sayılar
+    oz = {r[0].value: r[1].value for r in wv["Özet"].iter_rows(min_row=2) if r[0].value}
+    labels = [r[0].value for r in wv["Özet"].iter_rows(min_row=2)]
+    i = labels.index("GENEL TOPLAM — fiyatı belli ($)")
+    assert labels[i + 1:i + 4] == ["Stoktan karşılananların değeri — fiyatı belli ($)",
+                                   "PLANIN TOPLAM MALZEME MALİYETİ ($)", "Fiyatlı / fiyatsız stoktan karşılanan"]
+    assert oz["PLANIN TOPLAM MALZEME MALİYETİ ($)"] == 85 and oz["Fiyatlı / fiyatsız stoktan karşılanan"] == "1 / 1"
+    assert any("yenileme değeri" in str(r[1].value) for r in wv["Özet"].iter_rows(min_row=2))
+
+
+def test_xlsx_stock_sheet_open_order_columns():
+    res = _report(open_orders=True)
+    cs = res["pricing"]["cost_summary"]
+    assert (cs["buy_total"], cs["stock_total"], cs["open_total"], cs["plan_total"]) == (74, 2, 9, 85)
+    data = build_workbook(res)
+    ws = openpyxl.load_workbook(io.BytesIO(data))[SHEET_STOCK]
+    sv = openpyxl.load_workbook(io.BytesIO(data), data_only=True)[SHEET_STOCK]
+    assert (ws["L1"].value, ws["M1"].value, ws["N1"].value) == ("Yoldan kullanılan", "Yoldan değer ($)",
+                                                                "Fiyat kaynağı")
+    rows = _sheet_rows(ws)
+    g = rows["GLİSERİN"]
+    assert ws.cell(g, 1).value == "Kısmen stoktan + yoldan"
+    assert ws[f"L{g}"].value == f"=MIN(F{g},ROUND(D{g}-G{g},6))"
+    assert ws[f"M{g}"].value == f'=IF(J{g}="","",ROUND(L{g}*J{g},0))'
+    assert sv[f"L{g}"].value == pytest.approx(2.0) and sv[f"M{g}"].value == 9
+    tot = rows["TOPLAM (fiyatı belli olanlar)"]
+    assert sv[f"K{tot}"].value == 2 and sv[f"M{tot}"].value == cs["open_total"] == 9
+    oz = {r[0].value: r[1].value for r in openpyxl.load_workbook(io.BytesIO(data), data_only=True)["Özet"]
+          .iter_rows(min_row=2) if r[0].value}
+    assert oz["Yoldan karşılananların değeri (açık sipariş) — fiyatı belli ($)"] == 9
+    assert oz["PLANIN TOPLAM MALZEME MALİYETİ ($)"] == 85
+
+
+def test_pdf_stock_value_lines_and_gross_mode_has_none():
+    _, text = _pdf_text(render_pdf(_report()))
+    assert "Değer" in text and "stoktan 2 $" in text                          # Tutar altı + Yeterli sütunu
+    assert "Planın toplam malzeme maliyeti: 85 $" in text
+    assert "Stoktan karşılananların değeri: 2 $" in text
+    assert "Stoktan karşılanan 2 kalemden 1 tanesinin fiyatı yok; değeri toplama girmedi." in text
+    assert "Yeterli olanlar (1 kalem — fiyatı yok)" in text
+    assert "yenileme değeri" in text
+    _, text = _pdf_text(render_pdf(_report(open_orders=True)))
+    assert "yoldan 9 $" in text and "Yoldan karşılananların değeri (açık sipariş): 9 $" in text
+    # Brüt mod: hiçbiri
+    g = _report(mode="gross")
+    _, text = _pdf_text(render_pdf(g))
+    assert "Değer" not in text and "Planın toplam malzeme maliyeti" not in text
+    assert not re.search(r"stoktan [\d.]+ \$", text) and "Stoktan karşılanan" not in text
+    assert "yenileme değeri" not in text
+    wb = openpyxl.load_workbook(io.BytesIO(build_workbook(g)))
+    assert SHEET_STOCK not in wb.sheetnames
+    assert not any("PLANIN" in str(c.value) for row in wb["Özet"].iter_rows() for c in row)
+
+
+def test_xlsx_stock_sheet_unsafe_rounding_writes_number_not_min():
+    """Düz yuvarlamada adet satırının stoktan kullanılanı gereken − alınacak
+    (10,6 − 8 = 2,6); MIN(D,E) = 3 rapordan ayrışırdı → G sayı yazılır (Alım
+    listesi G'sinin koruması gibi), K formülü kalır, TOPLAM = cost_summary."""
+    items = [_it(1, "100 ML ŞİŞE", cat="Ambalaj", unit="adet", stock=3, pkg="şişe")]
+    recipe = RecipeRec(id=1, name="Tonik", ingredients=(IngredientRec(item_id=1, quantity=1),))
+    inp = PlanInputs(items={1: items[0]}, recipes={1: recipe}, stock_as_of=NOW)
+    res = compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 10}], options={
+        "safe_rounding": False, "extra_waste_pct": {"raw": 0, "packaging": 6, "label": 0}}))
+    attach(res, PriceInputs(offers={1: [OfferRec(item_id=1, supplier_name="CAM", unit_price=10.0,
+                                                 price_unit="adet", source="stok_son_durum")]}), None)
+    m = _mat(res, "100 ML ŞİŞE")
+    assert (m["stock_qty_used"], m["stock_value"]) == (pytest.approx(2.6), 26)
+    data = build_workbook(res)
+    ws = openpyxl.load_workbook(io.BytesIO(data))[SHEET_STOCK]
+    sv = openpyxl.load_workbook(io.BytesIO(data), data_only=True)[SHEET_STOCK]
+    r = _sheet_rows(ws)["100 ML ŞİŞE"]
+    assert ws[f"G{r}"].value == pytest.approx(2.6)                              # sayı, MIN(D,E) değil
+    assert ws[f"K{r}"].value == f'=IF(J{r}="","",ROUND(G{r}*J{r},0))' and sv[f"K{r}"].value == 26
+    tot = _sheet_rows(ws)["TOPLAM (fiyatı belli olanlar)"]
+    assert sv[f"K{tot}"].value == res["pricing"]["cost_summary"]["stock_total"] == 26
+
+
+def test_cover_text_same_in_preview_and_pdf():
+    """"stoktan X · yoldan Y" tek yardımcıdan (`cover_text`): önizlemenin
+    `ui.cover_text`'i PDF'teki metinle birebir aynı."""
+    from core.purchase_pricing import cover_text
+    from routers.purchase_plan import _preview_view
+    res = _report(open_orders=True)
+    assert cover_text(_mat(res, "GLİSERİN"), "USD") == "stoktan 2 $ · yoldan 9 $"
+    assert cover_text(_mat(res, "SHEA & BUTTER <özel>"), "USD") is None
+    _, text = _pdf_text(render_pdf(res))
+    assert "stoktan 2 $ · yoldan 9 $" in text and "stoktan: " not in text
+    view = _preview_view(_report(open_orders=True))
+    ui = _mat(view, "GLİSERİN")["ui"]
+    assert ui["cover_text"] == "stoktan 2 $ · yoldan 9 $"
+    assert (ui["stock_value"], ui["open_value"]) == ("2 $", "9 $")
 
 
 # ─── Rusya kabul senaryosu (ortam değişkeniyle kapılı) ──────────────────────

@@ -17,6 +17,10 @@ fiyatları SONRAKİ AŞAMA (burada `invoice` grubu yalnız ayrılmış bir addı
   • attach(result, pin, rates, currency=…)  → result         (SAF, yerinde)
   • sections(result)                         → bölüm listesi (UI/PDF/Excel'in
     TEK numaralandırma kaynağı; boş bölüm atlanır)
+  • cost_summary_lines(result) / cost_summary_caveats(result)
+                                             → "planın toplam malzeme maliyeti"
+    özeti (önizleme / PDF / Excel aynı metin); satır metinleri
+    `cover_text` ("stoktan X · yoldan Y") / `value_basis_text` / `cover_value`
 
 Kurallar:
   • Teklifler birleşmiş kartların HEPSİNDEN toplanır (aynı malzemenin fiyatı
@@ -50,6 +54,19 @@ Kurallar:
     (`status="equivalent"`) olarak yazılır.  Kural kapalıyken yüklenmez.
   • Tutar = round_half_up(alınacak × birim fiyat) — Excel ROUND ile aynı
     (Python `round` bankacı yuvarlaması yapar, .5'te Excel'den sapardı).
+  • Stoktan karşılanan değer (14.10.2026, YALNIZ net mod): satırın bu planda
+    stoktan kullanacağı miktar `stock_qty_used = min(elimizde, gereken −
+    alınacak)` (yeterli satırda alınacak 0; güvenli yuvarlamada Excel
+    "Stoktan karşılananlar" G = MIN(D,E) ile aynı), açık sipariş seçeneği
+    açıkken `open_qty_used = min(yolda, ROUND(gereken − alınacak − stoktan,
+    6))` — stoktan + yoldan + alınacak = gereken, düz yuvarlamada da;
+    değerler `stock_value` / `open_value` = round_half_up(miktar × seçilen
+    teklifin fiyatı) — tutarla aynı fiyat ve yuvarlama.  Depodaki fazla
+    değerlenmez; bugünkü teklif fiyatıdır (yenileme değeri), alış maliyeti
+    değil.  `amount`, `totals`, "Alım listesi" ve GENEL TOPLAM DEĞİŞMEZ;
+    yeni toplamlar `pricing.stock_totals` + `pricing.cost_summary`
+    (plan toplamı = alınacak `amount` + stoktan + yoldan; `pkg_amount`
+    değil).  Bekletilen / hariç satırlar ve brüt mod bu alanları almaz (None).
   • KDV (08.10.2026): KDV DAHİL teklif (`vat_included` + `vat_rate`) NET
     fiyatıyla yarışır ve tutara girer (`supplier_prices.net_unit_price`);
     teklif "KDV %20 dahil fiyattan düşüldü" etiketi taşır, `orig_price` brüt
@@ -221,6 +238,12 @@ def round_half_up(x) -> Optional[int]:
     if x is None:
         return None
     return int(Decimal(repr(float(x))).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def round6(x) -> float:
+    """Excel ROUND(x, 6) — float çıkarma gürültüsünü (3,3 − 0,5) Excel'le aynı
+    biçimde atar ("Stoktan karşılananlar" L = MIN(F, ROUND(D−G, 6)))."""
+    return float(Decimal(repr(float(x))).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))
 
 
 def _sup_tokens(name) -> Tuple[List[str], List[str]]:
@@ -1016,13 +1039,14 @@ def offer_lines(m: dict, cur: str) -> List[Tuple[str, str]]:
     (`_sup_cell`) aynı listeyi basar: seçilen kalın; diğer fiyatlı teklifler
     gri ("daha pahalı" / "daha ucuz", "tercih", "eşdeğer kart «X»"); uygun
     olmayanlar gri + " — bitirilecek, alma" …; fiyat seçilemediyse kırmızı
-    "Fiyat yok — teklif alınacak"; fiyatı kullanılamayanlar gri sonda."""
+    "Fiyat yok — teklif alınacak"; fiyatı kullanılamayanlar gri sonda.
+    Stok yeten ("yeterli") satırda alım yok → nötr gri "Fiyat yok"."""
     out: List[Tuple[str, str]] = []
     offers = m.get("offers") or []
     priced = [o for o in offers if o.get("price") is not None]
     best = next((o for o in priced if o.get("eligible", True)), None) if m.get("group") == "list" else None
     if best is None:
-        out.append(("Fiyat yok — teklif alınacak", "r"))
+        out.append(("Fiyat yok", "g") if m.get("status") == "yeterli" else ("Fiyat yok — teklif alınacak", "r"))
     for o in priced:
         tags, blocked = offer_tags(o, best)
         out.append((_with_tags(offer_text(o, cur), tags, blocked), "b" if o is best else "g"))
@@ -1152,6 +1176,37 @@ def _price_row(m: dict, pin: PriceInputs, rates, currency: str, round_to_package
     m["relations"] = _relations(m, ri or _RelIndex(pin, skip, ix))
 
 
+def _cover_values(m: dict, net: bool, open_on: bool) -> None:
+    """Satırın bu planda stoktan / yoldan karşılanan miktarı ve değeri.
+
+    Gösterim sayıları (`display` — kg / l / adet; Excel D/E/F ile aynı)
+    üzerinden; karşılanan = gereken − alınacak (alınacak satırda `buy_num`,
+    yeterli satırda 0): stoktan = min(elimizde, ROUND(gereken − alınacak, 6))
+    (yeterli satırda ve güvenli yuvarlamada Excel MIN(D,E) ile aynı); yoldan
+    (açık sipariş seçeneği açıkken) = min(yolda, ROUND(gereken − alınacak −
+    stoktan, 6)).  Böylece stoktan + yoldan + alınacak = gereken — düz
+    yuvarlamada (`safe_rounding=False`) adet satırının alınacağı gereken'den
+    bağımsız tama yuvarlanır (10,6 gereken, 3 stok → 8 alınacak); MIN(D,E)
+    orada 11 birim değerler, olmayan stoğu (3,6 → "4") da sayardı.  Değer =
+    round_half_up(miktar × seçilen teklifin fiyatı) — `amount` ile aynı fiyat
+    ve yuvarlama; fiyat yoksa ya da miktar 0 ise None.  Brüt modda (stok
+    yalnız bilgi) dört alan da None."""
+    m["stock_qty_used"] = m["open_qty_used"] = m["stock_value"] = m["open_value"] = None
+    if not net:
+        return
+    d = m.get("display") or {}
+    need = max(0.0, float(d.get("need_num") or 0.0))
+    buy = float(d.get("buy_num") or 0.0) if m.get("status") == "to_buy" else 0.0
+    covered = max(0.0, round6(need - buy))
+    su = max(0.0, min(float(d.get("stock_num") or 0.0), covered))
+    ou = max(0.0, min(float(d.get("open_num") or 0.0), round6(covered - su))) if open_on else 0.0
+    m["stock_qty_used"], m["open_qty_used"] = su, ou
+    price = m.get("price")
+    if price is not None:
+        m["stock_value"] = round_half_up(su * price) if su > 0 else None
+        m["open_value"] = round_half_up(ou * price) if ou > 0 else None
+
+
 def attach(result: dict, pin: PriceInputs, rates, *, currency: str = "USD",
            round_to_package: bool = False, respect_status: Optional[bool] = None) -> dict:
     """Fiyat + tedarikçi alanlarını `result`'a yazar (yerinde) ve döndürür.
@@ -1186,6 +1241,30 @@ def attach(result: dict, pin: PriceInputs, rates, *, currency: str = "USD",
     for k in ("raw", "packaging", "label"):
         counts[f"{k}_priced"] = sum(1 for m in mats if m["kind"] == k and m["group"] == "list")
         counts[f"{k}_unpriced"] = sum(1 for m in mats if m["kind"] == k and m["group"] != "list")
+    # Stoktan / yoldan karşılanan değer (yalnız net mod; bekletilen satır
+    # listeye girmediği için almaz).  `totals` / `amount` DEĞİŞMEZ.
+    opts = (result.get("meta") or {}).get("options") or {}
+    net = opts.get("stock_mode", "net") == "net"
+    open_on = bool(opts.get("subtract_open_orders"))
+    all_mats = result.get("materials", [])
+    for m in all_mats:
+        _cover_values(m, net, open_on)
+    for m in result.get("held", []):
+        _cover_values(m, False, False)
+    stock_totals = {k: sum(m["stock_value"] or 0 for m in all_mats if m["kind"] == k)
+                    for k in ("raw", "packaging", "label")}
+    stock_totals["all"] = sum(stock_totals.values())
+    st_rows = [m for m in all_mats if (m["stock_qty_used"] or 0) > 0]
+    op_rows = [m for m in all_mats if (m["open_qty_used"] or 0) > 0]
+    open_total = sum(m["open_value"] or 0 for m in op_rows)
+    cost_summary = {
+        "applies": net, "buy_total": totals["all"], "stock_total": stock_totals["all"],
+        "open_total": open_total, "plan_total": totals["all"] + stock_totals["all"] + open_total,
+        "buy_rows": len(mats), "buy_unpriced": sum(counts[f"{k}_unpriced"] for k in ("raw", "packaging", "label")),
+        "stock_rows": len(st_rows), "stock_unpriced": sum(1 for m in st_rows if m.get("price") is None),
+        "open_rows": len(op_rows), "open_unpriced": sum(1 for m in op_rows if m.get("price") is None),
+        "new_items": len(result.get("labels_new") or []) + len(result.get("manual_lines") or []),
+    }
     fx = None
     if fx_used:
         fx = {"used": True, "currencies": sorted(fx_used),
@@ -1203,6 +1282,8 @@ def attach(result: dict, pin: PriceInputs, rates, *, currency: str = "USD",
                     for (s, lbl, q, c, pu), n in sorted(sources.items(), key=lambda kv: -kv[1])],
         "totals": totals, "counts": counts,
         "held_what_if": sum(m.get("amount") or 0 for m in result.get("held", [])),
+        # Stoktan karşılanan değer (kind bazında) + planın toplam malzeme maliyeti
+        "stock_totals": stock_totals, "cost_summary": cost_summary,
         # Seçimi tedarikçi durumu / malzeme tercihi etkiledi mi (metinler buna göre)
         "respect_status": bool(respect_status), "status_used": flags["status_used"],
         "via_used": flags["via_used"], "via_listed": flags["via_listed"],
@@ -1613,6 +1694,89 @@ def _fmt_pct(v) -> str:
     return tr_num(v, 0 if float(v).is_integer() else 1)
 
 
+# ─── Stoktan karşılanan değer + planın toplam malzeme maliyeti ─────────────
+
+def cover_value(m: dict) -> Optional[int]:
+    """Satırın stoktan + yoldan karşılanan değeri ("Yeterli" bölümündeki
+    "Değer"); ikisi de yoksa (fiyat yok / brüt mod) None."""
+    sv, ov = m.get("stock_value"), m.get("open_value")
+    return None if sv is None and ov is None else (sv or 0) + (ov or 0)
+
+
+def cover_text(m: dict, cur: str = "USD") -> Optional[str]:
+    """"stoktan 2 $ · yoldan 9 $" (yalnız değeri olan parça) ya da None —
+    alım tablosunda Tutar'ın, "Yeterli"de (yoldan varsa) Değer'in altındaki
+    soluk satır.  Önizleme (`ui.cover_text`) ve PDF aynı metni basar."""
+    bits = ([f"stoktan {money(m['stock_value'], cur)}"] if m.get("stock_value") is not None else []) + \
+           ([f"yoldan {money(m['open_value'], cur)}"] if m.get("open_value") is not None else [])
+    return " · ".join(bits) or None
+
+
+def value_basis_text(m: dict, cur: str = "USD") -> str:
+    """Değerin dayanağı: "UMAYCHEM · 4,52 $/kg" (seçilen teklif — tutarla
+    aynı) ya da "Fiyat yok".  Önizleme ipucu/alt satırı, PDF ve Excel aynı."""
+    if m.get("price") is None:
+        return "Fiyat yok"
+    unit = UNIT_TEXT.get(m.get("price_unit"), m.get("price_unit") or "")
+    return f"{m.get('supplier') or '—'} · {price_text(m['price'])} {CURRENCY_SYMBOL.get(cur, cur)}/{unit}"
+
+
+COST_LABELS = {
+    "buy": "Alınacakların tutarı (fiyatı belli)",
+    "stock": "Stoktan karşılananların değeri",
+    "open": "Yoldan karşılananların değeri (açık sipariş)",
+    "plan": "Planın toplam malzeme maliyeti",
+}
+
+
+def cost_summary_lines(result: dict) -> List[dict]:
+    """Özet kutusunun maliyet satırları → [{key, label, value, text}] —
+    alınacaklar + stoktan + (yoldan, yalnız açık siparişten karşılanan satır
+    varsa) = planın toplam malzeme maliyeti.  Brüt modda (ya da fiyatlanmamış
+    raporda) boş liste."""
+    pr = result.get("pricing") or {}
+    cs = pr.get("cost_summary") or {}
+    if not cs.get("applies"):
+        return []
+    cur = pr.get("currency") or "USD"
+    keys = ["buy", "stock"] + (["open"] if cs.get("open_rows") else []) + ["plan"]
+    vals = {"buy": cs.get("buy_total") or 0, "stock": cs.get("stock_total") or 0,
+            "open": cs.get("open_total") or 0, "plan": cs.get("plan_total") or 0}
+    return [{"key": k, "label": COST_LABELS[k], "value": vals[k], "text": money(vals[k], cur)} for k in keys]
+
+
+def _unpriced_of(n: int, k: int) -> str:
+    """"12 kalemden 9 tanesinin" / "3 kalemin hiçbirinin" / "1 kalemin"."""
+    if k >= n:
+        return f"{n} kalemin" + (" hiçbirinin" if n > 1 else "")
+    return f"{n} kalemden {k} tanesinin"
+
+
+def cost_summary_caveats(result: dict) -> List[str]:
+    """Maliyet özetinin uyarıları — sessiz eksik toplam olmasın: fiyatı
+    olmayan stoktan / yoldan karşılanan ve alınacak kalem sayıları, yeni
+    kalemler, değerin dayanağı (bugünkü teklif = yenileme değeri)."""
+    pr = result.get("pricing") or {}
+    cs = pr.get("cost_summary") or {}
+    if not cs.get("applies"):
+        return []
+    out: List[str] = []
+    if cs.get("stock_unpriced"):
+        out.append(f"Stoktan karşılanan {_unpriced_of(cs['stock_rows'], cs['stock_unpriced'])} fiyatı yok; "
+                   "değeri toplama girmedi.")
+    if cs.get("open_unpriced"):
+        out.append(f"Yoldan karşılanan {_unpriced_of(cs['open_rows'], cs['open_unpriced'])} fiyatı yok; "
+                   "değeri toplama girmedi.")
+    parts = ([f"{cs['buy_unpriced']} alınacak kalem"] if cs.get("buy_unpriced") else []) + \
+            ([f"{cs['new_items']} yeni etiket / koli / palet kalemi"] if cs.get("new_items") else [])
+    if parts:
+        out.append("Fiyatı olmayan " + " ve ".join(parts) + " planın toplam maliyetine de girmedi.")
+    if cs.get("stock_rows") or cs.get("open_rows"):
+        out.append("Stoktaki malzemenin değeri bugünkü teklif fiyatıyla hesaplandı (yenileme değeri), "
+                   "alış maliyeti değil; yalnız bu planın kullanacağı miktar değerlendi, depodaki fazlası değil.")
+    return out
+
+
 def notes_lines(result: dict) -> List[str]:
     """12. bölüm — kaynaklar, kabuller, hariç/bekletilenler, kur, kullanıcı notları."""
     meta = result.get("meta", {})
@@ -1663,6 +1827,14 @@ def notes_lines(result: dict) -> List[str]:
         if pr.get("inactive_listed"):
             out.append("Pasife alınmış (silinmiş) tedarikçilerin teklifleri seçilmedi; listede gri "
                        "“pasif tedarikçi” olarak yazıldı.")
+        cs = pr.get("cost_summary") or {}
+        if cs.get("applies") and (cs.get("stock_rows") or cs.get("open_rows")):
+            out.append("Stoktan karşılanan malzemenin değeri = bu planın stoktan kullanacağı miktar (gereken ile "
+                       "elimizdekinin küçüğü) × tutardaki aynı teklifin birim fiyatı"
+                       + ("; yoldan karşılananınki kalan ihtiyaç ile yoldakinin küçüğü × aynı fiyat"
+                          if cs.get("open_rows") else "")
+                       + ". Bugünkü teklif fiyatıdır (yenileme değeri), geçmiş alış maliyeti değil; depodaki "
+                         "fazla değerlenmedi, fiyatı olmayan kalemler toplama girmedi.")
     if opts.get("subtract_open_orders"):
         out.append("Açık siparişler (sipariş verildi işareti) yolda sayılıp alınacaktan düşüldü.")
     out.append("Numune lotları stoğa dahil değildir; eksi stoklu kartlar 0 sayıldı.")
@@ -1823,7 +1995,23 @@ def sections(result: dict) -> List[dict]:
     add("products", prods, summary=f"{len(prods)} ürün, toplam {tr_num(sum(p['qty'] for p in prods))} adet")
     if opts.get("stock_mode", "net") == "net":
         suff = sorted([m for m in mats if m["status"] == "yeterli"], key=lambda m: alnum_fold(m["name"]))
-        add("sufficient", suff, summary=f"{len(suff)} kalem",
-            subtitle="Elimizdeki stok yetiyor; alım gerekmez.")
+        summary, total, sub = f"{len(suff)} kalem", None, "Elimizdeki stok yetiyor; alım gerekmez."
+        if pr:
+            # Değer = planın kullanacağı miktar × seçilen teklif (cover_value);
+            # fiyatsız kalem sayılır ama toplanmaz.
+            vals = [v for v in (cover_value(m) for m in suff) if v is not None]
+            used = [m for m in suff if (m.get("stock_qty_used") or 0) > 0 or (m.get("open_qty_used") or 0) > 0]
+            no_price = sum(1 for m in used if m.get("price") is None)
+            if vals:
+                total = sum(vals)
+                where = "stoktaki ve yoldaki" if any(m.get("open_value") for m in suff) else "stoktaki"
+                summary += f", {where} değer {money(total, cur)}"
+            if no_price:          # PDF başlığı özeti parantezle sarar → iç parantez yok
+                summary += (" — fiyatı yok" if len(suff) == 1 else
+                            " — hiçbirinin fiyatı yok" if no_price >= len(suff) else
+                            f" — {no_price} kalemin fiyatı yok")
+            sub += (" Değer = bu planın kullanacağı miktar × seçilen teklifin bugünkü birim fiyatı "
+                    "(yenileme değeri, alış maliyeti değil).")
+        add("sufficient", suff, total=total, summary=summary, subtitle=sub)
     add("notes", notes_lines(result))
     return out

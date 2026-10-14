@@ -15,7 +15,9 @@ last_run_at damgası updated_at'i değiştirmez); Origin'siz mutasyon 403;
 sayfa render + script dosyası; "aynı malzeme" grubu önizlemede (ui.sup
 "Aynı malzeme:" satırı + ui.firms "Tedarikçiler (N)" dökümü) ve Excel dışa
 aktarmada; grup stoğu (ui.stock_note, "— stoğu sayıldı", eski senaryo açık,
-üretimde kaynak seçimi kapalıyken seçenek kapanır + source_choice_disabled).
+üretimde kaynak seçimi kapalıyken seçenek kapanır + source_choice_disabled);
+stoktan karşılanan değer (ui.stock_value / value_basis, cost_summary.lines /
+caveats, "Yeterli" total_text; brüt modda yok).
 """
 from datetime import datetime, timedelta
 
@@ -141,6 +143,47 @@ def test_preview_report_sections_and_ui(authed_client: TestClient, db_session: S
     assert raw["row_keys"] == [gli["key"]] and "rows" not in raw and raw["total_text"] == "13 $"
     assert d["pricing"]["currency"] == "USD" and d["meta"]["domain"] == "cosmetics"
     assert d["meta"]["title"] == "Deneme Siparişi"
+
+
+def test_preview_stock_value_and_cost_summary(authed_client: TestClient, db_session: Session):
+    """Stoktan karşılanan değer (14.10.2026): satırda sunucu biçimli
+    `ui.stock_value` / `ui.value_basis`, özet kutusu `pricing.cost_summary.
+    lines` / `.caveats`; stok yetince "Yeterli" bölümünün `total_text`'i;
+    tutar ve GENEL TOPLAM değişmez; brüt modda maliyet satırı yok."""
+    ids = _seed(db_session)
+    r = authed_client.post("/api/purchase-plan/preview", json=_req(ids, qty=100), headers=_HDR)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    mats = {m["item_id"]: m for m in d["materials"]}
+    gli, jar = mats[ids["gli"]], mats[ids["jar"]]
+    assert gli["amount"] == 13 and d["pricing"]["totals"]["all"] == 13                 # değişmedi
+    assert gli["stock_qty_used"] == pytest.approx(0.5) and gli["stock_value"] == 2      # 0,5 kg × 4,52
+    assert gli["ui"]["stock_value"] == "2 $" and gli["ui"]["value_basis"] == "UMAYCHEM · 4,52 $/kg"
+    assert jar["stock_qty_used"] == 10 and jar["stock_value"] is None and jar["ui"]["stock_value"] is None
+    assert jar["ui"]["value_basis"] == "Fiyat yok"
+    cs = d["pricing"]["cost_summary"]
+    assert [(x["key"], x["label"], x["text"]) for x in cs["lines"]] == [
+        ("buy", "Alınacakların tutarı (fiyatı belli)", "13 $"),
+        ("stock", "Stoktan karşılananların değeri", "2 $"),
+        ("plan", "Planın toplam malzeme maliyeti", "15 $")]
+    assert cs["plan_total"] == 15 and cs["stock_rows"] == 2 and cs["stock_unpriced"] == 1
+    assert "Stoktan karşılanan 2 kalemden 1 tanesinin fiyatı yok; değeri toplama girmedi." in cs["caveats"]
+    # Stok yetince: "Yeterli" satırı + bölüm toplamı (tutar yine yok)
+    db_session.get(Item, ids["gli"]).current_stock = 10000
+    db_session.commit()
+    d = authed_client.post("/api/purchase-plan/preview", json=_req(ids, qty=100), headers=_HDR).json()
+    m = {x["item_id"]: x for x in d["materials"]}[ids["gli"]]
+    assert m["status"] == "yeterli" and m["amount"] is None
+    assert m["stock_value"] == 15 and m["ui"]["value"] == "15 $"                       # 3,3 kg × 4,52 = 14,9
+    suff = next(s for s in d["sections"] if s["key"] == "sufficient")
+    assert suff["row_keys"] == [m["key"]] and suff["total_text"] == "15 $"
+    assert suff["summary"] == "1 kalem, stoktaki değer 15 $"
+    assert [x["text"] for x in d["pricing"]["cost_summary"]["lines"]] == ["0 $", "15 $", "15 $"]
+    # Brüt mod: maliyet satırı / değer yok
+    d = authed_client.post("/api/purchase-plan/preview", json=_req(ids, qty=100, stock_mode="gross"),
+                           headers=_HDR).json()
+    assert d["pricing"]["cost_summary"]["applies"] is False and d["pricing"]["cost_summary"]["lines"] == []
+    assert all(x["ui"]["stock_value"] is None and x["ui"]["value_basis"] is None for x in d["materials"])
 
 
 def test_preview_same_material_group_firms(authed_client: TestClient, db_session: Session):

@@ -20,11 +20,28 @@ Satın Alma Planı — Excel çıktısı.
     sonrasında Y "Aynı malzeme (diğer kartlar)", Z "Sipariş geçmişi" ve AA
     "Grup stoğu (kart dökümü)" (`purchase_plan.stock_note`, önizleme/PDF ile
     aynı metin).
+  • "Stoktan karşılananlar" (14.10.2026; YALNIZ net modda ve satır varsa,
+    "Alım listesi"nden hemen sonra) — önce "Yeterli" satırlar, sonra
+    kısmen stoktan / yoldan karşılanan alınacaklar.  Formüller:
+        G (Kullanılan)  = MIN(D, E)                      (planın stoktan kullandığı)
+        K (Değer)       = IF(J="", "", ROUND(G*J, 0))
+      açık sipariş seçeneği açıkken ayrıca
+        L (Yoldan)      = MIN(F, ROUND(D−G, 6))
+        M (Yoldan değer)= IF(J="", "", ROUND(L*J, 0))
+    G / L satırın `stock_qty_used` / `open_qty_used`'ıdır; formülle aynı
+    sayıyı vermiyorsa (düz yuvarlamada alınacağı tama yuvarlanan adet
+    satırı: stoktan = gereken − alınacak) SAYI yazılır — Alım listesi G'si
+    gibi.  K / M formülü her satırda kalır.
+    + TOPLAM (SUM) — `pricing.cost_summary` stoktan / yoldan değeriyle aynı.
+    "Alım listesi"nin sütunları, formülleri ve GENEL TOPLAM'ı DEĞİŞMEZ.
   • "Tedarikçiler" — seçilen + aday firmalar, iletişim, kart adları, K
     "İlişki türleri" (stok kartı / alım / numune / sipariş / eşdeğer kart …).
   • "Ürünler"      — hedef adet, bitmiş stok, kapasite, kısıtlayan malzeme.
   • "Ürün detayı"  — ürün × malzeme ihtiyaç matrisi (kalem biriminde).
-  • "Özet"         — kapsam, toplamlar, bölüm listesi, notlar.
+  • "Özet"         — kapsam, toplamlar (net modda GENEL TOPLAM'ın altında
+    stoktan / yoldan değer + PLANIN TOPLAM MALZEME MALİYETİ + fiyatsız kalem
+    sayıları ve uyarılar — `cost_summary_lines` / `_caveats`), bölüm
+    listesi, notlar.
 
 Formül hücrelerinin HESAPLANMIŞ değeri `core.xlsx_cache.inject_cached_values`
 ile gömülür: formül hesaplamayan önizlemelerde (Quick Look, WhatsApp, Drive)
@@ -49,11 +66,13 @@ from io import BytesIO
 from typing import Dict, List, Optional
 
 from core.purchase_plan import _amount_near, stock_note
-from core.purchase_pricing import (CURRENCY_SYMBOL, REL_TYPE_TEXT, alt_texts, contact_line, money, notes_lines,
-                                   offer_tags, order_texts, round_half_up, sections, unpriced_offer_text)
+from core.purchase_pricing import (CURRENCY_SYMBOL, REL_TYPE_TEXT, alt_texts, contact_line, cost_summary_caveats,
+                                   cost_summary_lines, money, notes_lines, offer_tags, order_texts, round6,
+                                   round_half_up, sections, unpriced_offer_text)
 from core.xlsx_cache import inject_cached_values
 
 SHEET_LIST = "Alım listesi"
+SHEET_STOCK = "Stoktan karşılananlar"
 SHEET_SUP = "Tedarikçiler"
 SHEET_PROD = "Ürünler"
 SHEET_DETAIL = "Ürün detayı"
@@ -291,6 +310,131 @@ def _sheet_list(wb, report: dict, secs: List[dict], cache: Dict[str, object]) ->
     ws.freeze_panes = "D2"
 
 
+# ─── Stoktan karşılananlar ──────────────────────────────────────────────────
+
+def _covered_rows(report: dict, secs: List[dict]) -> List[dict]:
+    """Önce "Yeterli" bölümünün satırları (sections() sırası), sonra Alım
+    listesi sırasıyla stoktan / yoldan kısmen karşılanan alınacaklar."""
+    def used(m):
+        return (m.get("stock_qty_used") or 0) > 0 or (m.get("open_qty_used") or 0) > 0
+
+    suff = next((s["rows"] for s in secs if s["key"] == "sufficient"), [])
+    part = [m for s in secs if s["key"] in MATERIAL_SECTIONS for m in s["rows"] if used(m)]
+    return [m for m in suff if used(m)] + part
+
+
+def _sheet_stock(wb, report: dict, secs: List[dict], cache: Dict[str, object]) -> None:
+    """"Stoktan karşılananlar" — planın stoktan (ve açık siparişten) karşıladığı
+    malzemenin değeri.  Yalnız net modda ve satır varsa kurulur."""
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    meta = report.get("meta") or {}
+    opts = meta.get("options") or {}
+    pr = report.get("pricing") or {}
+    if not (pr.get("cost_summary") or {}).get("applies"):
+        return
+    rows = _covered_rows(report, secs)
+    if not rows:
+        return
+    cur = pr.get("currency") or opts.get("currency") or "USD"
+    sym = CURRENCY_SYMBOL.get(cur, cur)
+    open_on = bool(opts.get("subtract_open_orders"))
+    bold = Font(bold=True)
+    ws = wb.create_sheet(SHEET_STOCK, index=wb.sheetnames.index(SHEET_LIST) + 1)
+    head = ["Durum", "Tür", "Malzeme", "Gereken", "Elimizde", "Yolda", "Stoktan kullanılan", "Birim",
+            "Seçilen tedarikçi", f"Birim fiyat ({sym})", f"Değer ({sym})"]
+    if open_on:
+        head += ["Yoldan kullanılan", f"Yoldan değer ({sym})"]
+    head += ["Fiyat kaynağı", "Not"]
+    ws.append(head)
+    _style_header(ws)
+    first = None
+    k_vals: List[int] = []
+    m_vals: List[int] = []
+    for m in rows:
+        d = m.get("display") or {}
+        unit = d.get("buy_unit") or "adet"
+        D = float(d.get("need_num") or 0.0)
+        E = float(d.get("stock_num") or 0.0)
+        F = float(d.get("open_num") or 0.0) if open_on else None
+        price = m.get("price")
+        if m["status"] == "yeterli":
+            status = "Yeterli"
+        else:
+            parts = (["stoktan"] if (m.get("stock_qty_used") or 0) > 0 else []) + \
+                    (["yoldan"] if (m.get("open_qty_used") or 0) > 0 else [])
+            status = "Kısmen " + " + ".join(parts)
+        note = []
+        if price is None:
+            note.append("Fiyat yok; değer toplama girmedi.")
+        sn = stock_note(m)
+        if sn:
+            note.append(f"Grup stoğu: {sn}.")
+        vals = [status, KIND_TEXT.get(m["kind"], m["kind"]), m["name"], D, E, F, None, unit,
+                m.get("supplier") or "", price, None]
+        if open_on:
+            vals += [None, None]
+        vals += [m.get("price_source") or "", " ".join(note)]
+        r = _append_as_text(ws, vals)
+        first = first or r
+        # G = satırın `stock_qty_used`'ı; MIN(D,E)'ye eşitse formül (yeterli
+        # satır, güvenli yuvarlama), değilse sayı — düz yuvarlamada adet
+        # satırının alınacağı tama yuvarlanır, stoktan = gereken − alınacak
+        # olur (Alım listesi G'sinin formül/sayı korumasıyla aynı kalıp)
+        G = float(m.get("stock_qty_used") or 0.0)
+        if abs(G - min(D, E)) <= 1e-9:
+            ws.cell(r, 7).value = f"=MIN(D{r},E{r})"
+            cache[f"G{r}"] = G
+        else:
+            ws.cell(r, 7).value = G
+        ws.cell(r, 11).value = f'=IF(J{r}="","",ROUND(G{r}*J{r},0))'
+        kv = round_half_up(G * price) if price is not None else None
+        cache[f"K{r}"] = kv if kv is not None else ""
+        if kv is not None:
+            k_vals.append(kv)
+        fmt = _qty_fmt(unit)
+        for col in (4, 5, 6, 7):
+            ws.cell(r, col).number_format = fmt
+        if isinstance(price, (int, float)):
+            ws.cell(r, 10).number_format = "0.0000" if price < 1 else "#,##0.00"
+        ws.cell(r, 11).number_format = "#,##0"
+        if open_on:
+            L = float(m.get("open_qty_used") or 0.0)
+            if abs(L - min(F, round6(D - G))) <= 1e-9:
+                ws.cell(r, 12).value = f"=MIN(F{r},ROUND(D{r}-G{r},6))"
+                cache[f"L{r}"] = L
+            else:
+                ws.cell(r, 12).value = L
+            ws.cell(r, 13).value = f'=IF(J{r}="","",ROUND(L{r}*J{r},0))'
+            mv = round_half_up(L * price) if price is not None else None
+            cache[f"M{r}"] = mv if mv is not None else ""
+            if mv is not None:
+                m_vals.append(mv)
+            ws.cell(r, 12).number_format = fmt
+            ws.cell(r, 13).number_format = "#,##0"
+    last = ws.max_row
+    r = _append_as_text(ws, ["", "", "TOPLAM (fiyatı belli olanlar)"])
+    ws.cell(r, 11).value = f"=SUM(K{first}:K{last})"
+    cache[f"K{r}"] = sum(k_vals)
+    cells = [11]
+    if open_on:
+        ws.cell(r, 13).value = f"=SUM(M{first}:M{last})"
+        cache[f"M{r}"] = sum(m_vals)
+        cells.append(13)
+    ws.cell(r, 3).font = bold
+    for col in cells:
+        ws.cell(r, col).font = bold
+        ws.cell(r, col).number_format = "#,##0"
+    ws.append([])
+    for t in cost_summary_caveats(report):          # fiyatsız kalem sayıları + değerin dayanağı
+        _append_as_text(ws, ["", "", t])
+    widths = [16, 11, 34, 12, 12, 10, 14, 7, 22, 12, 12] + ([14, 14] if open_on else []) + [24, 50]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "D2"
+
+
 # ─── Diğer sayfalar ─────────────────────────────────────────────────────────
 
 def _sheet_suppliers(wb, report: dict, cur: str) -> None:
@@ -431,6 +575,26 @@ def _sheet_summary(wb, report: dict, secs: List[dict], cur: str) -> None:
         (f"Ambalaj — fiyatı belli tutar ({sym})", tot.get("packaging")),
         (f"Etiket — fiyatı belli tutar ({sym})", tot.get("label")),
         (f"GENEL TOPLAM — fiyatı belli ({sym})", tot.get("all")),
+    ]
+    # Net modda: stoktan (+ yoldan) karşılanan değer + planın toplam malzeme
+    # maliyeti (alınacak + stoktan + yoldan) ve fiyatsız kalem sayıları.
+    cs = pr.get("cost_summary") or {}
+    plan_label = None
+    for ln in cost_summary_lines(report):
+        if ln["key"] == "buy":
+            continue
+        label = (f"PLANIN TOPLAM MALZEME MALİYETİ ({sym})" if ln["key"] == "plan"
+                 else f"{ln['label']} — fiyatı belli ({sym})")
+        plan_label = label if ln["key"] == "plan" else plan_label
+        rows.append((label, ln["value"]))
+    if cs.get("applies"):
+        rows.append(("Fiyatlı / fiyatsız stoktan karşılanan",
+                     f"{cs.get('stock_rows', 0) - cs.get('stock_unpriced', 0)} / {cs.get('stock_unpriced', 0)}"))
+        if cs.get("open_rows"):
+            rows.append(("Fiyatlı / fiyatsız yoldan karşılanan",
+                         f"{cs['open_rows'] - cs.get('open_unpriced', 0)} / {cs.get('open_unpriced', 0)}"))
+        rows += [("Maliyet notu", t) for t in cost_summary_caveats(report)]
+    rows += [
         ("Fiyatlı / fiyatsız hammadde", f"{cnt.get('raw_priced', 0)} / {cnt.get('raw_unpriced', 0)}"),
         ("Fiyatlı / fiyatsız ambalaj", f"{cnt.get('packaging_priced', 0)} / {cnt.get('packaging_unpriced', 0)}"),
         ("Fiyatlı / fiyatsız etiket", f"{cnt.get('label_priced', 0)} / {cnt.get('label_unpriced', 0)}"),
@@ -444,6 +608,9 @@ def _sheet_summary(wb, report: dict, secs: List[dict], cur: str) -> None:
         if isinstance(v, (int, float)):
             ws.cell(r, 2).number_format = "#,##0"
             ws.cell(r, 2).alignment = Alignment(horizontal="left")
+        if k == plan_label:
+            ws.cell(r, 1).font = bold
+            ws.cell(r, 2).font = bold
     ws.append([])
     r = _append_as_text(ws, ["Bölümler", ""])
     ws.cell(r, 1).font = bold
@@ -471,8 +638,10 @@ def build_workbook(report: dict) -> bytes:
     secs = sections(report)
     wb = Workbook()
     list_cache: Dict[str, object] = {}
+    stock_cache: Dict[str, object] = {}
     detail_cache: Dict[str, object] = {}
     _sheet_list(wb, report, secs, list_cache)
+    _sheet_stock(wb, report, secs, stock_cache)
     _sheet_suppliers(wb, report, cur)
     _sheet_products(wb, report)
     _sheet_detail(wb, report, detail_cache)
@@ -481,4 +650,5 @@ def build_workbook(report: dict) -> bytes:
     wb.properties.creator = "Minerva 108"
     buf = BytesIO()
     wb.save(buf)
-    return inject_cached_values(buf.getvalue(), {SHEET_LIST: list_cache, SHEET_DETAIL: detail_cache})
+    return inject_cached_values(buf.getvalue(), {SHEET_LIST: list_cache, SHEET_STOCK: stock_cache,
+                                                 SHEET_DETAIL: detail_cache})

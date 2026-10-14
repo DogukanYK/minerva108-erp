@@ -158,6 +158,11 @@
     .sap-box-info { background: var(--sap-info-bg); color: var(--sap-info-fg); border-color: var(--sap-info-bd); }
     .sap-box ul { margin: 0.35rem 0 0; padding-left: 1.1rem; }
     .sap-box b { color: inherit; }
+    /* Planın toplam malzeme maliyeti (alınacak + stoktan + yoldan) — metinler sunucuda biçimli */
+    .sap-cost { margin-top: 0.5rem; max-width: 34rem; }
+    .sap-cost-row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.12rem 0; font-variant-numeric: tabular-nums; }
+    .sap-cost-row.tot { border-top: 1px solid var(--sap-ok-bd); margin-top: 0.2rem; padding-top: 0.3rem; font-weight: 700; }
+    .sap-cost-notes { font-size: 0.76rem; opacity: 0.9; }
 
     /* Marka çipleri */
     .sap-chips { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
@@ -628,7 +633,7 @@
 
   <div id="toast-container"></div>
 
-  <script src="/static/satin-alma.js?v=4" defer></script>
+  <script src="/static/satin-alma.js?v=5" defer></script>
   <script>
     document.getElementById('logoutBtn').addEventListener('click', async function () {
       try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}

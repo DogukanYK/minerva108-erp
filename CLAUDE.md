@@ -465,6 +465,42 @@ havuzu paylaşan satırlar havuzu BİR kez harcar. Açıkken "bitirilecek stok"
 kutusu da kapsanır. Router: üretimde kaynak seçimi kapalıysa
 `count_group_stock` + `count_phase_out_stock` hesap kopyasında kapanır,
 `source_choice_disabled` uyarısı (senaryo değişmez).
+**Stoktan karşılanan değer** (14.10.2026, "elimde olan malzemelerin de
+fiyatını göster"; YALNIZ net mod): `attach` → `_cover_values` satıra
+`stock_qty_used = min(elimizde, ROUND(gereken − alınacak, 6))` (display
+sayıları; yeterli satırda alınacak 0 → Excel MIN(D,E)), seçenek açıkken
+`open_qty_used = min(yolda, ROUND(gereken − alınacak − stoktan, 6))`,
+`stock_value`/`open_value` = round_half_up(miktar × SEÇİLEN teklif) yazar
+(stoktan + yoldan + alınacak = gereken; depodaki fazla değerlenmez).
+**TUZAK — düz yuvarlama** (`safe_rounding=False`): adet satırının alınacağı
+gereken'den bağımsız tama yuvarlanır (10,6 gereken, 3 stok → 8); MIN(gereken,
+elimizde) orada 11 birim değerlerdi — bu yüzden alınacak düşülür
+(`test_cover_values_unsafe_rounding_never_exceeds_need`).
+`amount`, `totals`, Alım listesi ve GENEL TOPLAM BİREBİR AYNI — yeni:
+`pricing.stock_totals` + `pricing.cost_summary` {applies, buy_total,
+stock_total, open_total, plan_total (= alınacak `amount` + stoktan + yoldan;
+`pkg_amount` DEĞİL), *_rows/*_unpriced, new_items}.  Brüt mod, bekletilen
+ve hariç satır almaz (None / applies=False → hiçbir çıktıda satır yok).
+Değer BUGÜNKÜ TEKLİF fiyatıdır (yenileme değeri, alış maliyeti değil —
+`Item.cost_price` boş); ambalajların hiçbirinde teklif yok → fiyatsız kalem
+SAYILIR, toplanmaz, uyarıda yazar (sessiz eksik toplam yok).  Ortak metin
+`cost_summary_lines` / `cost_summary_caveats` / `value_basis_text`
+("UMAYCHEM · 4,52 $/kg" | "Fiyat yok") / `cover_text` ("stoktan 2 $ ·
+yoldan 9 $") / `cover_value`.  "Yeterli"
+bölümü `total` + özet "N kalem, stoktaki değer X $ — K kalemin fiyatı yok"
+(iç parantez yok: PDF başlığı parantezle sarar); yeterli satırda
+`offer_lines` nötr gri "Fiyat yok".  Önizleme `ui.stock_value`/`open_value`/
+`value`/`cover_text`/`value_basis` + `pricing.cost_summary.lines`/`.caveats`
+(sunucu biçimli): alım tablosunda Tutar altında soluk "stoktan X · yoldan Y",
+Yeterli sekmesinde "Değer" sütunu + Toplam, yeşil kutuda maliyet satırları.
+PDF: Tutar altı gri satır, Yeterli'de "Değer" (genişliği Not'tan), kutuda
+kısa blok (uzarsa ilk tablo sayfada bölünür), alt başlıkta dayanak cümlesi.
+Excel: "Stoktan karşılananlar" sayfası (Alım listesi'nden hemen sonra,
+yalnız net + satır varsa; önce yeterli sonra kısmi; G = MIN(D,E), K =
+IF(J="","",ROUND(G*J,0)), açık siparişte L = MIN(F,ROUND(D−G,6)) + M — G/L
+satırın miktarından farklıysa (düz yuvarlama) SAYI yazılır; TOPLAM
+= `cost_summary`; önbellekli), Özet'te GENEL TOPLAM altına stoktan/yoldan
+değer + "PLANIN TOPLAM MALZEME MALİYETİ" + fiyatlı/fiyatsız sayısı + notlar.
 Varsayılanlar: alım firesi %0, USD,
 "1 l ≈ 1 kg" notu, DİSTİLE SU / SAF SU hariç (AppSetting
 `purchase_plan.default_excluded[.<domain>]`), bitmiş ürün stoğunu düşme kapalı;

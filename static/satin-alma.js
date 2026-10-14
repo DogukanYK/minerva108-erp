@@ -21,7 +21,11 @@
  *  • Taslak panel (domain) başına localStorage'da otomatik saklanır.
  *  • Sınıf öneki `sap-`; `btn-*` adı YASAK (Bootstrap gölgeleme tuzağı).
  *  • TR sayı/para biçimi tedarikçi hücresinde sunucudan gelir (`m.ui`);
- *    burada yalnız basit miktarlar biçimlenir.
+ *    burada yalnız basit miktarlar biçimlenir.  Stoktan / yoldan karşılanan
+ *    değer (`m.ui.value` / `stock_value` / `open_value` / `cover_text` /
+ *    `value_basis`) ve
+ *    özet kutusunun maliyet satırları (`pricing.cost_summary.lines` /
+ *    `.caveats`) da sunucu biçimlidir.
  */
 (function () {
   'use strict';
@@ -1304,12 +1308,32 @@
     return t ? '<div class="sap-stock-note">' + esc(t) + '</div>' : '';
   }
 
+  // Alınacak satırda stoktan / yoldan karşılanan kısmın değeri — Tutar'ın
+  // altında soluk ("stoktan X · yoldan Y" sunucuda kurulur: m.ui.cover_text,
+  // PDF ile aynı metin).
+  function coverNoteHtml(m) {
+    var u = m.ui || {};
+    return u.cover_text ? '<div class="sap-stock-note" title="' + esc(u.value_basis || '') + '">' + esc(u.cover_text) + '</div>' : '';
+  }
+
+  // "Yeterli" sekmesinin "Değer" hücresi: stoktan (+ yoldan) karşılanan
+  // değer; ipucunda ve soluk alt satırda dayanağı (seçilen teklif / "Fiyat yok").
+  function valueCellHtml(m) {
+    var u = m.ui || {};
+    var basis = u.value_basis || '';
+    var main = u.value ? '<b>' + esc(u.value) + '</b>' : '—';
+    var sub = basis ? '<div class="sap-stock-note">' + esc(basis) + '</div>' : '';
+    if (u.open_value && u.cover_text) sub += '<div class="sap-stock-note">' + esc(u.cover_text) + '</div>';
+    return '<td class="num"' + (basis ? ' title="' + esc(basis) + '"' : '') + '>' + main + sub + '</td>';
+  }
+
   function matTable(rows, rep, opts) {
     var gross = rep.meta.options.stock_mode === 'gross';
     var openOn = !!rep.meta.options.subtract_open_orders;
     var head = '<tr><th>Malzeme</th><th class="num">Toplam gereken</th><th class="num">' + (gross ? 'Elimizde (bilgi)' : 'Elimizde') + '</th>' +
       (openOn ? '<th class="num">' + (gross ? 'Yolda (bilgi)' : 'Yolda') + '</th>' : '') +
-      '<th class="num">Alınacak</th>' + (opts.noSup ? '' : '<th>Tedarikçi ve birim fiyat</th><th class="num">Tutar</th>') + '</tr>';
+      '<th class="num">Alınacak</th>' + (opts.noSup ? '' : '<th>Tedarikçi ve birim fiyat</th><th class="num">Tutar</th>') +
+      (opts.value ? '<th class="num">Değer</th>' : '') + '</tr>';
     var body = rows.map(function (m) {
       var d = m.display || {};
       var nameNotes = ((m.ui && m.ui.name_notes) || []).map(function (t) { return ' <span class="sap-faint">(' + esc(t.replace(/\.$/, '').toLocaleLowerCase('tr')) + ')</span>'; }).join('');
@@ -1317,10 +1341,14 @@
         '<td class="num">' + esc(d.need_text) + '</td><td class="num">' + esc(d.stock_text) + stockNoteHtml(m) + '</td>' +
         (openOn ? '<td class="num">' + esc(d.open_text) + '</td>' : '') +
         '<td class="num"><b>' + esc(d.buy_text) + '</b></td>' +
-        (opts.noSup ? '' : '<td>' + supHtml(m) + firmsHtml(m) + '</td><td class="num">' + (m.ui && m.ui.amount ? '<b>' + esc(m.ui.amount) + '</b>' : '—') + '</td>') + '</tr>';
+        (opts.noSup ? '' : '<td>' + supHtml(m) + firmsHtml(m) + '</td><td class="num">' + (m.ui && m.ui.amount ? '<b>' + esc(m.ui.amount) + '</b>' : '—') + coverNoteHtml(m) + '</td>') +
+        (opts.value ? valueCellHtml(m) : '') + '</tr>';
     }).join('');
-    var total = (opts.total_text && !opts.noSup)
-      ? '<tr class="sap-total"><td colspan="' + (openOn ? 6 : 5) + '">Toplam</td><td class="num">' + esc(opts.total_text) + '</td></tr>' : '';
+    // Toplam satırı son sütunun (Tutar ya da Değer) altında
+    var lastCol = !opts.noSup || opts.value;
+    var cols = 4 + (openOn ? 1 : 0) + (opts.noSup ? 0 : 2) + (opts.value ? 1 : 0);
+    var total = (opts.total_text && lastCol)
+      ? '<tr class="sap-total"><td colspan="' + (cols - 1) + '">Toplam</td><td class="num">' + esc(opts.total_text) + '</td></tr>' : '';
     return '<div style="overflow-x:auto;"><table class="sap-tbl">' + '<thead>' + head + '</thead><tbody>' + body + total + '</tbody></table></div>';
   }
 
@@ -1410,8 +1438,17 @@
       boxBits.push('Fiyatı listede olanların toplamı <b>' + fmt(pr.totals.all, 0) + ' ' + sym + '</b>' +
         ' (hammadde ' + fmt(pr.totals.raw, 0) + ', ambalaj ' + fmt(pr.totals.packaging, 0) + ', etiket ' + fmt(pr.totals.label, 0) + ' ' + sym + ').');
     }
+    var cs = pr.cost_summary || {};
+    var costLines = cs.lines || [];
     if (unpriced) boxBits.push(unpriced + ' kalemin fiyatı yok. Gerçek toplam, fiyatı olmayan kalemler eklenince bundan yüksek olacak.');
-    if (boxBits.length) html += '<div class="sap-box sap-box-ok">' + boxBits.join(' ') + '</div>';
+    var costHtml = '';
+    if (costLines.length) {
+      costHtml = '<div class="sap-cost">' + costLines.map(function (l) {
+        return '<div class="sap-cost-row' + (l.key === 'plan' ? ' tot' : '') + '"><span>' + esc(l.label) + '</span><b>' + esc(l.text) + '</b></div>';
+      }).join('') + '</div>' +
+        ((cs.caveats || []).length ? '<ul class="sap-cost-notes">' + cs.caveats.map(function (c) { return '<li>' + esc(c) + '</li>'; }).join('') + '</ul>' : '');
+    }
+    if (boxBits.length || costHtml) html += '<div class="sap-box sap-box-ok">' + boxBits.join(' ') + costHtml + '</div>';
 
     // Sekmeler
     var suff = sec('sufficient');
@@ -1440,7 +1477,7 @@
     // 2) Yeterli
     var okHtml;
     if (suff) {
-      okHtml = '<div class="sap-sec">' + secHead(suff) + matTable((suff.row_keys || []).map(function (k) { return byKey[k]; }).filter(Boolean), rep, { noSup: true }) + '</div>';
+      okHtml = '<div class="sap-sec">' + secHead(suff) + matTable((suff.row_keys || []).map(function (k) { return byKey[k]; }).filter(Boolean), rep, { noSup: true, value: true, total_text: suff.total_text }) + '</div>';
     } else {
       okHtml = '<div class="sap-empty">' + (meta.options.stock_mode === 'gross' ? 'Brüt modda stok düşülmez; yeterli listesi yok.' : 'Elimizdeki stokla karşılanan kalem yok.') + '</div>';
     }

@@ -26,6 +26,11 @@ listesi en iyi seçime uygulanır · eşdeğer kart teklifi yarışır + etiketl
 (birimi farklı kartınki alınmaz) · adaylarda bitirilecek / "alma" yok, tercih
 edilen yedek var · mükerrer kart durum çelişkisi · durum yoksa çıktı eskisiyle
 aynı · DB yükleyicide durum, tercih (kart kapsamı grubu ezer), eşdeğer teklif.
+Stoktan karşılanan değer (14.10.2026): yeterli satırda değer (tutar None
+kalır), kısmi satırda kullanılan stok, fiyatsız sayılır/toplanmaz, bekletilen
+ve brüt mod almaz, açık siparişte stok + yolda + alınacak = gereken, plan
+toplamı `amount` ile (ambalaj katı değil), yeterli bölüm toplamı + nötr
+"Fiyat yok".
 """
 from datetime import date, datetime
 
@@ -1237,3 +1242,154 @@ def test_load_price_inputs_carries_vat(db_session):
     pin = load_price_inputs(db_session, [i1.id], "cosmetics")
     got = {o.supplier_name: (o.vat_included, o.vat_rate) for o in pin.offers[i1.id]}
     assert got == {"PHARMATERM": (True, 20.0), "ULUDAĞ": (None, None)}
+
+
+# ─── Stoktan karşılanan değer + planın toplam malzeme maliyeti (14.10.2026) ─
+
+def _cover_plan(**opts):
+    """Kısmi (500 g stok, 10 kg gerek), yeterli fiyatlı (2,5 kg), yeterli
+    fiyatsız (1 kg) ve fiyatsız alınacak satır."""
+    items = [it(1, "Kısmi", stock=500), it(2, "Yeterli", stock=10 ** 6), it(3, "Fiyatsız", stock=10 ** 6),
+             it(4, "Alınacak fiyatsız")]
+    res = plan(items, [(1, 10), (2, 2.5), (3, 1), (4, 1)], **opts)
+    return attach(res, PriceInputs(offers={1: [offer(1, "UMAYCHEM", 4.52)], 2: [offer(2, "BEFCHEM", 4.52)]}),
+                  None, round_to_package=bool(opts.get("round_to_package")))
+
+
+def test_stock_value_sufficient_and_partial_rows_amount_unchanged():
+    from core.purchase_pricing import cost_summary_caveats, cost_summary_lines, cover_value, value_basis_text
+    res = _cover_plan()
+    part, suff, nop, buy = mat(res, 1), mat(res, 2), mat(res, 3), mat(res, 4)
+    # Yeterli satır: değer = min(gereken, elimizde) × fiyat; tutar YİNE None
+    assert suff["status"] == "yeterli" and suff["amount"] is None
+    assert suff["stock_qty_used"] == pytest.approx(2.5) and suff["stock_value"] == 11       # 2,5 × 4,52 = 11,3
+    assert cover_value(suff) == 11 and value_basis_text(suff) == "BEFCHEM · 4,52 $/kg"
+    # Kısmi satır: kullanılan stok = elimizdeki; stoktan + alınacak = gereken
+    d = part["display"]
+    assert part["status"] == "to_buy" and part["stock_qty_used"] == pytest.approx(0.5)
+    assert part["stock_qty_used"] + d["buy_num"] == pytest.approx(d["need_num"])
+    assert part["amount"] == 43 and part["stock_value"] == 2                               # 9,5 × 4,52 / 0,5 × 4,52
+    assert part["open_qty_used"] == 0 and part["open_value"] is None
+    # Fiyatsız: miktar var, değer yok (sayılır, toplanmaz)
+    assert nop["stock_qty_used"] == pytest.approx(1.0) and nop["stock_value"] is None
+    assert value_basis_text(nop) == "Fiyat yok" and cover_value(nop) is None
+    assert buy["stock_qty_used"] == 0 and buy["stock_value"] is None
+    pr = res["pricing"]
+    assert pr["totals"] == {"raw": 43, "packaging": 0, "label": 0, "all": 43}             # değişmedi
+    assert pr["stock_totals"] == {"raw": 13, "packaging": 0, "label": 0, "all": 13}
+    assert pr["cost_summary"] == {
+        "applies": True, "buy_total": 43, "stock_total": 13, "open_total": 0, "plan_total": 56,
+        "buy_rows": 2, "buy_unpriced": 1, "stock_rows": 3, "stock_unpriced": 1, "open_rows": 0,
+        "open_unpriced": 0, "new_items": 0}
+    assert [(x["key"], x["text"]) for x in cost_summary_lines(res)] == [
+        ("buy", "43 $"), ("stock", "13 $"), ("plan", "56 $")]
+    cav = cost_summary_caveats(res)
+    assert cav[0] == "Stoktan karşılanan 3 kalemden 1 tanesinin fiyatı yok; değeri toplama girmedi."
+    assert cav[1] == "Fiyatı olmayan 1 alınacak kalem planın toplam maliyetine de girmedi."
+    assert "yenileme değeri" in cav[-1] and "alış maliyeti değil" in cav[-1]
+
+
+def test_sufficient_section_total_and_neutral_offer_line():
+    res = _cover_plan()
+    secs = {s["key"]: s for s in sections(res)}
+    suff = secs["sufficient"]
+    assert [m["name"] for m in suff["rows"]] == ["Fiyatsız", "Yeterli"]
+    assert suff["total"] == 11 and suff["summary"] == "2 kalem, stoktaki değer 11 $ — 1 kalemin fiyatı yok"
+    assert "yenileme değeri" in suff["subtitle"]
+    assert secs["raw_priced"]["total"] == 43                                              # alım bölümü aynı
+    # yeterli satırda alım yok → nötr gri "Fiyat yok"; alınacakta kırmızı kalır
+    assert offer_lines(mat(res, 3), "USD") == [("Fiyat yok", "g")]
+    assert offer_lines(mat(res, 4), "USD")[0] == ("Fiyat yok — teklif alınacak", "r")
+    assert any("yenileme değeri" in n for n in secs["notes"]["rows"])
+    # hiçbiri fiyatsız / tek kalem fiyatsız özetleri (iç parantez yok — PDF başlığı parantezle sarar)
+    one = attach(plan([it(1, "Tek", stock=10 ** 6)], [(1, 1)]), PriceInputs(), None)
+    s1 = next(s for s in sections(one) if s["key"] == "sufficient")
+    assert s1["summary"] == "1 kalem — fiyatı yok" and s1["total"] is None
+
+
+def test_held_row_and_gross_mode_get_no_stock_value():
+    from core.purchase_pricing import cost_summary_caveats, cost_summary_lines
+    res = plan([it(1, "Toz", stock=100), it(2, "Kil", stock=10 ** 6)], [(1, 233.2), (2, 1)],
+               held_items=[{"item_id": 1, "reason": "teyit"}])
+    attach(res, PriceInputs(offers={1: [offer(1, "NATURALYA", 10.32)], 2: [offer(2, "S", 2.0)]}), None)
+    h = res["held"][0]
+    assert h["amount"] == 2406 and h["stock_qty_used"] is None and h["stock_value"] is None
+    cs = res["pricing"]["cost_summary"]
+    assert cs["stock_total"] == 2 and cs["stock_rows"] == 1 and cs["plan_total"] == 2       # yalnız Kil
+    # Brüt mod: alanlar None, maliyet satırı / uyarı / not yok
+    items = [it(1, "Kısmi", stock=500), it(2, "Bol", stock=10 ** 6)]
+    g = plan(items, [(1, 10), (2, 1)], stock_mode="gross")
+    attach(g, PriceInputs(offers={1: [offer(1, "U", 4.52)], 2: [offer(2, "S", 2.0)]}), None)
+    assert all(m["stock_qty_used"] is None and m["stock_value"] is None and m["open_value"] is None
+               for m in g["materials"])
+    assert g["pricing"]["cost_summary"]["applies"] is False
+    assert g["pricing"]["stock_totals"]["all"] == 0
+    assert cost_summary_lines(g) == [] and cost_summary_caveats(g) == []
+    assert not any("yenileme değeri" in n for n in sections(g)[-1]["rows"])
+
+
+def test_open_orders_stock_plus_open_plus_buy_equals_need():
+    from core.purchase_plan import OpenOrderRec
+    from core.purchase_pricing import cost_summary_lines, cover_value
+    items = [it(1, "Kısmi", stock=500), it(2, "Yoldan yeten", stock=300)]
+    oo = {1: [OpenOrderRec(item_id=1, quantity=2000, unit="g")],
+          2: [OpenOrderRec(item_id=2, quantity=800, unit="g")]}
+    inp = PlanInputs(items={i.id: i for i in items}, recipes={1: rec(1, [(1, 10), (2, 1)])}, open_orders=oo,
+                     stock_as_of=NOW)
+    res = compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}], options={"subtract_open_orders": True}))
+    attach(res, PriceInputs(offers={1: [offer(1, "U", 4.52)], 2: [offer(2, "S", 10.0)]}), None)
+    for m in res["materials"]:
+        d = m["display"]
+        assert m["stock_qty_used"] + m["open_qty_used"] + d["buy_num"] == pytest.approx(d["need_num"])
+    a, b = mat(res, 1), mat(res, 2)
+    assert (a["stock_qty_used"], a["open_qty_used"]) == (pytest.approx(0.5), pytest.approx(2.0))
+    assert (a["stock_value"], a["open_value"], a["amount"]) == (2, 9, 34)                 # 0,5/2/7,5 × 4,52
+    assert b["status"] == "yeterli" and b["amount"] is None
+    assert (b["stock_qty_used"], b["open_qty_used"]) == (pytest.approx(0.3), pytest.approx(0.7))
+    assert (b["stock_value"], b["open_value"], cover_value(b)) == (3, 7, 10)
+    cs = res["pricing"]["cost_summary"]
+    assert (cs["open_rows"], cs["open_total"], cs["stock_total"], cs["plan_total"]) == (2, 16, 5, 55)
+    assert [x["key"] for x in cost_summary_lines(res)] == ["buy", "stock", "open", "plan"]
+    suff = next(s for s in sections(res) if s["key"] == "sufficient")
+    assert suff["total"] == 10 and suff["summary"] == "1 kalem, stoktaki ve yoldaki değer 10 $"
+
+
+def test_plan_total_uses_amount_not_package_rounding():
+    res = _cover_plan(round_to_package=True)
+    m = mat(res, 1)
+    res2 = plan([it(1, "Yağ", stock=500)], [(1, 107.75)], round_to_package=True)
+    attach(res2, PriceInputs(offers={1: [offer(1, "Befchem", 8.0, pkg=25)]}), None, round_to_package=True)
+    y = mat(res2, 1)
+    assert y["amount"] == 858 and y["pkg_amount"] == 1000 and y["stock_value"] == 4    # 107,3 / 0,5 × 8
+    cs = res2["pricing"]["cost_summary"]
+    assert cs["buy_total"] == res2["pricing"]["totals"]["all"] == 858
+    assert cs["plan_total"] == 862                                                      # 858 + 4, pkg_amount değil
+    assert m["stock_value"] == 2 and res["pricing"]["cost_summary"]["plan_total"] == 56
+
+
+def test_cover_values_unsafe_rounding_never_exceeds_need():
+    """Düz yuvarlamada (`safe_rounding=False`) adet satırının alınacağı
+    gereken'den bağımsız tama yuvarlanır: 10,6 gereken, 3 stok → 8 alınacak.
+    Stoktan = gereken − alınacak (2,6) — MIN(gereken, elimizde) = 3 olsaydı
+    11 birim değerlenirdi; kesirli stok (3,6 → "4") da olmayan birimi saymaz."""
+    def run(stock, waste, **kw):
+        res = plan([it(1, "Şişe", cat="Ambalaj", unit="adet", stock=stock, pkg="şişe")], [(1, 1)], qty=10,
+                   extra_waste_pct={"raw": 0, "packaging": waste, "label": 0}, **kw)
+        attach(res, PriceInputs(offers={1: [offer(1, "X", 10.0, unit="adet")]}), None)
+        return res, mat(res, 1)
+
+    res, m = run(3, 6, safe_rounding=False)
+    d = m["display"]
+    assert (d["need_num"], d["stock_num"], d["buy_num"]) == (pytest.approx(10.6), 3, 8)
+    assert m["amount"] == 80 and res["pricing"]["totals"]["all"] == 80                    # tutar değişmez
+    assert m["stock_qty_used"] == pytest.approx(2.6) and m["stock_value"] == 26
+    assert m["stock_qty_used"] + d["buy_num"] == pytest.approx(d["need_num"])
+    assert res["pricing"]["cost_summary"]["plan_total"] == 106
+    res, m = run(3.6, 4, safe_rounding=False)
+    assert (m["display"]["stock_num"], m["display"]["buy_num"]) == (4, 7)
+    assert m["stock_qty_used"] == pytest.approx(3.4) and m["stock_value"] == 34           # 10,4 − 7
+    # Güvenli yuvarlamada (varsayılan) aynı plan: stoktan = elimizde = MIN(D,E)
+    res, m = run(3.6, 4)
+    d = m["display"]
+    assert (d["need_num"], d["stock_num"], d["buy_num"]) == (11, 3, 8)
+    assert m["stock_qty_used"] == min(d["need_num"], d["stock_num"]) == 3 and m["stock_value"] == 30

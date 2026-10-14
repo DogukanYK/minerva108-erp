@@ -23,6 +23,12 @@ stok kartı / son alım / numune ilişkileri, "Sipariş:" ve "Aynı malzeme:"
 (eşdeğer tedarikçi kartları) satırları ve uyarı notları; elle işaretlemek
 için boş "Alındı" sütunu.  "Elimizde" hücresinin altında grup stoğu
 sayıldıysa kart dökümü (`purchase_plan.stock_note`) küçük gri satırda.
+Stoktan karşılanan değer (14.10.2026, yalnız net mod): alım tablolarında
+Tutar'ın altında gri "stoktan X" / "yoldan Y"; "Yeterli olanlar"da "Değer"
+sütunu (dayanağı — seçilen teklif ya da "Fiyat yok" — altında gri); yeşil
+kutuda alınacak + stoktan (+ yoldan) = "Planın toplam malzeme maliyeti" ve
+uyarıları (`purchase_pricing.cost_summary_lines` / `_caveats`, önizleme ve
+Excel ile aynı metin).  Brüt modda hiçbiri basılmaz.
 
 Bütün dinamik metin (malzeme/tedarikçi adı, not, iletişim) reportlab
 Paragraph'ına `escape()` ile girer — adında "&" ya da "<" geçen bir kart
@@ -34,8 +40,9 @@ from typing import List, Optional
 from xml.sax.saxutils import escape
 
 from core.purchase_plan import _amount_near, stock_note, tr_num
-from core.purchase_pricing import (CURRENCY_SYMBOL, UNIT_TEXT, money, offer_lines, price_text, relation_texts,
-                                   sections)
+from core.purchase_pricing import (CURRENCY_SYMBOL, UNIT_TEXT, cost_summary_caveats, cost_summary_lines,
+                                   cover_text, cover_value, money, offer_lines, price_text, relation_texts,
+                                   sections, value_basis_text)
 
 CURRENCY_NAME = {"USD": "ABD doları", "EUR": "avro", "TRY": "Türk lirası"}
 KIND_HEADER = {"raw": "Hammadde", "packaging": "Ambalaj", "label": "Etiket"}
@@ -194,6 +201,20 @@ def _stock_cell(c: _Ctx, m: dict, d: dict) -> str:
     return t
 
 
+def _small_grey(c: _Ctx, t: str) -> str:
+    return c.grey(f"<font size='8.5'>{_e(t)}</font>")
+
+
+def _amount_cell(c: _Ctx, m: dict) -> str:
+    """Tutar + altında gri "stoktan X · yoldan Y" (satırın stoktan / yoldan
+    karşılanan kısmının değeri; tutara ve GENEL TOPLAM'a girmez)."""
+    t = c.money(m["amount"]) if m.get("amount") is not None else "—"
+    cov = cover_text(m, c.cur)          # önizlemenin `ui.cover_text`'iyle aynı metin
+    if cov:
+        t += "<br/>" + _small_grey(c, cov)
+    return t
+
+
 def _material_table(c: _Ctx, rows: List[dict], kind: str):
     from reportlab.platypus import Paragraph
 
@@ -215,7 +236,7 @@ def _material_table(c: _Ctx, rows: List[dict], kind: str):
                 "open": Paragraph(_e(d.get("open_text")), S["val"]),
                 "buy": Paragraph(_e(d.get("buy_text")), S["num"]),
                 "sup": Paragraph(_sup_cell(c, m), S["cell"]),
-                "amount": Paragraph(c.money(m["amount"]) if m.get("amount") is not None else "—", S["num"]),
+                "amount": Paragraph(_amount_cell(c, m), S["num"]),
                 "got": ""}
         data.append([cell[k] for k in cols])
     return c.table(data, [w[k] for k in cols])
@@ -360,6 +381,8 @@ def _sec_sufficient(c: _Ctx, sec: dict) -> list:
     cols = [("name", "Malzeme", 75), ("kind", "Tür", 30), ("need", "Toplam gereken", 30), ("stock", "Elimizde", 30)]
     if c.open_on:
         cols.append(("open", "Yolda", 24))
+    # "Değer" (planın kullanacağı stok × seçilen teklif) — genişliği Not'tan
+    cols.append(("value", "Değer", 38))
     cols.append(("note", "Not", _PAGE_W - sum(w for _, _, w in cols)))
     data = [[Paragraph(h, S["th"]) for _, h, _ in cols]]
     for m in sec["rows"]:
@@ -370,9 +393,23 @@ def _sec_sufficient(c: _Ctx, sec: dict) -> list:
                 "need": Paragraph(_e(d.get("need_text")), S["val"]),
                 "stock": Paragraph(_stock_cell(c, m, d), S["val"]),
                 "open": Paragraph(_e(d.get("open_text")), S["val"]),
+                "value": Paragraph(_value_cell(c, m), S["num"]),
                 "note": Paragraph(c.grey(notes) if notes else "", S["cell"])}
         data.append([cell[k] for k, _, _ in cols])
     return _heading(c, sec) + [c.table(data, [w for _, _, w in cols])]
+
+
+def _value_cell(c: _Ctx, m: dict) -> str:
+    """"Değer" hücresi: stoktan (+ yoldan) karşılanan değer, altında gri
+    dayanağı ("UMAYCHEM · 4,52 $/kg" / "Fiyat yok") — önizlemeyle aynı."""
+    v = cover_value(m)
+    t = c.money(v) if v is not None else "—"
+    used = (m.get("stock_qty_used") or 0) > 0 or (m.get("open_qty_used") or 0) > 0
+    if used:
+        t += "<br/>" + _small_grey(c, value_basis_text(m, c.cur))
+    if m.get("open_value") is not None:
+        t += "<br/>" + _small_grey(c, cover_text(m, c.cur))
+    return t
 
 
 def _sec_notes(c: _Ctx, sec: dict) -> list:
@@ -420,8 +457,9 @@ def _summary_text(c: _Ctx, report: dict) -> str:
     new_lbl = report.get("labels_new") or []
     manual = report.get("manual_lines") or []
     unpriced_any = ru + pu + lu + len(new_lbl) + len(manual)
+    cost = _cost_lines(c, report)
     if not (rp + ru + pp + pu + lp + lu) and not (new_lbl or manual):
-        return b("Alınacak kalem yok") + " — seçilen ürünler için elimizdeki stok yetiyor."
+        return "<br/>".join([b("Alınacak kalem yok") + " — seçilen ürünler için elimizdeki stok yetiyor."] + cost)
     lines.append(b(f"Fiyatı belli kalemlerin tutarı: {c.money(tot.get('all', 0))}"))
     if rp:
         lines.append(f"• {rp} hammadde fiyat listesinden: {c.money(tot.get('raw', 0))}")
@@ -448,7 +486,24 @@ def _summary_text(c: _Ctx, report: dict) -> str:
         lines.append(f"• {' · '.join(extra)}: fiyat yok, teklif alınacak.")
     if unpriced_any:
         lines.append("Gerçek toplam, fiyatı olmayan kalemler eklenince bundan yüksek olacak.")
-    return "<br/>".join(lines)
+    return "<br/>".join(lines + cost)
+
+
+def _cost_lines(c: _Ctx, report: dict) -> List[str]:
+    """Yeşil kutunun maliyet bloğu (net mod): alınacak + stoktan (+ yoldan) =
+    planın toplam malzeme maliyeti, sonra uyarılar — önizleme / Excel ile aynı
+    metin.  Brüt modda boş."""
+    rows = cost_summary_lines(report)
+    if not rows:
+        return []
+    # Kısa tutulur (bileşenler tek satır + kalın toplam + uyarılar): kutu
+    # uzarsa ilk tablo sayfa sonunda bölünür
+    out = [" · ".join(f"{_e(r['label'])}: {_e(r['text'])}" for r in rows if r["key"] != "plan")]
+    out += [c.bold(f"{_e(r['label'])}: {_e(r['text'])}") for r in rows if r["key"] == "plan"]
+    cav = cost_summary_caveats(report)
+    if cav:
+        out.append(c.grey(f"<font size='10.5'>{_e(' '.join(cav))}</font>"))
+    return out
 
 
 # ─── Giriş ──────────────────────────────────────────────────────────────────
@@ -472,6 +527,9 @@ def render_pdf(report: dict) -> bytes:
             + ("Tutar = alınacak × seçilen teklifin birim fiyatı (önce malzeme tercihi ve “tercih edilen” "
                "firma, sonra en ucuz)." if (report.get("pricing") or {}).get("status_used") else
                "Tutar = alınacak × en ucuz birim fiyat."))
+    if ((report.get("pricing") or {}).get("cost_summary") or {}).get("applies"):
+        sub += (" Stoktan karşılananın değeri = bu planın kullanacağı stok × aynı teklifin bugünkü fiyatı "
+                "(yenileme değeri, alış maliyeti değil).")
     story = [Paragraph(_e(title), S["h1"]), Paragraph(sub, S["sub"])]
     warn = _warning_text(c, report)
     if warn:
