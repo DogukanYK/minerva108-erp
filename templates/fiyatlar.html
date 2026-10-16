@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="/static/theme.js"></script>
+
+  {# ─── RBAC 2.0 — server-resolved permissions exposed to JS ────────────── #}
+  <script>
+    window.PERMS = {{ permissions | tojson }};
+    window.DOMAIN = {{ domain | tojson }};
+    window.can = function (category, action) {
+      const cat = window.PERMS && window.PERMS[category];
+      return !!(cat && cat[action]);
+    };
+    window.ME = { id: {{ user_id | tojson }}, name: {{ full_name | tojson }}, role: {{ role | tojson }} };
+  </script>
+  <title>Minerva108 ERP — Malzeme Fiyatları</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+
+  {# ─── PWA ─────────────────────────────────────────────────────────────── #}
+  <link rel="manifest" href="/static/manifest.json" />
+  <meta name="theme-color" content="#232E6E" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Minerva108" />
+  <link rel="apple-touch-icon" href="/static/images/icon-192.png" />
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' })
+          .catch(function (err) { console.warn('SW registration failed:', err); });
+      });
+    }
+  </script>
+  <script src="/static/push.js" defer></script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/dark.css" />
+  <link rel="stylesheet" href="/static/print.css" media="print" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+
+  <style>
+    :root {
+      --navy:  #232E6E;
+      --gold:  #C9AC6F;
+      --gold2: #D9BE85;
+      --cream: #f5f0e8;
+      --white: #ffffff;
+      --sidebar-width: 240px;
+      --navbar-height: 64px;
+      /* Sayfaya özgü (fp-) — koyu temada aşağıda yeniden tanımlanır */
+      --fp-ink: #1f2937; --fp-muted: #6b7280; --fp-faint: #9ca3af;
+      --fp-line: #f0ece4; --fp-line2: #e5e7eb; --fp-soft: #faf8f4; --fp-soft2: #f3f0ea;
+      --fp-head: #232E6E;
+      --fp-warn-bg: #fff7ed; --fp-warn-fg: #9a3412; --fp-warn-bd: #fed7aa;
+      --fp-ok-bg: #f0fdf4; --fp-ok-fg: #15803d; --fp-ok-bd: #bbf7d0;
+      --fp-err-bg: #fef2f2; --fp-err-fg: #b91c1c; --fp-err-bd: #fecaca;
+      --fp-info-bg: #eef2ff; --fp-info-fg: #4338ca; --fp-info-bd: #c7d2fe;
+    }
+    :root[data-theme="dark"] {
+      --fp-ink: #E2E5EC; --fp-muted: #9aa3bb; --fp-faint: #6b7594;
+      --fp-line: #222C46; --fp-line2: #2A3454; --fp-soft: #1d2540; --fp-soft2: #232B45;
+      --fp-head: #E6CFA0;
+      --fp-warn-bg: #2D1A0E; --fp-warn-fg: #FDBA74; --fp-warn-bd: #7c2d12;
+      --fp-ok-bg: #0E2A1A; --fp-ok-fg: #6EE7B7; --fp-ok-bd: #14532d;
+      --fp-err-bg: #2E1414; --fp-err-fg: #FCA5A5; --fp-err-bd: #7f1d1d;
+      --fp-info-bg: #142036; --fp-info-fg: #A5B4FC; --fp-info-bd: #312e81;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Jost', sans-serif; background-color: var(--cream); color: var(--fp-ink); }
+
+    /* ══ SIDEBAR / TOPNAV / MAIN — reports.html ile aynı iskelet ══ */
+    .sidebar { position: fixed; top: 0; left: 0; width: var(--sidebar-width); height: 100vh; background: var(--navy); display: flex; flex-direction: column; z-index: 100; }
+    .sidebar-brand { padding: 1.4rem 1.25rem 1.2rem; border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: center; }
+    .sidebar-brand-logo { width: 100%; max-width: 168px; height: auto; opacity: 0.96; }
+    .sidebar-nav { flex: 1; padding: 1.25rem 0.75rem; overflow-y: auto; }
+    .nav-section-label { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.3); padding: 0.5rem 0.75rem 0.4rem; margin-top: 0.5rem; }
+    .nav-link-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.85rem; border-radius: 8px; color: rgba(255,255,255,0.65); font-size: 0.88rem; font-weight: 500; text-decoration: none; transition: background 0.15s, color 0.15s; margin-bottom: 2px; }
+    .nav-link-item:hover { background: rgba(255,255,255,0.07); color: var(--white); }
+    .nav-link-item.active { background: rgba(184,150,90,0.18); color: var(--gold2); }
+    .nav-link-item.active .nav-icon { color: var(--gold); }
+    .nav-icon { font-size: 1rem; width: 18px; text-align: center; flex-shrink: 0; }
+    .sidebar-footer { padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,0.08); }
+    .sidebar-footer-text { font-size: 0.7rem; color: rgba(255,255,255,0.25); text-align: center; }
+    .topnav { position: fixed; top: 0; left: var(--sidebar-width); right: 0; height: var(--navbar-height); background: var(--white); border-bottom: 1px solid var(--fp-line); display: flex; align-items: center; justify-content: space-between; padding: 0 1.75rem; z-index: 90; box-shadow: 0 1px 8px rgba(0,0,0,0.05); }
+    .topnav-title { font-family: 'Playfair Display', serif; font-size: 1.15rem; font-weight: 600; color: var(--fp-head); }
+    .topnav-right { display: flex; align-items: center; gap: 1rem; }
+    .user-chip { display: flex; align-items: center; gap: 0.5rem; background: var(--cream); border-radius: 20px; padding: 0.35rem 0.9rem 0.35rem 0.5rem; }
+    .user-avatar { width: 28px; height: 28px; background: var(--navy); color: var(--gold2); border-radius: 50%; font-size: 0.7rem; font-weight: 700; display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', serif; }
+    .user-name { font-size: 0.85rem; font-weight: 500; color: var(--fp-ink); }
+    .btn-logout { display: flex; align-items: center; gap: 0.4rem; padding: 0.42rem 1rem; border: 1.5px solid var(--fp-line2); border-radius: 8px; background: var(--white); color: var(--fp-muted); font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 500; cursor: pointer; transition: border-color 0.2s, color 0.2s, background 0.2s; }
+    .btn-logout:hover { border-color: #ef4444; color: #ef4444; background: #fff5f5; }
+    /* Panel düğmesinin satır içi rengi (var(--navy)) koyu temada kart zeminiyle aynı → okunmuyordu */
+    :root[data-theme="dark"] #domainSwitchBtn { color: var(--gold2) !important; }
+    .main-content { margin-left: var(--sidebar-width); padding-top: var(--navbar-height); min-height: 100vh; background: var(--cream); }
+    .content-inner { padding: 2rem 2rem 3rem; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.4rem; }
+    .page-title { font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 700; color: var(--fp-head); margin: 0 0 0.25rem; }
+    .page-subtitle { font-size: 0.88rem; color: var(--fp-muted); margin: 0; max-width: 760px; }
+
+    /* ══ TOAST ══ */
+    #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.6rem; }
+    .toast-msg { min-width: 260px; max-width: 420px; padding: 0.8rem 1rem; border-radius: 10px; font-family: 'Jost', sans-serif; font-size: 0.88rem; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 0.6rem; }
+    .toast-error   { background: #fff1f1; color: #b91c1c; border-left: 4px solid #ef4444; }
+    .toast-success { background: #f0fdf4; color: #15803d; border-left: 4px solid #22c55e; }
+    .toast-info    { background: #eff6ff; color: #1d4ed8; border-left: 4px solid #3b82f6; }
+
+    /* ══ Malzeme Fiyatları (önek: fp-; 'btn-' YASAK — Bootstrap gölgeleme tuzağı) ══ */
+    .fp-card { background: var(--white); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(44,44,115,0.06); margin-bottom: 1rem; }
+    :root[data-theme="dark"] .fp-card { border: 1px solid var(--fp-line); box-shadow: none; }
+    .fp-link { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--navy); font-size: 0.85rem; font-weight: 600; text-decoration: none; padding: 0.45rem 0.85rem; border: 1.5px solid var(--fp-line2); border-radius: 8px; background: var(--white); }
+    .fp-link:hover { border-color: var(--navy); }
+    :root[data-theme="dark"] .fp-link { color: var(--gold2); }
+    .fp-links { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+    /* Araç çubuğu */
+    .fp-toolbar { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: flex-end; padding: 0.9rem 1.15rem; }
+    .fp-field { display: flex; flex-direction: column; }
+    .fp-field.fp-grow { flex: 1; min-width: 220px; }
+    .fp-lbl { display: block; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fp-muted); margin-bottom: 0.25rem; }
+    .fp-in, .fp-sel { padding: 0.42rem 0.65rem; border: 1.5px solid var(--fp-line2); border-radius: 8px; font-family: inherit; font-size: 0.86rem; background: var(--white); color: var(--fp-ink); }
+    .fp-in:focus, .fp-sel:focus { outline: none; border-color: var(--navy); }
+    .fp-in { width: 100%; }
+    .fp-b { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.46rem 0.95rem; border: 1.5px solid var(--fp-line2); border-radius: 8px; background: var(--white); color: var(--navy); font-family: 'Jost', sans-serif; font-size: 0.84rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .fp-b:hover:not(:disabled) { border-color: var(--navy); background: var(--fp-soft); }
+    .fp-b-main { background: var(--navy); border-color: var(--navy); color: #fff; }
+    .fp-b-main:hover:not(:disabled) { background: #1b2456; color: #fff; }
+    .fp-b-sm { padding: 0.25rem 0.6rem; font-size: 0.76rem; border-radius: 7px; }
+    :root[data-theme="dark"] .fp-b { color: var(--gold2); }
+    :root[data-theme="dark"] .fp-b-main { background: var(--gold); border-color: var(--gold); color: #131B40; }
+    .fp-meta { display: flex; gap: 0.5rem 1rem; flex-wrap: wrap; align-items: center; padding: 0 1.15rem 0.85rem; font-size: 0.8rem; color: var(--fp-muted); }
+    .fp-meta b { color: var(--fp-ink); }
+    .fp-fx { font-variant-numeric: tabular-nums; }
+    .fp-box { border-radius: 10px; padding: 0.6rem 0.9rem; font-size: 0.82rem; margin: 0 1.15rem 0.85rem; border: 1px solid; background: var(--fp-warn-bg); color: var(--fp-warn-fg); border-color: var(--fp-warn-bd); }
+    #fpForm { padding: 0 1.15rem; }
+
+    /* Grup bloğu + kart */
+    .fp-group { border: 1.5px solid var(--fp-info-bd); border-radius: 14px; padding: 0.65rem 0.75rem 0.1rem; margin-bottom: 1.1rem; background: var(--fp-info-bg); }
+    .fp-group-h { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.82rem; color: var(--fp-info-fg); margin: 0 0.25rem 0.55rem; }
+    .fp-group-h b { font-size: 0.92rem; }
+    .fp-group .fp-card { margin-bottom: 0.65rem; }
+    .fp-head { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.8rem 1.05rem 0.5rem; flex-wrap: wrap; }
+    .fp-name { font-weight: 700; font-size: 0.98rem; color: var(--fp-ink); }
+    .fp-sub { font-size: 0.76rem; color: var(--fp-muted); margin-top: 0.1rem; }
+    .fp-head-right { margin-left: auto; display: flex; gap: 0.4rem; align-items: center; }
+    .fp-pill { display: inline-block; font-size: 0.66rem; font-weight: 700; border-radius: 20px; padding: 1px 8px; white-space: nowrap; border: 1px solid; margin: 0 0.25rem 0.15rem 0; vertical-align: middle; }
+    .fp-pill-cat { background: var(--fp-soft2); color: var(--fp-muted); border-color: var(--fp-line2); }
+    .fp-pill-ok { background: var(--fp-ok-bg); color: var(--fp-ok-fg); border-color: var(--fp-ok-bd); }
+    .fp-pill-warn { background: var(--fp-warn-bg); color: var(--fp-warn-fg); border-color: var(--fp-warn-bd); }
+    .fp-pill-info { background: var(--fp-info-bg); color: var(--fp-info-fg); border-color: var(--fp-info-bd); }
+    .fp-pill-off { background: var(--fp-soft2); color: var(--fp-faint); border-color: var(--fp-line2); }
+    .fp-scroll { overflow-x: auto; padding: 0 0.4rem; }
+    .fp-tbl { width: 100%; border-collapse: collapse; font-size: 0.83rem; min-width: 760px; table-layout: fixed; }
+    /* Sabit sütun genişlikleri — kartlar alt alta hizalı okunur */
+    .fp-tbl th:nth-child(1) { width: 24%; } .fp-tbl th:nth-child(2) { width: 9%; }
+    .fp-tbl th:nth-child(3) { width: 14%; } .fp-tbl th:nth-child(4) { width: 13%; }
+    .fp-tbl th:nth-child(5) { width: 10%; } .fp-tbl th:nth-child(6) { width: 15%; }
+    .fp-tbl th:nth-child(7) { width: 9%; } .fp-tbl th:nth-child(8) { width: 6%; }
+    .fp-tbl td { overflow-wrap: anywhere; }
+    .fp-tbl td.fp-date { white-space: nowrap; overflow-wrap: normal; }
+    .fp-tbl th { color: var(--fp-muted); text-align: left; padding: 0.4rem 0.6rem; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; border-bottom: 2px solid var(--fp-line); }
+    .fp-tbl td { padding: 0.42rem 0.6rem; border-bottom: 1px solid var(--fp-line); vertical-align: top; color: var(--fp-ink); }
+    .fp-tbl tr:last-child td { border-bottom: none; }
+    .fp-tbl td.num, .fp-tbl th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .fp-tbl tr.fp-off td { color: var(--fp-faint); }
+    .fp-tbl tr.fp-best td.fp-net { color: var(--fp-ok-fg); font-weight: 700; }
+    .fp-small { display: block; font-size: 0.72rem; color: var(--fp-muted); white-space: normal; font-weight: 400; }
+    .fp-small.warn { color: var(--fp-warn-fg); }
+    .fp-sup { font-weight: 600; }
+    .fp-loose { color: #b45309; cursor: help; }
+    .fp-note { max-width: 220px; color: var(--fp-muted); font-size: 0.78rem; white-space: pre-line; }
+    .fp-src.manual { color: var(--fp-info-fg); }
+    .fp-act { white-space: nowrap; text-align: right; }
+    .fp-ic { background: none; border: none; padding: 0.1rem 0.3rem; cursor: pointer; font-size: 0.9rem; color: var(--fp-info-fg); }
+    .fp-ic.del { color: #dc2626; font-weight: 700; }
+    .fp-foot { padding: 0.15rem 1.05rem 0.7rem; font-size: 0.76rem; color: var(--fp-muted); }
+    .fp-foot div { margin-top: 0.2rem; }
+    .fp-foot .warn { color: var(--fp-warn-fg); }
+    .fp-none { padding: 0.1rem 1.05rem 0.85rem; font-size: 0.82rem; color: var(--fp-err-fg); font-weight: 600; }
+    .fp-host { padding: 0 1.05rem; }
+    .fp-empty { text-align: center; color: var(--fp-faint); padding: 2.2rem 1rem; font-size: 0.9rem; }
+    .fp-empty i { display: block; font-size: 1.8rem; margin-bottom: 0.4rem; color: var(--fp-line2); }
+    .fp-more { display: flex; justify-content: center; margin: 0.5rem 0 1.5rem; }
+
+    @media (max-width: 768px) {
+      .content-inner { padding: 1rem 0.9rem 4rem; }
+      .fp-toolbar { padding: 0.8rem; }
+      .fp-field, .fp-field.fp-grow { flex: 1 1 140px; min-width: 0; }
+      .fp-in, .fp-sel { font-size: 16px; width: 100%; }
+      .fp-group { padding: 0.5rem 0.4rem 0.05rem; }
+    }
+  </style>
+  <link rel="stylesheet" href="/static/mobile.css" />
+  <script src="/static/mobile.js" defer></script>
+  <script src="/static/toast.js" defer></script>
+  <script src="/static/tr-sort.js" defer></script>
+  <script src="/static/items-cache.js" defer></script>
+  <script src="/static/undo-watch.js" defer></script>
+  <script src="/static/fetch-guard.js" defer></script>
+  <script src="/static/idle-watch.js" defer></script>
+  <script src="/static/assistant.js?v=4" defer></script>
+</head>
+<body>
+
+  <!-- ════ SIDEBAR ════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <img src="/static/images/logo_sidebar.png" alt="Minerva 108 Vegan Cosmetics" class="sidebar-brand-logo" />
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Ana Menü</div>
+      <a href="/" class="nav-link-item"><i class="bi bi-grid-1x2-fill nav-icon"></i>Dashboard</a>
+      <a href="/items" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Ürünler</a>
+      <a href="/suppliers" class="nav-link-item"><i class="bi bi-truck nav-icon"></i>Tedarikçiler</a>
+      <a href="/receiving" class="nav-link-item"><i class="bi bi-box-arrow-in-down nav-icon"></i>Mal Kabul</a>
+      <a href="/recipes" class="nav-link-item"><i class="bi bi-journal-text nav-icon"></i>Reçeteler</a>
+      <a href="/production" class="nav-link-item"><i class="bi bi-gear nav-icon"></i>Üretim</a>
+      {% if can('outsourcing','view') %}<a href="/outsourcing" class="nav-link-item"><i class="bi bi-box-seam nav-icon"></i>Fason Üretim</a>{% endif %}
+      {% if can('b2b_orders','view') %}<a href="/b2b-siparisler" class="nav-link-item"><i class="bi bi-clipboard2-check nav-icon"></i>B2B Siparişleri</a>{% endif %}
+      <a href="/qc" class="nav-link-item"><i class="bi bi-patch-check nav-icon"></i>Kalite Kontrol</a>
+      <a href="/stocks" class="nav-link-item"><i class="bi bi-boxes nav-icon"></i>Stoklar</a>
+      <a href="/delivery" class="nav-link-item"><i class="bi bi-box-arrow-up nav-icon"></i>Teslimat</a>
+      <a href="/returns" class="nav-link-item"><i class="bi bi-arrow-return-left nav-icon"></i>İadeler</a>
+      <a href="/numune-analiz" class="nav-link-item"><i class="bi bi-clipboard2-pulse nav-icon"></i>Numune Analizi</a>
+      <a href="/sahit-numune" class="nav-link-item"><i class="bi bi-archive nav-icon"></i>Şahit Numune</a>
+      <a href="/urun-gorselleri" class="nav-link-item"><i class="bi bi-images nav-icon"></i>Ürün Görselleri</a>
+      <a href="/pdks" class="nav-link-item"><i class="bi bi-fingerprint nav-icon"></i>PDKS</a>
+      <a href="/yorumlar" class="nav-link-item"><i class="bi bi-chat-square-text nav-icon"></i>Yorumlar</a>
+      {% if can('influencer','view') %}<a href="/influencer" class="nav-link-item"><i class="bi bi-stars nav-icon"></i>Creator Programı</a>{% endif %}
+      <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
+      <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
+      {% if can('reports','view') %}<a href="/satin-alma" class="nav-link-item"><i class="bi bi-cart-check nav-icon"></i>Satın Alma</a>{% endif %}
+      {% if can('reports','view') %}<a href="/fiyatlar" class="nav-link-item active"><i class="bi bi-tags nav-icon"></i>Malzeme Fiyatları</a>{% endif %}
+      {% if can('trendyol','view') %}<a href="/trendyol" class="nav-link-item"><i class="bi bi-shop-window nav-icon"></i>Trendyol</a>{% endif %}
+      <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
+      <a href="/drive" class="nav-link-item"><i class="bi bi-folder-fill nav-icon"></i>Dosya Paylaşım</a>
+      {% if can('crm','view') %}<a href="/crm" class="nav-link-item"><i class="bi bi-people-fill nav-icon"></i>CRM</a>{% endif %}
+      {% if can('distributors','view') %}<a href="/distributors" class="nav-link-item"><i class="bi bi-shop nav-icon"></i>Distribütörler</a>{% endif %}
+      {% if can('b2b', 'view') %}
+      <a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklifler</a>
+      {% endif %}
+      {% if can('assistant','use') %}<div class="nav-section-label" style="margin-top:1rem;">Yapay Zekâ</div>
+      <a href="/asistan" class="nav-link-item"><i class="bi bi-chat-left-text nav-icon"></i>Asistan</a>
+      <a href="/asistan/belge" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>Belge Oku</a>
+      <a href="/asistan/yaz" class="nav-link-item"><i class="bi bi-pencil-square nav-icon"></i>Metin Yaz</a>{% endif %}
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sidebar-footer-row">
+        <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Tema değiştir" title="Tema değiştir">
+          <i class="bi bi-moon-stars-fill"></i>
+          <i class="bi bi-sun-fill"></i>
+        </button>
+        <p class="sidebar-footer-text" style="margin:0;">v2.0.0 &nbsp;·&nbsp; 2026</p>
+        <p class="sidebar-footer-text" style="margin:0.35rem 0 0;font-style:italic;">Geliştirici: Doğukan Yalçınkaya</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ════ TOPNAV ════ -->
+  <header class="topnav">
+    <span class="topnav-title">Malzeme Fiyatları</span>
+    <div class="topnav-right">
+      <button id="domainSwitchBtn" type="button" title="Panel değiştir (Kozmetik ↔ Food Supplement)"
+        onclick="fetch('/api/domain/switch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:(window.DOMAIN==='supplement'?'cosmetics':'supplement')})}).then(function(r){if(r.ok)location.reload();})"
+        style="display:flex;align-items:center;gap:0.4rem;padding:0.4rem 0.85rem;border:1.5px solid var(--gold);border-radius:8px;background:var(--white);color:var(--navy);font-family:'Jost',sans-serif;font-size:0.82rem;font-weight:600;cursor:pointer;">
+        <i class="bi bi-arrow-left-right"></i><span>{{ domain_label }}</span>
+      </button>
+      <button
+        id="enablePushBtn"
+        type="button"
+        onclick="setupPushNotifications()"
+        title="Tarayıcı bildirimlerini etkinleştir"
+        style="display:none;align-items:center;gap:0.4rem;padding:0.42rem 0.85rem;border:1.5px solid #e5e7eb;border-radius:8px;background:var(--white);color:#6b7280;font-family:'Jost',sans-serif;font-size:0.82rem;font-weight:500;cursor:pointer;">
+        <i class="bi bi-bell"></i><span>Bildirimleri Aç</span>
+      </button>
+      <div class="user-chip">
+        <div class="user-avatar">{{ full_name[0] | upper }}</div>
+        <span class="user-name">{{ full_name }} &nbsp;·&nbsp; {{ role_label }}</span>
+      </div>
+      <button class="btn-logout" id="logoutBtn"><i class="bi bi-box-arrow-right"></i>Çıkış Yap</button>
+    </div>
+  </header>
+
+  <!-- ════ MAIN ════ -->
+  <main class="main-content">
+    <div class="content-inner">
+
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Malzeme Fiyatları</h1>
+          <p class="page-subtitle">Tedarikçi fiyatlarına rapor almadan bakın. Aynı malzemenin kartları bir arada; net fiyat
+            KDV hariçtir, kartın alım birimine (kg / litre / adet) ve seçilen para birimine çevrilir. Satın Alma Planı'nın
+            tercih ve “bitirilecek” işaretleri burada da görünür. Panel: <b>{{ domain_label }}</b>.</p>
+        </div>
+        <div class="fp-links">
+          <a href="/satin-alma" class="fp-link"><i class="bi bi-cart-check"></i>Satın Alma Planı</a>
+          <a href="/reports" class="fp-link"><i class="bi bi-arrow-left"></i>Raporlar</a>
+        </div>
+      </div>
+
+      <!-- ════ ARAÇ ÇUBUĞU ════ -->
+      <section class="fp-card">
+        <div class="fp-toolbar">
+          <div class="fp-field fp-grow">
+            <label class="fp-lbl" for="fpQ">Ara</label>
+            <input type="search" id="fpQ" class="fp-in" maxlength="100" autocomplete="off" placeholder="Malzeme, tedarikçi ya da grup adı…">
+          </div>
+          <div class="fp-field">
+            <label class="fp-lbl" for="fpCat">Kategori</label>
+            <select id="fpCat" class="fp-sel">
+              <option value="all">Hepsi</option>
+              <option value="hammadde">Hammadde</option>
+              <option value="ambalaj">Ambalaj</option>
+              <option value="etiket">Etiket</option>
+              <option value="other">Diğer</option>
+            </select>
+          </div>
+          <div class="fp-field">
+            <label class="fp-lbl" for="fpHas">Fiyat durumu</label>
+            <select id="fpHas" class="fp-sel">
+              <option value="priced">Fiyatı olanlar</option>
+              <option value="unpriced">Fiyatı olmayanlar</option>
+              <option value="all">Hepsi</option>
+            </select>
+          </div>
+          <div class="fp-field">
+            <label class="fp-lbl" for="fpSrc">Kaynak</label>
+            <select id="fpSrc" class="fp-sel">
+              <option value="all">Hepsi</option>
+              <option value="manual">Elle girilen</option>
+              <option value="stok_son_durum">Stok Son Durum listesi</option>
+              <option value="lab">Lab fiyat notları / belge</option>
+            </select>
+          </div>
+          <div class="fp-field">
+            <label class="fp-lbl" for="fpCur">Para birimi</label>
+            <select id="fpCur" class="fp-sel">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="TRY">TRY (₺)</option>
+            </select>
+          </div>
+          {% if can('suppliers','prices') %}
+          <button type="button" class="fp-b fp-b-main" id="fpAdd"><i class="bi bi-plus-lg"></i>Fiyat ekle</button>
+          {% endif %}
+        </div>
+        <div class="fp-meta">
+          <span id="fpSummary">Yükleniyor…</span>
+          <span class="fp-fx" id="fpFx"></span>
+        </div>
+        <div class="fp-box" id="fpFxWarn" hidden></div>
+        <div id="fpForm" hidden></div>
+      </section>
+
+      <div id="fpList"><div class="fp-empty"><i class="bi bi-tags"></i>Yükleniyor…</div></div>
+      <div class="fp-more" id="fpMoreWrap" hidden><button type="button" class="fp-b" id="fpMore"></button></div>
+
+    </div>
+  </main>
+
+  <div id="toast-container"></div>
+
+  <!-- Ortak fiyat formu (Raporlar / Tedarikçiler ile aynı) + sayfa istemcisi -->
+  <script src="/static/supplier-price-form.js?v=6" defer></script>
+  <script src="/static/fiyatlar.js?v=1" defer></script>
+  <script>
+    document.getElementById('logoutBtn').addEventListener('click', async function () {
+      try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}
+      window.location.href = '/login';
+    });
+  </script>
+</body>
+</html>

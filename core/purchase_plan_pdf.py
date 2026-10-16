@@ -23,6 +23,10 @@ stok kartı / son alım / numune ilişkileri, "Sipariş:" ve "Aynı malzeme:"
 (eşdeğer tedarikçi kartları) satırları ve uyarı notları; elle işaretlemek
 için boş "Alındı" sütunu.  "Elimizde" hücresinin altında grup stoğu
 sayıldıysa kart dökümü (`purchase_plan.stock_note`) küçük gri satırda.
+Ambalaj uyarısı (16.10.2026) olan satırda Tutar'ın önünde kırmızı ⚠, metni
+"Not:" satırında.  "Maliyet özeti" bölümü (16.10.2026) yeni sayfada: tür
+bazında maliyet, gereken miktarlar, ürün başına maliyet, fiyatı eksik
+kalemler (ilk 80 + "+N"), notlar (`purchase_pricing.cost_overview_view`).
 Stoktan karşılanan değer (14.10.2026, yalnız net mod): alım tablolarında
 Tutar'ın altında gri "stoktan X" / "yoldan Y"; "Yeterli olanlar"da "Değer"
 sütunu (dayanağı — seçilen teklif ya da "Fiyat yok" — altında gri); yeşil
@@ -40,15 +44,21 @@ from typing import List, Optional
 from xml.sax.saxutils import escape
 
 from core.purchase_plan import _amount_near, stock_note, tr_num
-from core.purchase_pricing import (CURRENCY_SYMBOL, UNIT_TEXT, cost_summary_caveats, cost_summary_lines,
-                                   cover_text, cover_value, money, offer_lines, price_text, relation_texts,
-                                   sections, value_basis_text)
+from core.purchase_pricing import (CURRENCY_SYMBOL, PKG_SUFFIX, UNIT_TEXT, _qty,  # noqa: F401  (PKG_SUFFIX/_qty re-export)
+                                   amount_warn, cost_overview_view, cost_summary_caveats, cost_summary_lines,
+                                   cover_text, cover_value, money, offer_lines, pkg_round_text, price_text,
+                                   relation_texts, sections, value_basis_text)
 
 CURRENCY_NAME = {"USD": "ABD doları", "EUR": "avro", "TRY": "Türk lirası"}
 KIND_HEADER = {"raw": "Hammadde", "packaging": "Ambalaj", "label": "Etiket"}
 SECTION_KIND = {"raw_priced": "raw", "raw_unpriced": "raw", "pkg_priced": "packaging",
                 "pkg_unpriced": "packaging", "labels": "label"}
-PKG_SUFFIX = {"kg": "kg'lık", "l": "litrelik", "adet": "adetlik"}
+COST_UNPRICED_MAX = 80        # "Maliyet özeti" — fiyatı eksik kalemler en çok 80 + "+N"
+# ⚠ (U+26A0) her fontta yok (macOS Arial'da yok, DejaVu Sans'ta var): ana
+# fontta yoksa bu adaylardan biri yalnız işaret için kaydedilir; hiçbiri
+# yoksa kalın kırmızı "!" basılır.
+_WARN_GLYPH = "\u26a0"
+_SYMBOL_FONTS = ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/System/Library/Fonts/Apple Symbols.ttf")
 TR_MONTHS = ("Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos",
              "Eylül", "Ekim", "Kasım", "Aralık")
 
@@ -69,10 +79,33 @@ def _e(v) -> str:
     return escape("" if v is None else str(v))
 
 
-def _qty(v) -> str:
-    """Ambalaj boyu gibi küçük sayılar: 25 · 0,5 · 2,25."""
-    v = float(v)
-    return tr_num(v) if v.is_integer() else tr_num(v, 3).rstrip("0").rstrip(",")
+def _warn_font(font: str) -> Optional[str]:
+    """⚠ işaretini basabilen font adı (ana font, yoksa kayıtlı sembol fontu)
+    ya da None."""
+    import os
+
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    def has(name):
+        try:
+            face = getattr(pdfmetrics.getFont(name), "face", None)
+            return face is not None and ord(_WARN_GLYPH) in getattr(face, "charToGlyph", {})
+        except Exception:
+            return False
+    if has(font):
+        return font
+    if "RPT-SYM" in pdfmetrics.getRegisteredFontNames() and has("RPT-SYM"):
+        return "RPT-SYM"
+    for path in _SYMBOL_FONTS:
+        if os.path.isfile(path):
+            try:
+                pdfmetrics.registerFont(TTFont("RPT-SYM", path))
+            except Exception:
+                continue
+            if has("RPT-SYM"):
+                return "RPT-SYM"
+    return None
 
 
 def _long_date(stamp: Optional[str]) -> str:
@@ -123,6 +156,9 @@ class _Ctx:
         self.gross = self.opts.get("stock_mode") == "gross"
         self.open_on = bool(self.opts.get("subtract_open_orders"))
         self.owner = " ".join(str(self.opts.get("checklist_owner") or "").split()) or None
+        wf = _warn_font(f)
+        self.warn_mark = (f"<font name='{wf}' color='{_WARN}'>{_WARN_GLYPH}</font>" if wf
+                          else f"<font name='{fb}' color='{_WARN}'>!</font>")
 
     # ── metin parçaları ────────────────────────────────────────────────────
     def bold(self, t: str) -> str:
@@ -136,6 +172,10 @@ class _Ctx:
 
     def money(self, v) -> str:
         return money(v, self.cur)
+
+    def marks(self, t: str) -> str:
+        """Kaçışlanmış metindeki ⚠ işaretini basılabilir işaretle değiştirir."""
+        return t.replace(_WARN_GLYPH, self.warn_mark)
 
     def no_contact(self) -> str:
         return self.red("İletişim bilgisi sistemde yok" + (f" — {_e(self.owner)} girecek" if self.owner else ""))
@@ -172,9 +212,9 @@ def _sup_cell(c: _Ctx, m: dict) -> str:
     style = {"b": c.bold, "g": c.grey, "r": c.red}
     out: List[str] = [style[st](_e(t)) for t, st in offer_lines(m, c.cur)]
     out += [c.grey(_e(t)) for t in relation_texts(m)]
-    if m.get("pkg_buy") is not None:
-        out.append(c.grey(f"Ambalaj katına yuvarlanırsa: {_e(_amount_near(m['pkg_buy'], m['price_unit']))}"
-                          f" · {c.money(m.get('pkg_amount'))}"))
+    pkg = pkg_round_text(m, c.cur)          # önizleme / Excel "Not" ile aynı metin
+    if pkg:
+        out.append(c.grey(_e(pkg)))
     for cau in m.get("cautions") or []:
         if cau["code"] not in _NAME_CAUTIONS:
             out.append(c.grey("Not: " + _e(cau["text"])))
@@ -207,8 +247,12 @@ def _small_grey(c: _Ctx, t: str) -> str:
 
 def _amount_cell(c: _Ctx, m: dict) -> str:
     """Tutar + altında gri "stoktan X · yoldan Y" (satırın stoktan / yoldan
-    karşılanan kısmının değeri; tutara ve GENEL TOPLAM'a girmez)."""
+    karşılanan kısmının değeri; tutara ve GENEL TOPLAM'a girmez).  Ambalaj
+    uyarısı varsa tutarın önünde kırmızı ⚠ (metni tedarikçi hücresinin
+    "Not:" satırında)."""
     t = c.money(m["amount"]) if m.get("amount") is not None else "—"
+    if amount_warn(m):
+        t = c.warn_mark + " " + t
     cov = cover_text(m, c.cur)          # önizlemenin `ui.cover_text`'iyle aynı metin
     if cov:
         t += "<br/>" + _small_grey(c, cov)
@@ -399,6 +443,72 @@ def _sec_sufficient(c: _Ctx, sec: dict) -> list:
     return _heading(c, sec) + [c.table(data, [w for _, _, w in cols])]
 
 
+def _sec_cost(c: _Ctx, report: dict, sec: dict) -> list:
+    """"Maliyet özeti" (yeni sayfada): tür bazında maliyet tablosu + uyarılar,
+    gereken miktarlar, ürün başına maliyet (1 adet + toplam), fiyatı eksik
+    kalemler (ilk 80 + "+N"), notlar — metinler `cost_overview_view`
+    (önizleme ve Excel ile aynı)."""
+    from reportlab.lib.units import mm
+    from reportlab.platypus import CondPageBreak, KeepTogether, Paragraph
+
+    S = c.S
+    v = cost_overview_view(report)
+    if not v:
+        return []
+    out = _heading(c, sec, page_break=True)
+    cols = [("label", "Tür", 60), ("buy", "Alınacak", 36)]
+    if v["show_stock"]:
+        cols.append(("stock", "Stoktan", 36))
+    if v["show_open"]:
+        cols.append(("open", "Yoldan", 36))
+    cols += [("total", "Toplam", 36), ("priced", "Fiyatlı", 24), ("unpriced", "Fiyatsız", 24)]
+    data = [[Paragraph(h, S["th"]) for _, h, _ in cols]]
+    for r in v["categories"] + [v["total_row"]]:
+        tot = r is v["total_row"]
+        data.append([Paragraph(c.bold(_e(r[k])) if tot or k == "total" else _e(r[k]),
+                               S["cell"] if k == "label" else S["val"]) for k, _, _ in cols])
+    out.append(c.table(data, [w for _, _, w in cols]))
+    for t in v["caveats"]:
+        out.append(Paragraph(c.red(c.marks(_e(t))), S["note"]))
+    # Gereken miktarlar
+    q = [[Paragraph(c.bold(_e(x["label"])), S["cell"]), Paragraph(_e(x["text"]), S["cell"])]
+         for x in v["quantities"]]
+    out.append(KeepTogether([Paragraph("Gereken miktarlar", S["h3"]), c.table(q, [45, 150], header=False)]))
+    # Ürün başına maliyet
+    pcols = [("no", "No", 11), ("name", "Ürün", 100), ("qty", "Adet", 25), ("unit_cost", "1 adet maliyeti", 32),
+             ("total", "Toplam", 30)]
+    pcols.append(("miss", "Fiyatı eksik", _PAGE_W - sum(w for _, _, w in pcols)))
+    pdata = [[Paragraph(h, S["th"]) for _, h, _ in pcols]]
+    for p in v["products"]:
+        miss = " — ".join(_e(x) for x in (p["note"], p["missing"]) if x)
+        if p["missing_names"]:
+            miss += ("<br/>" if miss else "") + _small_grey(c, p["missing_names"])
+        pdata.append([Paragraph(str(p["no"]), S["val"]), Paragraph(_e(p["name"]), S["cell"]),
+                      Paragraph(_e(p["qty"]), S["val"]), Paragraph(_e(p["unit_cost"]), S["val"]),
+                      Paragraph(_e(p["total"]), S["num"]), Paragraph(miss, S["cell"])])
+    pdata.append([Paragraph("", S["cell"]), Paragraph(c.bold("Toplam"), S["cell"]),
+                  Paragraph(c.bold(_e(v["units_total"])), S["val"]), Paragraph("", S["val"]),
+                  Paragraph(c.bold(_e(v["products_total"])), S["num"]), Paragraph("", S["cell"])])
+    out += [CondPageBreak(40 * mm), Paragraph("Ürün başına maliyet", S["h3"]),
+            c.table(pdata, [w for _, _, w in pcols])]
+    # Fiyatı eksik kalemler
+    un = v["unpriced"]
+    if un:
+        udata = [[Paragraph(h, S["th"]) for h in ("Kalem", "Tür", "İhtiyaç")]]
+        for u in un[:COST_UNPRICED_MAX]:
+            udata.append([Paragraph(_e(u["name"]) + (" " + c.grey("(yeni kalem, kartı yok)") if u["new"] else ""),
+                                    S["cell"]),
+                          Paragraph(_e(u["kind"]), S["cell"]), Paragraph(_e(u["need"]), S["val"])])
+        out += [CondPageBreak(40 * mm), Paragraph(f"Fiyatı eksik kalemler ({v['unpriced_count']})", S["h3"]),
+                c.table(udata, [150, 35, 82])]
+        if len(un) > COST_UNPRICED_MAX:
+            out.append(Paragraph(c.grey(f"+{len(un) - COST_UNPRICED_MAX} kalem daha (Excel “Ürün maliyeti” "
+                                        "sayfasında tam liste)."), S["note"]))
+    out.append(KeepTogether([Paragraph("Notlar", S["h3"])]
+                            + [Paragraph("• " + _e(t), S["note"]) for t in v["notes"]]))
+    return out
+
+
 def _value_cell(c: _Ctx, m: dict) -> str:
     """"Değer" hücresi: stoktan (+ yoldan) karşılanan değer, altında gri
     dayanağı ("UMAYCHEM · 4,52 $/kg" / "Fiyat yok") — önizlemeyle aynı."""
@@ -417,7 +527,7 @@ def _sec_notes(c: _Ctx, sec: dict) -> list:
     from reportlab.platypus import CondPageBreak, KeepTogether, Paragraph
 
     paras = [Paragraph(f"{sec['no']}. {_e(sec['title'])}", c.S["h2"])]
-    paras += [Paragraph("• " + _e(t), c.S["note"]) for t in sec["rows"]]
+    paras += [Paragraph("• " + c.marks(_e(t)), c.S["note"]) for t in sec["rows"]]
     return [CondPageBreak(55 * mm), KeepTogether(paras)]
 
 
@@ -550,6 +660,8 @@ def render_pdf(report: dict) -> bytes:
             story += _sec_checklist(c, sec)
         elif k == "products":
             story += _sec_products(c, sec)
+        elif k == "cost":
+            story += _sec_cost(c, report, sec)
         elif k == "sufficient":
             story += _sec_sufficient(c, sec)
         elif k == "notes":

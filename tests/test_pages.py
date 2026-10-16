@@ -32,6 +32,7 @@ PAGES = [
     "/ledger",
     "/reports",
     "/satin-alma",
+    "/fiyatlar",
     "/trendyol",
     "/traceability",
     "/quotations",
@@ -265,3 +266,104 @@ def test_no_bootstrap_shadowed_class_names():
             assert cls not in code, (
                 f"{f.name}: '{cls}' Bootstrap'te gizleyici bir sınıf — "
                 f"başka bir ad kullan (ör. 'check-action')")
+
+
+# ─── Malzeme Fiyatları (/fiyatlar, 16.10.2026) ──────────────────────────────
+
+def test_fiyatlar_page_shell_and_edit_gate(client: TestClient):
+    """Sayfa ortak iskeletle (nav, idle-watch, asistan, toast) ve ortak fiyat
+    formuyla gelir; "Fiyat ekle" yalnız suppliers.prices'ta (LabTech görmez)."""
+    def login(u):
+        client.post("/api/logout", headers={"Origin": "http://testserver"})
+        r = client.post("/api/login", json={"username": u, "password": "minerva123"},
+                        headers={"Origin": "http://testserver"})
+        assert r.status_code == 200, r.text
+
+    login("songul")                                              # LabLead: görür + yazar
+    html = client.get("/fiyatlar").text
+    for frag in ('href="/fiyatlar" class="nav-link-item active"', '/static/fiyatlar.js?v=1',
+                 '/static/supplier-price-form.js?v=', '/static/idle-watch.js', '/static/assistant.js',
+                 'id="fpQ"', 'id="fpCur"', 'id="fpAdd"', 'id="fpList"'):
+        assert frag in html, frag
+    login("meltem")                                              # LabTech: reports.view var, prices yok
+    html = client.get("/fiyatlar").text
+    assert 'id="fpList"' in html and 'id="fpAdd"' not in html
+
+
+def test_fiyatlar_js_builds_dom_without_html_strings():
+    """XSS: tedarikçi adı / not / kaynak etiketi kullanıcı verisidir — sayfa
+    istemcisi HTML dizesi kurmaz (yalnız createElement + textContent)."""
+    src = pathlib.Path("static/fiyatlar.js").read_text(encoding="utf-8")
+    code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    for bad in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+        assert bad not in code, bad
+    assert "textContent" in code
+
+
+def test_reports_price_panel_links_to_fiyatlar(authed_client: TestClient):
+    assert 'href="/fiyatlar" class="plan-adv-link"' in authed_client.get("/reports").text
+
+
+def test_supplier_price_form_single_version_everywhere():
+    """Ortak form değişince her şablon aynı ?v= ile yükler (eski önbellek kalmasın)."""
+    vers = {}
+    for f in sorted(pathlib.Path("templates").glob("*.html")):
+        for v in re.findall(r"/static/supplier-price-form\.js\?v=(\d+)", f.read_text(encoding="utf-8")):
+            vers.setdefault(v, []).append(f.name)
+    assert len(vers) == 1, vers
+    assert "fiyatlar.html" in next(iter(vers.values()))
+
+
+def test_supplier_price_form_package_follows_price_unit():
+    """Ambalaj ("Alınabilecek miktar") FİYAT BİRİMİNDE: etiket seçilen birimi
+    izler (kartın g/ml birimi değil); listeler `packageText` ile "25 kg" yazar."""
+    import json
+    import shutil
+    import subprocess
+    src = pathlib.Path("static/supplier-price-form.js").read_text(encoding="utf-8")
+    assert "state.item.unit + ')'" not in src
+    assert "f('unit').addEventListener('change', pkgLabel)" in src
+    assert "packageText: packageText" in src
+    for f in ("templates/reports.html", "templates/suppliers.html"):
+        assert "SPF.packageText(" in pathlib.Path(f).read_text(encoding="utf-8"), f
+    node = shutil.which("node")
+    if not node:
+        return                                                  # node yoksa yalnız kaynak denetimi
+    js = ("global.window={};require('vm').runInThisContext(require('fs').readFileSync("
+          "'static/supplier-price-form.js','utf8'));const P=window.SupplierPriceForm.packageText;"
+          "console.log(JSON.stringify([P({package_size:25,price_unit:'kg',unit:'g'}),"
+          "P({package_size:5,price_unit:'l',unit:'ml'}),P({package_size:1000,price_unit:'adet',unit:'adet'}),"
+          "P({package_size:0.5,price_unit:'kg',unit:'g'}),P({package_size:null,price_unit:'kg'}),"
+          "P({package_size:20,price_unit:null,unit:'g'}),P({package_size:50,price_unit:'',unit:'adet'})]))")
+    out = subprocess.run([node, "-e", js], capture_output=True, text=True, timeout=30, check=True).stdout
+    assert json.loads(out) == ["25 kg", "5 litre", "1.000 adet", "0,5 kg", "—", "20 kg", "50 adet"]
+
+
+def test_add_fiyatlar_nav_script_idempotent(tmp_path):
+    """Menü betiği Satın Alma nav linkinin altına reports.view kapılı satır
+    ekler; ikinci çalıştırma değiştirmez; Satın Alma linki olmayan şablona ve
+    sayfa içi bağlantıya dokunmaz."""
+    import importlib.util
+    for name in ("index.html", "reports.html", "asistan.html", "fiyatlar.html"):
+        (tmp_path / name).write_text(pathlib.Path("templates", name).read_text(encoding="utf-8"),
+                                     encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("add_fiyatlar_nav", "scripts/add_fiyatlar_nav.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.TPL = tmp_path
+    before = {p.name: p.read_text(encoding="utf-8") for p in tmp_path.iterdir()}
+    mod.main()
+    after = {p.name: p.read_text(encoding="utf-8") for p in tmp_path.iterdir()}
+    link = ("{% if can('reports','view') %}<a href=\"/fiyatlar\" class=\"nav-link-item\">"
+            "<i class=\"bi bi-tags nav-icon\"></i>Malzeme Fiyatları</a>{% endif %}")
+    for name in ("index.html", "reports.html"):
+        lines = after[name].split("\n")
+        i = next(n for n, l in enumerate(lines) if 'href="/satin-alma" class="nav-link-item' in l)
+        assert lines[i + 1].strip() == link, name
+        assert lines[i + 1][:len(lines[i + 1]) - len(lines[i + 1].lstrip())] == \
+            lines[i][:len(lines[i]) - len(lines[i].lstrip())]                 # aynı girinti
+        assert after[name].count('href="/fiyatlar" class="nav-link-item') == 1
+    assert after["asistan.html"] == before["asistan.html"]
+    assert after["fiyatlar.html"] == before["fiyatlar.html"]
+    mod.main()
+    assert {p.name: p.read_text(encoding="utf-8") for p in tmp_path.iterdir()} == after

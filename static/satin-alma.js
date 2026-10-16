@@ -26,6 +26,10 @@
  *    `value_basis`) ve
  *    özet kutusunun maliyet satırları (`pricing.cost_summary.lines` /
  *    `.caveats`) da sunucu biçimlidir.
+ *  • Ambalaj uyarısı (16.10.2026): `m.ui.amount_warn` varsa Tutar'ın yanında
+ *    ⚠ + ipucu.  "Maliyet" sekmesi `pricing.cost_overview.view`'u basar
+ *    (tür bazında maliyet, fiyatı eksik kalemler + "Fiyat gir →", ürün başına
+ *    maliyet, gereken miktarlar) — metinler sunucuda biçimli.
  */
 (function () {
   'use strict';
@@ -1316,6 +1320,72 @@
     return u.cover_text ? '<div class="sap-stock-note" title="' + esc(u.value_basis || '') + '">' + esc(u.cover_text) + '</div>' : '';
   }
 
+  // Tutar hücresi: ambalaj uyarısı varsa ⚠ + ipucu (m.ui.amount_warn —
+  // uyarının tam metni satır notunda ve Uyarılar sekmesinde de yazar).
+  function amountHtml(m) {
+    var u = m.ui || {};
+    var warn = u.amount_warn ? '<span class="sap-amt-warn" title="' + esc(u.amount_warn) + '" aria-label="Ambalaj uyarısı">⚠</span> ' : '';
+    return warn + (u.amount ? '<b>' + esc(u.amount) + '</b>' : '—');
+  }
+
+  // "Maliyet" sekmesi — pricing.cost_overview.view (sunucu biçimli;
+  // core/purchase_pricing.cost_overview_view, PDF / Excel ile aynı metin).
+  function costPaneHtml(v, sec) {
+    if (!v) return '<div class="sap-empty">Fiyat bilgisi olmadan maliyet özeti çıkmaz.</div>';
+    var cols = [['label', 'Tür'], ['buy', 'Alınacak']];
+    if (v.show_stock) cols.push(['stock', 'Stoktan']);
+    if (v.show_open) cols.push(['open', 'Yoldan']);
+    cols.push(['total', 'Toplam'], ['priced', 'Fiyatlı'], ['unpriced', 'Fiyatsız']);
+    var row = function (r, tot) {
+      return '<tr' + (tot ? ' class="sap-total"' : '') + '>' + cols.map(function (c) {
+        var val = esc(r[c[0]]);
+        if (c[0] === 'total' && !tot) val = '<b>' + val + '</b>';
+        if (c[0] === 'unpriced' && r.has_unpriced) val = '<span class="sap-cost-miss">' + val + '</span>';
+        return '<td' + (c[0] === 'label' ? '' : ' class="num"') + '>' + val + '</td>';
+      }).join('') + '</tr>';
+    };
+    var html = '<div class="sap-sec">' + (sec ? secHead(sec) : '') +
+      '<div style="overflow-x:auto;"><table class="sap-tbl sap-cost-tbl"><thead><tr>' +
+      cols.map(function (c) { return '<th' + (c[0] === 'label' ? '' : ' class="num"') + '>' + c[1] + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + (v.categories || []).map(function (r) { return row(r, false); }).join('') +
+      row(v.total_row || {}, true) + '</tbody></table></div>';
+    (v.caveats || []).forEach(function (t) {
+      html += '<div class="sap-caut warn"><i class="bi bi-exclamation-triangle"></i> ' + esc(t) + '</div>';
+    });
+    var un = v.unpriced || [];
+    if (un.length) {
+      // Yeni sekmede: önizleme (S.report) saklanmaz, aynı sekmede gidilirse kaybolurdu.
+      // Fiyat giremeyen (suppliers.prices yok) kullanıcıya "bak" denir.
+      var canPrice = !!(window.can && window.can('suppliers', 'prices'));
+      var linkText = canPrice ? 'Fiyat gir →' : 'Fiyatlara bak →';
+      html += '<details class="sap-cost-un"><summary>Fiyatı eksik kalemler (' + fmt(v.unpriced_count, 0) + ')</summary><ul>' +
+        un.map(function (u) {
+          return '<li><b>' + esc(u.name) + '</b> <span class="sap-faint">' + esc(u.kind) + ' · ' + esc(u.need) + '</span>' +
+            (u.link ? ' <a class="sap-pricelink" href="' + esc(u.link) + '" target="_blank" rel="noopener">' + linkText + '</a>'
+              : (u.new ? ' <span class="sap-faint">(yeni kalem, kartı yok)</span>'
+                : (u.finished ? ' <span class="sap-faint">(bitmiş ürün kartı — Malzeme Fiyatları\'nda listelenmez)</span>' : ''))) + '</li>';
+        }).join('') + '</ul></details>';
+    }
+    html += '</div>';
+    // Ürün başına maliyet
+    html += '<div class="sap-sec"><h4>Ürün başına maliyet</h4><div style="overflow-x:auto;"><table class="sap-tbl"><thead><tr>' +
+      '<th class="num">No</th><th>Ürün</th><th class="num">Adet</th><th class="num">1 adet maliyeti</th><th class="num">Toplam</th><th>Fiyatı eksik</th></tr></thead><tbody>' +
+      (v.products || []).map(function (p) {
+        var miss = [p.note, p.missing].filter(Boolean).map(esc).join(' — ');
+        if (p.missing_names) miss += '<div class="sap-faint">' + esc(p.missing_names) + '</div>';
+        return '<tr><td class="num">' + p.no + '</td><td><b>' + esc(p.name) + '</b></td><td class="num">' + esc(p.qty) + '</td>' +
+          '<td class="num">' + esc(p.unit_cost) + '</td><td class="num"><b>' + esc(p.total) + '</b></td><td>' + (miss || '—') + '</td></tr>';
+      }).join('') +
+      '<tr class="sap-total"><td></td><td>Toplam</td><td class="num">' + esc(v.units_total) + '</td><td></td><td class="num">' + esc(v.products_total) + '</td><td></td></tr>' +
+      '</tbody></table></div></div>';
+    // Gereken miktarlar + notlar
+    html += '<div class="sap-sec"><h4>Gereken miktarlar</h4><div class="sap-cost">' + (v.quantities || []).map(function (q) {
+      return '<div class="sap-cost-row"><span>' + esc(q.label) + '</span><b>' + esc(q.text) + '</b></div>';
+    }).join('') + '</div></div>';
+    if ((v.notes || []).length) html += '<div class="sap-sec"><ul class="sap-notes">' + v.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul></div>';
+    return html;
+  }
+
   // "Yeterli" sekmesinin "Değer" hücresi: stoktan (+ yoldan) karşılanan
   // değer; ipucunda ve soluk alt satırda dayanağı (seçilen teklif / "Fiyat yok").
   function valueCellHtml(m) {
@@ -1341,7 +1411,7 @@
         '<td class="num">' + esc(d.need_text) + '</td><td class="num">' + esc(d.stock_text) + stockNoteHtml(m) + '</td>' +
         (openOn ? '<td class="num">' + esc(d.open_text) + '</td>' : '') +
         '<td class="num"><b>' + esc(d.buy_text) + '</b></td>' +
-        (opts.noSup ? '' : '<td>' + supHtml(m) + firmsHtml(m) + '</td><td class="num">' + (m.ui && m.ui.amount ? '<b>' + esc(m.ui.amount) + '</b>' : '—') + coverNoteHtml(m) + '</td>') +
+        (opts.noSup ? '' : '<td>' + supHtml(m) + firmsHtml(m) + '</td><td class="num">' + amountHtml(m) + coverNoteHtml(m) + '</td>') +
         (opts.value ? valueCellHtml(m) : '') + '</tr>';
     }).join('');
     // Toplam satırı son sütunun (Tutar ya da Değer) altında
@@ -1452,8 +1522,11 @@
 
     // Sekmeler
     var suff = sec('sufficient');
+    var costView = (pr.cost_overview || {}).view || null;
     var tabs = [['buy', 'Alınacaklar', counts.to_buy], ['ok', 'Yeterli', suff ? suff.count : 0],
-      ['prod', 'Ürünler & kapasite', counts.products], ['warn', 'Uyarılar', w.length],
+      ['prod', 'Ürünler & kapasite', counts.products],
+      // Maliyet rozeti: fiyatı eksik kalem sayısı
+      ['cost', 'Maliyet', costView ? costView.unpriced_count : 0], ['warn', 'Uyarılar', w.length],
       ['sup', 'Tedarikçiler', ((sec('suppliers') || {}).count || 0) + ((sec('candidates') || {}).count || 0)]];
     html += '<div class="sap-tabs" role="tablist">' + tabs.map(function (t, i) {
       return '<button type="button" class="sap-tab' + (i === 0 ? ' on' : '') + '" data-tab="' + t[0] + '">' + t[1] +
@@ -1523,6 +1596,7 @@
     html += '<div class="sap-pane on" data-pane="buy">' + buy + '</div>' +
       '<div class="sap-pane" data-pane="ok">' + okHtml + '</div>' +
       '<div class="sap-pane" data-pane="prod">' + prodHtml + '</div>' +
+      '<div class="sap-pane" data-pane="cost">' + costPaneHtml(costView, sec('cost')) + '</div>' +
       '<div class="sap-pane" data-pane="warn">' + warnHtml + '</div>' +
       '<div class="sap-pane" data-pane="sup">' + supHtmlAll + '</div>';
     $('sapPreview').innerHTML = html;

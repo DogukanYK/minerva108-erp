@@ -268,6 +268,7 @@
       <a href="/ledger" class="nav-link-item"><i class="bi bi-journal-bookmark nav-icon"></i>İşlem Defteri</a>
       <a href="/reports" class="nav-link-item"><i class="bi bi-bar-chart-line nav-icon"></i>Raporlar</a>
       {% if can('reports','view') %}<a href="/satin-alma" class="nav-link-item"><i class="bi bi-cart-check nav-icon"></i>Satın Alma</a>{% endif %}
+      {% if can('reports','view') %}<a href="/fiyatlar" class="nav-link-item"><i class="bi bi-tags nav-icon"></i>Malzeme Fiyatları</a>{% endif %}
       {% if can('trendyol','view') %}<a href="/trendyol" class="nav-link-item"><i class="bi bi-shop-window nav-icon"></i>Trendyol</a>{% endif %}
       <a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>
       <a href="/drive" class="nav-link-item"><i class="bi bi-folder-fill nav-icon"></i>Dosya Paylaşım</a>

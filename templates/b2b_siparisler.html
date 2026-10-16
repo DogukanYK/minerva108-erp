@@ -155,6 +155,7 @@
       {% if can('b2b','view') %}<a href="/quotations" class="nav-link-item"><i class="bi bi-file-earmark-text nav-icon"></i>B2B Teklif</a>{% endif %}
       <a href="/b2b-siparisler" class="nav-link-item active" aria-current="page"><i class="bi bi-clipboard2-check nav-icon"></i>B2B Siparişleri</a>
       {% if can('reports','view') %}<a href="/satin-alma" class="nav-link-item"><i class="bi bi-cart-check nav-icon"></i>Satın Alma</a>{% endif %}
+      {% if can('reports','view') %}<a href="/fiyatlar" class="nav-link-item"><i class="bi bi-tags nav-icon"></i>Malzeme Fiyatları</a>{% endif %}
       {% if can('trendyol','view') %}<a href="/trendyol" class="nav-link-item"><i class="bi bi-shop-window nav-icon"></i>Trendyol</a>{% endif %}
       {% if can('inventory','view') %}<a href="/traceability" class="nav-link-item"><i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik</a>{% endif %}
       {% if can('assistant','use') %}<div class="nav-section-label" style="margin-top:1rem;">Yapay Zekâ</div>

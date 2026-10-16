@@ -70,6 +70,8 @@ PAGES: Tuple[Page, ...] = (
     Page("İşlem Defteri", "/ledger", "bi-journal-bookmark", ("reports", "view"), ("defter", "hareket", "işlem")),
     Page("Raporlar", "/reports", "bi-bar-chart-line", ("reports", "view"), ("rapor", "analiz", "tüketim")),
     Page("Satın Alma", "/satin-alma", "bi-cart-check", ("reports", "view"), ("satın alma", "alım", "sipariş planı")),
+    Page("Malzeme Fiyatları", "/fiyatlar", "bi-tags", ("reports", "view"),
+         ("fiyat", "tedarikçi fiyatı", "birim fiyat", "fiyat listesi")),
     Page("Trendyol", "/trendyol", "bi-shop-window", ("trendyol", "view"), ("pazaryeri",)),
     Page("İzlenebilirlik", "/traceability", "bi-diagram-3", ("inventory", "view"), ("lot", "skt", "izlenebilirlik", "iz")),
     Page("Dosya Paylaşım", "/drive", "bi-folder-fill", None, ("drive", "dosya", "belge", "sertifika")),

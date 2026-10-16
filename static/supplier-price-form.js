@@ -9,6 +9,7 @@
  * + LabLead).  İki giriş noktası aynı formu kullanır, doğrulama tek yerde:
  *   • Tedarikçiler → firma → "Fiyatlar" penceresi (tedarikçi sabit)
  *   • Raporlar → Tedarikçi Fiyatları paneli → "Fiyat ekle" / satır kalemi
+ *   • Malzeme Fiyatları sayfası (/fiyatlar, static/fiyatlar.js) — satır içi
  *
  *   SupplierPriceForm.mount(container, {mode: 'create'|'edit', row?,
  *     supplierId?, supplierName?, item?: {id, name, unit}, prefill?, onSaved(row), onCancel()})
@@ -31,6 +32,9 @@
  *  • KDV (08.10.2026): "KDV" seçimi boş (= bilinmiyor, varsayılan) | hariç |
  *    dahil + oran (%).  Dahilse oran şart; satın alma planı net fiyatla
  *    karşılaştırır, `priceText` fiyatın yanına "(KDV %20 dahil)" yazar.
+ *  • Ambalaj ("Alınabilecek miktar") FİYAT BİRİMİNDEDİR (16.10.2026): alan
+ *    etiketi seçilen birimi izler — "(kg)" / "(litre)" / "(adet)"; kartın
+ *    g/ml birimi yazılmaz.  Listeler `packageText(r)` ile "25 kg" gösterir.
  *  • Form SAYFA İÇİNDE çizilir (Bootstrap modal içinde ikinci modal yok).
  *  • Sınıf öneki `spf-`; `btn-*` adı YASAK (Bootstrap gölgeleme tuzağı).
  *  • Defer DEĞİL — şablonlar bootstrap.bundle'dan hemen sonra yükler; inline
@@ -96,6 +100,22 @@
     var vat = vatLabel(r);
     return money(r.unit_price) + (sym ? ' ' + esc(sym) : '') + (r.price_unit ? '/' + esc(r.price_unit) : '') +
       (vat ? ' <span style="font-weight:400;font-size:.85em;color:#92400e;">(' + esc(vat) + ')</span>' : '');
+  }
+  // Ambalaj ("alınabilecek miktar") FİYAT BİRİMİNDE tutulur: 25 → 25 kg'lık
+  // ambalaj (canlıdaki bütün satırlar kg/l; kartın g/ml birimi değil).
+  var PKG_UNIT_TEXT = { kg: 'kg', l: 'litre', adet: 'adet' };
+  function pkgUnitText(pu) {
+    pu = String(pu || '').trim().toLowerCase();
+    return PKG_UNIT_TEXT[pu] || pu;
+  }
+  // "25 kg" / "5 litre" / "1.000 adet" — DÜZ METİN (eklerken kaçışlayın: esc).
+  // price_unit boş eski satırda: adetli kart → adet, diğerleri kg (Stok Son Durum temeli).
+  function packageText(r) {
+    if (!r || r.package_size == null || r.package_size === '') return '—';
+    var n = Number(r.package_size);
+    if (!isFinite(n) || n <= 0) return '—';
+    var pu = String(r.price_unit || '').trim().toLowerCase() || (unitFamily(r.unit) === 'count' ? 'adet' : 'kg');
+    return n.toLocaleString('tr-TR', { maximumFractionDigits: 4 }) + ' ' + pkgUnitText(pu);
   }
   function fmtDate(iso) {
     var d = String(iso || '').split('-');
@@ -240,7 +260,12 @@
         return '<option value="' + u + '">' + (u === 'adet' ? 'adet başına' : u === 'l' ? 'litre başına' : 'kg başına') + '</option>';
       }).join('');
       if (keep && units.indexOf(keep) >= 0) sel.value = keep;
-      f('pkglabel').textContent = 'Alınabilecek miktar' + (state.item && state.item.unit ? ' (' + state.item.unit + ')' : '');
+      pkgLabel();
+    }
+    // Ambalaj fiyat biriminde girilir — etiket seçilen birimi izler (kg / litre / adet)
+    function pkgLabel() {
+      var pu = f('unit').value;
+      f('pkglabel').textContent = 'Alınabilecek miktar' + (pu ? ' (' + pkgUnitText(pu) + ')' : '');
     }
 
     // Başlangıç değerleri
@@ -269,8 +294,11 @@
       if (pre.vat_rate != null && isFinite(Number(pre.vat_rate))) f('vatrate').value = pre.vat_rate;
       if (pre.price_unit && [].some.call(f('unit').options, function (o) { return o.value === pre.price_unit; })) {
         f('unit').value = pre.price_unit;
+        pkgLabel();
       }
     }
+
+    f('unit').addEventListener('change', pkgLabel);
 
     if (!fixedItem) {
       var itemSel = f('item'), search = f('search');
@@ -392,6 +420,7 @@
   window.SupplierPriceForm = {
     mount: mount, unmount: unmount, unitFamily: unitFamily, priceUnitsFor: priceUnitsFor,
     money: money, priceText: priceText, vatLabel: vatLabel, sourceText: sourceText, sourceTitle: sourceTitle,
+    packageText: packageText,
     fmtDate: fmtDate, esc: esc, fold: fold,
     // Sayfa tedarikçi/kart değiştirince önbelleği boşalt
     reset: function () { _items = null; _suppliers = null; },

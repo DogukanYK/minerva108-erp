@@ -58,6 +58,11 @@ yeniden yazılmaz.  Bu modülün kendi kuralları:
     elimizde tutar ve gerçek eksikten asla az olmaz.
   • Uyarılar (cautions) Türkçe, `{code, severity, text}`; Rusya listesindeki
     elle yazılmış notların otomatik karşılığı.
+  • Satırın `per_product[]` girdisi {no, product, need, extra, per_unit}:
+    `need` bu planda üretilecek adet için brüt tüketim, `per_unit` 1 adet
+    ürün için (kart biriminde; reçete firesi + ölçek dahil, alım firesi
+    hariç) — bitmiş stok siparişi tümüyle karşılasa da ürün başına maliyet
+    (`purchase_pricing.product_cost_lines`) hesaplanabilsin.
 """
 import difflib
 import math
@@ -936,8 +941,10 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
                     ritem = items.get(r) or it
                     m = mats[key] = _new_acc(key, item=ritem, kind=ln.kind)
                 m["need_production"] += ln.gross
-                pp = m["per_product"].setdefault(no, {"no": no, "product": name, "need": 0.0, "extra": False})
+                pp = m["per_product"].setdefault(no, {"no": no, "product": name, "need": 0.0, "extra": False,
+                                                      "per_unit": 0.0})
                 pp["need"] += ln.gross
+                pp["per_unit"] += ln.per_unit
                 m["products"].add(no)
                 used_cards.add(ln.item_id)
                 if estimated and ln.kind == "raw":
@@ -994,8 +1001,10 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
                                              is_new=True, new_note=clean_text(ex.note))
             amt = ex.per_unit * produce
             m["need_production"] += amt
-            pp = m["per_product"].setdefault(no, {"no": no, "product": name, "need": 0.0, "extra": False})
+            pp = m["per_product"].setdefault(no, {"no": no, "product": name, "need": 0.0, "extra": False,
+                                                  "per_unit": 0.0})
             pp["need"] += amt
+            pp["per_unit"] += ex.per_unit
             pp["extra"] = True
             m["products"].add(no)
             m["extra_for"].add(no)
@@ -1262,7 +1271,11 @@ def compute(inputs: PlanInputs, req: PlanRequest) -> dict:
             caut.append(_caution("estimated", "Tahmini." if m["est_products"] >= m["products"]
                                  else "Kısmen tahmini.", "info"))
 
-        per_product = [{"no": p["no"], "product": p["product"], "need": _r6(p["need"]), "extra": p["extra"]}
+        # `per_unit` = 1 adet ürün için brüt tüketim (kart biriminde; reçete
+        # firesi + ölçek dahil, alım firesi hariç) — bitmiş stok siparişi
+        # tümüyle karşılayıp `need` 0 kalsa da ürün başına maliyet hesaplanır.
+        per_product = [{"no": p["no"], "product": p["product"], "need": _r6(p["need"]), "extra": p["extra"],
+                        "per_unit": round(float(p["per_unit"]), 9)}
                        for p in m["per_product"].values()]
         rows.append({
             "key": key, "item_id": m["item_id"], "member_ids": members, "name": m["name"],

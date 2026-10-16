@@ -591,6 +591,20 @@ def satin_alma_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse("satin_alma.html", _page_ctx(request, payload, user))
 
 
+@app.get("/fiyatlar", response_class=HTMLResponse)
+def fiyatlar_page(request: Request, db: Session = Depends(get_db)):
+    """Malzeme Fiyatları — rapor almadan tedarikçi fiyatlarına bakış (grup →
+    kart → satır; seçilen para biriminde net fiyat, planın tercih bayrakları,
+    elle ekle/düzenle/sil `suppliers.prices`).  Görüntüleme `reports.view`
+    (Satın Alma Planı ile aynı kapı).  API: GET /api/supplier-prices/overview."""
+    payload = _get_user_context(request)
+    if not payload: return RedirectResponse(url="/login", status_code=302)
+    user = _resolve_active_user(payload, db)
+    if not _user_can(user, "reports", "view"):
+        return RedirectResponse(url="/", status_code=302)
+    return templates.TemplateResponse("fiyatlar.html", _page_ctx(request, payload, user))
+
+
 @app.get("/delivery", response_class=HTMLResponse)
 def delivery_page(request: Request, db: Session = Depends(get_db)):
     """Hediye / numune teslimatı — barkod okutarak stok çıkışı + imzalı belge."""

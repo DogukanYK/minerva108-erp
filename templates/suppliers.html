@@ -366,6 +366,7 @@
         <i class="bi bi-bar-chart-line nav-icon"></i>Raporlar
       </a>
       {% if can('reports','view') %}<a href="/satin-alma" class="nav-link-item"><i class="bi bi-cart-check nav-icon"></i>Satın Alma</a>{% endif %}
+      {% if can('reports','view') %}<a href="/fiyatlar" class="nav-link-item"><i class="bi bi-tags nav-icon"></i>Malzeme Fiyatları</a>{% endif %}
       {% if can('trendyol','view') %}<a href="/trendyol" class="nav-link-item"><i class="bi bi-shop-window nav-icon"></i>Trendyol</a>{% endif %}
       <a href="/traceability" class="nav-link-item">
         <i class="bi bi-diagram-3 nav-icon"></i>İzlenebilirlik
@@ -633,7 +634,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="/static/supplier-price-form.js?v=4"></script>
+  <script src="/static/supplier-price-form.js?v=6"></script>
   <script>
     let allSuppliers = [];
     let sortCol = null, sortDir = 'asc';
@@ -962,7 +963,7 @@
       }
       body.innerHTML = rows.map(p => {
         const loose = p.matched ? '' : ' <span title="Excel’deki ad bu firma kartına bağlı değil (ad eşleşmesiyle gösteriliyor)" style="color:#b45309;">⚠</span>';
-        const pkg = p.package_size != null ? `${Number(p.package_size).toLocaleString('tr-TR', { maximumFractionDigits: 4 })} ${escHtml(p.unit || '')}` : '—';
+        const pkg = escHtml(SPF.packageText(p));          // fiyat biriminde: 25 kg (kartın g'si değil)
         const src = SPF.sourceText(p);
         const ttl = SPF.sourceTitle(p);
         const act = canEdit && p.matched ? `<span class="sup-pr-act">

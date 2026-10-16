@@ -1,7 +1,9 @@
 """Add permission-gated "Trendyol" link to internal sidebar templates.
 
-İdempotent.  Link, "Satın Alma" (/satin-alma) bağlantısının hemen altına —
-o yoksa Raporlar (/reports) bağlantısının altına — aynı girintiyle eklenir ve
+İdempotent.  Link, "Malzeme Fiyatları" (/fiyatlar) nav bağlantısının hemen
+altına — o yoksa "Satın Alma" (/satin-alma), o da yoksa Raporlar (/reports)
+bağlantısının altına — aynı girintiyle eklenir (menü sırası Satın Alma →
+Malzeme Fiyatları → Trendyol, `scripts/add_fiyatlar_nav.py` ile aynı) ve
 `trendyol.view` ile sarılır (sayfanın kendi kapısıyla aynı).  Zaten olan
 şablona dokunulmaz; trendyol.html kendi (active) linkini taşır.  Sidebar'ı
 olmayan şablonlar ve kendine özgü düzeni olan CRM atlanır.
@@ -14,6 +16,8 @@ LINK = ("{% if can('trendyol','view') %}<a href=\"/trendyol\" class=\"nav-link-i
         "<i class=\"bi bi-shop-window nav-icon\"></i>Trendyol</a>{% endif %}")
 OPT = r"(?:\{%[^%]*%\})?"
 ANCHORS = [
+    re.compile(r"^([ \t]*)" + OPT + r'<a href="/fiyatlar"\s*class="nav-link-item[^"]*"[^>]*>.*?</a>'
+               + OPT + r"[ \t]*$", re.M),
     re.compile(r"^([ \t]*)" + OPT + r'<a href="/satin-alma"\s*class="nav-link-item[^"]*"[^>]*>.*?</a>'
                + OPT + r"[ \t]*$", re.M),
     re.compile(r"^([ \t]*)" + OPT + r'<a href="/reports"\s*class="nav-link-item[^"]*"[^>]*>.*?</a>'

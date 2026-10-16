@@ -890,3 +890,382 @@ def test_excel_price_cells_show_currency_and_skip_cheapest_claim_when_mixed():
     assert ws.cell(2, 9).value == 1.88 and ws.cell(2, 9).number_format == '#,##0.00##" €/kg"'
     assert ws.cell(2, 12).value == 250.0 and "₺/kg" in ws.cell(2, 12).number_format
     assert price_cell_format({"unit_price": 3}) == "#,##0.00##"
+
+
+# ─── Malzeme Fiyatları sayfası (/fiyatlar, 16.10.2026) ───────────────────────
+# GET /api/supplier-prices/overview → core.price_overview.build_overview.
+# Grup → kart → satır; planın durum bayrakları; elle fiyat aynı firmanın Excel
+# satırını gizler; net fiyat seçilen para biriminde (kur sahte — ağa çıkılmaz).
+
+from datetime import date as _date  # noqa: E402
+
+from database import AppSetting, MaterialGroup, MaterialSupplierPref, User  # noqa: E402
+
+
+def _ov(db, **kw):
+    from core.price_overview import build_overview
+    kw.setdefault("rates_fn", _rates)
+    return build_overview(db, "cosmetics", **kw)
+
+
+def _cards(ov):
+    return [c for b in ov["blocks"] for c in b["cards"]]
+
+
+def _card(ov, name):
+    return next(c for c in _cards(ov) if c["name"] == name)
+
+
+def _sp(item, sup=None, price=1.0, *, name=None, cur="USD", unit="kg", pkg=None, source="stok_son_durum",
+        domain="cosmetics", **kw):
+    return SupplierPrice(item_id=item.id, supplier_id=(sup.id if sup is not None else None),
+                         supplier_name=name or (sup.name if sup is not None else None), unit_price=price,
+                         currency=cur, price_unit=unit, package_size=pkg, source=source, domain=domain, **kw)
+
+
+def _overview_case(db):
+    """SETİL / CETYL aynı grupta (iki görünür kart → tek blok), ARGAN grupsuz,
+    pasif kart ve bitmiş ürün fiyatlı ama görünmez; JOJOBA grubunun tek
+    görünür kartı (diğeri pasif) blok açmaz."""
+    g = MaterialGroup(name="Setil stearil alkol", domain="cosmetics")
+    gj = MaterialGroup(name="Jojoba grubu", domain="cosmetics")
+    db.add_all([g, gj]); db.flush()
+    um = Supplier(name="UMAYCHEM", domain="cosmetics")
+    nat = Supplier(name="NATURALYA", domain="cosmetics")
+    db.add_all([um, nat]); db.flush()
+    setil = Item(name="SETİL STEARİL ALKOL", category="Hammadde", unit="g", domain="cosmetics",
+                 material_group_id=g.id, supplier_id=um.id)
+    cetyl = Item(name="CETYL STEARYL ALCOHOL", category="Hammadde", unit="g", domain="cosmetics",
+                 material_group_id=g.id)
+    argan = Item(name="ARGAN YAĞI", category="Hammadde", unit="g", domain="cosmetics")
+    old = Item(name="ESKİ KART", category="Hammadde", unit="g", domain="cosmetics", is_active=False)
+    krem = Item(name="KREM", category="Bitmiş Ürün", unit="adet", domain="cosmetics")
+    jo1 = Item(name="JOJOBA", category="Hammadde", unit="g", domain="cosmetics", material_group_id=gj.id)
+    jo2 = Item(name="JOJOBA ESKİ", category="Hammadde", unit="g", domain="cosmetics",
+               material_group_id=gj.id, is_active=False)
+    db.add_all([setil, cetyl, argan, old, krem, jo1, jo2]); db.flush()
+    db.add_all([
+        _sp(setil, um, 5.0, pkg=25),                               # Excel — elle satır gizler
+        _sp(setil, um, 4.8, pkg=25, source="manual", created_by="Songül"),
+        _sp(cetyl, nat, 6.0, pkg=20),
+        _sp(argan, nat, 10.0, pkg=5, unit="l"),
+        _sp(old, nat, 1.0),
+        _sp(krem, nat, 3.0, unit="adet"),
+        _sp(jo1, um, 9.0), _sp(jo2, um, 8.0),
+    ])
+    db.commit()
+    return {"setil": setil.id, "cetyl": cetyl.id, "argan": argan.id, "group": g.id}
+
+
+def test_overview_groups_dedup_and_excludes_inactive_and_finished(db_session):
+    ids = _overview_case(db_session)
+    ov = _ov(db_session, has_price="priced")
+    names = [[c["name"] for c in b["cards"]] for b in ov["blocks"]]
+    assert names == [["ARGAN YAĞI"], ["JOJOBA"], ["CETYL STEARYL ALCOHOL", "SETİL STEARİL ALKOL"]]
+    gb = ov["blocks"][2]
+    assert gb["group"] == {"id": ids["group"], "name": "Setil stearil alkol"}
+    assert ov["blocks"][1]["group"] is None and _card(ov, "JOJOBA")["group_name"] == "Jojoba grubu"
+    setil = _card(ov, "SETİL STEARİL ALKOL")
+    assert [(r["unit_price"], r["source"]) for r in setil["rows"]] == [(4.8, "manual")]
+    assert setil["hidden_rows"] == 1 and "elle girilen fiyatla gizlendi" in setil["hidden_text"]
+    assert setil["card_supplier"] == "UMAYCHEM" and setil["purchase_unit"] == "kg"
+    r = setil["rows"][0]
+    # Ambalaj FİYAT BİRİMİNDE (25 kg), kartın g birimiyle değil; satır SPF formunun şekli
+    assert r["package_text"] == "25 kg" and r["material"] == "SETİL STEARİL ALKOL" and r["unit"] == "g"
+    assert r["net_text"] == "4,80 $/kg" and r["orig_text"] == "4,80 $/kg" and r["matched"] is True
+    assert _card(ov, "ARGAN YAĞI")["rows"][0]["package_text"] == "5 litre"
+    s = ov["summary"]
+    assert s == {"cards": 4, "priced_cards": 4, "unpriced_cards": 0, "rows": 4, "hidden_rows": 1, "groups": 1}
+    assert ov["summary_text"] == "4 malzeme · 4 fiyat satırı · 1 aynı malzeme grubu"
+    assert ov["fx"]["needed"] is False                     # hepsi USD → kur yok, ağ yok
+
+
+def test_overview_search_expands_to_group_and_matches_supplier(db_session):
+    _overview_case(db_session)
+    # Grubun bir üyesine uyan arama grubun bütün kartlarını getirir (karşılaştırma için)
+    ov = _ov(db_session, q="setil")
+    assert [[c["name"] for c in b["cards"]] for b in ov["blocks"]] == [
+        ["CETYL STEARYL ALCOHOL", "SETİL STEARİL ALKOL"]]
+    assert [c["name"] for c in _cards(_ov(db_session, q="naturalya"))] == [
+        "ARGAN YAĞI", "CETYL STEARYL ALCOHOL", "SETİL STEARİL ALKOL"]
+    assert _cards(_ov(db_session, q="yok böyle")) == []
+
+
+def test_overview_status_flags_follow_purchase_plan_rules(db_session):
+    """Firma (tercih edilen / bitirilecek / pasif / atlanacaklar) ve malzeme
+    (tercih sırası / bu malzemede alma) bayrakları planın `_offer_status`
+    kuralıyla; en ucuz pasif olmayanlardan, planın seçtiği tercih kademesinden."""
+    it = Item(name="LAVANTA YAĞI", category="Hammadde", unit="g", domain="cosmetics")
+    pref = Supplier(name="TERCİHLİ KİMYA", domain="cosmetics", purchase_status="preferred")
+    out = Supplier(name="BİTEN FİRMA", domain="cosmetics", purchase_status="phase_out",
+                   status_reason="kalite sorunu")
+    avo = Supplier(name="ALINMAZ LTD", domain="cosmetics")
+    gone = Supplier(name="KAPANAN KİMYA", domain="cosmetics", is_active=False)
+    mat = Supplier(name="MALZEME TERCİHİ", domain="cosmetics")
+    skip = Supplier(name="MİNERVA", domain="cosmetics")
+    db_session.add_all([it, pref, out, avo, gone, mat, skip]); db_session.flush()
+    db_session.add_all([
+        _sp(it, pref, 9.0), _sp(it, out, 3.0), _sp(it, avo, 4.0), _sp(it, gone, 1.0),
+        _sp(it, mat, 12.0), _sp(it, skip, 2.0),
+        MaterialSupplierPref(domain="cosmetics", item_id=it.id, supplier_id=mat.id, preference="preferred", rank=1),
+        MaterialSupplierPref(domain="cosmetics", item_id=it.id, supplier_id=avo.id, preference="avoid", rank=1),
+    ])
+    db_session.commit()
+    c = _card(_ov(db_session), "LAVANTA YAĞI")
+    st = {r["supplier_name"]: (r["status"], r["eligible"], r["status_tags"], r["status_blocked"])
+          for r in c["rows"]}
+    assert st == {
+        "TERCİHLİ KİMYA": ("preferred", True, ["tercih edilen firma"], None),
+        "BİTEN FİRMA": ("phase_out", False, [], "bitirilecek, alma"),
+        "ALINMAZ LTD": ("avoid", False, [], "bu malzemede alma"),
+        "KAPANAN KİMYA": ("inactive", False, [], "pasif tedarikçi"),
+        "MALZEME TERCİHİ": ("preferred", True, ["tercih"], None),
+        "MİNERVA": ("skip", False, [], "atlanacaklar listesinde"),
+    }
+    by = {r["supplier_name"]: r for r in c["rows"]}
+    assert by["BİTEN FİRMA"]["status_reason"] == "kalite sorunu"
+    assert by["KAPANAN KİMYA"]["supplier_inactive"] is True and by["KAPANAN KİMYA"]["status_kind"] == "inactive"
+    # En ucuz: pasif firma (1 $) sayılmaz → MİNERVA 2 $; plan malzeme tercihini seçer (12 $)
+    assert [r["supplier_name"] for r in c["rows"] if r["cheapest"]] == ["MİNERVA"]
+    assert [r["supplier_name"] for r in c["rows"] if r["plan_pick"]] == ["MALZEME TERCİHİ"]
+    # Sıra: uygunlar ucuzdan → uygun olmayanlar → pasif sonda
+    assert [r["supplier_name"] for r in c["rows"]] == [
+        "TERCİHLİ KİMYA", "MALZEME TERCİHİ", "MİNERVA", "BİTEN FİRMA", "ALINMAZ LTD", "KAPANAN KİMYA"]
+    assert c["pref_text"] == "Tercih: MALZEME TERCİHİ · Bu malzemede alma: ALINMAZ LTD"
+    # Atlanacaklar listesi AppSetting'ten okunur (plan ile aynı ayar)
+    db_session.add(AppSetting(key="purchase_plan.skip_suppliers", value="BAŞKA FİRMA"))
+    db_session.commit()
+    by = {r["supplier_name"]: r for r in _card(_ov(db_session), "LAVANTA YAĞI")["rows"]}
+    assert by["MİNERVA"]["status"] == "normal"
+
+
+def test_overview_group_prefs_apply_to_member_cards(db_session):
+    g = MaterialGroup(name="Argan", domain="cosmetics")
+    db_session.add(g); db_session.flush()
+    a = Item(name="ARGAN A", category="Hammadde", unit="g", domain="cosmetics", material_group_id=g.id)
+    b = Item(name="ARGAN B", category="Hammadde", unit="g", domain="cosmetics", material_group_id=g.id)
+    s1 = Supplier(name="BİRİNCİ", domain="cosmetics")
+    s2 = Supplier(name="İKİNCİ", domain="cosmetics")
+    db_session.add_all([a, b, s1, s2]); db_session.flush()
+    db_session.add_all([
+        _sp(a, s1, 5.0), _sp(a, s2, 6.0), _sp(b, s1, 5.0),
+        MaterialSupplierPref(domain="cosmetics", material_group_id=g.id, supplier_id=s2.id,
+                             preference="preferred", rank=1),
+        # Kartın kendi satırı grubunkini ezer
+        MaterialSupplierPref(domain="cosmetics", item_id=b.id, supplier_id=s1.id, preference="avoid", rank=1),
+    ])
+    db_session.commit()
+    ov = _ov(db_session)
+    ca, cb = _card(ov, "ARGAN A"), _card(ov, "ARGAN B")
+    assert [r["supplier_name"] for r in ca["rows"] if r["plan_pick"]] == ["İKİNCİ"]
+    assert [(r["supplier_name"], r["status"]) for r in cb["rows"]] == [("BİRİNCİ", "avoid")]
+    assert not any(r["plan_pick"] for r in cb["rows"])
+
+
+def test_overview_fx_conversion_and_vat_net(db_session, monkeypatch):
+    """Net = KDV hariç fiyat → alım birimi → seçilen para birimi; kur TCMB
+    sahte fetcher'ından BİR KEZ (hepsi aynı para biriminde ise hiç)."""
+    import core.fx as fx
+    calls = []
+
+    def fake_fetch():
+        calls.append(1)
+        return {"USD": 40.0, "EUR": 44.0, "as_of": _date(2026, 10, 16)}
+
+    fx.reset_cache()
+    monkeypatch.setattr(fx, "_fetch_tcmb_rates", fake_fetch)
+    it = Item(name="BİBERİYE", category="Hammadde", unit="g", domain="cosmetics")
+    db_session.add(it); db_session.flush()
+    db_session.add_all([
+        _sp(it, name="ULUDAĞ", price=10.0, cur="EUR"),
+        _sp(it, name="PHARMATERM", price=400.0, cur="TRY"),
+        _sp(it, name="KDVLİ", price=12.6, vat_included=True, vat_rate=20),     # net 10,50 $
+    ])
+    db_session.commit()
+    from core.price_overview import build_overview
+    try:
+        ov = build_overview(db_session, "cosmetics")                 # gerçek today_rates → sahte fetch
+        assert calls == [1]
+        by = {r["supplier_name"]: r for r in _card(ov, "BİBERİYE")["rows"]}
+        assert by["ULUDAĞ"]["net"] == pytest.approx(11.0) and by["ULUDAĞ"]["net_text"] == "11,00 $/kg"
+        assert by["ULUDAĞ"]["orig_text"] == "10,00 €/kg"
+        assert by["PHARMATERM"]["net"] == pytest.approx(10.0)
+        assert by["KDVLİ"]["net"] == pytest.approx(10.5) and by["KDVLİ"]["vat_label"] == "KDV %20 dahil"
+        assert by["KDVLİ"]["orig_text"] == "12,60 $/kg"
+        assert [r["supplier_name"] for r in _card(ov, "BİBERİYE")["rows"]] == ["PHARMATERM", "KDVLİ", "ULUDAĞ"]
+        assert by["PHARMATERM"]["cheapest"] and _card(ov, "BİBERİYE")["comparable"] is True
+        assert ov["fx"]["text"] == "kur: TCMB 16.10" and ov["fx"]["needed"] is True
+        assert ov["fx"]["rates_text"] == "1 $ = 40,0000 ₺ · 1 € = 44,0000 ₺"
+        ov = build_overview(db_session, "cosmetics", currency="EUR")  # 1 saat önbellek → ağ yok
+        assert calls == [1] and ov["symbol"] == "€"
+        by = {r["supplier_name"]: r for r in _card(ov, "BİBERİYE")["rows"]}
+        assert by["ULUDAĞ"]["net"] == pytest.approx(10.0) and by["ULUDAĞ"]["net_text"] == "10,00 €/kg"
+        assert by["KDVLİ"]["net"] == pytest.approx(10.5 * 40 / 44)
+    finally:
+        fx.reset_cache()
+
+
+def test_overview_without_rates_marks_rows_and_card(db_session):
+    it = Item(name="BİBERİYE", category="Hammadde", unit="g", domain="cosmetics")
+    db_session.add(it); db_session.flush()
+    db_session.add_all([_sp(it, name="ULUDAĞ", price=10.0, cur="EUR"), _sp(it, name="ESKİ LİSTE", price=12.0)])
+    db_session.commit()
+
+    def boom():
+        raise RuntimeError("TCMB yok")
+    ov = _ov(db_session, rates_fn=boom)
+    c = _card(ov, "BİBERİYE")
+    by = {r["supplier_name"]: r for r in c["rows"]}
+    assert by["ULUDAĞ"]["net"] is None and by["ULUDAĞ"]["net_text"] is None
+    assert "kur yok" in by["ULUDAĞ"]["net_note"] and by["ESKİ LİSTE"]["net_text"] == "12,00 $/kg"
+    assert c["comparable"] is False and "kur yok" in c["compare_note"]
+    assert not any(r["cheapest"] for r in c["rows"])
+    assert [r["supplier_name"] for r in c["rows"] if r["plan_pick"]] == ["ESKİ LİSTE"]   # planla aynı: çevrilemeyen fiyatsız
+    assert ov["fx"]["text"] == "kur yok" and ov["fx"]["available"] is False
+    # Tek para birimi (EUR) + USD görünüm + kur yok → ham fiyatla karşılaştırılır
+    db_session.query(SupplierPrice).filter(SupplierPrice.supplier_name == "ESKİ LİSTE").update(
+        {"currency": "EUR", "unit_price": 9.0})
+    db_session.commit()
+    c = _card(_ov(db_session, rates_fn=boom), "BİBERİYE")
+    assert c["comparable"] is True and [r["supplier_name"] for r in c["rows"] if r["cheapest"]] == ["ESKİ LİSTE"]
+
+
+def test_overview_mixed_units_not_comparable_and_litre_note(db_session):
+    it = Item(name="GÜL SUYU", category="Hammadde", unit="ml", domain="cosmetics")
+    lab = Item(name="ŞİŞE 100 ML", category="Ambalaj", pkg_type="şişe", unit="adet", domain="cosmetics")
+    db_session.add_all([it, lab]); db_session.flush()
+    db_session.add_all([_sp(it, name="A FİRMA", price=3.0, unit="kg", pkg=20),
+                        _sp(it, name="B FİRMA", price=4.0, unit="l", pkg=5),
+                        _sp(lab, name="C FİRMA", price=0.1193, unit="adet", pkg=1000)])
+    db_session.commit()
+    ov = _ov(db_session)
+    c = _card(ov, "GÜL SUYU")
+    assert c["comparable"] is False and c["compare_note"] == "Farklı fiyat birimi (kg / litre) — karşılaştırılamaz"
+    assert not any(r["cheapest"] for r in c["rows"])
+    by = {r["supplier_name"]: r for r in c["rows"]}
+    assert by["A FİRMA"]["litre_kg"] is True and by["A FİRMA"]["net_text"] == "3,00 $/litre"
+    assert by["B FİRMA"]["package_text"] == "5 litre" and by["A FİRMA"]["package_text"] == "20 kg"
+    r = _card(ov, "ŞİŞE 100 ML")["rows"][0]
+    assert r["net_text"] == "0,1193 $/adet" and r["package_text"] == "1.000 adet"
+
+
+def test_overview_filters(db_session):
+    _overview_case(db_session)
+    db_session.add_all([
+        Item(name="KAPAK", category="Ambalaj", pkg_type="kapak", unit="adet", domain="cosmetics"),
+        Item(name="ETİKET X", category="Ambalaj", pkg_type="etiket", unit="adet", domain="cosmetics"),
+        Item(name="YARDIMCI", category="Sarf", unit="adet", domain="cosmetics"),
+    ])
+    db_session.commit()
+    items, _ = _ids(db_session)
+    db_session.add(SupplierPrice(item_id=items["ARGAN YAĞI"], supplier_name="LAB FİRMA", unit_price=7.0,
+                                 currency="USD", price_unit="l", source="lab_notu",
+                                 source_label="Lab fiyat notları 07.10.2026 — s.3", domain="cosmetics"))
+    db_session.commit()
+    names = lambda ov: [c["name"] for c in _cards(ov)]                        # noqa: E731
+    # Fiyatsız: yalnız hammadde / ambalaj / etiket kartları (Sarf ve bitmiş ürün yok)
+    un = _ov(db_session, has_price="unpriced")
+    assert names(un) == ["ETİKET X", "KAPAK"]
+    assert all(not c["priced"] and c["rows"] == [] for c in _cards(un))
+    assert un["summary"]["unpriced_cards"] == 2 and "2 fiyatsız" in un["summary_text"]
+    allc = names(_ov(db_session))                                              # varsayılan: hepsi
+    assert "KAPAK" in allc and "ARGAN YAĞI" in allc and "YARDIMCI" not in allc and "KREM" not in allc
+    assert names(_ov(db_session, category="etiket")) == ["ETİKET X"]
+    assert names(_ov(db_session, category="ambalaj")) == ["KAPAK"]
+    assert "KAPAK" not in names(_ov(db_session, category="hammadde"))
+    # Kaynak: kartta o kaynaktan satır olmalı; satırlar daralır, sayısı kartta
+    lab = _ov(db_session, source="lab")
+    assert names(lab) == ["ARGAN YAĞI"]
+    c = _card(lab, "ARGAN YAĞI")
+    assert [r["supplier_name"] for r in c["rows"]] == ["LAB FİRMA"] and c["filtered_rows"] == 1
+    assert "1 fiyat satırı daha" in c["filtered_text"]
+    assert names(_ov(db_session, source="manual")) == ["SETİL STEARİL ALKOL"]
+    assert "SETİL STEARİL ALKOL" not in names(_ov(db_session, source="stok_son_durum"))   # Excel satırı gizli
+    # "Diğer" kovası (Sarf / Kimyasal / Yardımcı — plan hammadde sayıp "Fiyat gir →"
+    # bağlantısı verir) aramada ve "diğer" süzgecinde gelir; bitmiş ürün hiç gelmez
+    assert names(_ov(db_session, q="yardımcı")) == ["YARDIMCI"]
+    assert names(_ov(db_session, category="other")) == ["YARDIMCI"]
+    assert names(_ov(db_session, q="krem")) == []
+    assert "YARDIMCI" not in names(_ov(db_session, q="yardımcı", has_price="priced"))
+    with pytest.raises(ValueError):
+        _ov(db_session, currency="GBP")
+    with pytest.raises(ValueError):
+        _ov(db_session, has_price="belki")
+
+
+def test_overview_plan_pick_spans_plan_merged_twin_cards(db_session):
+    """Plan aynı katlanmış ad + birimli iki aktif hammadde kartını (kept kararı /
+    grup yoksa) tek satırda birleştirir ve teklifi iki kartın fiyatlarından
+    seçer — "planda seçilir" küme başına BİR kez; fiyatsız ikizi fiyatlı kart
+    "fiyatı olmayanlar"a düşmez; kept kararı birleştirmeyi kapatır."""
+    from database import DuplicateItemDecision
+    a = Item(name="ALOE VERA EKSTRAKTI", category="Hammadde", unit="ml", domain="cosmetics")
+    b = Item(name="ALOEVERA EKSTRAKTI", category="Hammadde", unit="ml", domain="cosmetics")
+    k1 = Item(name="KAPAK 24 MM", category="Ambalaj", pkg_type="kapak", unit="adet", domain="cosmetics")
+    k2 = Item(name="KAPAK 24MM", category="Ambalaj", pkg_type="kapak", unit="adet", domain="cosmetics")
+    db_session.add_all([a, b, k1, k2]); db_session.flush()
+    db_session.add_all([_sp(a, name="NATURALYA", price=12.0, unit="l"), _sp(a, name="AROMA", price=13.0, unit="l"),
+                        _sp(b, name="KRK", price=10.0, unit="l"), _sp(k1, name="KAPAKÇI", price=0.05, unit="adet")])
+    db_session.commit()
+    ov = _ov(db_session)
+    ca, cb = _card(ov, "ALOE VERA EKSTRAKTI"), _card(ov, "ALOEVERA EKSTRAKTI")
+    assert not any(r["plan_pick"] for r in ca["rows"])                  # plan KRK'dan alır
+    assert [r["supplier_name"] for r in cb["rows"] if r["plan_pick"]] == ["KRK"]
+    assert ca["merged_with"] == [{"item_id": b.id, "name": "ALOEVERA EKSTRAKTI"}]
+    assert "ALOEVERA EKSTRAKTI ile tek satırda birleştirir" in ca["merge_text"]
+    assert [r["supplier_name"] for r in ca["rows"] if r["cheapest"]] == ["NATURALYA"]   # en ucuz kart başına
+    # İkiz görünmese de (arama yalnız birini buluyor) seçim kümeden yapılır
+    only = _ov(db_session, q="aloe vera")
+    assert [c["name"] for c in _cards(only)] == ["ALOE VERA EKSTRAKTI"]
+    assert not any(r["plan_pick"] for r in _card(only, "ALOE VERA EKSTRAKTI")["rows"])
+    # Fiyatsız ikiz: "hepsi"de görünür (planda fiyatı var), "fiyatı olmayanlar"da yok
+    k2c = _card(ov, "KAPAK 24MM")
+    assert k2c["priced"] is False and k2c["twin_priced"] is True and k2c["rows"] == []
+    un = _ov(db_session, has_price="unpriced")
+    assert "KAPAK 24MM" not in [c["name"] for c in _cards(un)]
+    assert ov["summary"]["unpriced_cards"] == 0 and "fiyatsız" not in ov["summary_text"]
+    # Lab "ayrı kalsın" dediyse plan birleştirmez → kart kendi en iyisini seçer
+    db_session.add(DuplicateItemDecision(cluster_key="aloe", title="Aloe", status="kept",
+                                         item_ids=json.dumps([a.id, b.id])))
+    db_session.commit()
+    ov = _ov(db_session)
+    ca = _card(ov, "ALOE VERA EKSTRAKTI")
+    assert [r["supplier_name"] for r in ca["rows"] if r["plan_pick"]] == ["NATURALYA"]
+    assert ca["merged_with"] == [] and ca["merge_text"] is None
+
+
+def test_overview_endpoint_domain_scoped_and_validated(authed_client: TestClient, db_session):
+    _overview_case(db_session)
+    sup_item = Item(name="KAPSÜL TOZU", category="Hammadde", unit="g", domain="supplement")
+    db_session.add(sup_item); db_session.flush()
+    db_session.add(SupplierPrice(item_id=sup_item.id, supplier_name="TAKVİYE FİRMA", unit_price=2.0,
+                                 currency="USD", price_unit="kg", domain="supplement"))
+    db_session.commit()
+    r = authed_client.get("/api/supplier-prices/overview?has_price=priced")
+    assert r.status_code == 200, r.text
+    names = [c["name"] for b in r.json()["blocks"] for c in b["cards"]]
+    assert "KAPSÜL TOZU" not in names and "ARGAN YAĞI" in names
+    authed_client.cookies.set("active_domain", "supplement")
+    r = authed_client.get("/api/supplier-prices/overview")
+    assert [c["name"] for b in r.json()["blocks"] for c in b["cards"]] == ["KAPSÜL TOZU"]
+    for bad in ("currency=GBP", "category=bitmis", "has_price=x", "source=excel"):
+        r = authed_client.get("/api/supplier-prices/overview?" + bad)
+        assert r.status_code == 400 and isinstance(r.json()["detail"], str), bad
+    assert authed_client.get("/api/supplier-prices/overview?q=" + "x" * 101).status_code == 422
+
+
+def test_overview_endpoint_requires_reports_view(client: TestClient, db_session):
+    import bcrypt
+    u = User(username="raporsuz", full_name="raporsuz", role="Staff", is_active=True,
+             password_hash=bcrypt.hashpw(b"minerva123", bcrypt.gensalt()).decode(),
+             permissions=json.dumps({"items": {"view": True}}))
+    db_session.add(u); db_session.commit()
+    assert client.get("/api/supplier-prices/overview").status_code == 401
+    r = client.get("/fiyatlar", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "/login"
+    _login(client, "raporsuz")
+    assert client.get("/api/supplier-prices/overview").status_code == 403
+    r = client.get("/fiyatlar", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "/"
+    _login(client, "meltem")                                                    # LabTech: reports.view var
+    assert client.get("/api/supplier-prices/overview").status_code == 200

@@ -37,6 +37,13 @@ Satın Alma Planı — Excel çıktısı.
   • "Tedarikçiler" — seçilen + aday firmalar, iletişim, kart adları, K
     "İlişki türleri" (stok kartı / alım / numune / sipariş / eşdeğer kart …).
   • "Ürünler"      — hedef adet, bitmiş stok, kapasite, kısıtlayan malzeme.
+  • "Ürün maliyeti" (16.10.2026; fiyatlı raporda, "Ürünler"den sonra) —
+    üstte ürün özeti (1 adet maliyeti + toplam, fiyatı eksik kalemler) ve
+    TOPLAM; altında ürün × malzeme dökümü (H = IF(G="","",F*G), J = F*I,
+    K = IF(G="","",J*G), ara toplam H = SUM / K = ROUND(SUM,0)); tür
+    bazında maliyet (Σ = planın toplam malzeme maliyeti), fiyatı eksik
+    kalemler, notlar.  Alım listesi'nde ambalaj uyarılı satırın K'si
+    turuncu + uyarı hücre yorumu (X "Not"ta da yazar).
   • "Ürün detayı"  — ürün × malzeme ihtiyaç matrisi (kalem biriminde).
   • "Özet"         — kapsam, toplamlar (net modda GENEL TOPLAM'ın altında
     stoktan / yoldan değer + PLANIN TOPLAM MALZEME MALİYETİ + fiyatsız kalem
@@ -66,19 +73,22 @@ from io import BytesIO
 from typing import Dict, List, Optional
 
 from core.purchase_plan import _amount_near, stock_note
-from core.purchase_pricing import (CURRENCY_SYMBOL, REL_TYPE_TEXT, alt_texts, contact_line, cost_summary_caveats,
-                                   cost_summary_lines, money, notes_lines, offer_tags, order_texts, round6,
-                                   round_half_up, sections, unpriced_offer_text)
+from core.purchase_pricing import (CURRENCY_SYMBOL, KIND_TITLE, REL_TYPE_TEXT, UNIT_TEXT, alt_texts, amount_warn,
+                                   contact_line, cost_overview_view, cost_summary_caveats, cost_summary_lines,
+                                   notes_lines, offer_tags, order_texts, pkg_round_text, product_cost_lines,
+                                   round6, round_half_up, sections, unpriced_offer_text)
 from core.xlsx_cache import inject_cached_values
 
 SHEET_LIST = "Alım listesi"
 SHEET_STOCK = "Stoktan karşılananlar"
 SHEET_SUP = "Tedarikçiler"
 SHEET_PROD = "Ürünler"
+SHEET_COST = "Ürün maliyeti"
 SHEET_DETAIL = "Ürün detayı"
 SHEET_SUMMARY = "Özet"
 
 HEADER_FILL = "E8ECF6"
+WARN_COLOR = "C2410C"         # ambalaj uyarılı Tutar (K) hücresi — turuncu yazı + hücre yorumu
 KIND_TEXT = {"raw": "Hammadde", "packaging": "Ambalaj", "label": "Etiket"}
 GROUP_TEXT = {"list": "Fiyat listesinde var", "none": "Fiyat yok — teklif alınacak"}
 MANUAL_SECTION_TEXT = {"label": "Etiket", "shipping": "Koli / palet", "other": "Diğer"}
@@ -176,9 +186,9 @@ def _note_text(m: dict, cur: str) -> str:
     katına yuvarlanmış miktar + tutar (seçenek açıkken), uyarılar."""
     parts = [unpriced_offer_text(o) + "." for o in m.get("offers") or []
              if o.get("price") is None and o.get("note")]
-    if m.get("pkg_buy") is not None:
-        parts.append(f"Ambalaj katına yuvarlanırsa: {_amount_near(m['pkg_buy'], m['price_unit'])}"
-                     f" · {money(m.get('pkg_amount'), cur)}.")
+    pkg = pkg_round_text(m, cur)          # önizleme / PDF ile aynı metin
+    if pkg:
+        parts.append(pkg + ".")
     parts += [x["text"] for x in m.get("cautions") or []]
     return " ".join(parts)
 
@@ -186,6 +196,7 @@ def _note_text(m: dict, cur: str) -> str:
 # ─── Alım listesi ───────────────────────────────────────────────────────────
 
 def _sheet_list(wb, report: dict, secs: List[dict], cache: Dict[str, object]) -> None:
+    from openpyxl.comments import Comment
     from openpyxl.styles import Font
 
     meta = report.get("meta") or {}
@@ -260,6 +271,13 @@ def _sheet_list(wb, report: dict, secs: List[dict], cache: Dict[str, object]) ->
                 if isinstance(v, (int, float)):
                     ws.cell(r, col).number_format = "0.0000" if v < 1 else "#,##0.00"
             ws.cell(r, 11).number_format = "#,##0"
+            warn = amount_warn(m)
+            if warn:
+                # Ambalaj uyarısı: tutar turuncu, uyarı metni hücre yorumu (X "Not"ta da yazar)
+                ws.cell(r, 11).font = Font(color=WARN_COLOR, bold=True)
+                cm = Comment(_clean(warn), "Minerva 108")
+                cm.width, cm.height = 320, 110
+                ws.cell(r, 11).comment = cm
         if first and any(m.get("price") is not None for m in sec["rows"]):
             last = ws.max_row
             r = _append_as_text(ws, ["", "", f"{sec['no']}. {sec['title']} — toplam"])
@@ -499,6 +517,165 @@ def _sheet_products(wb, report: dict) -> None:
     ws.freeze_panes = "C2"
 
 
+def _sheet_cost(wb, report: dict, cache: Dict[str, object]) -> None:
+    """"Ürün maliyeti" (16.10.2026; "Ürünler"den sonra, fiyatlı raporda).
+
+    Üstte ürün özeti (No · Ürün · Adet · 1 adet maliyeti · Toplam · fiyatı
+    eksik kalem sayısı + adları) ve TOPLAM; altında ürün × malzeme dökümü
+    (`product_cost_lines` — aynı sayılar):
+        F (1 adet için, fiyat biriminde) · G birim fiyat · H = IF(G="","",F*G)
+        I adet · J = F*I (toplam tüketim) · K = IF(G="","",J*G)
+    + ürün başına ara toplam (H = SUM, K = ROUND(SUM, 0)); özetin D/E'si ara
+    toplama bağlanır.  Sonra tür bazında maliyet (Σ = planın toplam
+    malzeme maliyeti), fiyatı eksik kalemler ve notlar
+    (`cost_overview_view`, önizleme / PDF ile aynı metin).  Bütün
+    formüllerin önbellek değeri yazılır."""
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    pr = report.get("pricing") or {}
+    co = pr.get("cost_overview")
+    v = cost_overview_view(report)
+    if not co or not v:
+        return
+    cur = pr.get("currency") or "USD"
+    sym = CURRENCY_SYMBOL.get(cur, cur)
+    bold = Font(bold=True)
+    ws = wb.create_sheet(SHEET_COST, index=wb.sheetnames.index(SHEET_PROD) + 1)
+    prods = co["products"]
+    lines = product_cost_lines(report)
+    by_no: Dict[int, List[dict]] = {}
+    for ln in lines:
+        by_no.setdefault(ln["no"], []).append(ln)
+
+    # Satır yerleşimi önceden: özet (başlık + ürünler + TOPLAM), boş satır,
+    # döküm başlığı, sonra ürün başına satırlar + ara toplam
+    top_first = 2
+    top_total = top_first + len(prods)
+    det_head = top_total + 2
+    sub_row: Dict[int, int] = {}
+    r = det_head
+    for p in prods:
+        ls = by_no.get(p["no"]) or []
+        if ls:
+            r += len(ls) + 1
+            sub_row[p["no"]] = r
+
+    ws.append(["No", "Ürün", "Adet", f"1 adet maliyeti ({sym})", f"Toplam ({sym})", "Fiyatı eksik kalem",
+               "Eksik kalemler"])
+    _style_header(ws)
+    units = 0.0
+    for p in prods:
+        row = _append_as_text(ws, [p["no"], p["name"], p["qty"], None, None, p["missing"],
+                                   ", ".join(p["missing_names"]) or ("Reçetesi yok" if p["recipeless"] else "")])
+        units += float(p["qty"] or 0)
+        sr = sub_row.get(p["no"])
+        if sr and p["priced"]:
+            ws.cell(row, 4).value = f"=H{sr}"
+            cache[f"D{row}"] = p["unit_cost"]
+            ws.cell(row, 5).value = f"=K{sr}"
+            cache[f"E{row}"] = p["total"]
+        ws.cell(row, 3).number_format = "#,##0"
+        ws.cell(row, 4).number_format = "#,##0.00"
+        ws.cell(row, 5).number_format = "#,##0"
+    row = _append_as_text(ws, ["", "TOPLAM", None, None, None])
+    assert row == top_total
+    ws.cell(row, 3).value = f"=SUM(C{top_first}:C{top_total - 1})" if prods else 0
+    ws.cell(row, 5).value = f"=SUM(E{top_first}:E{top_total - 1})" if prods else 0
+    if prods:
+        cache[f"C{row}"] = units
+        cache[f"E{row}"] = co["products_total"]
+    for col in (2, 3, 5):
+        ws.cell(row, col).font = bold
+    ws.cell(row, 3).number_format = ws.cell(row, 5).number_format = "#,##0"
+
+    ws.append([])
+    _append_as_text(ws, ["No", "Ürün", "Malzeme", "Tür", "Birim", "1 adet için", f"Birim fiyat ({sym})",
+                         f"1 adet maliyeti ({sym})", "Adet", "Toplam tüketim", f"Toplam ({sym})", "Tedarikçi",
+                         "Not"])
+    _style_header(ws, det_head)
+    for p in prods:
+        ls = by_no.get(p["no"]) or []
+        if not ls:
+            continue
+        first = ws.max_row + 1
+        h_sum, k_sum = 0.0, 0.0
+        for ln in ls:
+            unit = UNIT_TEXT.get(ln["unit"], ln["unit"])
+            row = _append_as_text(ws, [p["no"], p["name"], ln["name"], KIND_TITLE.get(ln["kind"], ln["kind"]), unit,
+                                       ln["per_unit"], ln["price"], None, ln["qty"], None, None,
+                                       ln.get("supplier") or "",
+                                       ("Fiyat yok — toplama girmedi" if ln["price"] is None else "")
+                                       + (" · ek ambalaj" if ln["extra"] else "")])
+            ws.cell(row, 8).value = f'=IF(G{row}="","",F{row}*G{row})'
+            ws.cell(row, 10).value = f"=F{row}*I{row}"
+            ws.cell(row, 11).value = f'=IF(G{row}="","",J{row}*G{row})'
+            cache[f"H{row}"] = ln["unit_cost"] if ln["unit_cost"] is not None else ""
+            cache[f"J{row}"] = ln["total_qty"]
+            cache[f"K{row}"] = ln["total"] if ln["total"] is not None else ""
+            if ln["unit_cost"] is not None:
+                h_sum += ln["unit_cost"]
+                k_sum += ln["total"]
+            qfmt = "#,##0" if ln["unit"] == "adet" else "#,##0.000###"
+            ws.cell(row, 6).number_format = qfmt
+            ws.cell(row, 10).number_format = qfmt
+            if isinstance(ln["price"], (int, float)):
+                ws.cell(row, 7).number_format = "0.0000" if ln["price"] < 1 else "#,##0.00"
+            ws.cell(row, 8).number_format = "#,##0.0000"
+            ws.cell(row, 9).number_format = "#,##0"
+            ws.cell(row, 11).number_format = "#,##0.00"
+        last = ws.max_row
+        row = _append_as_text(ws, ["", "", f"{p['no']}. {p['name']} — ara toplam"])
+        assert row == sub_row[p["no"]]
+        ws.cell(row, 8).value = f"=SUM(H{first}:H{last})"
+        ws.cell(row, 11).value = f"=ROUND(SUM(K{first}:K{last}),0)"
+        cache[f"H{row}"] = h_sum
+        cache[f"K{row}"] = round_half_up(k_sum) if p["priced"] else 0
+        for col in (3, 8, 11):
+            ws.cell(row, col).font = bold
+        ws.cell(row, 8).number_format = "#,##0.00"
+        ws.cell(row, 11).number_format = "#,##0"
+
+    # Tür bazında maliyet (Σ = planın toplam malzeme maliyeti) — değer, formül yok
+    ws.append([])
+    row = _append_as_text(ws, ["", "Tür bazında maliyet", "", f"Alınacak ({sym})", f"Stoktan ({sym})",
+                               f"Yoldan ({sym})", f"Toplam ({sym})", "Fiyatlı", "Fiyatsız"])
+    _style_header(ws, row)
+    tot_label = "TOPLAM (planın toplam malzeme maliyeti)" if co["net"] else "TOPLAM (alınacakların tutarı)"
+    for c in co["categories"] + [dict(co["total"], label=tot_label)]:
+        row = _append_as_text(ws, ["", c["label"], "", c["buy"], c["stock"], c["open"], c["total"],
+                                   c["priced"], c["unpriced"]])
+        for col in (4, 5, 6, 7):
+            ws.cell(row, col).number_format = "#,##0"
+    ws.cell(row, 2).font = ws.cell(row, 7).font = bold
+    for t in v["caveats"]:
+        _append_as_text(ws, ["", t])
+    # Gereken miktarlar
+    ws.append([])
+    row = _append_as_text(ws, ["", "Gereken miktarlar"])
+    ws.cell(row, 2).font = bold
+    for q in v["quantities"]:
+        _append_as_text(ws, ["", q["label"], q["text"]])
+    # Fiyatı eksik kalemler (tam liste)
+    if v["unpriced"]:
+        ws.append([])
+        row = _append_as_text(ws, ["", f"Fiyatı eksik kalemler ({v['unpriced_count']})", "Tür", "İhtiyaç",
+                                   "Not"])
+        _style_header(ws, row)
+        for u in v["unpriced"]:
+            _append_as_text(ws, ["", u["name"], u["kind"], u["need"], u["note"]])
+    ws.append([])
+    row = _append_as_text(ws, ["", "Notlar"])
+    ws.cell(row, 2).font = bold
+    for t in v["notes"]:
+        _append_as_text(ws, ["", t])
+    for i, w in enumerate((8, 40, 34, 14, 14, 14, 14, 16, 10, 16, 14, 24, 30), start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    # Yalnız A:B (No, Ürün) iki blokta da aynı anlamda — üst blok başlığı
+    # dökümün üstünde donarsa sütun adları yanlış olurdu
+    ws.freeze_panes = "C1"
+
+
 def _sheet_detail(wb, report: dict, cache: Dict[str, object]) -> None:
     from openpyxl.styles import Alignment
     from openpyxl.utils import get_column_letter
@@ -603,6 +780,16 @@ def _sheet_summary(wb, report: dict, secs: List[dict], cur: str) -> None:
         ("Bekletilen kalem", c.get("held")),
         ("Hariç kalem", c.get("excluded")),
     ]
+    # Plan maliyet özeti (16.10.2026) — yalnız YENİ satırlar, eskilerin sırası aynı
+    co = pr.get("cost_overview")
+    cv = cost_overview_view(report) if co else None
+    if co and cv:
+        rows += [(f"Ürün başına maliyet toplamı ({sym})", co["products_total"]),
+                 ("Fiyatı eksik kalem (maliyet özeti)", co["total"]["unpriced"])]
+        rows += [(f"Toplam gereken — {q['label'].lower()}", q["text"]) for q in cv["quantities"]
+                 if q["label"] != "Ürün"]            # ürün / adet yukarıda zaten var
+        if pr.get("package_warned"):
+            rows.append(("Ambalaj uyarılı satır", pr["package_warned"]))
     for k, v in rows:
         r = _append_as_text(ws, [k, v])
         if isinstance(v, (int, float)):
@@ -644,6 +831,8 @@ def build_workbook(report: dict) -> bytes:
     _sheet_stock(wb, report, secs, stock_cache)
     _sheet_suppliers(wb, report, cur)
     _sheet_products(wb, report)
+    cost_cache: Dict[str, object] = {}
+    _sheet_cost(wb, report, cost_cache)
     _sheet_detail(wb, report, detail_cache)
     _sheet_summary(wb, report, secs, cur)
     wb.properties.title = _clean(meta.get("title")) or "Satın Alma Planı"
@@ -651,4 +840,4 @@ def build_workbook(report: dict) -> bytes:
     buf = BytesIO()
     wb.save(buf)
     return inject_cached_values(buf.getvalue(), {SHEET_LIST: list_cache, SHEET_STOCK: stock_cache,
-                                                 SHEET_DETAIL: detail_cache})
+                                                 SHEET_COST: cost_cache, SHEET_DETAIL: detail_cache})

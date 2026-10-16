@@ -565,6 +565,29 @@ def test_per_product_breakdown_sums_to_need():
     assert m["need"] == pytest.approx(m["need_production"] * 1.1)
 
 
+def test_per_product_per_unit_survives_finished_stock_and_extra_packaging():
+    """`per_unit` = 1 adet ürünün brüt tüketimi (reçete firesi + ölçek dahil,
+    alım firesi hariç; kart biriminde): need = per_unit × üretilecek.  Bitmiş
+    stok siparişi tümüyle karşılasa da (need 0) per_unit kalır — ürün başına
+    maliyet hesaplanabilsin (16.10.2026).  Ek ambalaj `per_unit`'i de yazılır."""
+    r = rec(100, "Minerva 108 Krem 50ml", [(1, 10), (3, 1)], target=10, waste=10)
+    res = compute(inputs([OIL, JAR, CREAM], [r]), req([{"recipe_id": 100, "qty": 30, "scale": 2}],
+                                                       extra_waste_pct={"raw": 50}))
+    pp = mat(res, 1)["per_product"][0]
+    assert pp["per_unit"] == pytest.approx(22.0) and pp["need"] == pytest.approx(22.0 * 30)   # 10 × 2 × 1,1
+    assert mat(res, 1)["need"] == pytest.approx(22.0 * 30 * 1.5)                               # alım firesi satırda
+    res = compute(inputs([OIL, JAR, CREAM], [r]), req([{"recipe_id": 100, "qty": 30}], subtract_finished_stock=True))
+    assert res["products"][0]["produce_qty"] == 0
+    for i, per in ((1, 11.0), (3, 1.0)):
+        pp = mat(res, i)["per_product"][0]
+        assert pp["need"] == 0 and pp["per_unit"] == pytest.approx(per)
+    r2 = rec(118, "Maske 200 ml", [(1, 10)], target=None)
+    res = compute(inputs([OIL, JAR], [r2]), req([{"recipe_id": 118, "qty": 10,
+                                                  "extra_packaging": [{"item_id": 3, "per_unit": 2}]}]))
+    jar = mat(res, 3)["per_product"][0]
+    assert jar["extra"] is True and jar["per_unit"] == pytest.approx(2.0) and jar["need"] == pytest.approx(20)
+
+
 def test_subtract_finished_stock():
     inp = base_inputs(default_excluded=(2,))
     res = compute(inp, req([{"recipe_id": 100, "qty": 100}], subtract_finished_stock=True))

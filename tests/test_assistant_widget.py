@@ -40,7 +40,7 @@ WIDGET_RE = re.compile(r'<script src="/static/assistant\.js(\?v=\d+)?" defer></s
 PORTAL = "distributor_portal.html"
 PUBLIC_TEMPLATES = ["login.html", "share.html", "yorum.html", "basvuru.html",
                     "basvuru_claim.html", "pdks_qr.html", "pdks_qr_yazdir.html", PORTAL]
-EXPECTED_INTERNAL = 30          # 29 + templates/asistan.html (13.10.2026)
+EXPECTED_INTERNAL = 31          # 29 + templates/asistan.html (13.10.2026) + templates/fiyatlar.html (16.10.2026)
 NAV_SCRIPT = ROOT / "scripts" / "add_ai_nav.py"
 
 

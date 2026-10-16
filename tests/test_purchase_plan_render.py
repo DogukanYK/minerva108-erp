@@ -18,7 +18,10 @@ Tedarikçiler K "İlişki türleri"); grup stoğu dökümü PDF stok hücresinde
 Excel AA (27.) sütununda (24–26 aynı); stoktan karşılanan değer —
 "Stoktan karşılananlar" sayfası (formül + önbellek + TOPLAM, açık siparişte
 L/M), Alım listesi GENEL TOPLAM'ı değişmez, Özet plan toplamı, PDF "Değer" /
-"stoktan" / "Planın toplam malzeme maliyeti" (brüt modda hiçbiri).
+"stoktan" / "Planın toplam malzeme maliyeti" (brüt modda hiçbiri); ambalaj
+uyarısı (16.10.2026) Alım listesi K turuncu + hücre yorumu, PDF ⚠ + "Not:";
+"Ürün maliyeti" sayfası (formül + önbellek, ara toplam, TOPLAM, tür bazında
+maliyet, eksik kalemler) ve PDF "Maliyet özeti" bölümü.
 Sondaki test `RUSYA_FIXTURE_DIR` varsa Rusya kabul senaryosunu iki çıktıya da
 basar (toplamlar PDF ↔ Excel ↔ rapor aynı).
 """
@@ -40,7 +43,7 @@ from core.purchase_plan_models import PlanRequest
 from core.purchase_plan_pdf import render_pdf
 from core.purchase_plan_xlsx import SHEET_DETAIL, SHEET_LIST, SHEET_STOCK, SHEET_SUP, build_workbook
 from core.purchase_pricing import (OfferRec, OrderRec, PriceInputs, ReceiptRec, SupplierRec, alt_texts, attach,
-                                   money, order_texts)
+                                   money, order_texts, sections)
 from core.xlsx_cache import inject_cached_values
 
 NOW = datetime(2026, 10, 5, 9, 0)
@@ -175,9 +178,10 @@ def test_xlsx_sheets_formulas_and_cached_values():
     res = _report()
     data = build_workbook(res)
     wb = openpyxl.load_workbook(io.BytesIO(data))
-    # "Stoktan karşılananlar" (14.10.2026) net modda Alım listesi'nden hemen sonra
-    assert wb.sheetnames == ["Alım listesi", "Stoktan karşılananlar", "Tedarikçiler", "Ürünler", "Ürün detayı",
-                             "Özet"]
+    # "Stoktan karşılananlar" (14.10.2026) net modda Alım listesi'nden hemen sonra;
+    # "Ürün maliyeti" (16.10.2026) "Ürünler"den sonra
+    assert wb.sheetnames == ["Alım listesi", "Stoktan karşılananlar", "Tedarikçiler", "Ürünler", "Ürün maliyeti",
+                             "Ürün detayı", "Özet"]
     ws = wb[SHEET_LIST]
     assert ws.freeze_panes == "D2"
     r = _row_of(ws, "GLİSERİN")
@@ -222,7 +226,9 @@ def test_xlsx_free_text_never_becomes_formula():
     data = build_workbook(_report())
     allowed = re.compile(r'^(MAX\(0,ROUND\(D\d+-E\d+-F\d+,3\)\)|D\d+|IF\(J\d+="","",ROUND\([GL]\d+\*J\d+,0\)\)'
                          r'|SUM\([A-Z]+\d+:[A-Z]+\d+\)|K\d+(\+K\d+)*'
-                         r'|MIN\(D\d+,E\d+\)|MIN\(F\d+,ROUND\(D\d+-G\d+,6\)\))$')   # + Stoktan karşılananlar
+                         r'|MIN\(D\d+,E\d+\)|MIN\(F\d+,ROUND\(D\d+-G\d+,6\)\)'    # + Stoktan karşılananlar
+                         r'|H\d+|IF\(G\d+="","",[FJ]\d+\*G\d+\)|F\d+\*I\d+'       # + Ürün maliyeti
+                         r'|ROUND\(SUM\(K\d+:K\d+\),0\))$')
     z = zipfile.ZipFile(io.BytesIO(data))
     for n in z.namelist():
         if n.startswith("xl/worksheets/sheet"):
@@ -272,7 +278,11 @@ def test_xlsx_package_rounding_written_and_decimal_manual_qty():
     assert gl["pkg_buy"] == 25 and gl["pkg_amount"] == 109
     wb = openpyxl.load_workbook(io.BytesIO(build_workbook(res)))
     ws = wb[SHEET_LIST]
-    assert ws.cell(_row_of(ws, "GLİSERİN"), 24).value == "Ambalaj katına yuvarlanırsa: 25,0 kg · 109 $."
+    # Not: ambalaj katı satırı + ambalaj uyarısı (9,5 kg < 25 kg'ın yarısı; seçenek açık →
+    # "tam ambalaj alınırsa" eki yok, yuvarlanmış satır zaten yazıyor)
+    assert ws.cell(_row_of(ws, "GLİSERİN"), 24).value == (
+        "Ambalaj katına yuvarlanırsa: 25,0 kg · 109 $. Bu fiyat 25 kg'lık ambalaj için; alınacak 9,5 kg. "
+        "Bu miktarda birim fiyat daha yüksek olabilir — bu miktara özel fiyat alınmalı.")
     r = _row_of(ws, "Koli bandı")
     assert ws.cell(r, 7).value == 2.5 and ws.cell(r, 7).number_format == "#,##0.0#"
     assert ws.cell(_row_of(ws, "Koli"), 7).number_format == "#,##0"
@@ -575,3 +585,100 @@ def test_xlsx_group_stock_column_aa_after_existing_columns():
     assert ws.cell(r, 5).value == pytest.approx(24.8)                          # E = elimizde (grup dahil)
     assert ws[f"G{r}"].value == f"=MAX(0,ROUND(D{r}-E{r}-F{r},3))"            # formüller kaymadı
     assert ws.column_dimensions["AA"].width == 50
+
+
+# ─── Ambalaj uyarısı + "Ürün maliyeti" / "Maliyet özeti" (16.10.2026) ───────
+
+def test_xlsx_amount_warn_k_cell_orange_with_comment_total_unchanged():
+    """GLİSERİN 9,5 kg ve SHEA 5 kg alınacak, fiyatlar 25 kg ambalaj için →
+    K turuncu + uyarı hücre yorumu; formül ve GENEL TOPLAM aynı."""
+    from core.purchase_plan_xlsx import WARN_COLOR
+    from core.purchase_pricing import amount_warn
+    res = _report()
+    gl = _mat(res, "GLİSERİN")
+    assert amount_warn(gl).startswith("Bu fiyat 25 kg'lık ambalaj için; alınacak 9,5 kg.")
+    data = build_workbook(res)
+    ws = openpyxl.load_workbook(io.BytesIO(data))[SHEET_LIST]
+    wv = openpyxl.load_workbook(io.BytesIO(data), data_only=True)[SHEET_LIST]
+    r = _row_of(ws, "GLİSERİN")
+    k = ws[f"K{r}"]
+    assert k.value == f'=IF(J{r}="","",ROUND(G{r}*J{r},0))' and wv[f"K{r}"].value == gl["amount"]
+    assert k.font.color.rgb.endswith(WARN_COLOR) and k.comment.text == amount_warn(gl)
+    assert amount_warn(gl) in ws.cell(r, 24).value                         # X "Not" da yazar
+    ru = _row_of(ws, "GÜL ABSOLÜ")                                          # fiyatsız → işaret yok
+    assert ws[f"K{ru}"].comment is None
+    tot = next(x for x in range(2, ws.max_row + 1) if ws.cell(x, 3).value == "GENEL TOPLAM (fiyatı belli olanlar)")
+    assert wv[f"K{tot}"].value == res["pricing"]["totals"]["all"] == 83
+
+
+def test_xlsx_cost_sheet_formulas_cached_values_and_totals():
+    from core.purchase_plan_xlsx import SHEET_COST
+    from core.purchase_pricing import product_cost_lines
+    res = _report()
+    co = res["pricing"]["cost_overview"]
+    p = co["products"][0]
+    # Eksik: fiyatsız malzemeler + ürünün yeni etiketi (label_mode="new")
+    assert p["total"] == 85 and p["unit_cost"] == pytest.approx(0.0852) and p["missing"] == 4
+    assert p["missing_names"][-1].endswith("— Gece Kremi 50 ml")
+    assert co["plan_total"] == res["pricing"]["cost_summary"]["plan_total"] == 85
+    data = build_workbook(res)
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    wv = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+    assert wb.sheetnames.index(SHEET_COST) == wb.sheetnames.index("Ürünler") + 1
+    ws, sv = wb[SHEET_COST], wv[SHEET_COST]
+    assert ws.freeze_panes == "C1"          # yalnız No / Ürün: iki blokta da aynı anlam
+    assert [ws.cell(1, c).value for c in range(1, 8)] == ["No", "Ürün", "Adet", "1 adet maliyeti ($)", "Toplam ($)",
+                                                          "Fiyatı eksik kalem", "Eksik kalemler"]
+    assert (ws["A2"].value, ws["B2"].value, ws["C2"].value) == (1, "Gece Kremi 50 ml", 1000)
+    sub = next(r for r in range(2, ws.max_row + 1) if ws.cell(r, 3).value == "1. Gece Kremi 50 ml — ara toplam")
+    assert ws["D2"].value == f"=H{sub}" and ws["E2"].value == f"=K{sub}"
+    assert sv["D2"].value == pytest.approx(p["unit_cost"]) and sv["E2"].value == 85
+    assert ws["B3"].value == "TOPLAM" and ws["E3"].value == "=SUM(E2:E2)" and sv["E3"].value == co["products_total"]
+    assert ws["G2"].value == ", ".join(p["missing_names"])
+    # Döküm: H = IF(G="","",F*G), J = F*I, K = IF(G="","",J*G) — önbellek product_cost_lines ile aynı
+    lines = product_cost_lines(res)
+    rows = [r for r in range(2, sub) if ws.cell(r, 3).value in {x["name"] for x in lines} and ws.cell(r, 9).value]
+    assert len(rows) == len(lines)
+    for r, ln in zip(rows, lines):
+        assert ws[f"H{r}"].value == f'=IF(G{r}="","",F{r}*G{r})' and ws[f"J{r}"].value == f"=F{r}*I{r}"
+        assert ws[f"K{r}"].value == f'=IF(G{r}="","",J{r}*G{r})'
+        assert ws[f"F{r}"].value == pytest.approx(ln["per_unit"]) and ws[f"I{r}"].value == 1000
+        assert sv[f"J{r}"].value == pytest.approx(ln["total_qty"])
+        if ln["total"] is None:                                                  # fiyatsız → boş sonuç
+            assert sv[f"K{r}"].value in (None, "") and sv[f"H{r}"].value in (None, "")
+        else:
+            assert sv[f"K{r}"].value == pytest.approx(ln["total"])
+    gl = next(r for r, ln in zip(rows, lines) if ln["name"] == "GLİSERİN")
+    assert sv[f"H{gl}"].value == pytest.approx(0.0452) and sv[f"K{gl}"].value == pytest.approx(45.2)
+    assert ws[f"H{sub}"].value == f"=SUM(H{rows[0]}:H{rows[-1]})"
+    assert ws[f"K{sub}"].value == f"=ROUND(SUM(K{rows[0]}:K{rows[-1]}),0)" and sv[f"K{sub}"].value == 85
+    # Tür bazında maliyet: TOPLAM = planın toplam malzeme maliyeti; eksik kalemler tam liste
+    tr = next(r for r in range(2, ws.max_row + 1) if ws.cell(r, 2).value == "TOPLAM (planın toplam malzeme maliyeti)")
+    assert ws.cell(tr, 7).value == 85 and ws.cell(tr, 9).value == co["total"]["unpriced"]
+    texts = [ws.cell(r, 2).value for r in range(1, ws.max_row + 1)]
+    assert f"Fiyatı eksik kalemler ({len(co['unpriced'])})" in texts and "=1+1 koli" in texts
+    assert ws.cell(texts.index("=1+1 koli") + 1, 2).data_type == "s"           # serbest metin formül olmaz
+    for n in zipfile.ZipFile(io.BytesIO(data)).namelist():                       # önbelleksiz formül yok
+        if n.startswith("xl/worksheets/sheet"):
+            assert not re.search(r"<f>[^<]*</f><v ?/>", zipfile.ZipFile(io.BytesIO(data)).read(n).decode()), n
+    # Özet: yalnız yeni satırlar (eski sıra aynı), Alım listesi GENEL TOPLAM aynı
+    oz = {r[0].value: r[1].value for r in wv["Özet"].iter_rows(min_row=2) if r[0].value}
+    assert oz["Ürün başına maliyet toplamı ($)"] == 85 and oz["Ambalaj uyarılı satır"] == 2
+    assert oz["Fiyatı eksik kalem (maliyet özeti)"] == co["total"]["unpriced"]
+    labels = [r[0].value for r in wv["Özet"].iter_rows(min_row=2)]
+    assert labels.index("Hariç kalem") < labels.index("Ürün başına maliyet toplamı ($)")
+
+
+def test_pdf_cost_section_and_amount_warn_mark():
+    res = _report()
+    _, text = _pdf_text(render_pdf(res))
+    assert "Maliyet özeti (1 ürün, 1.000 adet — malzeme maliyeti 85 $)" in text
+    assert "Ürün başına maliyet" in text and "Gereken miktarlar" in text and "Fiyatı eksik kalemler (6)" in text
+    assert "Gece Kremi 50 ml 1.000 0,09 $ 85 $" in text                      # 1 adet 0,0852 → 0,09
+    assert "Bu fiyat 25 kg'lık ambalaj için; alınacak 9,5 kg." in text      # "Not:" satırı
+    secs = [s["key"] for s in sections(res)]
+    no = secs.index("cost") + 1
+    assert f"{no}. Maliyet özeti" in text and f"{no - 1}. Ürünler, hedef adetler ve kapasite" in text
+    # Brüt modda da bölüm var, stok değeri dili yok
+    _, gtext = _pdf_text(render_pdf(_report(mode="gross")))
+    assert "Maliyet özeti" in gtext and "Stoktan" not in gtext.split("Maliyet özeti", 1)[1].split("Notlar")[0]

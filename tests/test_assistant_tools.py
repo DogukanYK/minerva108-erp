@@ -240,6 +240,8 @@ HELP_CASES = {
     "kartları aynı malzeme olarak grupla": "ayni_malzeme_gruplari",
     "tedarikçi fiyat": "tedarikci_tercihleri_ve_fiyat",
     "tedarikçiyi bitirilecek yap": "tedarikci_tercihleri_ve_fiyat",
+    "fiyatı olmayan malzemeleri nerede görürüm": "tedarikci_tercihleri_ve_fiyat",
+    "plandaki maliyet sekmesi": "satin_alma_plani",
     "satın alma planı": "satin_alma_plani",
     "alım listesi excel indir": "satin_alma_plani",
     "şahit numune": "sahit_numune_dolabi",

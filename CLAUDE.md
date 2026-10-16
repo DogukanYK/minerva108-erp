@@ -512,6 +512,44 @@ alış faturası fiyatları SONRAKİ AŞAMA. Testler `tests/test_purchase_plan_a
 (+ `_engine`, `_render`, `_acceptance` — sonuncusu `RUSYA_FIXTURE_DIR` ile
 açılır) ve `tests/test_purchase_pricing.py`.
 
+**Ambalaj uyarısı — iki yönlü** (16.10.2026; "76 gr'a 2 $ diye", ABD planında TIBBI
+LAVANTA UÇUCU YAĞI 26 g × 40,5 $/kg (25 kg ambalaj fiyatı) → 1 $). `_price_row` seçilen teklifin
+ambalajını `price_package` / `price_package_unit` (FİYAT biriminde) yazar;
+`package_caution(m, round_to_package, cur)` (İDEMPOTENT, yalnız alınacak + fiyatlı +
+ambalajlı satır) `display.buy_num`'u ambalajla doğrudan karşılaştırır (kg↔l 1:1):
+alınacak **< 0,5 ×** ambalaj → `package_small` ("Bu fiyat 25 kg'lık ambalaj için;
+alınacak <buy_text>. Bu miktarda birim fiyat daha yüksek olabilir — bu miktara özel
+fiyat alınmalı" + seçenek kapalıyken "(tam ambalaj alınırsa X $)"); **≥ 2 ×** →
+`package_large` ("… daha düşük olabilir — bu miktar için fiyat istenmeli"); tam 0,5×
+uyarısız, tam 2× uyarılı. `amount` / `totals` / GENEL TOPLAM DEĞİŞMEZ; satır notuna
+tek satır, `summary.warnings` yeniden sayılır, `pricing.package_warned`. Tutar'ın
+yanında ⚠ (`amount_warn(m)` metni): önizleme `ui.amount_warn` (title), PDF kırmızı ⚠
+(Arial'de glif yok → DejaVu → Apple Symbols → "!") + "Not:" satırı, Excel K turuncu
+kalın + hücre yorumu + X "Not". "Ambalaj katına yuvarlanırsa" metni tek yerde
+(`pkg_round_text`).
+
+**Maliyet özeti** (16.10.2026, "Amerika siparişinin toplamı"; `pricing.cost_overview`
+= `cost_overview(result)`, metinler `cost_overview_view` — önizleme "Maliyet" sekmesi,
+PDF "Maliyet özeti" bölümü (sections `cost`, `products`'tan sonra, fiyatsız raporda
+yok), Excel "Ürün maliyeti" sayfası aynı metni basar). Tür bazında (hammadde / ambalaj /
+etiket) alınacak + stoktan + yoldan; **Σ tür = `cost_summary.plan_total`** (brüt modda
+`totals.all`; brüt dilde "değer / yenileme değeri" YOK). Değer bugünkü teklif fiyatı
+(yenileme değeri). Sayılan satır = alınacak ya da bu planda stoktan/yoldan kullanılan;
+fiyatsız SAYILIR, toplanmaz. Ürün başına: `compute` her `per_product`'a `per_unit`
+(1 adet tüketimi, fire dahil) yazar → `product_cost_lines` (fiyat biriminde; g/ml
+×0,001) → 1 adet maliyeti × sipariş adedi (ürün toplamı round_half_up); yeni etiket
+(`labels_new`, `no` ile) o ürünün `missing`/`missing_names`'ine de yazılır. Fiyatı
+eksik kalemler `/fiyatlar?q=<ad>` bağlantılı (`price_link`) — yeni etiket, serbest
+satır (koli/palet/diğer → ambalaj) ve kit bileşeni **Bitmiş Ürün** kartı bağlantısız
+(`UNPRICED_NOTE`); önizlemede bağlantı yeni sekmede, `suppliers.prices` yoksa "Fiyatlara
+bak →". Gereken miktar toplamları (kg/l/adet, yeni etiket, serbest satır). Ürün
+toplamları plan toplamına YAKLAŞIK eşittir (güvenli yuvarlama, alım firesi, satır başına
+tam para birimi; `pkg_amount` ikisine de girmez; bitmiş ürün stoğu düşülünce ürün
+toplamı sipariş adedi üzerinden — notlarda). Excel "Ürün maliyeti": üstte ürün özeti
+(`D=H{ara}`, `E=K{ara}`, TOPLAM), altta ürün × malzeme dökümü (`H=IF(G="","",F*G)`,
+`J=F*I`, `K=IF(G="","",J*G)`, ara toplam `H=SUM`, `K=ROUND(SUM,0)`), önbellekli;
+`freeze_panes="C1"` (iki blokta yalnız A:B aynı). Özet'e yalnız yeni satırlar.
+
 **"Aynı malzeme" grupları + hedefli numune çevirme + lot taşıma** (2026-10-06).
 Lab'ın düzeni: aynı malzemenin her TEDARİKÇİSİ AYRI KART (kopya-kart popup'ında
 "ayrı kalsın" kararları; ör. SETİL STEARİL ALKOL / CETYL STEARYL ALCOHOL /
@@ -849,7 +887,7 @@ eklerken güvenlik başlıklarını oraya da yazdığını `curl -sI` ile DOĞRU
 **Minerva Asistan** (`core/assistant/`, `routers/assistant.py`, `static/assistant.js`,
 `docs/assistant/*.md`, `templates/admin.html` kartı) — IMS içi, **yalnız okuma** yapan
 Claude tabanlı soru-cevap + nasıl-yapılır asistanı (üst çubukta "Ara ya da sor" kutusu +
-yan cevap paneli, sol menüde "Yapay Zekâ" bölümü, `/asistan` sayfası; 29 iç sayfa +
+yan cevap paneli, sol menüde "Yapay Zekâ" bölümü, `/asistan` sayfası; 30 iç sayfa +
 `asistan.html`, public/kiosk/portal yollarında yok). SDK `anthropic==0.125.0` (son Py3.9 uyumlu
 seri; typed olmayan alanlar `extra_body`), model varsayılan Opus 5.5 / efor `low`.
 
@@ -1121,7 +1159,7 @@ Kâr motoru (`core/trendyol_profit.py`, Özet/Ürün Kârlılığı sekmeleri) T
   Bildirim (`alerts_due` → `notify_trendyol_sync_failure`, yöneticilere): kimlik hatası
   ilk seferde, orders/catalog üst üste 3 hatada, finans ilk hatada; en sık 24 sa'te bir;
   başarı sayacı sessizce sıfırlar.
-- **Nav** `scripts/add_trendyol_nav.py` (idempotent, Satın Alma linkinin altı,
+- **Nav** `scripts/add_trendyol_nav.py` (idempotent, Malzeme Fiyatları linkinin altı — yoksa Satın Alma,
   `trendyol.view` kapılı; CRM atlanır).  Testler `tests/test_trendyol_{client,sync,api}.py`
   (`tests/trendyol_fakes.py` — sahte API, AĞ YOK).
 - **Yayına alma:** anahtarlar prod `.env`'e (sohbete yapıştırılmaz) → `./deploy.sh` →
@@ -1473,6 +1511,28 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   açık malzeme tercihi işlemi durdurur. Yeni firma/stok/minimum değiştirmez.
   `import_prices` (Stok Son Durum) lab satırlarını silmez; aynı firmanın Excel
   satırını yalnız ELLE (`manual`) satır engeller — lab + Stok Son Durum yan yana kalır.
+  **Malzeme Fiyatları sayfası** (`/fiyatlar`, 16.10.2026; `core/price_overview.py`,
+  `templates/fiyatlar.html` + `static/fiyatlar.js`): rapor almadan fiyatlara bakış.
+  `GET /api/supplier-prices/overview?currency=USD|EUR|TRY&q=&category=all|hammadde|
+  ambalaj|etiket|other&has_price=all|priced|unpriced&source=all|manual|stok_son_durum|lab`
+  (geçersiz süzgeç 400 metin `detail`, q>100 → 422); sayfa ve uç `reports.view` + panel,
+  ekle/düzenle/sil `suppliers.prices` (paylaşılan `SupplierPriceForm`). Grup (≥2 görünür
+  kart) → kart → satır; aktif, bitmiş ürün HARİÇ; elle fiyat aynı firmanın Excel/lab
+  satırını gizler (`firm_keys`, sayı kartta). Durum planın kuralıyla (`_status_ctx` /
+  `_row_prefs` / `_offer_status`: normal/preferred/phase_out/avoid/skip/inactive);
+  net = KDV düşülmüş → alım birimi → seçilen para birimi (kur YALNIZ başka para birimli
+  satır varsa, bir kez; alınamazsa "kur yok"); "en ucuz" karşılaştırılabilir satırlarda
+  (aynı fiyat birimi, kur), "planda seçilir" planın seçimi — planın OTOMATİK birleştirdiği
+  ikiz kartlarda (`plan_merge_twins` → `purchase_plan.merge_map`) küme başına bir kez,
+  fiyatsız ikizi fiyatlı kart "fiyatı olmayanlar"a girmez. Fiyatsız: hammadde/ambalaj/
+  etiket; "diğer" (Kimyasal/Yardımcı/boş) arama ya da `category=other` ile (plan onları
+  hammadde sayıp bağlantı verir). `?q=` aramayı doldurur, durum "Hepsi". TR biçim
+  sunucuda; DOM `textContent`. Nav `scripts/add_fiyatlar_nav.py` (idempotent, Satın
+  Alma'nın altı, `reports.view`); Trendyol linki artık onun altına (sıra Satın Alma →
+  Malzeme Fiyatları → Trendyol); asistan `PAGES`'te kayıtlı. **`package_size` FİYAT
+  birimindedir** (canlıdaki 93 satır kg/l: 1/5/15/20/25/170/180/220): fiyat formunda
+  ambalaj etiketi seçilen birimi izler ("(kg)" / "(litre)" / "(adet)"), listeler
+  `SPF.packageText` ile "25 kg" yazar — kartın g/ml birimi yazılmaz; veri göçü YOK.
   **Para birimi karışık malzeme** (lab notları EUR/TRY + Stok Son Durum USD):
   `prices_for_items(..., rates=today_rates_or_none)` (Excel uçları) sıralamayı
   net fiyatın USD karşılığıyla yapar (kur yalnız karışık malzeme varsa, bir

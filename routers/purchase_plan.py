@@ -277,26 +277,27 @@ def _sup_lines(m: dict, cur: str) -> List[dict]:
     [{t: metin, s: 'b' kalın | 'g' gri | 'r' kırmızı}].  Teklif satırları
     (seçilen kalın; "tercih" / "eşdeğer kart «X»" / " — bitirilecek, alma"
     etiketleri) `purchase_pricing.offer_lines`'tan — PDF ile tek kaynak."""
-    from core.purchase_plan import _amount_near
-    from core.purchase_pricing import money, offer_lines, relation_texts
+    from core.purchase_pricing import offer_lines, pkg_round_text, relation_texts
     out: List[dict] = [{"t": t, "s": st} for t, st in offer_lines(m, cur)]
     # İlişkiler (stok kartı / son alım / numune · Sipariş: · Aynı malzeme:) — PDF ile tek kaynak
     out += [{"t": t, "s": "g"} for t in relation_texts(m)]
-    if m.get("pkg_buy") is not None:
-        out.append({"t": f"Ambalaj katına yuvarlanırsa: {_amount_near(m['pkg_buy'], m['price_unit'])}"
-                         f" · {money(m.get('pkg_amount'), cur)}", "s": "g"})
+    pkg = pkg_round_text(m, cur)          # PDF / Excel "Not" ile aynı metin
+    if pkg:
+        out.append({"t": pkg, "s": "g"})
     return out
 
 
 def _preview_view(res: dict) -> dict:
     """Önizleme yanıtı: rapor + `sections` (malzeme bölümlerinde `row_keys`)
     + malzeme başına sunucuda biçimlenmiş `ui` (tedarikçi hücresi, tutar,
-    `stock_note` = grup stoğu kart dökümü, stoktan / yoldan karşılanan değer
-    + dayanağı) + `pricing.cost_summary.lines` / `.caveats` (özet kutusu) —
-    TR sayı biçimi tek kaynakta (Python) kalsın, JS yeniden yazmasın."""
+    `amount_warn` = ambalaj uyarısı, `stock_note` = grup stoğu kart dökümü,
+    stoktan / yoldan karşılanan değer + dayanağı) + `pricing.cost_summary.
+    lines` / `.caveats` (özet kutusu) + `pricing.cost_overview.view`
+    ("Maliyet" sekmesi) — TR sayı biçimi tek kaynakta (Python) kalsın, JS
+    yeniden yazmasın."""
     from core.purchase_plan import stock_note
-    from core.purchase_pricing import (cost_summary_caveats, cost_summary_lines, cover_text, cover_value,
-                                       firms_view, money, sections, value_basis_text)
+    from core.purchase_pricing import (amount_warn, cost_overview_view, cost_summary_caveats, cost_summary_lines,
+                                       cover_text, cover_value, firms_view, money, sections, value_basis_text)
     pr = res.get("pricing") or {}
     cur = pr.get("currency") or "USD"
 
@@ -307,6 +308,8 @@ def _preview_view(res: dict) -> dict:
         used = (m.get("stock_qty_used") or 0) > 0 or (m.get("open_qty_used") or 0) > 0
         m["ui"] = {"sup": _sup_lines(m, cur),
                    "amount": money(m["amount"], cur) if m.get("amount") is not None else None,
+                   # Ambalaj uyarısı (package_small / package_large) — Tutar'ın yanında ⚠ + ipucu
+                   "amount_warn": amount_warn(m),
                    # Stoktan / yoldan karşılanan değer (net mod) + dayanağı ("UMAYCHEM · 4,52 $/kg" /
                    # "Fiyat yok") — "Yeterli" sekmesinin "Değer" sütunu ve Tutar altındaki soluk satırlar
                    "stock_value": _m(m.get("stock_value")), "open_value": _m(m.get("open_value")),
@@ -324,7 +327,8 @@ def _preview_view(res: dict) -> dict:
         d = {k: v for k, v in s.items() if k != "rows"}
         if s["key"] in _MATERIAL_SECTIONS:
             d["row_keys"] = [m["key"] for m in s["rows"]]
-        elif s["key"] == "products":
+        elif s["key"] in ("products", "cost"):
+            # "cost": satırlar `pricing.cost_overview` (+ `.view`) içinde — iki kez taşınmasın
             d["row_nos"] = [p["no"] for p in s["rows"]]
         else:
             d["rows"] = s["rows"]
@@ -335,6 +339,9 @@ def _preview_view(res: dict) -> dict:
     if pr.get("cost_summary") is not None:
         pr["cost_summary"]["lines"] = cost_summary_lines(res)
         pr["cost_summary"]["caveats"] = cost_summary_caveats(res)
+    if pr.get("cost_overview") is not None:
+        # "Maliyet" sekmesi — metinler sunucu biçimli (PDF / Excel ile aynı)
+        pr["cost_overview"]["view"] = cost_overview_view(res)
     return res
 
 

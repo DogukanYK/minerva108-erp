@@ -105,6 +105,19 @@ def test_tr_num_and_page_score():
     assert S.page_score(teslimat, "recete", ["recete"]) == 0
 
 
+def test_price_page_in_registry_after_purchase_plan():
+    """Malzeme Fiyatları (/fiyatlar) sol menüde Satın Alma'nın altında —
+    sayfa araması da onu önerir ("teklif" B2B Teklifler'in kelimesi)."""
+    hrefs = [p.href for p in S.PAGES]
+    assert hrefs.index("/fiyatlar") == hrefs.index("/satin-alma") + 1
+    page = S.PAGES[hrefs.index("/fiyatlar")]
+    assert page.label == "Malzeme Fiyatları" and page.perm == ("reports", "view") and page.icon == "bi-tags"
+    from core.supplier_prices import normalize
+    assert S.page_score(page, normalize("malzeme fiy"), S._tokens("malzeme fiy")) == 3
+    assert S.page_score(page, "birim fiyat", ["birim", "fiyat"]) == 2
+    assert "teklif" not in page.keywords
+
+
 def test_page_registry_matches_page_route_guards():
     """Her kayıt api_main'deki sayfa route'unun `_user_can` kapısıyla aynı
     (route'u değiştiren burayı da güncellemek zorunda kalsın — kullanıcıya

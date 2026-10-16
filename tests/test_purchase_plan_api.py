@@ -17,7 +17,8 @@ sayfa render + script dosyası; "aynı malzeme" grubu önizlemede (ui.sup
 aktarmada; grup stoğu (ui.stock_note, "— stoğu sayıldı", eski senaryo açık,
 üretimde kaynak seçimi kapalıyken seçenek kapanır + source_choice_disabled);
 stoktan karşılanan değer (ui.stock_value / value_basis, cost_summary.lines /
-caveats, "Yeterli" total_text; brüt modda yok).
+caveats, "Yeterli" total_text; brüt modda yok); ambalaj uyarısı ui.amount_warn
++ maliyet özeti `pricing.cost_overview.view` ("Maliyet" sekmesi, 16.10.2026).
 """
 from datetime import datetime, timedelta
 
@@ -696,3 +697,52 @@ def test_satin_alma_page_requires_login(client: TestClient):
 def test_reports_page_links_to_satin_alma(authed_client: TestClient):
     html = authed_client.get("/reports").text
     assert 'href="/satin-alma"' in html and "Gelişmiş: Satın Alma Planı" in html
+
+
+# ─── Ambalaj uyarısı + maliyet özeti (16.10.2026) ───────────────────────────
+
+def test_preview_amount_warn_and_cost_overview_view(authed_client: TestClient, db_session: Session):
+    """GLİSERİN 2,8 kg alınacak, fiyat 25 kg ambalaj için → `ui.amount_warn`
+    + uyarı satırı (tutar aynı); `pricing.cost_overview.view` sunucu biçimli
+    ("Maliyet" sekmesi); "cost" bölümü satırsız (`row_nos`); iki dışa aktarma 200."""
+    ids = _seed(db_session)
+    r = authed_client.post("/api/purchase-plan/preview", json=_req(ids, qty=100), headers=_HDR)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    mats = {m["item_id"]: m for m in d["materials"]}
+    gli, jar = mats[ids["gli"]], mats[ids["jar"]]
+    assert gli["amount"] == 13 and d["pricing"]["totals"]["all"] == 13              # değişmedi
+    warn = ("Bu fiyat 25 kg'lık ambalaj için; alınacak 2,8 kg. Bu miktarda birim fiyat daha yüksek olabilir — "
+            "bu miktara özel fiyat alınmalı (tam ambalaj alınırsa 113 $).")
+    assert gli["ui"]["amount_warn"] == warn
+    assert any(c["code"] == "package_small" and c["text"] == warn for c in gli["cautions"])
+    assert jar["ui"]["amount_warn"] is None
+    co = d["pricing"]["cost_overview"]
+    assert co["plan_total"] == d["pricing"]["cost_summary"]["plan_total"] == 15
+    assert sum(c["total"] for c in co["categories"]) == 15
+    v = co["view"]
+    assert v["summary"] == "1 ürün, 100 adet — malzeme maliyeti 15 $"
+    assert v["total_row"]["total"] == "15 $" and v["unpriced_count"] == 1
+    assert v["unpriced"][0]["name"] == "50 ML KAVANOZ cosmetics" and v["unpriced"][0]["link"].startswith("/fiyatlar?q=")
+    p = v["products"][0]
+    assert p["unit_cost"] == "0,15 $" and p["total"] == "15 $" and p["missing"] == "eksik: 1 kalem"   # 33 g × 4,52
+    sec = next(s for s in d["sections"] if s["key"] == "cost")
+    assert sec["title"] == "Maliyet özeti" and "rows" not in sec and sec["row_nos"] == [1]
+    for fmt in ("pdf", "xlsx"):
+        x = authed_client.post(f"/api/purchase-plan/export?format={fmt}", json=_req(ids, qty=100), headers=_HDR)
+        assert x.status_code == 200, (fmt, x.text[:200])
+    # Brüt mod: özet yine var, stok sütunu yok
+    d = authed_client.post("/api/purchase-plan/preview", json=_req(ids, qty=100, stock_mode="gross"),
+                           headers=_HDR).json()
+    v = d["pricing"]["cost_overview"]["view"]
+    assert v["show_stock"] is False and d["pricing"]["cost_overview"]["plan_total"] == d["pricing"]["totals"]["all"]
+
+
+def test_satin_alma_page_loads_current_script_version(authed_client: TestClient):
+    html = authed_client.get("/satin-alma").text
+    assert "/static/satin-alma.js?v=6" in html
+    js = authed_client.get("/static/satin-alma.js").text
+    assert "amount_warn" in js and "cost_overview" in js and "Fiyat gir →" in js
+    # Fiyat bağlantısı yeni sekmede (önizleme kaybolmasın); fiyat giremeyene "bak"
+    assert 'target="_blank" rel="noopener"' in js and "Fiyatlara bak →" in js
+    assert "window.can('suppliers', 'prices')" in js

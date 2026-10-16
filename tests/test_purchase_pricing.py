@@ -31,6 +31,12 @@ kalır), kısmi satırda kullanılan stok, fiyatsız sayılır/toplanmaz, beklet
 ve brüt mod almaz, açık siparişte stok + yolda + alınacak = gereken, plan
 toplamı `amount` ile (ambalaj katı değil), yeterli bölüm toplamı + nötr
 "Fiyat yok".
+Ambalaj uyarısı (16.10.2026): küçük / büyük, sınırlar (tam 0,5× yok, tam 2×
+var), ambalajsız / yeterli / bekletilen / fiyatsız satır almaz, litre kart +
+kg fiyatı, ambalaj katı açıkken "tam ambalaj" eki yok, idempotent, tutar ve
+toplam aynı.  Plan maliyet özeti: tür toplamı = plan_total, birleşik kartlar,
+iki ürünün paylaştığı malzeme, bitmiş stok düşümü, brüt mod, reçetesiz ürün,
+eksik kalem bağlantıları, "cost" bölümü "products"tan sonra.
 """
 from datetime import date, datetime
 
@@ -271,7 +277,7 @@ def test_sections_order_numbering_and_skip_empty():
     secs = sections(res)
     keys = [s["key"] for s in secs]
     assert keys == ["raw_priced", "raw_unpriced", "pkg_unpriced", "new_items", "suppliers", "candidates",
-                    "checklist", "products", "sufficient", "notes"]
+                    "checklist", "products", "cost", "sufficient", "notes"]
     assert [s["no"] for s in secs] == list(range(1, len(secs) + 1))
     assert secs[0]["title"] == "Hammadde — fiyat listesinde olanlar" and secs[0]["total"] == 8
     assert secs[0]["summary"] == "1 kalem, toplam 8 $"
@@ -1393,3 +1399,246 @@ def test_cover_values_unsafe_rounding_never_exceeds_need():
     d = m["display"]
     assert (d["need_num"], d["stock_num"], d["buy_num"]) == (11, 3, 8)
     assert m["stock_qty_used"] == min(d["need_num"], d["stock_num"]) == 3 and m["stock_value"] == 30
+
+
+# ─── Ambalaj uyarısı (16.10.2026) ───────────────────────────────────────────
+
+def _pkg_codes(m):
+    return [c["code"] for c in m["cautions"] if c["code"] in ("package_small", "package_large")]
+
+
+def _pkg_text(m):
+    return next(c["text"] for c in m["cautions"] if c["code"] in ("package_small", "package_large"))
+
+
+def test_package_small_and_large_cautions_amount_unchanged():
+    """TIBBI LAVANTA vakası: 26 g × 40,5 $/kg (25 kg ambalaj) → 1 $; uyarı
+    "birim fiyat daha yüksek olabilir" + tam ambalaj tutarı.  60 kg alınacak
+    25 kg ambalaj fiyatıyla → "daha düşük olabilir".  Tutar / toplam aynı."""
+    from core.purchase_pricing import amount_warn, package_caution
+    items = [it(1, "TIBBI LAVANTA UÇUCU YAĞI"), it(2, "GLİSERİN"), it(3, "ORTA")]
+    res = plan(items, [(1, 0.026), (2, 60), (3, 30)])
+    pin = PriceInputs(offers={1: [offer(1, "AROMA", 40.5, pkg=25)], 2: [offer(2, "UMAYCHEM", 2.0, pkg=25)],
+                              3: [offer(3, "S", 2.0, pkg=25)]})
+    attach(res, pin, None)
+    lav, gli, orta = mat(res, 1), mat(res, 2), mat(res, 3)
+    assert lav["amount"] == 1 and lav["price_package"] == 25 and lav["price_package_unit"] == "kg"
+    assert _pkg_codes(lav) == ["package_small"]
+    assert _pkg_text(lav) == ("Bu fiyat 25 kg'lık ambalaj için; alınacak 26 gram. Bu miktarda birim fiyat daha "
+                              "yüksek olabilir — bu miktara özel fiyat alınmalı (tam ambalaj alınırsa 1.013 $).")
+    assert amount_warn(lav) == _pkg_text(lav)
+    assert _pkg_codes(gli) == ["package_large"] and gli["amount"] == 120
+    assert _pkg_text(gli) == ("Bu fiyat 25 kg'lık ambalaj için; alınacak 60,0 kg. Bu miktarda birim fiyat daha "
+                              "düşük olabilir — bu miktar için fiyat istenmeli.")
+    assert _pkg_codes(orta) == [] and amount_warn(orta) is None          # 30 kg: 0,5×–2× arası
+    assert next(c for c in lav["cautions"] if c["code"] == "package_small")["severity"] == "warn"
+    assert res["pricing"]["totals"]["all"] == 1 + 120 + 60 and res["pricing"]["package_warned"] == 2
+    assert res["summary"]["warnings"] == sum(1 for r in res["materials"] + res["products"] for c in r["cautions"]
+                                             if c["severity"] == "warn")
+    notes = next(s for s in sections(res) if s["key"] == "notes")["rows"]
+    assert sum("ambalaj uyarısı, 2 satır" in n for n in notes) == 1
+    # idempotent: yeniden attach / package_caution tek uyarı bırakır
+    attach(res, pin, None)
+    package_caution(lav)
+    assert _pkg_codes(lav) == ["package_small"] and _pkg_codes(gli) == ["package_large"]
+
+
+def test_package_caution_boundaries_half_and_double():
+    """Tam 0,5× → uyarı YOK; tam 2× → uyarı VAR (20 kg ambalaj: 10 kg / 40 kg)."""
+    res = plan([it(1, "Yarım"), it(2, "İki kat"), it(3, "Az altı")], [(1, 10), (2, 40), (3, 9.9)])
+    attach(res, PriceInputs(offers={i: [offer(i, "S", 1.0, pkg=20)] for i in (1, 2, 3)}), None)
+    assert mat(res, 1)["display"]["buy_num"] == pytest.approx(10.0) and _pkg_codes(mat(res, 1)) == []
+    assert mat(res, 2)["display"]["buy_num"] == pytest.approx(40.0) and _pkg_codes(mat(res, 2)) == ["package_large"]
+    assert _pkg_codes(mat(res, 3)) == ["package_small"]
+
+
+def test_package_caution_skips_no_package_sufficient_held_and_unpriced():
+    items = [it(1, "Ambalajsız"), it(2, "Yeterli", stock=10 ** 6), it(3, "Bekletilen"), it(4, "Fiyatsız"),
+             it(5, "Sıfır ambalaj")]
+    res = plan(items, [(1, 0.01), (2, 0.01), (3, 0.01), (4, 0.01), (5, 0.01)],
+               held_items=[{"item_id": 3, "reason": "teyit"}])
+    pin = PriceInputs(offers={1: [offer(1, "S", 9.0)], 2: [offer(2, "S", 9.0, pkg=25)],
+                              3: [offer(3, "S", 9.0, pkg=25)], 4: [offer(4, "S", None, pkg=25)],
+                              5: [offer(5, "S", 9.0, pkg=0)]})
+    attach(res, pin, None)
+    for i in (1, 2, 4, 5):
+        assert _pkg_codes(mat(res, i)) == [], i
+    assert [c["code"] for c in res["held"][0]["cautions"] if c["code"].startswith("package")] == []
+    assert res["pricing"]["package_warned"] == 0
+    assert not any("ambalaj uyarısı" in n for n in sections(res)[-1]["rows"])
+
+
+def test_package_caution_litre_card_with_kg_price_and_round_to_package():
+    """ml kartı + kg fiyatı (1 l ≈ 1 kg, `pkg_buy` ile aynı kural): 500 ml <
+    12,5 → uyarı.  Ambalaj katı seçeneği açıkken "tam ambalaj" eki yazılmaz
+    (yuvarlanmış satır zaten görünüyor)."""
+    from core.purchase_pricing import pkg_round_text
+    res = plan([it(1, "Hidrosol", unit="ml")], [(1, 0.5)])
+    attach(res, PriceInputs(offers={1: [offer(1, "S", 4.0, pkg=25)]}), None)
+    m = mat(res, 1)
+    assert m["price_unit"] == "l" and m["price_package_unit"] == "kg"
+    assert _pkg_text(m) == ("Bu fiyat 25 kg'lık ambalaj için; alınacak 500 ml. Bu miktarda birim fiyat daha "
+                            "yüksek olabilir — bu miktara özel fiyat alınmalı (tam ambalaj alınırsa 100 $).")
+    assert pkg_round_text(m) is None
+    res = plan([it(1, "Hidrosol", unit="ml")], [(1, 0.5)], round_to_package=True)
+    attach(res, PriceInputs(offers={1: [offer(1, "S", 4.0, pkg=25)]}), None, round_to_package=True)
+    m = mat(res, 1)
+    assert m["pkg_buy"] == 25 and "tam ambalaj" not in _pkg_text(m)
+    assert _pkg_text(m).endswith("bu miktara özel fiyat alınmalı.")
+    assert pkg_round_text(m) == "Ambalaj katına yuvarlanırsa: 25,0 litre · 100 $"
+
+
+# ─── Plan maliyet özeti (16.10.2026) ────────────────────────────────────────
+
+def _co(res):
+    return res["pricing"]["cost_overview"]
+
+
+def test_cost_overview_categories_sum_to_plan_total_and_unpriced_links():
+    from core.purchase_pricing import cost_overview_view
+    items = [it(1, "Kısmi", stock=500), it(2, "Yeterli", stock=10 ** 6), it(3, "Fiyatsız yeterli", stock=10 ** 6),
+             it(4, "Alınacak fiyatsız"), it(5, "Kavanoz", cat="Ambalaj", unit="adet", pkg="kavanoz", stock=200),
+             it(6, "Etiket TR", cat="Ambalaj", unit="adet", pkg="etiket")]
+    res = plan(items, [(1, 10), (2, 2.5), (3, 1), (4, 1), (5, 1), (6, 1)],
+               held_items=[{"item_id": 6, "reason": "teyit"}])
+    pin = PriceInputs(offers={1: [offer(1, "UMAYCHEM", 4.52)], 2: [offer(2, "BEFCHEM", 4.52)],
+                              5: [offer(5, "CAM", 0.5, unit="adet")]})
+    attach(res, pin, None)
+    co, cs = _co(res), res["pricing"]["cost_summary"]
+    cats = {c["kind"]: c for c in co["categories"]}
+    assert sum(c["total"] for c in co["categories"]) == co["plan_total"] == cs["plan_total"]
+    assert cats["raw"] == {"kind": "raw", "label": "Hammadde", "buy": 43, "stock": 13, "open": 0, "total": 56,
+                           "priced": 2, "unpriced": 2}
+    assert cats["packaging"]["buy"] == 400 and cats["packaging"]["stock"] == 100     # 800 + 200 adet × 0,5
+    assert cats["label"]["total"] == 0 and cats["label"]["priced"] + cats["label"]["unpriced"] == 0  # bekletilen
+    assert co["total"]["total"] == cs["plan_total"] == 556
+    names = [u["name"] for u in co["unpriced"]]
+    assert names == ["Alınacak fiyatsız", "Fiyatsız yeterli"]
+    assert co["unpriced"][0]["link"] == "/fiyatlar?q=Al%C4%B1nacak%20fiyats%C4%B1z"
+    v = cost_overview_view(res)
+    assert v["unpriced_count"] == 2 and v["total_row"]["total"] == "556 $" and v["plan_total"] == "556 $"
+    assert v["caveats"][0] == ("2 kalemin fiyatı yok (2 hammadde) — toplama girmedi; gerçek maliyet bundan "
+                               "yüksek olacak.")
+    assert any("(1)" in n and "Bekletilen" in n for n in v["notes"])
+    sec = next(s for s in sections(res) if s["key"] == "cost")
+    assert sec["title"] == "Maliyet özeti" and sec["summary"] == "1 ürün, 1.000 adet — malzeme maliyeti 556 $"
+    keys = [s["key"] for s in sections(res)]
+    assert keys.index("cost") == keys.index("products") + 1
+    # amount / totals / GENEL TOPLAM değişmedi
+    assert res["pricing"]["totals"] == {"raw": 43, "packaging": 400, "label": 0, "all": 443}
+
+
+def test_product_costs_shared_material_and_new_labels_without_link():
+    """İki ürünün paylaştığı malzeme iki satıra ayrılır (birim tüketim × fiyat
+    × sipariş adedi); yeni etiket satırı fiyatsız sayılır, bağlantısız ve
+    kendi ürününün eksik kalemine yazılır (ürün maliyeti sessizce tam görünmez)."""
+    from core.purchase_pricing import cost_overview_view, product_cost_lines
+    items = [it(1, "Shea"), it(2, "Kavanoz", cat="Ambalaj", unit="adet", pkg="kavanoz")]
+    inp = PlanInputs(items={i.id: i for i in items},
+                     recipes={1: rec(1, [(1, 5), (2, 1)], name="Krem"), 2: rec(2, [(1, 2.5)], name="Losyon")},
+                     stock_as_of=NOW)
+    res = compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}, {"recipe_id": 2, "qty": 400}],
+                                   options={"label_mode": "new"}))
+    attach(res, PriceInputs(offers={1: [offer(1, "BEFCHEM", 8.0)]}), None)
+    shea = mat(res, 1)
+    assert [(p["no"], p["per_unit"]) for p in shea["per_product"]] == [(1, 5.0), (2, 2.5)]
+    lines = product_cost_lines(res)
+    assert [(x["no"], x["name"]) for x in lines] == [(1, "Shea"), (1, "Kavanoz"), (2, "Shea")]
+    a, jar, b = lines
+    assert a["per_unit"] == pytest.approx(0.005) and a["unit"] == "kg" and a["unit_cost"] == pytest.approx(0.04)
+    assert a["total_qty"] == pytest.approx(5.0) and a["total"] == pytest.approx(40.0)
+    assert jar["price"] is None and jar["unit_cost"] is None and jar["per_unit"] == 1
+    assert b["total"] == pytest.approx(8.0)
+    co = _co(res)
+    p1, p2 = co["products"]
+    assert (p1["unit_cost"], p1["total"], p1["missing"], p1["missing_names"]) == (
+        pytest.approx(0.04), 40, 2, ["Kavanoz", "Yeni etiket — Krem"])
+    assert (p2["unit_cost"], p2["total"], p2["missing"], p2["missing_names"]) == (
+        pytest.approx(0.02), 8, 1, ["Yeni etiket — Losyon"])
+    assert co["products_total"] == 48 == co["plan_total"]
+    assert [u["name"] for u in co["unpriced"]] == ["Kavanoz", "Yeni etiket — Krem", "Yeni etiket — Losyon"]
+    assert [u["link"] for u in co["unpriced"]] == ["/fiyatlar?q=Kavanoz", None, None]
+    assert {c["kind"]: c["unpriced"] for c in co["categories"]} == {"raw": 0, "packaging": 1, "label": 2}
+    q = co["quantities"]
+    assert (q["products"], q["units"], q["raw"]["kg"], q["packaging"]["adet"]) == (2, 1400, pytest.approx(6.0), 1000)
+    assert (q["labels_new"], q["labels_new_rows"]) == (1400, 2)
+    v = cost_overview_view(res)
+    assert [x["unit_cost"] for x in v["products"]] == ["0,04 $", "0,02 $"]
+    assert v["products"][0]["missing"] == "eksik: 2 kalem" and v["products"][1]["missing"] == "eksik: 1 kalem"
+    assert v["products"][1]["missing_names"] == "Yeni etiket — Losyon"
+    assert v["products"][1]["note"] == ""   # Shea fiyatlı: "hiçbirinin fiyatı yok" değil
+    assert not any("ambalaj yuvarlamasından" in n for n in v["notes"])
+    assert any("ambalaj katına yuvarlanmış tutar iki toplama da girmez" in n for n in v["notes"])
+    assert [(x["label"], x["text"]) for x in v["quantities"]] == [
+        ("Ürün", "2 ürün, 1.400 adet"), ("Hammadde", "6,0 kg"), ("Ambalaj", "1.000 adet"),
+        ("Yeni etiket", "1.400 adet (2 kalem)")]
+
+
+def test_cost_overview_finished_kit_ingredient_has_no_price_link():
+    """Kit bileşeni bitmiş ürün kartı plan için "hammadde"dir ama Malzeme
+    Fiyatları'nda listelenmez → "Fiyat gir →" bağlantısı yok, notu ayrı; Kimyasal
+    gibi "diğer" kategorili kart bağlantılı kalır (sayfa onu aramada gösterir)."""
+    from core.purchase_pricing import UNPRICED_NOTE, cost_overview_view
+    items = [it(1, "Shea"), it(2, "Mini Krem 10 ml", cat="Bitmiş Ürün", unit="adet"),
+             it(3, "Sitrik Asit", cat="Kimyasal")]
+    res = plan(items, [(1, 5), (2, 1), (3, 0.5)], qty=100)
+    attach(res, PriceInputs(offers={1: [offer(1, "BEFCHEM", 8.0)]}), None)
+    co = _co(res)
+    by = {u["name"]: u for u in co["unpriced"]}
+    assert by["Mini Krem 10 ml"]["link"] is None and by["Mini Krem 10 ml"]["finished"] is True
+    assert by["Mini Krem 10 ml"]["new"] is False and by["Mini Krem 10 ml"]["kind"] == "raw"
+    assert by["Sitrik Asit"]["link"] == "/fiyatlar?q=Sitrik%20Asit" and by["Sitrik Asit"]["finished"] is False
+    v = {u["name"]: u for u in cost_overview_view(res)["unpriced"]}
+    assert v["Mini Krem 10 ml"]["note"] == UNPRICED_NOTE["finished"]
+    assert v["Sitrik Asit"]["note"] == UNPRICED_NOTE["card"]
+
+
+def test_cost_overview_merged_cards_finished_stock_recipeless_and_gross():
+    from core.purchase_pricing import cost_overview_view
+    # Birleştirilmiş kartlar: teklif ikinci kartta, ürün maliyeti birleşik satırdan
+    a, b = it(1, "ALOE VERA EKSTRAKTI", unit="ml"), it(2, "ALOEVERA EKSTRAKTI", unit="ml")
+    tgt = ItemRec(id=9, name="Tonik", category="Bitmiş Ürün", unit="adet", current_stock=5000)
+    inp = PlanInputs(items={1: a, 2: b, 9: tgt}, recipes={1: RecipeRec(
+        id=1, name="Tonik", target_item_id=9, ingredients=(IngredientRec(item_id=1, quantity=4.2),))},
+        stock_as_of=NOW)
+    pin = PriceInputs(offers={2: [offer(2, "NATURALYA", 10.32)]})
+    res = compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}], options={"manual_merges": [[2, 1]]}))
+    attach(res, pin, None)
+    p = _co(res)["products"][0]
+    assert p["unit_cost"] == pytest.approx(0.043344) and p["total"] == 43 and p["missing"] == 0
+    assert _co(res)["plan_total"] == 43
+    # Bitmiş stok siparişi tümüyle karşılıyor: ihtiyaç 0 ama 1 adet maliyeti hesaplanır,
+    # toplam sipariş adedi üzerinden; plan toplamı 0 (alınacak / stoktan yok)
+    res = compute(inp, PlanRequest(lines=[{"recipe_id": 1, "qty": 1000}],
+                                   options={"manual_merges": [[2, 1]], "subtract_finished_stock": True}))
+    attach(res, pin, None)
+    assert res["products"][0]["produce_qty"] == 0 and res["materials"][0]["need"] == 0
+    co = _co(res)
+    assert co["products"][0]["unit_cost"] == pytest.approx(0.043344) and co["products"][0]["total"] == 43
+    assert co["plan_total"] == 0 and co["total"]["priced"] == 0 and co["unpriced"] == []
+    assert any("Bitmiş ürün stoğu düşüldüğü için" in n for n in cost_overview_view(res)["notes"])
+    # Reçetesiz ürün: satırı var, maliyeti yok
+    items = [it(1, "Shea"), ItemRec(id=8, name="Reçetesiz Losyon", category="Bitmiş Ürün", unit="adet")]
+    inp2 = PlanInputs(items={i.id: i for i in items}, recipes={1: rec(1, [(1, 5)], name="Krem")}, stock_as_of=NOW)
+    res = compute(inp2, PlanRequest(lines=[{"recipe_id": 1, "qty": 100}, {"target_item_id": 8, "qty": 50}]))
+    attach(res, PriceInputs(offers={1: [offer(1, "S", 8.0)]}), None)
+    r1, r2 = _co(res)["products"]
+    assert r1["total"] == 4 and r2["recipeless"] is True and r2["unit_cost"] is None and r2["total"] is None
+    v = cost_overview_view(res)
+    assert v["products"][1]["note"] == "reçetesi yok" and v["products"][1]["unit_cost"] == "—"
+    # Brüt mod: stok değerlenmez, Σ tür = totals.all
+    items = [it(1, "Kısmi", stock=500), it(2, "Bol", stock=10 ** 6)]
+    g = plan(items, [(1, 10), (2, 1)], stock_mode="gross")
+    attach(g, PriceInputs(offers={1: [offer(1, "U", 4.52)], 2: [offer(2, "S", 2.0)]}), None)
+    co = _co(g)
+    assert co["net"] is False and co["plan_total"] == g["pricing"]["totals"]["all"] == 47      # 45 + 2
+    assert sum(c["total"] for c in co["categories"]) == 47 and co["total"]["stock"] == 0
+    v = cost_overview_view(g)
+    assert v["show_stock"] is False and not any("yenileme değeri" in n for n in v["notes"])
+    sec = next(s for s in sections(g) if s["key"] == "cost")
+    assert "Planın toplam malzeme maliyeti" not in sec["subtitle"]
+
+
+def test_cost_overview_absent_without_pricing():
+    res = plan([it(1, "A")], [(1, 1)])
+    assert "cost" not in [s["key"] for s in sections(res)]

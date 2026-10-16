@@ -898,6 +898,35 @@ def list_supplier_prices(
     return {"items": out, "total_items": len(out), "total_prices": len(rows)}
 
 
+@router.get("/supplier-prices/overview")
+def supplier_prices_overview(
+    currency: str = Query("USD", max_length=8),
+    q: Optional[str] = Query(None, max_length=100),
+    category: str = Query("all", max_length=20),
+    has_price: str = Query("all", max_length=20),
+    source: str = Query("all", max_length=20),
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_permission("reports", "view")),
+    domain: str = Depends(active_domain),
+):
+    """"Malzeme Fiyatları" sayfası (`/fiyatlar`) — `core.price_overview.build_overview`.
+    Aktif kartlar (bitmiş ürün hariç) → "aynı malzeme" grubu blokları →
+    fiyat satırları: planın tercih / bitirilecek bayrakları, elle-fiyat
+    çakışmasında gizlenen satır sayısı, seçilen para biriminde net fiyat
+    (`currency` USD | EUR | TRY; kur yalnız gerekirse, sunucuda), en ucuz ve
+    planın seçeceği teklif.  Süzgeçler: `q` (malzeme / tedarikçi / grup),
+    `category` all | hammadde | ambalaj | etiket | other, `has_price`
+    all | priced | unpriced, `source` all | manual | stok_son_durum | lab.
+    Geçersiz değer → 400.  Görüntüleme `reports.view` (fiyatlar raporu gören
+    herkese açık, 05.10.2026); yazma uçları `suppliers.prices`."""
+    from core.price_overview import build_overview
+    try:
+        return build_overview(db, domain, currency=currency, q=q, category=category,
+                              has_price=has_price, source=source)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
 class SupplierPriceIn(BaseModel):
     item_id: int
     supplier_id: int
