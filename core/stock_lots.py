@@ -50,6 +50,16 @@ EPS = 1e-9
 APPROVED = "APPROVED"
 
 
+def witness_lot_ids(db: Session):
+    """Şahit numune dolabına bağlı lotların id sorgusu (aktif RetentionSample
+    `inventory_id`'leri).  Alt sorgu olarak `Inventory.id.in_(...)` içinde
+    kullanılır; NULL bağlar (sayım/elle girilen lotsuz şahit kayıtları)
+    dışarıda kalır."""
+    return (db.query(RetentionSample.inventory_id)
+            .filter(RetentionSample.is_active == True,               # noqa: E712
+                    RetentionSample.inventory_id.isnot(None)))
+
+
 def plan_fifo(
     db: Session,
     item: Item,
@@ -59,6 +69,8 @@ def plan_fifo(
     lock: bool = True,
     reserved: Optional[Dict[int, float]] = None,
     released_only: bool = False,
+    exclude_witness: bool = False,
+    exclude_qc: bool = False,
     accept: Optional[Callable[[Inventory], bool]] = None,
 ) -> Tuple[List[Tuple[Inventory, float]], float]:
     """`qty` kadar stoğun hangi lotlardan düşeceğini planla — en eski önce.
@@ -74,6 +86,14 @@ def plan_fifo(
 
     `exclude_samples=True` varsayılan: numune lotu (`is_sample`) satışa/
     teslimata KONU OLAMAZ — 24.08.2026 numune olayının kuralı.
+
+    `exclude_witness` — şahit numune dolabına bağlı lot (`-S`, aktif
+    RetentionSample) havuzda yok sayılır.  `exclude_qc` — QC kararı bekleyen
+    (`qc_required`) lot yok sayılır.  `released_only=True` ikisini birden
+    açar (B2B sevkiyatı).  Varsayılanlar kapalı: üretim planlayıcısı
+    hammadde lotlarında eski havuzu kullanır.  `draw_down` ikisini, `consume`
+    şahidi daima açar (16.10.2026 — şahit lotu yalnız Şahit Numune modülünün
+    çıkış/imha akışından azalır).
 
     `reserved` — {inventory_id: miktar}: aynı planda ÖNCEKİ satırların bu
     lotlardan aldığı (henüz yazılmamış) miktar; lotun kullanılabilir kalanı
@@ -100,8 +120,10 @@ def plan_fifo(
     )
     if exclude_samples:
         q = q.filter(Inventory.is_sample == False)      # noqa: E712
-    if released_only:
-        q = _released(db, q)
+    if released_only or exclude_qc:
+        q = q.filter(Inventory.qc_required == False)    # noqa: E712
+    if released_only or exclude_witness:
+        q = q.filter(~Inventory.id.in_(witness_lot_ids(db)))
     lots = q.with_for_update().all() if lock else q.all()
 
     allocations: List[Tuple[Inventory, float]] = []
@@ -121,28 +143,14 @@ def plan_fifo(
     return allocations, max(0.0, round(remaining, 6))
 
 
-def _released(db: Session, q):
-    """Sevke uygun lot: QC kararı verilmiş (`qc_required` değil) ve şahit
-    numune dolabına bağlı OLMAYAN.  Varsayılan havuz bunları da verir (iç
-    üretim QC'den önce stoğa girer, dolaptaki şahit stokta sayılır — bilinçli
-    karar); B2B sipariş sevkiyatı `released_only=True` ile istemez."""
-    witness = (db.query(RetentionSample.inventory_id)
-               .filter(RetentionSample.is_active == True,           # noqa: E712
-                       RetentionSample.inventory_id.isnot(None)))
-    return q.filter(Inventory.qc_required == False,                  # noqa: E712
-                    ~Inventory.id.in_(witness))
-
-
 def unreleased_quantity(db: Session, item_id: int) -> float:
     """Kart stoğunda sayılıp sevke uygun OLMAYAN: QC kararı bekleyen ya da
     şahit numune dolabına bağlı APPROVED lotlar (numune lotu zaten stok değil)."""
-    witness = (db.query(RetentionSample.inventory_id)
-               .filter(RetentionSample.is_active == True,           # noqa: E712
-                       RetentionSample.inventory_id.isnot(None)))
     q = db.query(func.coalesce(func.sum(Inventory.quantity), 0.0)).filter(
         Inventory.item_id == item_id, Inventory.status == APPROVED,
         Inventory.quantity > 0, Inventory.is_sample == False,       # noqa: E712
-        or_(Inventory.qc_required == True, Inventory.id.in_(witness)))  # noqa: E712
+        or_(Inventory.qc_required == True,                          # noqa: E712
+            Inventory.id.in_(witness_lot_ids(db))))
     return float(q.scalar() or 0.0)
 
 
@@ -150,7 +158,7 @@ def shippable_quantity(db: Session, item: Item) -> float:
     """B2B sipariş sevkiyatına uygun stok = kart stoğu − QC bekleyen − şahit.
     Lot kaydı olmayan eski stok (lotlar açılmadan önceki) uygundur: QC bekleyen
     ve şahit stok DAİMA lot satırıdır.  `consume(released_only=True)` önce
-    `_released` lotlarını düşer, kalanı lotsuz Output yazar."""
+    QC'si bitmiş, şahit olmayan lotları düşer, kalanı lotsuz Output yazar."""
     stock = float(item.current_stock or 0.0)
     return max(0.0, round(stock - unreleased_quantity(db, item.id), 6))
 
@@ -164,15 +172,19 @@ def draw_down(
 ) -> Tuple[List[Tuple[str, float]], float]:
     """Yalnız LOT satırlarını FIFO düş — Transaction YAZMAZ, stoğa DOKUNMAZ.
 
-    Çağıran kendi defter kaydını yazar.  Elle stok düzeltmesi (`adjust_stock`)
-    bunu kullanır: orada defter kaydı tek bir imzalı `Adjustment` olmak
-    zorundadır (birleştirme script'leri bu konvansiyona dayanıyor), ama lot
-    satırları da gerçeği izlemelidir.
+    Çağıran kendi defter kaydını yazar.  Fason sevkiyatın lotsuz kabı bunu
+    kullanır: defter kaydı çağıranın tek kaydıdır, ama lot satırları da
+    gerçeği izlemelidir.
+
+    Şahit numune lotuna ve QC kararı bekleyen lota ASLA dokunmaz (16.10.2026:
+    Niacinamide'de "66 → 15 yanlış sayım" düzeltmesi SR002-S şahidini ve
+    yeni üretilen SR003'ü düşmüştü — 49 lot düşümlü düzeltmenin 29'u şahitten).
 
     Dönüş: ``([(lot_number, düşülen), …], uncovered)``
     """
     allocations, uncovered = plan_fifo(
-        db, item, qty, exclude_samples=exclude_samples)
+        db, item, qty, exclude_samples=exclude_samples,
+        exclude_witness=True, exclude_qc=True)
     touched: List[Tuple[str, float]] = []
     for lot, take in allocations:
         lot.quantity = round(float(lot.quantity or 0.0) - take, 6)
@@ -190,6 +202,7 @@ def consume(
     exclude_samples: bool = True,
     apply_stock: bool = True,
     released_only: bool = False,
+    exclude_witness: bool = True,
 ) -> List[Tuple[str, float]]:
     """Stok çıkışının TAMAMI — lot düş + Output yaz + `current_stock` düş.
 
@@ -198,6 +211,9 @@ def consume(
     • Her lot tahsisi için AYRI `Transaction(Output)` (lot_number dolu) yazılır;
       lotla karşılanamayan artık için lotsuz tek Output.  Yazılan Output'ların
       TOPLAMI daima `qty`'dir → defter rekonstrüksiyonu değişmez.
+    • Şahit numune lotu (`exclude_witness=True` varsayılan) düşülmez: dolaptaki
+      numune satılmaz, yalnız Şahit Numune modülünün çıkış/imha akışından
+      azalır.  Lot yetmezse artık yine lotsuz Output'tur (iş engellenmez).
     • `apply_stock=False` yalnız çağıran `current_stock`'u kendi güncelliyorsa
       kullanılır (geri uyum kancası; normalde dokunma).
 
@@ -208,7 +224,8 @@ def consume(
         return []
 
     allocations, uncovered = plan_fifo(
-        db, item, qty, exclude_samples=exclude_samples, released_only=released_only)
+        db, item, qty, exclude_samples=exclude_samples, released_only=released_only,
+        exclude_witness=exclude_witness)
 
     used: List[Tuple[str, float]] = []
     for lot, take in allocations:
@@ -241,6 +258,146 @@ def consume(
 def lot_summary(used: List[Tuple[str, float]]) -> str:
     """`consume()` çıktısını tek satırlık nota çevir: ``MNR006×3 · SR004×1``."""
     return " · ".join(f"{lot}×{qty:g}" for lot, qty in used) if used else "—"
+
+
+# ─── Kart stoğu ↔ lot kırılımı (16.10.2026) ──────────────────────────────────
+#
+# NEDEN VAR: Stoklar listesi kart stoğunu (Serenida Niacinamide 15), pencere
+# lot toplamını (10) gösteriyordu ve kullanıcı "üretim girişi/çıkışı bozuk mu"
+# diye sordu.  Kart = her hareketin toplamı; lot = o miktarın hangi partiden
+# geldiği.  Her stok lota bağlı değildir (lot sisteminden önceki stok, elle
+# '+' düzeltme, iade lot açmaz).  Pencere ve asistan bu TEK yardımcıyla dört
+# satırı karta tam toplar:  raf + QC bekleyen + şahit dolabı + lotsuz = kart.
+
+#: Lot rolü — stokta sayılanlar: shelf (raf, satılabilir), qc (QC kararı
+#: bekliyor), witness (şahit numune dolabı).  Stok dışı: sample (numune),
+#: quarantine / rejected / cancelled / retained (fason şahidi) / other.
+STOCK_ROLES = ("shelf", "qc", "witness")
+_STATUS_ROLE = {"QUARANTINE": "quarantine", "REJECTED": "rejected",
+                "CANCELLED": "cancelled", "RETAINED": "retained"}
+
+
+def lot_role(inv: Inventory, witness_ids) -> str:
+    """Lotun stoktaki yeri — `witness_ids` aktif şahit kaydına bağlı lot
+    id'leri kümesi.  Şahit QC'den önce gelir (-S lotu üretimde qc_required
+    açılır; çift sayılmasın)."""
+    if inv.is_sample:
+        return "sample"
+    st = inv.status or APPROVED
+    if st != APPROVED:
+        return _STATUS_ROLE.get(st, "other")
+    if inv.id in witness_ids:
+        return "witness"
+    if inv.qc_required:
+        return "qc"
+    return "shelf"
+
+
+def item_witness_ids(db: Session, item_id: int) -> set:
+    """Bu kartın lotlarından aktif şahit kaydına bağlı olanların id'leri."""
+    rows = (db.query(RetentionSample.inventory_id)
+            .join(Inventory, Inventory.id == RetentionSample.inventory_id)
+            .filter(Inventory.item_id == item_id,
+                    RetentionSample.is_active == True)               # noqa: E712
+            .all())
+    return {r[0] for r in rows}
+
+
+def stock_breakdown(db: Session, item: Item, *, lots: Optional[List[Inventory]] = None) -> dict:
+    """Kart stoğunun dört satıra kırılımı — toplamı DAİMA kart stoğudur.
+
+    • shelf      — raf (satılabilir): QC'si bitmiş, şahit olmayan APPROVED lotlar
+    • qc_pending — QC kararı bekleyen APPROVED lotlar (şahit hariç)
+    • witness    — şahit numune dolabına bağlı lotlar (aktif RetentionSample)
+    • lotless    — kart − (raf + QC + şahit); lot sisteminden önceki stok, elle
+                   '+' düzeltme ve iadeler lot açmaz.  Eksiye düşerse 0 olur ve
+                   fark `lot_excess`'e yazılır (lotlar kartta olmayan stok
+                   gösteriyor — sayılmalı).
+    • shelf_quantity — rafta olması gereken = kart − şahit − QC bekleyen
+                   (raf lotları + lotsuz).  Lab yalnız rafı sayar; düzeltme
+                   formu bu sayıyı ister.
+    • unlinked_witness — lotu olmayan şahit kayıtları (03.08 sayımı, elle
+                   girilenler; `inventory_id` boş).  YALNIZ BİLGİ: stoktan
+                   düşülmez, lab'ın kart değerleri rafı yansıtıyor.
+
+    `lots` verilirse (çağıran kilitlediyse) yeniden sorgulanmaz.  `roles`
+    {inventory_id: rol} — pencere rozetleri ve düzeltme doğrulaması için.
+    """
+    if lots is None:
+        lots = (db.query(Inventory).filter(Inventory.item_id == item.id)
+                .order_by(Inventory.created_at.asc(), Inventory.id.asc()).all())
+    wids = item_witness_ids(db, item.id)
+    roles: Dict[int, str] = {}
+    tot = {"shelf": 0.0, "qc": 0.0, "witness": 0.0}
+    cnt = {"shelf": 0, "qc": 0, "witness": 0}
+    for inv in lots:
+        role = lot_role(inv, wids)
+        roles[inv.id] = role
+        q = float(inv.quantity or 0.0)
+        if role in tot and q > EPS:
+            tot[role] += q
+            cnt[role] += 1
+    card = round(float(item.current_stock or 0.0), 6)
+    shelf, qc, wit = (round(tot[k], 6) for k in ("shelf", "qc", "witness"))
+    lot_total = round(shelf + qc + wit, 6)
+    diff = round(card - lot_total, 6)
+    unlinked = (db.query(RetentionSample)
+                .filter(RetentionSample.item_id == item.id,
+                        RetentionSample.inventory_id.is_(None),
+                        RetentionSample.is_active == True,           # noqa: E712
+                        RetentionSample.status == "stored",
+                        RetentionSample.quantity > 0)
+                .order_by(RetentionSample.id.asc()).all())
+    return {
+        "card": card,
+        "shelf": shelf, "shelf_lots": cnt["shelf"],
+        "qc_pending": qc, "qc_lots": cnt["qc"],
+        "witness": wit, "witness_lots": cnt["witness"],
+        "lot_total": lot_total,
+        "lotless": diff if diff > EPS else 0.0,
+        "lot_excess": -diff if diff < -EPS else 0.0,
+        "shelf_quantity": round(card - wit - qc, 6),
+        "unlinked_witness": round(sum(float(r.quantity or 0.0) for r in unlinked), 6),
+        "unlinked_witness_records": [
+            {"id": r.id, "lot_number": r.lot_number, "quantity": round(float(r.quantity or 0.0), 4),
+             "brand": r.brand, "source": r.source}
+            for r in unlinked],
+        "roles": roles,
+        "witness_ids": wids,
+    }
+
+
+def witness_totals(db: Session, domain: str) -> Dict[int, float]:
+    """Panel genelinde kart başına şahit lot toplamı (Stoklar listesi notu).
+    Kartın paneline göre süzülür (lot damgasına değil) — `stock_breakdown`
+    kartın TÜM lotlarını sayar, liste notu pencereyle aynı kalsın."""
+    rows = (db.query(Inventory.item_id, func.sum(Inventory.quantity))
+            .join(Item, Item.id == Inventory.item_id)
+            .filter(Item.domain == domain, Inventory.status == APPROVED,
+                    Inventory.is_sample == False,                    # noqa: E712
+                    Inventory.quantity > 0,
+                    Inventory.id.in_(witness_lot_ids(db)))
+            .group_by(Inventory.item_id).all())
+    return {iid: round(float(q or 0.0), 6) for iid, q in rows}
+
+
+def correction_default(lotless: float, shelf_lots: List[Inventory],
+                       need: float) -> Tuple[float, List[Tuple[Inventory, float]], float]:
+    """Elle azaltmanın varsayılan kaynağı: ÖNCE lot kaydı olmayan stok, sonra
+    en eski raf lotu (FIFO).  `shelf_lots` yalnız raf rolündeki lotlar, en eski
+    önce.  Dönüş: ``(lotsuzdan, [(lot, miktar), …], karşılanamayan)``."""
+    need = round(float(need or 0.0), 6)
+    from_lotless = round(min(max(0.0, float(lotless or 0.0)), need), 6)
+    remaining = round(need - from_lotless, 6)
+    allocations: List[Tuple[Inventory, float]] = []
+    for lot in shelf_lots:
+        if remaining <= EPS:
+            break
+        take = round(min(float(lot.quantity or 0.0), remaining), 6)
+        if take > EPS:
+            allocations.append((lot, take))
+            remaining = round(remaining - take, 6)
+    return from_lotless, allocations, max(0.0, remaining)
 
 
 # ─── Lotu başka karta taşı (06.10.2026) ──────────────────────────────────────

@@ -525,3 +525,58 @@ def test_by_item_lot_ids_moved_from_and_group(authed_client: TestClient, db_sess
     assert {m["item_id"] for m in d["item_group"]["members"]} == {krk_card.id, nat_card.id}
     plain = authed_client.get(f"/api/inventory/by-item/{krk_card.id}").json()
     assert plain["lots"] == [] and plain["item_group"]["name"] == "JOJOBA"
+
+
+def test_by_item_breakdown_reconciles_to_card(authed_client: TestClient, db_session: Session):
+    """Stoklar penceresi (16.10.2026): raf + lotsuz + şahit + QC bekleyen = kart.
+    REJECTED / QUARANTINE / iptal / numune lotları stok değildir; lotsuz şahit
+    kaydı (03.08 sayımı gibi) yalnız bilgi satırıdır, stoktan düşülmez."""
+    from database import RetentionSample
+    it = Item(name="Serenida Niacinamide BD", sku="SKU-BD", category="Bitmiş Ürün",
+              unit="adet", current_stock=20, domain="cosmetics")
+    db_session.add(it); db_session.flush()
+    shelf = _lot(db_session, it.id, "SR003", 5, age_days=3)
+    qc = _lot(db_session, it.id, "SR004", 3, age_days=1)
+    qc.qc_required = True
+    wit = _lot(db_session, it.id, "SR003-S", 2, age_days=3)
+    wit.qc_required = True                      # -S lotu üretimde QC'li açılır — şahit önce
+    rej = _lot(db_session, it.id, "SR001", 4, age_days=30)
+    rej.status = "REJECTED"
+    qua = _lot(db_session, it.id, "FS-1-R1", 6)
+    qua.status = "QUARANTINE"
+    can = _lot(db_session, it.id, "SR000", 1, age_days=60)
+    can.status = "CANCELLED"
+    smp = _lot(db_session, it.id, "NUMUNE", 7, is_sample=True)
+    for inv in (shelf, qc, wit, rej, qua, can, smp):
+        inv.domain = "cosmetics"
+    db_session.add(RetentionSample(inventory_id=wit.id, item_id=it.id, lot_number="SR003-S",
+                                   brand="Serenida", quantity=2, initial_quantity=2,
+                                   status="stored", domain="cosmetics"))
+    db_session.add(RetentionSample(inventory_id=None, item_id=it.id, lot_number="SR001-S",
+                                   brand="Serenida", quantity=3, initial_quantity=3,
+                                   status="stored", source="backfill", domain="cosmetics"))
+    db_session.commit()
+
+    d = authed_client.get(f"/api/inventory/by-item/{it.id}").json()
+    b = d["breakdown"]
+    assert (b["shelf"], b["qc_pending"], b["witness"], b["lotless"]) == (5, 3, 2, 10)
+    assert b["shelf"] + b["qc_pending"] + b["witness"] + b["lotless"] == d["current_stock"] == 20
+    assert b["lot_excess"] == 0 and b["shelf_quantity"] == 15
+    assert b["unlinked_witness"] == 3 and len(b["unlinked_witness_records"]) == 1
+    assert d["lot_total"] == 10 and d["sample_total"] == 7       # eskiden RED/KARANTİNA da toplanıyordu
+    roles = {l["lot_number"]: l["role"] for l in d["lots"]}
+    assert roles == {"SR003": "shelf", "SR004": "qc", "SR003-S": "witness", "SR001": "rejected",
+                     "FS-1-R1": "quarantine", "SR000": "cancelled", "NUMUNE": "sample"}
+    w = [l for l in d["lots"] if l["lot_number"] == "SR003-S"][0]
+    assert w["is_witness"] is True and w["counts_in_stock"] is True and w["retention"]["quantity"] == 2
+    assert [l for l in d["lots"] if l["lot_number"] == "SR001"][0]["counts_in_stock"] is False
+
+    # Liste: kart stoğunun şahit kısmı ayrı not
+    rows = {r["item_id"]: r for r in authed_client.get("/api/inventory/summary").json()}
+    assert rows[it.id]["witness_qty"] == 2 and rows[it.id]["total_stock"] == 20
+
+    # Lotlar kartı aşarsa lotsuz 0, fark "lot fazlası"
+    db_session.query(Item).filter(Item.id == it.id).update({Item.current_stock: 8})
+    db_session.commit()
+    b = authed_client.get(f"/api/inventory/by-item/{it.id}").json()["breakdown"]
+    assert b["lotless"] == 0 and b["lot_excess"] == 2

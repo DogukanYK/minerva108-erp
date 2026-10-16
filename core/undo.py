@@ -135,12 +135,17 @@ def apply_undo(db: Session, entry: UndoLog) -> str:
 
 def _undo_stock_adjust(db: Session, entry: UndoLog) -> str:
     """
-    Payload: { item_id, before_stock, after_stock, transaction_id }
+    Payload: { item_id, before_stock, after_stock, transaction_id,
+               lot_changes?: [{inventory_id, lot_number, delta}] }
 
     Geri alma:
         1) Item.current_stock değeri hâlâ after_stock mu?  Değilse conflict.
-        2) Item.current_stock = before_stock
-        3) Oluşturulan Transaction satırı sil (audit trail bilerek bozulur —
+        2) Lot satırları düzeltmenin uyguladığı farkın tersiyle eski hâline
+           döner (16.10.2026 — eskiden yalnız kart dönüyor, lot düşümü kalıcı
+           kalıyordu).  Lot karttan ayrılmış / silinmiş ya da sonradan eksiye
+           düşecek kadar tüketilmişse conflict — HİÇBİR ŞEY değişmez.
+        3) Item.current_stock = before_stock
+        4) Oluşturulan Transaction satırı sil (audit trail bilerek bozulur —
            kullanıcı işlemi geri aldıysa o transaction "olmamış" olur).
     """
     p = entry.payload or {}
@@ -148,6 +153,7 @@ def _undo_stock_adjust(db: Session, entry: UndoLog) -> str:
     before_stock   = float(p.get("before_stock", 0.0))
     after_stock    = float(p.get("after_stock",  0.0))
     transaction_id = p.get("transaction_id")
+    lot_changes    = p.get("lot_changes") or []
 
     item = db.query(Item).filter(Item.id == item_id).with_for_update().first()
     if not item:
@@ -160,6 +166,23 @@ def _undo_stock_adjust(db: Session, entry: UndoLog) -> str:
             f"Stok bu işlemden sonra başkası tarafından değiştirilmiş "
             f"(şu an {cur}, beklenen {after_stock})."
         )
+
+    # Önce hepsini doğrula, sonra yaz (kilit sırası kart → lot).
+    restore = []
+    for ch in lot_changes:
+        inv = (db.query(Inventory).filter(Inventory.id == ch.get("inventory_id"))
+               .with_for_update().first())
+        lot = ch.get("lot_number") or "—"
+        if inv is None or inv.item_id != item_id:
+            raise UndoConflict(f"Lot ({lot}) artık bu kartta değil, düzeltme geri alınamaz.")
+        back = round(float(inv.quantity or 0.0) - float(ch.get("delta") or 0.0), 6)
+        if back < -1e-6:
+            raise UndoConflict(f"Lot ({lot}) sonradan kullanılmış, düzeltme geri alınamaz.")
+        restore.append((inv, max(0.0, back)))
+    now = datetime.utcnow()
+    for inv, back in restore:
+        inv.quantity = back
+        inv.updated_at = now
 
     item.current_stock = round(before_stock, 6)
 

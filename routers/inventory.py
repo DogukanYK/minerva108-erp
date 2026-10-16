@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal, Optional, List
 
 
@@ -43,7 +43,7 @@ def _norm_language(val: Optional[str]) -> Optional[str]:
 from database import (
     to_tr,
     get_db, DuplicateItemDecision, Item, MaterialGroup, Supplier, Inventory, Transaction,
-    Recipe, RecipeIngredient, RetentionSample, User,
+    ProductionHistory, Recipe, RecipeIngredient, RetentionSample, User,
 )
 from core.auth import get_current_user
 from core.permissions import (_can_see_finance, require_any_permission, require_internal_user,
@@ -135,17 +135,37 @@ def _finite(v) -> bool:
         return False
 
 
+class StockAdjustDraw(BaseModel):
+    """Eksi düzeltmede bir kaynak satırı — `inventory_id` boş = lot kaydı
+    olmayan stok."""
+    inventory_id: Optional[int] = None
+    quantity: float
+
+
 class StockAdjustRequest(BaseModel):
     """
-    Manual stock correction. The user supplies the *target* quantity that
-    Item.current_stock should hold; backend computes the delta and writes
-    an immutable Transaction(type='Adjustment') so the change is auditable.
+    Manual stock correction. Backend computes the delta and writes ONE
+    immutable Transaction(type='Adjustment') so the change is auditable.
     Reason is mandatory — no silent corrections.
+
+    İki mod (16.10.2026), tam olarak biri gönderilir:
+      • `new_shelf_quantity` — lab'ın RAF sayımı (şahit dolabı ve QC bekleyen
+        hariç).  Sunucu yeni kart = raf + şahit lotları + QC bekleyen hesaplar.
+      • `new_quantity` — eski istemci: yeni TOPLAM kart stoğu.
+    `draw_from` eksi farkın hangi satırlardan düşeceği (toplam = fark; boş
+    `inventory_id` = lotsuz stok); verilmezse önce lotsuz, sonra en eski raf
+    lotu.  `add_to_inventory_id` artı farkın yazılacağı raf lotu (yoksa
+    lotsuz).  `lot_number` eski tek-lot dalı: farkı o lota uygular.
+    `acknowledge_recent_production` 409 `recent_production` uyarısı görüldü.
     """
     item_id: int
-    new_quantity: float
+    new_quantity: Optional[float] = None
+    new_shelf_quantity: Optional[float] = None
     reason: str = Field(..., min_length=3, max_length=200)
     lot_number: Optional[str] = Field(None, max_length=100)
+    draw_from: Optional[List[StockAdjustDraw]] = Field(None, max_length=100)
+    add_to_inventory_id: Optional[int] = None
+    acknowledge_recent_production: bool = False
 
 
 # ─── Items Endpoints ─────────────────────────────────────────────────────────
@@ -1520,91 +1540,303 @@ def receive_stock(
 # it appends an immutable Transaction(type='Adjustment') and updates the
 # canonical Item.current_stock to the requested value. The reason string is
 # required so audit reviewers can see *why* the correction happened.
+#
+# RAF SAYIMI (16.10.2026): lab yalnız rafı sayar; şahit dolabı ve QC bekleyen
+# lotlar sayıma girmez.  Eski form "yeni TOPLAM stok" istiyordu ve eksi farkı
+# FIFO ile en eski lottan düşüyordu — Niacinamide'de "66 → 15 yanlış sayım"
+# SR002-S şahidini ve aynı sabah üretilen SR003'ü düştü.  Artık eksi fark
+# kullanıcının seçtiği satırlardan (varsayılan: önce lotsuz stok, sonra en
+# eski raf lotu) düşer; şahit ve QC bekleyen lota elle düzeltme dokunmaz.
+
+#: Üretimden hemen sonra büyük eksi düzeltme uyarısı: son 48 saatteki iptal
+#: edilmemiş bir üretimin en az yarısı kadar düşüş → 409 `recent_production`.
+RECENT_PRODUCTION_HOURS = 48
+RECENT_PRODUCTION_RATIO = 0.5
+
+_ROLE_REFUSAL = {
+    "witness": "şahit numune dolabına bağlı — şahit lotu yalnız Şahit Numune modülünden "
+               "(çıkış/imha) azalır",
+    "qc": "QC kararı bekliyor — önce Kalite Kontrol'de karar verin",
+    "sample": "numune lotu — stok değildir",
+    "quarantine": "karantinada (QC kararı bekliyor)",
+    "rejected": "QC'de reddedilmiş",
+    "cancelled": "iptal edilmiş",
+    "retained": "fason şahit numunesi — stok değildir",
+}
+
+
+def _lot_refusal(inv: Inventory, role: Optional[str]) -> Optional[str]:
+    """Elle düzeltmenin dokunabileceği tek rol raf lotudur (`stock_lots.lot_role`)."""
+    if role == "shelf":
+        return None
+    why = _ROLE_REFUSAL.get(role or "", "onaylı değil")
+    return f"Lot {inv.lot_number or '—'} {why}."
+
+
+# Saat okunuşuna göre bulunma eki: 12:06'da, 12:03'te, 12:40'ta, 12:00'de.
+_LOC_ONES = {1: "de", 2: "de", 3: "te", 4: "te", 5: "te", 6: "da", 7: "de", 8: "de", 9: "da"}
+_LOC_TENS = {1: "da", 2: "de", 3: "da", 4: "ta", 5: "de", 6: "ta", 7: "te", 8: "de", 9: "da"}
+
+
+def _tr_locative(n: int) -> str:
+    if n == 0:
+        return "da"                                  # sıfır
+    if n % 10:
+        return _LOC_ONES[n % 10]
+    if n % 100:
+        return _LOC_TENS[(n // 10) % 10]
+    return "de"                                      # yüz / bin
+
+
+def _when_tr(dt) -> str:
+    """``16.10 12:06'da`` — kullanıcı mesajı için TR saatli tarih + ek."""
+    t = to_tr(dt)
+    suffix = _tr_locative(t.minute) if t.minute else _tr_locative(t.hour)
+    return f"{t:%d.%m %H:%M}'{suffix}"
+
+
+def _recent_production(db: Session, item: Item, need: float):
+    """Bu kartın son 48 saatte girilmiş, iptal edilmemiş ve `need`'in en çok
+    iki katı olan üretimi (en yenisi) — yoksa None."""
+    since = datetime.utcnow() - timedelta(hours=RECENT_PRODUCTION_HOURS)
+    rows = (db.query(ProductionHistory)
+            .filter(ProductionHistory.target_item_id == item.id,
+                    ProductionHistory.cancelled_at.is_(None),
+                    ProductionHistory.produced_at >= since)
+            .order_by(ProductionHistory.produced_at.desc(), ProductionHistory.id.desc())
+            .all())
+    for p in rows:
+        pq = float(p.produced_quantity or 0.0)
+        if pq > 0 and need + 1e-9 >= pq * RECENT_PRODUCTION_RATIO:
+            return p
+    return None
+
+
+def _adj_error(status: int, detail: str, db: Optional[Session] = None, **extra) -> JSONResponse:
+    if db is not None:
+        db.rollback()                                # kart/lot kilitleri bırakılsın
+    return JSONResponse(status_code=status, content={"detail": detail, **extra})
+
 
 @router.post("/inventory/adjust", status_code=201)
 def adjust_stock(
     data: StockAdjustRequest,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("inventory", "adjust")),
+    domain: str = Depends(active_domain),
 ):
-    if not _finite(data.new_quantity):
-        return JSONResponse(status_code=400, content={"detail": "Stok miktarı geçerli bir sayı olmalıdır."})
-    if data.new_quantity < 0:
-        return JSONResponse(status_code=400, content={"detail": "Stok miktarı negatif olamaz."})
+    shelf_mode = data.new_shelf_quantity is not None
+    if shelf_mode == (data.new_quantity is not None):
+        return _adj_error(400, "Yeni raf sayımı ya da yeni toplam stoktan yalnız biri gönderilmeli.")
+    target = data.new_shelf_quantity if shelf_mode else data.new_quantity
+    if not _finite(target):
+        return _adj_error(400, "Stok miktarı geçerli bir sayı olmalıdır.")
+    if target < 0:
+        return _adj_error(400, "Stok miktarı negatif olamaz.")
+    draws = data.draw_from
+    if draws is not None:
+        if any(not _finite(d.quantity) for d in draws):
+            return _adj_error(400, "Lot miktarı geçerli bir sayı olmalıdır.")
+        if any(d.quantity < 0 for d in draws):
+            return _adj_error(400, "Lot miktarı negatif olamaz.")
+    if data.lot_number and (draws is not None or data.add_to_inventory_id is not None):
+        return _adj_error(400, "Tek lot (lot_number) ile lot seçimi birlikte gönderilemez.")
+    if draws is not None and data.add_to_inventory_id is not None:
+        return _adj_error(400, "Düşülecek satırlar ile hedef lot birlikte gönderilemez.")
 
     reason = (data.reason or "").strip()
     if len(reason) < 3:
         return JSONResponse(status_code=422, content={"detail": "Sebep en az 3 karakter olmalıdır."})
 
-    item = db.query(Item).filter(Item.id == data.item_id).with_for_update().first()
+    # Kilit sırası kart → lot (üretim iptali, QC, şahit çıkışıyla aynı).
+    item = (db.query(Item).filter(Item.id == data.item_id, Item.domain == domain)
+            .with_for_update().first())
     if not item:
-        return JSONResponse(status_code=404, content={"detail": "Ürün bulunamadı."})
+        return _adj_error(404, "Ürün bulunamadı.", db)
+    lots = (db.query(Inventory).filter(Inventory.item_id == item.id)
+            .order_by(Inventory.created_at.asc(), Inventory.id.asc())
+            .with_for_update().all())
+    bd = stock_lots.stock_breakdown(db, item, lots=lots)
+    roles = bd["roles"]
+    by_id = {inv.id: inv for inv in lots}
 
     actor    = current_user.get("full_name") or current_user.get("username") or "—"
+    unit     = item.unit or ""
     old_qty  = float(item.current_stock or 0)
-    new_qty  = float(data.new_quantity)
+    if shelf_mode:
+        new_qty = round(float(target) + bd["witness"] + bd["qc_pending"], 6)
+    else:
+        new_qty = round(float(target), 6)
     delta    = round(new_qty - old_qty, 6)
 
     if abs(delta) < 1e-9:
-        return JSONResponse(status_code=400, content={
-            "detail": f"Yeni miktar mevcut stokla aynı ({old_qty} {item.unit or ''}). Düzeltme gerekmez."
-        })
+        if shelf_mode:
+            return _adj_error(400, f"Raf sayımı mevcut rafla aynı ({bd['shelf_quantity']:g} {unit}). "
+                                   f"Düzeltme gerekmez.", db)
+        return _adj_error(400, f"Yeni miktar mevcut stokla aynı ({old_qty} {unit}). Düzeltme gerekmez.", db)
+
+    # ── Lot planı — hiçbir şey yazılmadan doğrulanır ──────────────────────
+    changes: List[tuple] = []          # [(Inventory, imzalı fark)]
+    lotless_part = 0.0                 # − lotsuz stoktan düşüldü / + lotsuz stoğa eklendi
+    uncovered = 0.0                    # eski mod: lotsuz + raf lotları yetmedi
+    legacy_lot = None
+    if data.lot_number:
+        # Eski tek-lot dalı: FARK o lota uygulanır (eskiden lota kartın
+        # TOPLAMI yazılıyordu).  Aynı kart + lot no'da fason karantina satırı
+        # da olabilir — önce normal satır; yalnız o yoksa fason satırı.
+        same = [l for l in lots if l.lot_number == data.lot_number]
+        inv = (next((l for l in sorted(same, key=lambda r: r.id)
+                     if l.outsourcing_receipt_id is None), None)
+               or (min(same, key=lambda r: r.id) if same else None))
+        if inv is not None:
+            if inv.outsourcing_receipt_id and (inv.status == "QUARANTINE" or inv.qc_required):
+                return _adj_error(400, "Fason kabul lotu kalite kontrolü tamamlanmadan stok "
+                                       "düzeltmesine konu olamaz.", db)
+            refusal = _lot_refusal(inv, roles.get(inv.id))
+            if refusal:
+                return _adj_error(400, refusal, db)
+            have = float(inv.quantity or 0.0)
+            if have + delta < -1e-6:
+                return _adj_error(400, f"Lot {inv.lot_number} içinde {have:g} {unit} var; "
+                                       f"{-delta:g} {unit} düşülemez.", db)
+            changes.append((inv, delta))
+            legacy_lot = inv
+    elif delta < 0:
+        need = -delta
+        if data.add_to_inventory_id is not None:
+            return _adj_error(400, "Stok azalıyor — hedef lot değil, düşülecek satırlar seçilir.", db)
+        if draws is not None:
+            seen, total, from_lotless = set(), 0.0, 0.0
+            for d in draws:
+                q = round(float(d.quantity), 6)
+                if q <= 1e-9:
+                    continue
+                if d.inventory_id in seen:
+                    return _adj_error(400, "Aynı satır iki kez seçilmiş.", db)
+                seen.add(d.inventory_id)
+                if d.inventory_id is None:
+                    if q > bd["lotless"] + 1e-6:
+                        return _adj_error(400, f"Lot kaydı olmayan stok {bd['lotless']:g} {unit}; "
+                                               f"{q:g} {unit} düşülemez.", db)
+                    from_lotless += q
+                else:
+                    inv = by_id.get(d.inventory_id)
+                    if inv is None:
+                        return _adj_error(400, "Seçilen lot bu karta ait değil.", db)
+                    refusal = _lot_refusal(inv, roles.get(inv.id))
+                    if refusal:
+                        return _adj_error(400, refusal, db)
+                    have = float(inv.quantity or 0.0)
+                    if q > have + 1e-6:
+                        return _adj_error(400, f"Lot {inv.lot_number} içinde {have:g} {unit} var; "
+                                               f"{q:g} {unit} düşülemez.", db)
+                    changes.append((inv, -q))
+                total = round(total + q, 6)
+            if abs(total - need) > 1e-6:
+                return _adj_error(400, f"Seçilen miktarların toplamı ({total:g} {unit}) düzeltme "
+                                       f"farkına ({need:g} {unit}) eşit olmalı.", db)
+            lotless_part = -round(from_lotless, 6)
+        else:
+            shelf_lots = [l for l in lots
+                          if roles.get(l.id) == "shelf" and float(l.quantity or 0.0) > 1e-9]
+            from_lotless, allocs, uncovered = stock_lots.correction_default(
+                bd["lotless"], shelf_lots, need)
+            lotless_part = -from_lotless
+            changes = [(l, -q) for l, q in allocs]
+    else:
+        if draws is not None and any(d.quantity > 1e-9 for d in draws):
+            return _adj_error(400, "Stok artıyor — düşülecek satır seçilmez; gerekirse hedef lot seçin.", db)
+        if data.add_to_inventory_id is not None:
+            inv = by_id.get(data.add_to_inventory_id)
+            if inv is None:
+                return _adj_error(400, "Seçilen lot bu karta ait değil.", db)
+            refusal = _lot_refusal(inv, roles.get(inv.id))
+            if refusal:
+                return _adj_error(400, refusal, db)
+            changes.append((inv, delta))
+        else:
+            lotless_part = delta
+
+    # ── Yeni üretimin hemen ardından büyük düşüş → önce sor ───────────────
+    if delta < 0 and not data.acknowledge_recent_production:
+        prod = _recent_production(db, item, -delta)
+        if prod is not None:
+            pq = float(prod.produced_quantity or 0.0)
+            when = _when_tr(prod.produced_at) if prod.produced_at else "yakın zamanda"
+            return _adj_error(
+                409,
+                f"Bu üründen {when} {pq:g} {unit} üretim girildi. Üretim yanlışsa "
+                f"'Üretimi iptal et' (hammadde ve ambalaj geri döner); ürün gönderildiyse "
+                f"Teslimat'tan çıkış yapın.",
+                db, code="recent_production", delta=delta,
+                production={"id": prod.id, "lot_number": prod.lot_number or "",
+                            "produced_quantity": pq,
+                            "produced_at": (to_tr(prod.produced_at).strftime("%d.%m.%Y %H:%M")
+                                            if prod.produced_at else "")})
 
     try:
-        # ── Item.current_stock güncelle ────────────────────────────────────
-        item.current_stock = round(new_qty, 6)
+        now = datetime.utcnow()
+        for inv, d in changes:
+            q = round(float(inv.quantity or 0.0) + d, 6)
+            # Doğrulama 1e-6 toleranslı — düşüşte lot satırı asla eksiye inmez.
+            inv.quantity = 0.0 if abs(q) < 1e-9 or (d < 0 and q < 0) else q
+            inv.updated_at = now
+        item.current_stock = new_qty
 
-        # ── Lot-level adjustment opsiyonel: belirli bir lot'un quantity'sini
-        #     hedef değere düşür/yükselt. Yoksa sadece item-level düzeltme.
-        lot_note = ""
-        if data.lot_number:
-            # Aynı kart + lot no'da fason karantina satırı da olabilir — önce
-            # normal satır; yalnız o yoksa fason satırı (QC bitmişse düzeltilebilir).
-            lot_q = db.query(Inventory).filter(Inventory.item_id == data.item_id,
-                                               Inventory.lot_number == data.lot_number)
-            inv = (lot_q.filter(Inventory.outsourcing_receipt_id.is_(None))
-                   .order_by(Inventory.id).with_for_update().first()
-                   or lot_q.order_by(Inventory.id).with_for_update().first())
-            if inv:
-                if inv.outsourcing_receipt_id and (inv.status == "QUARANTINE" or inv.qc_required):
-                    db.rollback()
-                    return JSONResponse(status_code=400, content={
-                        "detail": "Fason kabul lotu kalite kontrolü tamamlanmadan stok düzeltmesine konu olamaz."
-                    })
-                # Bu lot için yeni miktar mantıklı mı kontrol etmiyoruz — kullanıcı
-                # zaten gerekçeyi girdi. Sadece lot satırını da güncelleyelim.
-                inv.quantity = round(new_qty, 6)
-                inv.updated_at = __import__("datetime").datetime.utcnow()
-                lot_note = f" | Lot: {data.lot_number}"
-        elif delta < 0:
-            # Lot SEÇİLMEDİ ve stok DÜŞÜYOR → lotlardan da FIFO düş.  Aksi hâlde
-            # `current_stock` iner ama lot satırları olduğu yerde kalır ve iki
-            # sayaç kalıcı olarak ayrışır (09.09.2026 tespiti, 25 üründe 274
-            # adet sapma).  Defter kaydı yine TEK imzalı Adjustment'tır —
-            # birleştirme script'leri bu konvansiyona dayanıyor.
-            from core.stock_lots import draw_down, lot_summary
-            touched, uncovered = draw_down(db, item, -delta)
-            if touched:
-                lot_note = f" | Lot düşümü: {lot_summary(touched)}"
+        # ── Not: önek "Stok düzeltme — Eski: … → Yeni: … (Δ …)" SÖZLEŞME —
+        #     numune çevirmedeki çift sayım koruması (_count_guard) ve
+        #     birleştirme script'leri bu öneki arar.
+        parts = []
+        if shelf_mode:
+            extra = []
+            if bd["witness"] > 1e-9:
+                extra.append(f"şahit {bd['witness']:g}")
+            if bd["qc_pending"] > 1e-9:
+                extra.append(f"QC bekleyen {bd['qc_pending']:g}")
+            parts.append(f"Raf sayımı: {float(target):g} {unit}".rstrip()
+                         + (f" (+ {' + '.join(extra)})" if extra else ""))
+        if legacy_lot is not None:
+            parts.append(f"Lot: {data.lot_number}")
+        else:
+            dec = [(inv.lot_number or "—", -d) for inv, d in changes if d < 0]
+            inc = [(inv.lot_number or "—", d) for inv, d in changes if d > 0]
+            if dec:
+                parts.append(f"Lot düşümü: {stock_lots.lot_summary(dec)}")
+            if inc:
+                parts.append(f"Lota eklendi: {stock_lots.lot_summary(inc)}")
+            if lotless_part < -1e-9:
+                parts.append(f"Lotsuz stoktan: {-lotless_part:g}")
+            elif lotless_part > 1e-9:
+                parts.append(f"Lotsuz stoğa: {lotless_part:g}")
             if uncovered > 1e-9:
-                lot_note += f" | lot kaydı dışı: {round(uncovered, 6):g}"
+                parts.append(f"lot kaydı dışı: {round(uncovered, 6):g}")
+        lot_note = "".join(f" | {p}" for p in parts)
+        # Tek lot hedeflendiyse (bütün fark o lotta) defter satırı lot no'yu taşır.
+        if data.lot_number:
+            tx_lot = data.lot_number
+        elif len(changes) == 1 and abs(lotless_part) < 1e-9 and uncovered < 1e-9:
+            tx_lot = changes[0][0].lot_number
+        else:
+            tx_lot = None
 
-        # ── Immutable audit kaydı (delta hem +/- olabilir) ─────────────────
         sign = "+" if delta > 0 else ""
         tx = Transaction(
             item_id=item.id,
-            lot_number=data.lot_number,
+            lot_number=tx_lot,
             transaction_type="Adjustment",
             quantity=delta,            # signed delta (-8.0 veya +3.0)
             notes=(
-                f"Stok düzeltme — Eski: {old_qty} {item.unit or ''} → "
-                f"Yeni: {new_qty} {item.unit or ''} "
+                f"Stok düzeltme — Eski: {old_qty} {unit} → "
+                f"Yeni: {new_qty} {unit} "
                 f"(Δ {sign}{delta}){lot_note} | Sebep: {reason[:200]}"
             ),
             performed_by=actor,
         )
         db.add(tx)
         db.flush()    # tx.id'i undo payload'a koyabilmek için
+
+        lot_changes = [{"inventory_id": inv.id, "lot_number": inv.lot_number,
+                        "delta": round(d, 6)} for inv, d in changes]
 
         # ── Undo log — Ctrl+Z için ─────────────────────────────────────────
         try:
@@ -1621,19 +1853,25 @@ def adjust_stock(
                         "before_stock":   old_qty,
                         "after_stock":    new_qty,
                         "transaction_id": tx.id,
+                        "lot_changes":    lot_changes,
                     },
-                    description=f"Stok düzeltildi: {old_qty} → {new_qty} {item.unit or ''} ({item.name})",
+                    description=f"Stok düzeltildi: {old_qty} → {new_qty} {unit} ({item.name})",
                 )
         except Exception:
             pass  # Undo başarısız olsa ana mutation hâlâ commit edilir.
 
         db.commit()
         return {
-            "message": f"Stok düzeltildi: {old_qty} → {new_qty} {item.unit or ''} (Δ {sign}{delta}).",
+            "message": f"Stok düzeltildi: {old_qty} → {new_qty} {unit} (Δ {sign}{delta}).",
             "item_id":    item.id,
             "old_qty":    old_qty,
             "new_qty":    new_qty,
             "delta":      delta,
+            "shelf_quantity": round(float(target), 6) if shelf_mode else None,
+            "lot_changes": lot_changes,
+            "lotless_delta": round(lotless_part, 6),
+            "uncovered":  round(uncovered, 6),
+            "transaction_id": tx.id,
         }
 
     except Exception:
@@ -1672,6 +1910,7 @@ def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(activ
     olan bir "aynı malzeme" grubundaysa grubu (`group_key` =
     "<grup id>:<kova>", /inventory/groups-summary'nin `key`'i); değilse null.
     `unit_family` + `bar_value` stok çubuğunu birim ailesi içinde kıyaslar.
+    `witness_qty` (16.10.2026): kart stoğunun şahit numune dolabındaki kısmı.
     """
     from core import group_stock
     items = (
@@ -1684,6 +1923,9 @@ def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(activ
     # (pasife alınan tedarikçinin adı da — kart tedarikçisiz görünmesin)
     supplier_name_by_id = _supplier_names(db, domain)
     by_item = group_stock.index_by_item(group_stock.load_groups(db, domain))
+    # Şahit dolabındaki lotlar kart stoğunda sayılır ama rafta değildir —
+    # listede "şahit N" notu (16.10.2026; pencere ile liste arasındaki fark).
+    witness_by_item = stock_lots.witness_totals(db, domain)
     out = []
     for i in items:
         g = by_item.get(i.id)
@@ -1698,6 +1940,7 @@ def inventory_summary(db: Session = Depends(get_db), domain: str = Depends(activ
             "supplier_name": supplier_name_by_id.get(i.supplier_id) if i.supplier_id else None,
             "group_id":      g.group_id if g else None,
             "group_key":     f"{g.group_id}:{g.bucket}" if g else None,
+            "witness_qty":   round(witness_by_item.get(i.id, 0.0), 4),
             **_bar_fields(i.current_stock, i.unit),
         })
     return out
@@ -1751,6 +1994,11 @@ def inventory_by_item(
     POST /inventory/lots/{id}/move'a gider); başka karttan taşındıysa
     `moved_from` ilk kartı gösterir.  `item_group` kartın "aynı malzeme"
     grubu ve üyeleridir (yoksa null).
+
+    `breakdown` (16.10.2026) kart stoğunu karta tam toplanan dört satıra
+    böler: raf (satılabilir) + lot kaydı olmayan + şahit dolabı + QC bekleyen
+    (`core.stock_lots.stock_breakdown`).  Her lot `role` taşır (shelf / qc /
+    witness / sample / quarantine / rejected / cancelled / retained / other).
     """
     item = db.query(Item).filter(Item.id == item_id, Item.domain == domain).first()
     if not item:
@@ -1766,6 +2014,14 @@ def inventory_by_item(
     moved_ids = {r.moved_from_item_id for r in rows if r.moved_from_item_id}
     moved_names = (dict(db.query(Item.id, Item.name).filter(Item.id.in_(moved_ids)).all())
                    if moved_ids else {})
+    # Kart = raf + QC bekleyen + şahit + lotsuz (core/stock_lots.stock_breakdown).
+    # Kırılım kartın TÜM lotlarından kurulur (eski panel damgalı lot da stoktur).
+    bd = stock_lots.stock_breakdown(db, item)
+    roles = bd["roles"]
+    witness_recs = {r.inventory_id: r for r in (
+        db.query(RetentionSample)
+        .filter(RetentionSample.inventory_id.in_([r.id for r in rows] or [0]))
+        .all())}
 
     lots = []
     by_location: dict[str, float] = {}
@@ -1773,6 +2029,8 @@ def inventory_by_item(
         loc = (r.location or "").strip() or "(Konum belirtilmemiş)"
         qty = float(r.quantity or 0)
         by_location[loc] = round(by_location.get(loc, 0.0) + qty, 4)
+        role = roles.get(r.id) or stock_lots.lot_role(r, bd["witness_ids"])
+        rs = witness_recs.get(r.id)
         lots.append({
             "inventory_id":  r.id,
             "lot_number":    r.lot_number,
@@ -1781,11 +2039,21 @@ def inventory_by_item(
             "status":        r.status or "",
             "qc_required":   bool(r.qc_required),
             "is_sample":     bool(r.is_sample),
+            # shelf | qc | witness → stokta; sample | quarantine | rejected |
+            # cancelled | retained | other → stok dışı (pencere rozetleri)
+            "role":          role,
+            "counts_in_stock": role in stock_lots.STOCK_ROLES,
+            "is_witness":    role == "witness",
+            "retention":     ({"id": rs.id, "status": rs.status, "is_active": bool(rs.is_active),
+                               "quantity": round(float(rs.quantity or 0.0), 4), "brand": rs.brand}
+                              if rs is not None else None),
+            "is_outsourcing": bool(r.outsourcing_receipt_id),
             "supplier_id":   r.supplier_id,
             "supplier_name": (r.supplier.name if r.supplier else "—"),
             "expiry_date":   r.expiry_date or "",
             "received_by":   r.received_by or "",
             "created_at":    to_tr(r.created_at).strftime("%d.%m.%Y %H:%M") if r.created_at else "",
+            "created_iso":   r.created_at.isoformat() if r.created_at else "",
             "moved_from":    ({"id": r.moved_from_item_id,
                                "name": moved_names.get(r.moved_from_item_id, "—")}
                               if r.moved_from_item_id else None),
@@ -1793,10 +2061,7 @@ def inventory_by_item(
                                     if r.sample_converted_at else ""),
         })
 
-    # lot_total STOK karşılığı — numune satırları hariç (numune current_stock'a
-    # hiç girmiyor, dahil edilirse her numunesi olan üründe kalıcı "stok ile
-    # lot toplamı uyuşmuyor" uyarısı basardı).  sample_total ayrı gösterilir.
-    non_sample_total = round(sum(l["quantity"] for l in lots if not l["is_sample"]), 4)
+    # Numune stok değildir (current_stock'a hiç girmez) — ayrı gösterilir.
     sample_total = round(sum(l["quantity"] for l in lots if l["is_sample"]), 4)
 
     return {
@@ -1804,11 +2069,25 @@ def inventory_by_item(
         "item_name":     item.name,
         "category":      item.category or "",
         "unit":          item.unit or "",
-        # Item.current_stock source-of-truth; lot toplamı bundan sapabilir
-        # (ör. üretim çıktısı doğrudan current_stock'a yazılır).
+        # Item.current_stock source-of-truth; `breakdown` onu dört satıra böler.
         "current_stock": round(float(item.current_stock or 0), 4),
-        "lot_total":     non_sample_total,
+        # Uyumluluk: stokta sayılan lotların toplamı (raf + QC + şahit; eskiden
+        # REJECTED/QUARANTINE/CANCELLED dahil her durum toplanıyordu — yanlış).
+        "lot_total":     round(bd["lot_total"], 4),
         "sample_total":  sample_total,
+        "breakdown": {
+            "shelf":          round(bd["shelf"], 4),
+            "shelf_lots":     bd["shelf_lots"],
+            "lotless":        round(bd["lotless"], 4),
+            "lot_excess":     round(bd["lot_excess"], 4),
+            "witness":        round(bd["witness"], 4),
+            "witness_lots":   bd["witness_lots"],
+            "qc_pending":     round(bd["qc_pending"], 4),
+            "qc_lots":        bd["qc_lots"],
+            "shelf_quantity": round(bd["shelf_quantity"], 4),
+            "unlinked_witness": round(bd["unlinked_witness"], 4),
+            "unlinked_witness_records": bd["unlinked_witness_records"],
+        },
         "by_location":   [
             {"location": loc, "total": tot}
             for loc, tot in sorted(by_location.items(), key=lambda x: -x[1])

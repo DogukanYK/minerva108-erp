@@ -939,3 +939,41 @@ def test_lot_message_when_counter_came_from_count(authed_client, db_session):
     db_session.commit()
     first = suggest(db_session, db_session.query(Item).get(tgt.id))
     assert first["lot_number"] == "EV001" and "ilk üretim" in first["message"]
+
+
+def test_witness_checkout_still_works_after_shelf_correction(authed_client, db_session):
+    """16.10.2026: elle düzeltme (raf sayımı ve eski toplam modu) şahit lotunu
+    düşmez — dolap çıkışı sonrasında da tam miktarla çalışır."""
+    rec, tgt = _recipe(db_session, suffix="RC")
+    assert _produce(authed_client, rec.id, 10, witness=3).status_code == 201
+    db_session.expire_all()
+    showroom = (db_session.query(Inventory)
+                .filter(Inventory.item_id == tgt.id, Inventory.location == "Showroom").one())
+    showroom.qc_required = False                     # QC onaylandı
+    db_session.commit()
+
+    # Rafta 5 sayıldı → kart = 5 + şahit 3 = 8; şahit lotu 3 kalır
+    r = authed_client.post("/api/inventory/adjust", headers=_HDR, json={
+        "item_id": tgt.id, "new_shelf_quantity": 5, "reason": "raf sayımı",
+        "acknowledge_recent_production": True})
+    assert r.status_code == 201, r.text
+    db_session.expire_all()
+    wit = (db_session.query(Inventory)
+           .filter(Inventory.item_id == tgt.id, Inventory.lot_number.like("%-S")).one())
+    assert wit.quantity == 3 and db_session.query(Item).get(tgt.id).current_stock == 8
+    # Eski toplam modu: kart 8 → 4 (−4) raf lotundan düşer; şahit yine 3
+    r = authed_client.post("/api/inventory/adjust", headers=_HDR, json={
+        "item_id": tgt.id, "new_quantity": 4, "reason": "sayım farkı"})
+    assert r.status_code == 201, r.text
+    db_session.expire_all()
+    assert db_session.query(Inventory).get(wit.id).quantity == 3
+    assert db_session.query(Inventory).get(showroom.id).quantity == 1
+
+    rs = db_session.query(RetentionSample).one()
+    r = authed_client.post(f"/api/retention/samples/{rs.id}/checkout", headers=_HDR,
+                           json={"quantity": 3, "reason": "test"})
+    assert r.status_code == 200, r.text
+    db_session.expire_all()
+    assert db_session.query(Inventory).get(wit.id).quantity == 0
+    assert db_session.query(RetentionSample).get(rs.id).status == "depleted"
+    assert db_session.query(Item).get(tgt.id).current_stock == 1

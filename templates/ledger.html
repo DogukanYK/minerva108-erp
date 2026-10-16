@@ -179,6 +179,40 @@
     .loc-group { margin: 0 0 0.85rem; padding: 0.5rem 0.8rem; border-radius: 8px;
       background: #f5f3ff; border: 1px solid #ddd6fe; font-size: 0.8rem; color: #4c1d95; }
     :root[data-theme="dark"] .loc-group { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+    /* Kart stoğu ↔ lot kırılımı (16.10.2026) — dört satır karta tam toplanır */
+    .recon-intro { margin: 0 0 0.75rem; font-size: 0.8rem; color: #6b7280; line-height: 1.45; }
+    .recon { border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; margin-bottom: 0.9rem; }
+    .recon-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75rem;
+      padding: 0.6rem 0.9rem; border-bottom: 1px solid #f0ece4; background: #faf8f3; }
+    .recon-row:last-child { border-bottom: none; }
+    .recon-row.zero { opacity: 0.55; }
+    .recon-label { font-weight: 600; color: var(--navy); font-size: 0.88rem; }
+    .recon-sub { font-size: 0.74rem; color: #6b7280; margin-top: 1px; font-weight: 400; }
+    .recon-qty { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--navy); white-space: nowrap; }
+    .recon-row.recon-total { background: #f3f0ea; }
+    .recon-row.recon-warn { background: #fff7ed; }
+    .recon-row.recon-warn .recon-label, .recon-row.recon-warn .recon-qty { color: #9a3412; }
+    .recon-info { margin: -0.4rem 0 0.9rem; font-size: 0.78rem; color: #6b7280; }
+    .recon-fix { display: inline-flex; align-items: center; gap: 0.3rem; margin: 0 0 0.9rem;
+      padding: 3px 12px; border-radius: 20px; border: 1.5px solid #e5e7eb; background: var(--white);
+      color: var(--navy); font-family: 'Jost', sans-serif; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
+    .recon-fix:hover { border-color: var(--gold); }
+    .lot-tag { display: inline-block; border-radius: 10px; padding: 1px 7px; margin-left: 4px;
+      font-family: 'Jost', sans-serif; font-size: 0.64rem; font-weight: 700; letter-spacing: 0.03em;
+      border: 1px solid; vertical-align: middle; }
+    .lot-tag.t-witness    { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
+    .lot-tag.t-qc         { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+    .lot-tag.t-sample     { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }
+    .lot-tag.t-rejected   { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+    .lot-tag.t-quarantine { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+    .lot-tag.t-cancelled, .lot-tag.t-retained, .lot-tag.t-other { background: #f3f4f6; color: #4b5563; border-color: #e5e7eb; }
+    tr.lot-off td { color: #9ca3af; }
+    .wit-hint { font-size: 0.7rem; color: #6d28d9; font-weight: 600; margin-top: 1px; }
+    :root[data-theme="dark"] .recon { border-color: var(--border); }
+    :root[data-theme="dark"] .recon-row { background: var(--surface-2); border-color: var(--border); }
+    :root[data-theme="dark"] .recon-row.recon-total { background: var(--white); }
+    :root[data-theme="dark"] .recon-label, :root[data-theme="dark"] .recon-qty { color: var(--text); }
+    :root[data-theme="dark"] .recon-fix { background: var(--surface-2); color: var(--text); border-color: var(--border); }
     /* "Aynı malzeme" grup satırı (13.10.2026) — toplam + kart dökümü sunucudan */
     tr.grp-row { background: #f8f6fe; cursor: pointer; }
     tr.grp-row:hover { background: #f1edfc; }
@@ -229,6 +263,33 @@
     .adj-delta-up   { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
     .adj-delta-down { background: #fff1f1; color: #b91c1c; border: 1px solid #fecaca; }
     .adj-delta-zero { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
+    /* Raf sayımı (16.10.2026) — kart kırılımı, düşülecek satırlar, artış hedefi */
+    .adj-info { margin: 0 0 1rem; padding: 0.55rem 0.85rem; border-radius: 8px; background: #f5f3ff;
+      border: 1px solid #ddd6fe; font-size: 0.8rem; color: #4c1d95; line-height: 1.45; }
+    .adj-label { font-size: 0.78rem; font-weight: 600; color: #6b7280; letter-spacing: 0.06em;
+      text-transform: uppercase; margin-bottom: 0.35rem; display: block; }
+    .adj-sec { margin-top: 1rem; }
+    .adj-sec-hint { font-size: 0.76rem; color: #6b7280; margin: -0.15rem 0 0.45rem; }
+    .adj-draw { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+    .adj-draw td { padding: 0.35rem 0.4rem; border-bottom: 1px solid #f3f0ea; vertical-align: middle; }
+    .adj-draw td.adj-draw-q { width: 8.5rem; }
+    .adj-draw .adj-draw-name { font-weight: 600; color: #1f2937; }
+    .adj-draw .adj-draw-meta { font-size: 0.72rem; color: #9ca3af; }
+    .adj-draw input { width: 100%; border: 1.5px solid #e5e7eb; border-radius: 6px; padding: 0.3rem 0.5rem;
+      font-family: 'Jost', sans-serif; font-size: 0.86rem; text-align: right; }
+    .adj-draw-sum { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+      margin-top: 0.45rem; font-size: 0.8rem; font-weight: 600; }
+    .adj-draw-sum.ok { color: #15803d; }
+    .adj-draw-sum.bad { color: #b91c1c; }
+    .adj-link { background: none; border: none; padding: 0; color: var(--navy); text-decoration: underline;
+      font-family: 'Jost', sans-serif; font-size: 0.78rem; cursor: pointer; }
+    :root[data-theme="dark"] .adj-info { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+    :root[data-theme="dark"] .adj-delta-up   { background: rgba(34,197,94,0.12); color: #86efac; border-color: rgba(34,197,94,0.35); }
+    :root[data-theme="dark"] .adj-delta-down { background: rgba(239,68,68,0.12); color: #fca5a5; border-color: rgba(239,68,68,0.35); }
+    :root[data-theme="dark"] .adj-delta-zero { background: var(--surface-2); color: var(--text-muted); border-color: var(--border); }
+    :root[data-theme="dark"] .adj-draw .adj-draw-name { color: var(--text); }
+    :root[data-theme="dark"] .adj-draw input { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+    :root[data-theme="dark"] .adj-link { color: var(--gold); }
 
     /* Stock level indicator */
     .stock-bar-wrap { width: 80px; height: 6px; background: #f3f4f6; border-radius: 3px; display: inline-block; vertical-align: middle; margin-left: 8px; }
@@ -474,20 +535,19 @@
         </div>
         <div class="modal-body" style="padding:1.5rem;">
           <div style="font-size:0.78rem;color:#9ca3af;letter-spacing:0.06em;text-transform:uppercase;font-weight:700;">Ürün</div>
-          <div id="adjItemName" style="font-size:1rem;font-weight:600;color:#1f2937;margin-top:2px;margin-bottom:1.1rem;">—</div>
+          <div id="adjItemName" style="font-size:1rem;font-weight:600;color:#1f2937;margin-top:2px;margin-bottom:0.9rem;">—</div>
+
+          <!-- Raf sayımı: lab yalnız rafı sayar; şahit dolabı + QC bekleyen karta otomatik eklenir -->
+          <div id="adjInfo" class="adj-info" style="display:none;"></div>
 
           <div class="row g-3">
             <div class="col-6">
-              <label style="font-size:0.78rem;font-weight:600;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:0.35rem;display:block;">
-                Mevcut Stok
-              </label>
+              <label class="adj-label" id="adjOldLabel">Mevcut Stok</label>
               <input type="text" class="form-control" id="adjOldQty" readonly
                 style="border:1.5px solid #e5e7eb;border-radius:8px;padding:0.6rem 0.9rem;background:#f9f7f3;color:#6b7280;font-family:'Jost',sans-serif;font-size:0.95rem;font-weight:600;width:100%;" />
             </div>
             <div class="col-6">
-              <label style="font-size:0.78rem;font-weight:600;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:0.35rem;display:block;">
-                Yeni Toplam Stok *
-              </label>
+              <label class="adj-label" id="adjNewLabel">Yeni Toplam Stok *</label>
               <div style="display:flex;gap:0.4rem;">
                 <input type="number" class="form-control" id="adjNewQty"
                   min="0" step="0.001" placeholder="örn. 10"
@@ -500,6 +560,20 @@
           </div>
 
           <div id="adjDeltaPreview" class="adj-delta-preview adj-delta-zero" style="display:none;"></div>
+
+          <!-- Eksi fark: hangi satırlardan düşülecek (varsayılan önce lotsuz, sonra en eski raf lotu) -->
+          <div id="adjDrawBox" class="adj-sec" style="display:none;">
+            <span class="adj-label">Nereden düşülecek? *</span>
+            <div class="adj-sec-hint">Varsayılan: önce lot kaydı olmayan stok, sonra en eski raf lotu. Şahit ve QC bekleyen lotlar düzeltmeyle düşülmez.</div>
+            <table class="adj-draw"><tbody id="adjDrawBody"></tbody></table>
+            <div id="adjDrawSum" class="adj-draw-sum"></div>
+          </div>
+
+          <!-- Artı fark: hangi lota yazılacak (varsayılan lotsuz) -->
+          <div id="adjAddBox" class="adj-sec" style="display:none;">
+            <label class="adj-label" for="adjAddTarget">Artış nereye yazılsın?</label>
+            <select id="adjAddTarget" class="form-select" style="border:1.5px solid #e5e7eb;border-radius:8px;font-family:'Jost',sans-serif;font-size:0.9rem;"></select>
+          </div>
 
           <label style="font-size:0.78rem;font-weight:600;color:#6b7280;letter-spacing:0.06em;text-transform:uppercase;margin-top:1.1rem;margin-bottom:0.35rem;display:block;">
             Sebep * <span style="text-transform:none;color:#9ca3af;font-weight:500;">(audit kaydına yazılacak — silinemez)</span>
@@ -712,6 +786,11 @@
         return `<span class="stock-bar-wrap"><span class="stock-bar ${barClass}" style="width:${pct.toFixed(1)}%;"></span></span>`;
       };
 
+      // Kart stoğunun şahit dolabındaki kısmı — rafta değil (pencerede ayrı satır)
+      const witnessHint = i => (Number(i.witness_qty) > 0)
+        ? `<div class="wit-hint" title="Kart stoğunun bu kadarı şahit numune dolabında — rafta değil, satılmaz">şahit ${Number(i.witness_qty).toLocaleString('tr-TR', {maximumFractionDigits:4})}</div>`
+        : '';
+
       const cardRow = (i, member) => {
         const adjustCell = canAdjust ? `
           <td style="text-align:right;">
@@ -736,6 +815,7 @@
           <td style="text-align:right;">
             <span class="td-num">${i.total_stock.toLocaleString('tr-TR', {maximumFractionDigits:4})}</span>
             ${barHtml(i.unit_family, i.bar_value)}
+            ${witnessHint(i)}
           </td>
           ${adjustCell}
         </tr>`;
@@ -771,9 +851,28 @@
     }
 
     /* ── Stok lokasyon detayı — satıra tıklayınca ──────────────────────────
-       Bir ürünün lot bazlı dökümü: hangi lot nerede (Showroom / Şahit Numune
-       Dolabı / diğer), ne kadarı, hangi durumda. */
+       Kart stoğu dört satıra bölünür ve satırlar karta TAM toplanır
+       (16.10.2026 — sunucu /api/inventory/by-item `breakdown`, tek kaynak
+       core/stock_lots.stock_breakdown): raf (satılabilir) + lot kaydı olmayan
+       stok + şahit dolabı + QC bekleyen.  Altında lot tablosu rozetlerle. */
     let _stockLocModal = null;
+
+    // Lot rolü → rozet (sunucu `role`; stok dışı lotlar soluk satır)
+    const LOT_ROLE_TAG = {
+      witness:    ['t-witness', 'ŞAHİT'],
+      qc:         ['t-qc', 'QC BEKLİYOR'],
+      sample:     ['t-sample', 'NUMUNE'],
+      rejected:   ['t-rejected', 'RED'],
+      quarantine: ['t-quarantine', 'KARANTİNA'],
+      cancelled:  ['t-cancelled', 'İPTAL'],
+      retained:   ['t-retained', 'FASON ŞAHİT'],
+      other:      ['t-other', 'STOK DIŞI'],
+    };
+    function lotRoleTag(role) {
+      const t = LOT_ROLE_TAG[role];
+      return t ? ` <span class="lot-tag ${t[0]}">${t[1]}</span>` : '';
+    }
+
     async function showStockLocations(itemId) {
       const body  = document.getElementById('stockLocBody');
       const title = document.getElementById('stockLocTitle');
@@ -790,34 +889,76 @@
         }
         title.textContent = d.item_name;
         const fmt = n => Number(n || 0).toLocaleString('tr-TR', { maximumFractionDigits: 4 });
+        const u = escHtml(d.unit);
+        const b = d.breakdown || {};
 
-        const locCards = d.by_location.length
-          ? d.by_location.map(l => `
+        // ── Dört satır: karta tam toplanır ──
+        // qty sayıdır; sıfır satır soluk (toplam/uyarı satırı hariç)
+        const reconRow = (label, sub, qty, extraCls, sign) => `
+          <div class="recon-row${extraCls ? ' ' + extraCls : ''}${!extraCls && Math.abs(Number(qty) || 0) < 0.0005 ? ' zero' : ''}">
+            <div><div class="recon-label">${label}</div>${sub ? `<div class="recon-sub">${sub}</div>` : ''}</div>
+            <div class="recon-qty">${sign || ''}${fmt(qty)} ${u}</div>
+          </div>`;
+        const lotCount = n => n ? `${n} lot` : 'lot yok';
+        let recon = reconRow('Raf (satılabilir)',
+                             `QC'si bitmiş, şahit olmayan lotlar — ${lotCount(b.shelf_lots)}`, b.shelf);
+        recon += reconRow('Lot kaydı olmayan stok',
+                          'Lot sisteminden önceki stok, elle artı düzeltmeler ve iadeler lot açmaz.', b.lotless);
+        recon += reconRow('Şahit dolabı',
+                          `Stokta sayılır ama satılmaz; yalnız Şahit Numune ekranından çıkar — ${lotCount(b.witness_lots)}`,
+                          b.witness);
+        recon += reconRow('QC bekleyen',
+                          `Üretimden çıktı, kalite kontrol kararı bekliyor — ${lotCount(b.qc_lots)}`, b.qc_pending);
+        if (Number(b.lot_excess) > 0.0005) {
+          recon += reconRow('− Lot fazlası',
+                            'Lot kayıtları kart stoğundan fazla gösteriyor — rafı sayıp düzeltin.',
+                            b.lot_excess, 'recon-warn', '−');
+        }
+        recon += reconRow('Toplam = kart stoğu', '', d.current_stock, 'recon-total');
+
+        const unlinked = (Number(b.unlinked_witness) > 0.0005)
+          ? `<p class="recon-info"><i class="bi bi-info-circle"></i> Dolapta ayrıca lot kaydı olmayan
+               ${(b.unlinked_witness_records || []).length} şahit kaydı var (${fmt(b.unlinked_witness)} ${u}) —
+               bilgi amaçlı, stoktan düşülmez.</p>`
+          : '';
+
+        const canAdj  = !!(window.can && window.can('inventory', 'adjust'));
+        const fixBtn = (canAdj && document.getElementById('adjustStockModal'))
+          ? `<button type="button" class="recon-fix" onclick="adjustFromLocations()"><i class="bi bi-clipboard-check"></i> Raf sayımıyla düzelt</button>`
+          : '';
+
+        // Konum kırılımı — yalnız stokta sayılan lotlar (red/iptal/numune hariç)
+        const byLoc = {};
+        d.lots.filter(l => l.counts_in_stock).forEach(l => {
+          byLoc[l.location] = (byLoc[l.location] || 0) + Number(l.quantity || 0);
+        });
+        const locs = Object.entries(byLoc).filter(([, q]) => q > 0.0005).sort((a, b2) => b2[1] - a[1]);
+        const locCards = locs.length
+          ? locs.map(([loc, q]) => `
               <div class="loc-card">
-                <span class="loc-name"><i class="bi bi-geo-alt-fill" style="color:var(--gold);"></i> ${escHtml(l.location)}</span>
-                <span class="loc-qty">${fmt(l.total)} ${escHtml(d.unit)}</span>
+                <span class="loc-name"><i class="bi bi-geo-alt-fill" style="color:var(--gold);"></i> ${escHtml(loc)}</span>
+                <span class="loc-qty">${fmt(q)} ${u}</span>
               </div>`).join('')
-          : '<div style="color:#9ca3af;padding:1rem;text-align:center;">Bu ürün için lot kaydı yok (üretim çıktısı doğrudan stoğa yazılmış olabilir).</div>';
+          : '<div style="color:#9ca3af;padding:0.5rem 0 0.75rem;">Stokta sayılan lot yok — kart stoğunun tamamı lot kaydı olmayan stok.</div>';
 
         // "Taşı": numune lotu inventory.receive, stoktaki lot ayrıca
-        // inventory.adjust ister (iki kartın stoğu değişir); QC bekleyen ya da
-        // boş lot taşınmaz — sunucu (core/stock_lots.move_lot) yine doğrular.
+        // inventory.adjust ister (iki kartın stoğu değişir); QC bekleyen,
+        // şahit ya da boş lot taşınmaz — sunucu (core/stock_lots.move_lot) yine doğrular.
         _locData = d;
         const canRecv = !!(window.can && window.can('inventory', 'receive'));
-        const canAdj  = !!(window.can && window.can('inventory', 'adjust'));
         const movable = l => canRecv && (l.is_sample || canAdj) && l.quantity > 0
-                             && (!l.status || l.status === 'APPROVED') && !l.qc_required;
+                             && (!l.status || l.status === 'APPROVED') && !l.qc_required && !l.is_witness;
         const anyMove = d.lots.some(movable);
 
         let lotTable = '';
         if (d.lots.length) {
           const rows = d.lots.map(l => `
-            <tr>
-              <td style="font-family:monospace;font-size:0.8rem;">${escHtml(l.lot_number || '—')}${l.is_sample ? ' <span style="background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;border-radius:10px;padding:1px 7px;font-size:0.66rem;font-weight:700;">NUMUNE</span>' : ''}${l.moved_from ? `<div class="loc-moved" title="Lotun ilk geldiği kart">← «${escHtml(l.moved_from.name)}» kartından taşındı</div>` : ''}</td>
+            <tr class="${l.counts_in_stock || l.is_sample ? '' : 'lot-off'}">
+              <td style="font-family:monospace;font-size:0.8rem;">${escHtml(l.lot_number || '—')}${lotRoleTag(l.role)}${l.moved_from ? `<div class="loc-moved" title="Lotun ilk geldiği kart">← «${escHtml(l.moved_from.name)}» kartından taşındı</div>` : ''}</td>
               <td>${escHtml(l.supplier_name || '—')}</td>
               <td>${escHtml(l.location)}</td>
-              <td style="text-align:right;">${fmt(l.quantity)} ${escHtml(d.unit)}</td>
-              <td>${escHtml(l.status)}${l.qc_required ? ' <span style="color:#b45309;">· QC bekliyor</span>' : ''}</td>
+              <td style="text-align:right;">${fmt(l.quantity)} ${u}</td>
+              <td>${escHtml(l.status)}</td>
               <td style="color:#6b7280;">${escHtml(l.created_at)}</td>
               ${anyMove ? `<td style="text-align:right;">${movable(l) ? `<button type="button" class="lot-mv" onclick="moveLocLot(${l.inventory_id})" title="Lotu başka bir karta taşı (ör. doğru tedarikçinin kartına)"><i class="bi bi-arrow-left-right"></i> Taşı</button>` : ''}</td>` : ''}
             </tr>`).join('');
@@ -836,36 +977,36 @@
                   (stok ${fmt(m.stock)} ${escHtml(m.unit || '')}${m.is_active ? '' : ', pasif'})`).join(' · ')}</div>`
           : '';
 
-        let mismatch = '';
-        if (Math.abs(d.current_stock - d.lot_total) > 0.001) {
-          mismatch = `<div style="margin-top:0.75rem;padding:0.6rem 0.9rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:0.8rem;color:#9a3412;">
-            <i class="bi bi-info-circle"></i> Güncel stok (${fmt(d.current_stock)}) ile lot toplamı (${fmt(d.lot_total)}) farklı —
-            üretim çıktıları doğrudan stoğa yazıldığı için bu beklenen bir durum olabilir.</div>`;
-        }
-
-        // Numune stoğa dahil DEĞİL (2026-08-24 sonrası) — ayrı satır olarak
-        // gösterilir, yoksa numunesi olan her üründe "stok ile lot toplamı
-        // farklı" uyarısı kalıcı olarak basardı.
+        // Numune stoğa dahil DEĞİL (2026-08-24 sonrası) — ayrı satır.
         const sampleLine = (d.sample_total > 0.001)
           ? `<p style="margin:0 0 0.85rem;color:#6b7280;font-size:0.85rem;">
-               Numune toplamı: <b style="color:#4338ca;">${fmt(d.sample_total)} ${escHtml(d.unit)}</b>
+               Numune toplamı: <b style="color:#4338ca;">${fmt(d.sample_total)} ${u}</b>
                <span style="color:#9ca3af;"> — stok toplamına dahil değil</span>
              </p>`
           : '';
 
         body.innerHTML = `
-          <p style="margin:0 0 0.85rem;color:#6b7280;font-size:0.85rem;">
-            Güncel toplam stok: <b style="color:var(--navy);">${fmt(d.current_stock)} ${escHtml(d.unit)}</b>
-          </p>
+          <p class="recon-intro">Kart stoğu her giriş ve çıkış hareketinin toplamıdır. Lot, o miktarın hangi
+            üretim ya da alım partisinden geldiğini gösterir; her stok bir lota bağlı değildir.</p>
+          <div class="recon">${recon}</div>
+          ${unlinked}
+          ${fixBtn}
           ${sampleLine}
           ${groupLine}
-          <p style="font-size:0.72rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#9ca3af;margin:0 0 0.5rem;">Lokasyon Kırılımı</p>
+          <p style="font-size:0.72rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#9ca3af;margin:0 0 0.5rem;">Lotların konumu</p>
           ${locCards}
-          ${lotTable}
-          ${mismatch}`;
+          ${lotTable}`;
       } catch {
         body.innerHTML = '<div style="padding:2rem;color:#b91c1c;">Bağlantı hatası.</div>';
       }
+    }
+
+    /* Penceredeki "Raf sayımıyla düzelt" → düzeltme penceresi */
+    function adjustFromLocations() {
+      const d = _locData;
+      if (!d) return;
+      if (_stockLocModal) _stockLocModal.hide();
+      openAdjustModal(d.item_id, d.item_name, d.current_stock, d.unit);
     }
 
     /* Lot detayındaki "Taşı" → static/lot-move.js penceresi.  Bu modal
@@ -888,18 +1029,46 @@
     }
 
     /* ── Stok Düzeltme akışı ───────────────────────────────────────────────
-       Black-box invariant: backend her düzeltmeyi Transaction(type='Adjustment')
-       olarak audit'e yazar; biz sadece kullanıcıya delta'yı önizlettirip ham
-       sebebi gönderiyoruz. Modal sadece izinli kullanıcılarda render olur. */
-    let _adjState = { itemId: null, oldQty: 0, unit: '' };
+       Black-box invariant: backend her düzeltmeyi TEK Transaction(type=
+       'Adjustment') olarak audit'e yazar.  RAF SAYIMI (16.10.2026): lab yalnız
+       rafı sayar — şahit dolabı ve QC bekleyen sayıma girmez, sunucu yeni
+       kartı raf + şahit + QC bekleyen olarak hesaplar.  Eksi farkta kullanıcı
+       hangi satırlardan düşüleceğini seçer (varsayılan önce lotsuz stok, sonra
+       en eski raf lotu); artı farkta hedef lot (varsayılan lotsuz).  Lot dökümü
+       alınamazsa eski "yeni toplam stok" moduna düşer.  Modal sadece izinli
+       kullanıcılarda render olur. */
+    let _adjState = { itemId: null, oldQty: 0, unit: '', mode: 'total', bd: null,
+                      shelfLots: [], allShelf: [], seq: 0, need: null };
     let _adjModal = null;
 
     function fmtNum(n) {
       return Number(n || 0).toLocaleString('tr-TR', { maximumFractionDigits: 4 });
     }
+    const r6 = n => Math.round((Number(n) || 0) * 1e6) / 1e6;
 
-    function openAdjustModal(itemId, name, oldQty, unit) {
-      _adjState = { itemId, oldQty: Number(oldQty || 0), unit: unit || '' };
+    function _adjSetMode(mode) {
+      _adjState.mode = mode;
+      const shelf = mode === 'shelf';
+      document.getElementById('adjOldLabel').textContent = shelf ? 'Mevcut Raf (sistem)' : 'Mevcut Stok';
+      document.getElementById('adjNewLabel').textContent = shelf ? 'Yeni Raf Sayımı *' : 'Yeni Toplam Stok *';
+      const old = shelf ? _adjState.bd.shelf_quantity : _adjState.oldQty;
+      document.getElementById('adjOldQty').value = `${fmtNum(old)} ${_adjState.unit}`;
+      const info = document.getElementById('adjInfo');
+      if (!shelf) { info.style.display = 'none'; info.textContent = ''; return; }
+      const b = _adjState.bd;
+      const u = _adjState.unit;
+      const fixed = r6(Number(b.witness || 0) + Number(b.qc_pending || 0));
+      info.textContent = `Kart stoğu ${fmtNum(_adjState.oldQty)} ${u} = raf ${fmtNum(b.shelf_quantity)}`
+        + ` + şahit dolabı ${fmtNum(b.witness)} + QC bekleyen ${fmtNum(b.qc_pending)}. `
+        + `Yalnız rafı sayın; şahit dolabı ve QC bekleyen sayıma girmez, karta otomatik eklenir`
+        + (fixed > 0 ? ` (yeni kart = raf sayımı + ${fmtNum(fixed)}).` : '.');
+      info.style.display = 'block';
+    }
+
+    async function openAdjustModal(itemId, name, oldQty, unit) {
+      const seq = ++_adjState.seq;
+      _adjState = { itemId, oldQty: Number(oldQty || 0), unit: unit || '', mode: 'total', bd: null,
+                    shelfLots: [], allShelf: [], seq, need: null };
       document.getElementById('adjItemName').textContent = name;
       document.getElementById('adjOldQty').value = `${fmtNum(oldQty)} ${unit || ''}`;
       document.getElementById('adjNewQty').value = '';
@@ -907,28 +1076,144 @@
       document.getElementById('adjReason').value = '';
       document.getElementById('adjReasonCount').textContent = '0';
       document.getElementById('adjDeltaPreview').style.display = 'none';
+      document.getElementById('adjDrawBox').style.display = 'none';
+      document.getElementById('adjAddBox').style.display = 'none';
+      document.getElementById('adjAddTarget').dataset.item = '';
+      const info = document.getElementById('adjInfo');
+      info.textContent = 'Lot dökümü yükleniyor…';
+      info.style.display = 'block';
+      const btn = document.getElementById('adjSaveBtn');
+      btn.disabled = true;
       if (!_adjModal) _adjModal = new bootstrap.Modal(document.getElementById('adjustStockModal'));
       _adjModal.show();
       setTimeout(() => document.getElementById('adjNewQty').focus(), 200);
+      let d = null;
+      try {
+        const res = await fetch(`/api/inventory/by-item/${itemId}`);
+        if (res.ok) d = await res.json();
+      } catch { d = null; }
+      if (seq !== _adjState.seq) return;            // başka bir kart açıldı
+      btn.disabled = false;
+      if (!d || !d.breakdown) { _adjSetMode('total'); updateAdjPreview(); return; }
+      _adjState.oldQty = Number(d.current_stock || 0);
+      _adjState.bd = d.breakdown;
+      // Raf lotları en eski önce (sunucunun varsayılan sırası: created_at, id)
+      const shelf = d.lots.filter(l => l.role === 'shelf')
+        .sort((a, b) => (a.created_iso || '').localeCompare(b.created_iso || '') || a.inventory_id - b.inventory_id);
+      _adjState.allShelf = shelf;
+      _adjState.shelfLots = shelf.filter(l => Number(l.quantity) > 0);
+      _adjSetMode('shelf');
+      updateAdjPreview();
+    }
+
+    function _adjDelta() {
+      const v = parseFloat(document.getElementById('adjNewQty').value);
+      if (isNaN(v)) return null;
+      if (_adjState.mode === 'shelf') {
+        const b = _adjState.bd;
+        const newCard = r6(v + Number(b.witness || 0) + Number(b.qc_pending || 0));
+        return { value: v, newCard, delta: r6(newCard - _adjState.oldQty) };
+      }
+      return { value: v, newCard: v, delta: r6(v - _adjState.oldQty) };
     }
 
     function updateAdjPreview() {
-      const newVal = parseFloat(document.getElementById('adjNewQty').value);
       const box = document.getElementById('adjDeltaPreview');
-      if (isNaN(newVal)) { box.style.display = 'none'; return; }
-      const delta = +(newVal - _adjState.oldQty).toFixed(6);
+      const drawBox = document.getElementById('adjDrawBox');
+      const addBox = document.getElementById('adjAddBox');
+      const x = _adjDelta();
+      if (!x) { box.style.display = 'none'; drawBox.style.display = 'none'; addBox.style.display = 'none'; _adjState.need = null; return; }
+      const u = escHtml(_adjState.unit);
+      const shelf = _adjState.mode === 'shelf';
+      const cardTxt = shelf ? ` · kart ${fmtNum(_adjState.oldQty)} → ${fmtNum(x.newCard)} ${u}` : '';
+      const what = shelf ? 'Raf' : 'Stok';
       box.style.display = 'flex';
       box.classList.remove('adj-delta-up', 'adj-delta-down', 'adj-delta-zero');
-      if (delta > 0) {
+      if (x.delta > 0) {
         box.classList.add('adj-delta-up');
-        box.innerHTML = `<i class="bi bi-arrow-up-circle-fill"></i> Stok <b>+${fmtNum(delta)}</b> ${escHtml(_adjState.unit)} artırılacak`;
-      } else if (delta < 0) {
+        box.innerHTML = `<i class="bi bi-arrow-up-circle-fill"></i> ${what} <b>+${fmtNum(x.delta)}</b> ${u} artırılacak${cardTxt}`;
+      } else if (x.delta < 0) {
         box.classList.add('adj-delta-down');
-        box.innerHTML = `<i class="bi bi-arrow-down-circle-fill"></i> Stok <b>${fmtNum(delta)}</b> ${escHtml(_adjState.unit)} azaltılacak`;
+        box.innerHTML = `<i class="bi bi-arrow-down-circle-fill"></i> ${what} <b>${fmtNum(x.delta)}</b> ${u} azaltılacak${cardTxt}`;
       } else {
         box.classList.add('adj-delta-zero');
-        box.innerHTML = `<i class="bi bi-info-circle"></i> Mevcut stokla aynı — düzeltme gerekmez`;
+        box.innerHTML = `<i class="bi bi-info-circle"></i> Mevcut ${shelf ? 'rafla' : 'stokla'} aynı — düzeltme gerekmez`;
       }
+      if (!shelf) { drawBox.style.display = 'none'; addBox.style.display = 'none'; return; }
+      if (x.delta < 0) {
+        addBox.style.display = 'none';
+        const need = r6(-x.delta);
+        if (_adjState.need !== need) { _adjState.need = need; renderDrawRows(need); }
+        drawBox.style.display = 'block';
+      } else {
+        _adjState.need = null;
+        drawBox.style.display = 'none';
+        if (x.delta > 0) { renderAddTargets(); addBox.style.display = 'block'; }
+        else addBox.style.display = 'none';
+      }
+    }
+
+    /* Eksi fark: lotsuz satır + raf lotları, varsayılan dağıtımla dolu */
+    function renderDrawRows(need) {
+      const b = _adjState.bd;
+      const u = escHtml(_adjState.unit);
+      let rem = need;
+      const take = avail => { const t = r6(Math.min(Math.max(0, avail), rem)); rem = r6(rem - t); return t; };
+      const rows = [];
+      const lotless = Number(b.lotless || 0);
+      rows.push({ id: '', name: 'Lot kaydı olmayan stok', meta: `mevcut ${fmtNum(lotless)} ${u}`,
+                  max: lotless, q: take(lotless) });
+      _adjState.shelfLots.forEach(l => {
+        rows.push({ id: String(l.inventory_id), name: l.lot_number || '—',
+                    meta: `${l.location} · mevcut ${fmtNum(l.quantity)} ${u} · ${l.created_at}`,
+                    max: Number(l.quantity || 0), q: take(Number(l.quantity || 0)) });
+      });
+      document.getElementById('adjDrawBody').innerHTML = rows.map(r => `
+        <tr>
+          <td><div class="adj-draw-name">${escHtml(r.name)}</div><div class="adj-draw-meta">${escHtml(r.meta)}</div></td>
+          <td class="adj-draw-q"><input type="number" min="0" step="0.001" max="${r.max}"
+                data-inv="${escHtml(r.id)}" value="${r.q > 0 ? r.q : ''}" placeholder="0"
+                oninput="updateDrawSum()" aria-label="${escHtml(r.name)} — düşülecek miktar" /></td>
+        </tr>`).join('');
+      updateDrawSum();
+    }
+
+    function _drawEntries() {
+      return Array.from(document.querySelectorAll('#adjDrawBody input[data-inv]')).map(el => ({
+        inventory_id: el.dataset.inv ? Number(el.dataset.inv) : null,
+        quantity: r6(parseFloat(el.value) || 0),
+        max: Number(el.getAttribute('max') || 0),
+      }));
+    }
+
+    function updateDrawSum() {
+      const el = document.getElementById('adjDrawSum');
+      const need = _adjState.need || 0;
+      const rows = _drawEntries();
+      const sum = r6(rows.reduce((a, r) => a + r.quantity, 0));
+      const over = rows.find(r => r.quantity > r.max + 1e-6);
+      const ok = Math.abs(sum - need) < 1e-6 && !over;
+      el.className = 'adj-draw-sum ' + (ok ? 'ok' : 'bad');
+      const u = _adjState.unit;
+      const msg = over ? `Bir satırda mevcuttan fazla miktar var (en çok ${fmtNum(over.max)} ${u}).`
+        : `Seçilen ${fmtNum(sum)} / düşülecek ${fmtNum(need)} ${u}`;
+      el.innerHTML = `<span>${escHtml(msg)}</span><button type="button" class="adj-link" onclick="renderDrawRows(_adjState.need || 0)">Varsayılana dön</button>`;
+      return ok;
+    }
+
+    /* Artı fark: hedef — lotsuz (varsayılan) ya da bir raf lotu */
+    function renderAddTargets() {
+      const sel = document.getElementById('adjAddTarget');
+      if (sel.dataset.item === String(_adjState.itemId)) return;   // seçim korunsun
+      sel.dataset.item = String(_adjState.itemId);
+      const u = _adjState.unit;
+      const opt = l => `<option value="${l.inventory_id}">${escHtml(l.lot_number || '—')} — ${escHtml(l.location)} · ${escHtml(fmtNum(l.quantity))} ${escHtml(u)}</option>`;
+      const full = _adjState.allShelf.filter(l => Number(l.quantity) > 0);
+      const empty = _adjState.allShelf.filter(l => !(Number(l.quantity) > 0)).slice().reverse();
+      sel.innerHTML = '<option value="">Lot kaydı olmayan stok (önerilen)</option>'
+        + (full.length ? `<optgroup label="Raf lotları">${full.map(opt).join('')}</optgroup>` : '')
+        + (empty.length ? `<optgroup label="Boşalmış raf lotları">${empty.map(opt).join('')}</optgroup>` : '');
+      sel.value = '';
     }
 
     /* Reason char counter — sadece izin varsa modal var, dolayısıyla element de var */
@@ -940,16 +1225,34 @@
           reason.addEventListener('input', () => count.textContent = reason.value.length);
         }
         const saveBtn = document.getElementById('adjSaveBtn');
-        if (saveBtn) saveBtn.addEventListener('click', submitAdjustment);
+        if (saveBtn) saveBtn.addEventListener('click', () => submitAdjustment());
       });
     }
 
     async function submitAdjustment() {
-      const newVal = parseFloat(document.getElementById('adjNewQty').value);
+      const x = _adjDelta();
       const reason = document.getElementById('adjReason').value.trim();
-      if (isNaN(newVal) || newVal < 0) { showToast('Geçerli bir miktar giriniz (0 veya üzeri).'); return; }
+      if (!x || x.value < 0) { showToast('Geçerli bir miktar giriniz (0 veya üzeri).'); return; }
       if (reason.length < 3) { showToast('Sebep en az 3 karakter olmalı.'); return; }
-      if (Math.abs(newVal - _adjState.oldQty) < 1e-9) { showToast('Yeni miktar mevcut stokla aynı.'); return; }
+      if (Math.abs(x.delta) < 1e-9) {
+        showToast(_adjState.mode === 'shelf' ? 'Raf sayımı mevcut rafla aynı.' : 'Yeni miktar mevcut stokla aynı.');
+        return;
+      }
+
+      const body = { item_id: _adjState.itemId, reason: reason };
+      if (_adjState.mode === 'shelf') {
+        body.new_shelf_quantity = x.value;
+        if (x.delta < 0) {
+          if (!updateDrawSum()) { showToast('Düşülecek satırların toplamı farka eşit olmalı.'); return; }
+          body.draw_from = _drawEntries().filter(r => r.quantity > 0)
+            .map(r => ({ inventory_id: r.inventory_id, quantity: r.quantity }));
+        } else {
+          const t = document.getElementById('adjAddTarget').value;
+          if (t) body.add_to_inventory_id = Number(t);
+        }
+      } else {
+        body.new_quantity = x.value;
+      }
 
       const btn = document.getElementById('adjSaveBtn');
       btn.disabled = true;
@@ -957,20 +1260,26 @@
       btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Kaydediliyor…';
 
       try {
-        const res = await fetch('/api/inventory/adjust', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            item_id: _adjState.itemId,
-            new_quantity: newVal,
-            reason: reason,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) { showToast(data.detail || 'Düzeltme başarısız.'); return; }
-        showToast(data.message || 'Düzeltme kaydedildi.', 'success');
-        _adjModal.hide();
-        loadAll();   // KPI + stok + ledger feed yenilensin
+        // Yeni üretimin hemen ardından büyük düşüş: sunucu 409 recent_production
+        // ile sorar; onaylanırsa bayrakla bir kez yeniden gönderilir.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const res = await fetch('/api/inventory/adjust', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.status === 409 && data.code === 'recent_production' && !body.acknowledge_recent_production) {
+            if (!window.confirm(`${data.detail}\n\nSayım doğruysa düzeltme yine de kaydedilsin mi?`)) return;
+            body.acknowledge_recent_production = true;
+            continue;
+          }
+          if (!res.ok) { showToast(data.detail || 'Düzeltme başarısız.'); return; }
+          showToast(data.message || 'Düzeltme kaydedildi.', 'success');
+          _adjModal.hide();
+          loadAll();   // KPI + stok + ledger feed yenilensin
+          return;
+        }
       } catch {
         showToast('Bağlantı hatası — düzeltme kaydedilmedi.');
       } finally {

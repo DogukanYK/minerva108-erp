@@ -642,7 +642,7 @@ kaplarıyla birlikte denetlenir) → her değişiklik yeni paket sürümü
 `packet_hash` eşleşmeli; B2B'nin aksine çizilen imza / şifre YOK) → etaplı sevk
 (`idempotency_key`; kap başına TEK `Output`, not öneki `Fason sevk`,
 `OutsourcingShipmentLine.transaction_id`; lotsuz kap `stock_lots.draw_down` ile FIFO
-lot düşer) → ilk sevkten sonra paket/kap DONAR → dış tüketim/fire
+lot düşer — şahit/QC bekleyen lot hariç) → ilk sevkten sonra paket/kap DONAR → dış tüketim/fire
 (`OutsourcingMovement`; yerel stok TEKRAR düşmez; g↔kg, ml↔l kesin, kg↔l YOK) →
 fiziksel iade + mamul kabul (`quantity` toplam, `sample_quantity` şahit alt kümesi)
 **ayrı karantina lotlarına** (`status='QUARANTINE'`, `inventory.outsourcing_receipt_id`;
@@ -1304,14 +1304,46 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   (`lot_number` dolu) yazar + `current_stock`'u düşer. Yazılan Output'ların
   TOPLAMI daima miktara eşittir → `compute_stock_at` rekonstrüksiyonu değişmez.
   Lot yetmiyorsa artık lotsuz tek Output olarak yazılır, **iş engellenmez**.
-  Elle düzeltme (negatif delta, lot seçilmemiş) `stock_lots.draw_down()`
-  kullanır: yalnız lotu düşer, defter kaydı yine TEK imzalı `Adjustment`'tır
-  (birleştirme script'leri bu konvansiyona dayanıyor). Numune lotu
-  (`is_sample`) hiçbir tüketimde kullanılmaz. Üretim planlayıcısı
+  Numune lotu (`is_sample`) hiçbir tüketimde kullanılmaz. **Şahit lotu (`-S`,
+  aktif `RetentionSample.inventory_id`) ve QC bekleyen lot (16.10.2026):**
+  `consume` şahidi daima atlar (`exclude_witness=True`; teslimat, Shopify,
+  proforma — lot yetmezse artık lotsuz Output), `draw_down` (yalnız fason
+  lotsuz kap) şahidi VE QC bekleyeni atlar, B2B `released_only` ikisini;
+  şahit lotu YALNIZ Şahit Numune çıkış/imhasından azalır. Kart kırılımı TEK
+  yardımcı `stock_lots.stock_breakdown`: raf (QC'si bitmiş, şahit olmayan
+  APPROVED) + QC bekleyen + şahit + lotsuz (`kart − lotlar`; eksiyse
+  `lot_excess`) = kart; `shelf_quantity = kart − şahit − QC`; lotsuz şahit
+  kaydı (`inventory_id` NULL) yalnız bilgi. By-item `breakdown` + lot `role`,
+  summary `witness_qty`, asistan `item_detail` aynı yardımcıyı kullanır.
+  **Elle düzeltme** (`POST /api/inventory/adjust`, `inventory.adjust` +
+  `active_domain`, kilit kart → lotlar): tam olarak biri — `new_shelf_quantity`
+  (lab yalnız RAFI sayar; yeni kart = raf + şahit + QC bekleyen) ya da eski
+  `new_quantity` (toplam). Eksi farkta `draw_from [{inventory_id|null,
+  quantity}]` (toplam = fark; null = lotsuz, lotsuz miktarla sınırlı; yalnız
+  `shelf` rollü lot), verilmezse `correction_default`: önce lotsuz, sonra en
+  eski raf lotu. Artı fark `add_to_inventory_id` (raf lotu) ya da lotsuz. Eski
+  `lot_number` dalı FARKI o lota uygular (eskiden kart toplamını yazıyordu).
+  Defter yine TEK imzalı `Adjustment`, önek "Stok düzeltme — Eski: … → Yeni: …
+  (Δ …)" SÖZLEŞME (`_count_guard` + birleştirme script'leri arar); not
+  `Raf sayımı` / `Lot düşümü` / `Lota eklendi` / `Lotsuz stoktan|stoğa` ekler.
+  Undo payload `lot_changes` taşır, `_undo_stock_adjust` lotları da geri
+  yükler (lot karttan ayrıldıysa / eksiye düşecekse conflict, hiçbir şey
+  değişmez). **409 `recent_production`**: düşüş, kartın son 48 saatteki iptal
+  edilmemiş üretiminin ≥ %50'si → onay; istemci
+  `acknowledge_recent_production: true` ile yeniden gönderir (400'ler önce). Üretim planlayıcısı
   (`core/production_plan`) da aynı motoru çağırır (`plan_fifo(..., reserved=)`)
   — FIFO'nun ikinci bir kopyası YAZILMAZ.
   **Bilinçli açık:** girişler (iade, '+' düzeltme) lot AÇMAZ; stok lottan fazla
   kalabilir, `uncovered` bunu sorunsuz karşılar. `tests/test_stock_lots.py`
+  **TUZAK — 16.10.2026 bulgusu:** eski `draw_down` FIFO'su şahit ve QC lotunu
+  dışlamıyordu: 49 lot düşümlü elle düzeltmenin 29'u şahit lotundan da düştü
+  (Niacinamide #32 "66 → 15 yanlış sayım" SR002-S×2 + aynı sabahki SR003×40);
+  72 bitmiş ürünün 62'sinde kart lot toplamından fazla (lotsuz stok — beklenen,
+  hata değil). Onarım `scripts/repair_witness_lots_20261016.py` (kuru
+  varsayılan, önce pg_dump, `--commit`; stored+aktif şahit kaydının lotunu
+  `RetentionSample.quantity`'ye geri yazar, kart/Transaction'a DOKUNMAZ, lot
+  başına `inventory.witness_lot_repair` audit, idempotent). Sonra lab raf
+  sayım formuyla bir kez sayar.
 - **Samples (numune)**: `Inventory.is_sample=True` marks a lot received from an
   *alternate* supplier for an existing raw material (entered from the Items page
   "Numune" tab → `/api/inventory/receive` with `is_sample`). Sample lots never merge
@@ -1352,6 +1384,10 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   Transaction rows, see the ledger-invariant note below) plus `Item.name`/
   `name_tr` duplicate-guard on create/update (`_find_name_conflict`, Turkish-
   folded via `core.supplier_prices.normalize`, 409 + `force:true` override).
+  **Numune ≠ şahit:** üretimin `-S` şahit lotu `is_sample=False`'tur ve kart
+  stoğunda SAYILIR (Stoklar penceresi "Şahit dolabı" satırı) ama satılmaz /
+  elle düzeltilmez / taşınmaz — yalnız `routers/retention.py` çıkış/imha
+  (`_consume`) azaltır (bkz. "Lot düşümü TEK KAYNAK").
 - **Lot/supplier-aware consumption**: production decrements `Item.current_stock`
   (authoritative gate) **and** specific Inventory lots. Per raw-material ingredient the
   user may pick a lot via `ingredient_lot_choices {item_id: inventory_id}` (production

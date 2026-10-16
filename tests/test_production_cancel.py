@@ -322,10 +322,14 @@ def _block_witness_variation(client, db, ids):
 
 
 def _block_manual_adjust(client, db, ids):
+    # Elle düzeltme (16.10.2026) QC bekleyen showroom lotuna ve şahide dokunmaz —
+    # lot satırları aynı kalır, ama kart üretilenin altına iner → yine engel.
     r = client.post("/api/inventory/adjust",
                     json={"item_id": ids["tgt"], "new_quantity": 15, "reason": "sayım farkı"},
                     headers=_HDR)
     assert r.status_code == 201, r.text
+    assert "lot kaydı dışı: 5" in db.query(Transaction).filter(
+        Transaction.transaction_type == "Adjustment").one().notes
 
 
 @pytest.mark.parametrize("mutate,expect", [
@@ -333,7 +337,7 @@ def _block_manual_adjust(client, db, ids):
     (_block_qc_reject, "QC'de reddedilmiş"),
     (_block_witness_checkout, "Şahit numune"),
     (_block_witness_variation, "boyu düzeltilmiş"),
-    (_block_manual_adjust, "miktarı değişmiş"),
+    (_block_manual_adjust, "üretilen miktardan"),
 ])
 def test_blockers_return_409_and_change_nothing(authed_client, db_session, mutate, expect):
     m = _materials(db_session)

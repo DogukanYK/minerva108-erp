@@ -55,7 +55,7 @@ from sqlalchemy.orm import Session, joinedload
 from database import (DriveFile, DriveFolder, Inventory, Item, MaterialGroup, MaterialSupplierPref, ProductionHistory, Recipe,
                       RetentionSample, StockOrderFlag, Supplier, SupplierPrice, to_tr, tr_now)
 from core import drive as D
-from core import group_stock, material_groups, stock_gaps
+from core import group_stock, material_groups, stock_gaps, stock_lots
 from core.assistant import help_docs, prompt
 from core.brands import cabinet_of
 from core.items_report import tr_key
@@ -231,18 +231,20 @@ def item_detail(ctx: "ToolContext", db: Session, args: dict) -> dict:
             .order_by(Inventory.id.desc()).all())
     by_location: Dict[str, float] = {}
     lots = []
-    non_sample = sample = 0.0
+    sample = 0.0
+    # Kart = raf + QC bekleyen + şahit + lotsuz — Stoklar penceresiyle TEK
+    # yardımcı (core/stock_lots.stock_breakdown).
+    bd = stock_lots.stock_breakdown(db, item)
     for r in rows:
         loc = (r.location or "").strip() or "(Konum belirtilmemiş)"
         qty = float(r.quantity or 0.0)
         by_location[loc] = round(by_location.get(loc, 0.0) + qty, 4)
         if r.is_sample:
             sample += qty
-        else:
-            non_sample += qty
         lots.append({
             "lot": r.lot_number, "qty": _r(qty), "location": loc, "status": r.status or "",
             "is_sample": bool(r.is_sample),
+            "role": bd["roles"].get(r.id) or stock_lots.lot_role(r, bd["witness_ids"]),
             "supplier": r.supplier.name if r.supplier else "",
             "expiry": r.expiry_date or "", "received": _dt_text(r.created_at),
         })
@@ -280,8 +282,13 @@ def item_detail(ctx: "ToolContext", db: Session, args: dict) -> dict:
     out = {
         "id": item.id, "name": item.name, "name_tr": item.name_tr or "", "sku": item.sku or "",
         "unit": item.unit or "", "category": item.category or "",
-        "current_stock": _r(item.current_stock), "lot_total": _r(non_sample),
+        "current_stock": _r(item.current_stock), "lot_total": _r(bd["lot_total"]),
         "sample_total": _r(sample), "min_stock_level": _r(item.min_stock_level),
+        # Dört satır karta tam toplanır; lotsuz şahit kaydı yalnız bilgidir.
+        "breakdown": {"shelf": _r(bd["shelf"]), "lotless": _r(bd["lotless"]),
+                      "witness": _r(bd["witness"]), "qc_pending": _r(bd["qc_pending"]),
+                      "lot_excess": _r(bd["lot_excess"]),
+                      "unlinked_witness": _r(bd["unlinked_witness"])},
         "supplier": item.supplier.name if item.supplier else "",
         "by_location": [{"location": k, "total": v}
                         for k, v in sorted(by_location.items(), key=lambda kv: -kv[1])],
