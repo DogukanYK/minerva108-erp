@@ -1239,21 +1239,25 @@
     return m ? m[1] : fallback;
   }
 
-  async function runExport(format) {
+  // format: 'pdf' | 'xlsx'; variant (yalnız PDF): 'summary' Yönetici Özeti | 'full' Detaylı Rapor
+  async function runExport(format, variant) {
     var req = buildRequest(false);
     if (!checkRequest(req)) return;
-    var btn = $(format === 'pdf' ? 'sapPdf' : 'sapXls');
+    variant = format === 'pdf' ? (variant || 'full') : null;
+    var btn = $(format === 'pdf' ? (variant === 'summary' ? 'sapPdfSummary' : 'sapPdf') : 'sapXls');
     var old = btn.innerHTML;
     btn.disabled = true;
     btn.innerHTML = '<i class="bi bi-hourglass-split"></i>Hazırlanıyor…';
     try {
-      var r = await api('POST', API + '/export?format=' + format + scenarioQS('&'), req);
+      var qs = '/export?format=' + format + (variant ? '&variant=' + variant : '') + scenarioQS('&');
+      var r = await api('POST', API + qs, req);
       if (!r.ok) { toast(await errText(r, (format === 'pdf' ? 'PDF' : 'Excel') + ' üretilemedi.')); return; }
       var blob = await r.blob();
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
       a.href = url;
-      a.download = fileNameFrom(r.headers.get('content-disposition'), 'satin_alma_plani.' + format);
+      a.download = fileNameFrom(r.headers.get('content-disposition'),
+        (variant === 'summary' ? 'satin_alma_ozeti.' : 'satin_alma_plani.') + format);
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
       if (S.scenario) loadScenarios();
@@ -1604,7 +1608,8 @@
 
   function bindPreview() {
     $('sapRun').addEventListener('click', runPreview);
-    $('sapPdf').addEventListener('click', function () { runExport('pdf'); });
+    $('sapPdfSummary').addEventListener('click', function () { runExport('pdf', 'summary'); });
+    $('sapPdf').addEventListener('click', function () { runExport('pdf', 'full'); });
     $('sapXls').addEventListener('click', function () { runExport('xlsx'); });
     $('sapPreview').addEventListener('click', function (e) {
       var t = e.target.closest('.sap-tab');

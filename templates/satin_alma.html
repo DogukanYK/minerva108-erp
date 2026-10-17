@@ -624,8 +624,9 @@
           <span class="sap-num">3</span><h2>Önizleme</h2>
           <div class="sap-head-right">
             <button type="button" class="sap-b sap-b-main" id="sapRun"><i class="bi bi-play-fill"></i>Önizle</button>
-            <button type="button" class="sap-b" id="sapPdf"><i class="bi bi-filetype-pdf"></i>PDF indir</button>
-            <button type="button" class="sap-b" id="sapXls"><i class="bi bi-filetype-xlsx"></i>Excel indir</button>
+            <button type="button" class="sap-b" id="sapPdfSummary" title="2–4 sayfa: toplamlar, tedarikçiler, hammadde kg'ları, fiyatı eksikler"><i class="bi bi-file-earmark-text"></i>Yönetici Özeti (PDF)</button>
+            <button type="button" class="sap-b" id="sapPdf" title="Kapak + yönetici özeti + bölüm bölüm alım listesi"><i class="bi bi-filetype-pdf"></i>Detaylı Rapor (PDF)</button>
+            <button type="button" class="sap-b" id="sapXls" title="Formüllü çalışma kitabı; ilk sayfa Yönetici Özeti"><i class="bi bi-filetype-xlsx"></i>Excel</button>
           </div>
         </div>
         <div class="sap-body">
@@ -648,7 +649,7 @@
 
   <div id="toast-container"></div>
 
-  <script src="/static/satin-alma.js?v=6" defer></script>
+  <script src="/static/satin-alma.js?v=7" defer></script>
   <script>
     document.getElementById('logoutBtn').addEventListener('click', async function () {
       try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}

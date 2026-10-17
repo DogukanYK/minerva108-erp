@@ -1290,9 +1290,27 @@ def test_stock_value_sufficient_and_partial_rows_amount_unchanged():
     assert [(x["key"], x["text"]) for x in cost_summary_lines(res)] == [
         ("buy", "43 $"), ("stock", "13 $"), ("plan", "56 $")]
     cav = cost_summary_caveats(res)
-    assert cav[0] == "Stoktan karşılanan 3 kalemden 1 tanesinin fiyatı yok; değeri toplama girmedi."
+    # "kısmen ya da tamamen": sayı yeterli + stoğu kısmen kullanılan alınacak satırları kapsar
+    assert cav[0] == ("Stoktan kısmen ya da tamamen karşılanan 3 kalemden 1 tanesinin fiyatı yok; bu stoğun "
+                      "değeri toplama girmedi.")
     assert cav[1] == "Fiyatı olmayan 1 alınacak kalem planın toplam maliyetine de girmedi."
     assert "yenileme değeri" in cav[-1] and "alış maliyeti değil" in cav[-1]
+
+
+def test_cost_summary_caveats_wording_matches_kpi_terms():
+    """"Alınacak kalem" = alınacak kart + yeni kalem (KPI "53 alınacak kart +
+    31 yeni kalem", özet kutusu "84 alınacak kalemin fiyatı yok"); stok satırı
+    "kısmen ya da tamamen" der — KPI "Fiyatı eksik kalem" ile karışmasın."""
+    from core.purchase_pricing import cost_summary_caveats
+
+    cs = {"applies": True, "buy_unpriced": 53, "new_items": 31, "stock_rows": 87, "stock_unpriced": 48}
+    cav = cost_summary_caveats({"pricing": {"cost_summary": cs}})
+    assert cav[0] == ("Stoktan kısmen ya da tamamen karşılanan 87 kalemden 48 tanesinin fiyatı yok; bu stoğun "
+                      "değeri toplama girmedi.")
+    assert cav[1] == ("Fiyatı olmayan 84 alınacak kalem (53 kart, 31 yeni etiket / koli / palet kalemi) planın "
+                      "toplam maliyetine de girmedi.")
+    only_new = cost_summary_caveats({"pricing": {"cost_summary": {"applies": True, "new_items": 2}}})
+    assert only_new == ["Fiyatı olmayan 2 yeni etiket / koli / palet kalemi planın toplam maliyetine de girmedi."]
 
 
 def test_sufficient_section_total_and_neutral_offer_line():

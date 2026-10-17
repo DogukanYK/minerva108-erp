@@ -20,6 +20,7 @@ Maliyet BİLİNÇLİ olarak yoktur — bu rapor içerik dokümantasyonudur; fina
 gating gerektirmez, `recipes:view` yeter (bileşim yine de ticari sırdır).
 """
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -198,11 +199,14 @@ def assemble(db: Session, item_ids: list, domain: str) -> dict:
 
 # ─── Excel ───────────────────────────────────────────────────────────────────
 
-def _setup_a4(ws, *, landscape: bool = True, title: str = "") -> None:
+def _setup_a4(ws, *, landscape: bool = True, title: str = "", header_text: Optional[str] = None,
+              title_rows: str = "1:2") -> None:
     """Sayfayı A4 baskıya hazırlar — repo'daki ilk Excel print-setup kullanımı.
 
     fitToWidth tek başına yetmez: sheet_properties.pageSetUpPr.fitToPage
-    işaretlenmezse Excel fitTo* değerlerini yok sayar.
+    işaretlenmezse Excel fitTo* değerlerini yok sayar.  `header_text` verilirse
+    sayfa üstü o metindir (varsayılan İçindekiler Raporu başlığı — değişmez);
+    `title_rows` her baskı sayfasında yinelenen satırlar (Satın Alma: "1:1").
     """
     from openpyxl.worksheet.page import PageMargins
     from openpyxl.worksheet.properties import PageSetupProperties
@@ -212,10 +216,10 @@ def _setup_a4(ws, *, landscape: bool = True, title: str = "") -> None:
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0                          # boyuna serbest sayfa
     ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-    ws.print_title_rows = "1:2"                            # rapor bandı her baskı sayfasında
+    ws.print_title_rows = title_rows                       # rapor bandı her baskı sayfasında
     ws.page_margins = PageMargins(left=0.4, right=0.4, top=0.7, bottom=0.6,
                                   header=0.3, footer=0.3)
-    ws.oddHeader.center.text = f"Minerva 108 — İçindekiler Raporu · {title}"
+    ws.oddHeader.center.text = header_text if header_text else f"Minerva 108 — İçindekiler Raporu · {title}"
     ws.oddHeader.center.size = 8
     ws.oddFooter.left.text = "&D &T"
     ws.oddFooter.right.text = "Sayfa &P / &N"

@@ -168,7 +168,8 @@ def test_preview_stock_value_and_cost_summary(authed_client: TestClient, db_sess
         ("stock", "Stoktan karşılananların değeri", "2 $"),
         ("plan", "Planın toplam malzeme maliyeti", "15 $")]
     assert cs["plan_total"] == 15 and cs["stock_rows"] == 2 and cs["stock_unpriced"] == 1
-    assert "Stoktan karşılanan 2 kalemden 1 tanesinin fiyatı yok; değeri toplama girmedi." in cs["caveats"]
+    assert ("Stoktan kısmen ya da tamamen karşılanan 2 kalemden 1 tanesinin fiyatı yok; bu stoğun değeri "
+            "toplama girmedi.") in cs["caveats"]
     # Stok yetince: "Yeterli" satırı + bölüm toplamı (tutar yine yok)
     db_session.get(Item, ids["gli"]).current_stock = 10000
     db_session.commit()
@@ -483,11 +484,19 @@ def test_export_pdf_and_xlsx_with_audit(authed_client: TestClient, db_session: S
     assert r.status_code == 200 and r.content[:4] == b"%PDF"
     cd = r.headers["content-disposition"]
     assert cd.startswith("inline;") and "satin_alma_plani_deneme_siparisi_" in cd and ".pdf" in cd
+    # Yönetici Özeti (16.10.2026): variant=summary → dikey, ayrı dosya adı, audit'te variant
+    r = authed_client.post("/api/purchase-plan/export?format=pdf&variant=summary", json=_req(ids), headers=_HDR)
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+    assert "satin_alma_ozeti_deneme_siparisi_" in r.headers["content-disposition"]
     r = authed_client.post("/api/purchase-plan/export?format=xlsx", json=_req(ids), headers=_HDR)
     assert r.status_code == 200 and r.content[:2] == b"PK"
     assert r.headers["content-disposition"].startswith("attachment;")
     rows = _audit(db_session, "purchase_plan.export")
-    assert len(rows) == 2 and {'"pdf"' in (a.details or "") for a in rows} == {True, False}
+    assert len(rows) == 3 and sorted('"pdf"' in (a.details or "") for a in rows) == [False, True, True]
+    assert sum('"summary"' in (a.details or "") for a in rows) == 1
+    assert sum('"full"' in (a.details or "") for a in rows) == 1
+    assert authed_client.post("/api/purchase-plan/export?format=pdf&variant=kisa", json=_req(ids),
+                              headers=_HDR).status_code == 422
     assert authed_client.post("/api/purchase-plan/export?format=csv", json=_req(ids),
                               headers=_HDR).status_code == 422
 
@@ -740,7 +749,8 @@ def test_preview_amount_warn_and_cost_overview_view(authed_client: TestClient, d
 
 def test_satin_alma_page_loads_current_script_version(authed_client: TestClient):
     html = authed_client.get("/satin-alma").text
-    assert "/static/satin-alma.js?v=6" in html
+    assert "/static/satin-alma.js?v=7" in html             # 16.10.2026 rapor yeniden tasarımı (iki PDF düğmesi)
+    assert "sapPdfSummary" in html and "Yönetici Özeti (PDF)" in html and "Detaylı Rapor (PDF)" in html
     js = authed_client.get("/static/satin-alma.js").text
     assert "amount_warn" in js and "cost_overview" in js and "Fiyat gir →" in js
     # Fiyat bağlantısı yeni sekmede (önizleme kaybolmasın); fiyat giremeyene "bak"

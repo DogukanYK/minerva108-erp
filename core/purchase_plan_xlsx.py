@@ -10,6 +10,13 @@ Satın Alma Planı — Excel çıktısı.
     build_workbook(report) -> bytes
 
 `report` = `compute()` + `attach()` çıktısı (PDF ile aynı sözlük).  Sayfalar:
+  • "Yönetici Özeti" (16.10.2026 yeniden tasarım; İLK sayfa) — PDF Yönetici
+    Özeti'yle aynı veri (`purchase_pricing.summary_data`): göstergeler, tür
+    bazında maliyet (sütunlar PDF'teki gibi: Stoktan yalnız net modda, Yoldan
+    yalnız açık siparişte), tedarikçi bazında alınacaklar (ilk 8 + Diğer), hammadde
+    ihtiyacı (kg / l ayrı, ilk 12 + Diğer; alınacak hammadde toplamı), fiyatı
+    eksik kalemler, uyarılar ve bekletilenler.  Değer hücreleri sayı (formül
+    yok); öteki sayfaların sırası değişmez.
   • "Alım listesi"  — bölüm sırası `purchase_pricing.sections()` ile AYNI
     (1–5: hammadde/ambalaj/etiket, fiyatlı → fiyatsız), sonra yeni etiket /
     koli / palet satırları.  Formüller:
@@ -57,6 +64,14 @@ AYNISIDIR (G için Excel ROUND taklidi; tutmuyorsa — `safe_rounding` kapalı
 gibi — G formül yerine raporun alınacak sayısı olarak yazılır ki PDF ile
 Excel toplamı ayrışmasın).
 
+Biçim (16.10.2026): başlık satırı lacivert dolgu / beyaz kalın yazı, veri
+satırlarında kıl alt çizgi + zebra (ara toplam / başlık satırları hariç),
+tek bloklu sayfalarda (Tedarikçiler, Ürünler, Ürün detayı) otomatik süzgeç —
+ara toplamlı Alım listesi / Stoktan karşılananlar'da YOK (sıralama SUM
+aralığını bozardı) —, sabit başlık (freeze), sayı biçimleri;
+her sayfada A4 yazdırma ayarı (`ingredients_report._setup_a4`, üst bilgi
+"Minerva 108 — Satın Alma Planı · <başlık>", 1. satır her baskı sayfasında).
+
 Formül kalkanı: openpyxl "=" ile başlayan HER metni formül sayar.  Malzeme /
 tedarikçi adı, not, iletişim gibi serbest metinler kullanıcıdan gelir
 ("=HYPERLINK(…)" ya da "=2 adet kırık" notu) → hepsi `_put_text`/
@@ -75,8 +90,9 @@ from typing import Dict, List, Optional
 from core.purchase_plan import _amount_near, stock_note
 from core.purchase_pricing import (CURRENCY_SYMBOL, KIND_TITLE, REL_TYPE_TEXT, UNIT_TEXT, alt_texts, amount_warn,
                                    contact_line, cost_overview_view, cost_summary_caveats, cost_summary_lines,
-                                   notes_lines, offer_tags, order_texts, pkg_round_text, product_cost_lines,
-                                   round6, round_half_up, sections, unpriced_offer_text)
+                                   money, notes_lines, offer_tags, order_texts, pkg_round_text,
+                                   product_cost_lines, round6, round_half_up, sections, summary_data,
+                                   unpriced_offer_text)
 from core.xlsx_cache import inject_cached_values
 
 SHEET_LIST = "Alım listesi"
@@ -86,8 +102,15 @@ SHEET_PROD = "Ürünler"
 SHEET_COST = "Ürün maliyeti"
 SHEET_DETAIL = "Ürün detayı"
 SHEET_SUMMARY = "Özet"
+SHEET_EXEC = "Yönetici Özeti"
 
-HEADER_FILL = "E8ECF6"
+HEADER_FILL = "232E6E"       # lacivert başlık dolgusu (report_theme PALETTE navy), beyaz kalın yazı
+HEADER_TEXT = "FFFFFF"
+ZEBRA_FILL = "F5F6F9"
+LINE_COLOR = "D9DDE6"
+TITLE_COLOR = "232E6E"
+MUTED_COLOR = "5B6170"
+MONEY_FMT = "#,##0"
 WARN_COLOR = "C2410C"         # ambalaj uyarılı Tutar (K) hücresi — turuncu yazı + hücre yorumu
 KIND_TEXT = {"raw": "Hammadde", "packaging": "Ambalaj", "label": "Etiket"}
 GROUP_TEXT = {"list": "Fiyat listesinde var", "none": "Fiyat yok — teklif alınacak"}
@@ -142,17 +165,196 @@ def _append_as_text(ws, values) -> int:
 
 
 def _style_header(ws, row: int = 1, wrap: bool = True):
-    from openpyxl.styles import Alignment, Font, PatternFill
+    """Başlık satırı: lacivert dolgu, beyaz kalın yazı, kalın alt çizgi."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
     fill = PatternFill("solid", fgColor=HEADER_FILL)
+    border = Border(bottom=Side(style="medium", color=HEADER_FILL))
     for c in ws[row]:
-        c.font = Font(bold=True)
+        c.font = Font(bold=True, color=HEADER_TEXT)
         c.fill = fill
+        c.border = border
         c.alignment = Alignment(wrap_text=wrap, vertical="center")
+
+
+def _polish(ws, *, zebra: bool = True, filt: bool = False, header_row: int = 1) -> None:
+    """Veri satırlarına kıl alt çizgi + zebra; `filt` ile otomatik süzgeç
+    (tek bloklu sayfalar).  Veri satırı = dolu ve kalın yazısız satır; başlık,
+    ara toplam ve boş satırlar atlanır, zebra her blokta yeniden başlar."""
+    from openpyxl.styles import Border, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    last = ws.max_column
+    if ws.max_row <= header_row or not last:
+        return
+    hair = Border(bottom=Side(style="hair", color=LINE_COLOR))
+    fill = PatternFill("solid", fgColor=ZEBRA_FILL)
+    n = 0
+    for row in ws.iter_rows(min_row=header_row + 1, max_row=ws.max_row, max_col=last):
+        filled = [c for c in row if c.value not in (None, "")]
+        # İlk üç dolu hücreden biri kalınsa başlık / ara toplam satırı (ambalaj
+        # uyarılı Tutar hücresi kalın olsa da satır veri satırıdır)
+        if not filled or any(c.font is not None and c.font.bold for c in filled[:3]):
+            n = 0
+            continue
+        n += 1
+        for c in row:
+            c.border = hair
+            if zebra and n % 2 == 0:
+                c.fill = fill
+    if filt:
+        ws.auto_filter.ref = f"A{header_row}:{get_column_letter(last)}{ws.max_row}"
+
+
+def _print_setup(ws, *, landscape: bool, title: str) -> None:
+    """A4 yazdırma ayarı — `ingredients_report._setup_a4` (tembel içe aktarma:
+    o modül `database`'i yükler); üst bilgi Satın Alma Planı başlığı, 1.
+    satır her baskı sayfasında."""
+    from core.ingredients_report import _setup_a4
+
+    _setup_a4(ws, landscape=landscape, header_text=f"Minerva 108 — Satın Alma Planı · {title}", title_rows="1:1")
+
+
+# ─── Yönetici Özeti (ilk sayfa) ─────────────────────────────────────────────
+
+def _sheet_exec(wb, report: dict) -> None:
+    """İlk sayfa: `summary_data` (PDF Yönetici Özeti ile aynı sayılar).
+    Bloklar arası boş satır; her bloğun başlığı `_style_header` satırı.
+    Serbest metin (ad, iletişim, uyarı) formül kalkanından geçer."""
+    from openpyxl.styles import Alignment, Font
+
+    from database import to_tr
+
+    sd = summary_data(report)
+    sym = sd["symbol"]
+    ws = wb.active
+    ws.title = SHEET_EXEC
+    bold = Font(bold=True)
+    r = _append_as_text(ws, [f"{sd['title']} — Yönetici Özeti"])
+    ws.cell(r, 1).font = Font(bold=True, size=14, color=TITLE_COLOR)
+    gen = sd.get("generated_at")
+    try:
+        gen_tr = to_tr(datetime.fromisoformat(gen)).strftime("%d.%m.%Y %H:%M") if gen else ""
+    except ValueError:
+        gen_tr = gen or ""
+    sub = f"Stoklar {sd['stock_as_of_tr']} · fiyatlar {sd['currency']} ({sym})" + (f" · oluşturma {gen_tr}" if gen_tr else "")
+    if sd["brands"]:
+        sub += " · markalar: " + ", ".join(sd["brands"])
+    r = _append_as_text(ws, [sub])
+    ws.cell(r, 1).font = Font(color=MUTED_COLOR)
+    if sd["scope_text"]:
+        r = _append_as_text(ws, [sd["scope_text"]])
+        ws.cell(r, 1).font = Font(color=MUTED_COLOR)
+
+    def head(cells):
+        ws.append([])
+        rr = _append_as_text(ws, cells)
+        _style_header(ws, rr, wrap=False)
+        return rr
+
+    # Göstergeler
+    head(["Göstergeler", "Değer", "Gösterim", "", "", "", "", "Not"])
+    for k in sd["kpis"]:
+        rr = _append_as_text(ws, [k["label"], k["value"], k["text"], "", "", "", "", k.get("note") or ""])
+        ws.cell(rr, 2).number_format = MONEY_FMT if k["key"] in ("plan_total", "buy_total", "stock_total") else "#,##0"
+
+    # Maliyet — tür bazında
+    if sd["categories"]:
+        # Sütunlar PDF'teki tabloyla aynı: Stoktan yalnız net modda, Yoldan
+        # yalnız açık sipariş seçeneğiyle (brüt modda stok değeri dili yok)
+        cols = [("buy", f"Alınacak ({sym})")] + ([("stock", f"Stoktan ({sym})")] if sd["show_stock"] else []) \
+            + ([("open", f"Yoldan ({sym})")] if sd["show_open"] else []) \
+            + [("total", f"Toplam ({sym})"), ("priced", "Fiyatlı"), ("unpriced", "Fiyatsız")]
+        head(["Maliyet — tür bazında"] + [h for _, h in cols])
+        rows = list(sd["categories"]) + [dict(sd["categories_total"], label="Toplam")]
+        for c in rows:
+            rr = _append_as_text(ws, [c["label"]] + [c.get(k) or 0 for k, _ in cols])
+            for i, (k, _) in enumerate(cols, start=2):
+                if k not in ("priced", "unpriced"):
+                    ws.cell(rr, i).number_format = MONEY_FMT
+        for col in range(1, len(cols) + 2):
+            ws.cell(rr, col).font = bold
+
+    # Alınacaklar — tedarikçi bazında
+    if sd["top_suppliers"]:
+        head([f"Alınacaklar — tedarikçi bazında ({sd['suppliers_count']} firma)", "Kalem", f"Tutar ({sym})",
+              "", "", "", "", "İletişim"])
+        for b in sd["top_suppliers"]:
+            contact = "" if b["other"] else (b.get("contact_line") or "İletişim bilgisi sistemde yok")
+            rr = _append_as_text(ws, [b["name"], b["count"], b["total"], "", "", "", "", contact])
+            ws.cell(rr, 3).number_format = MONEY_FMT
+            if b["other"]:
+                ws.cell(rr, 1).font = Font(color=MUTED_COLOR)
+
+    # Hammadde ihtiyacı
+    if sd["raw_need"] or any(sd["raw_to_buy"].values()):
+        head(["Hammadde ihtiyacı", "Birim", "Toplam gereken", "Alınacak"])
+        for u in ("kg", "l", "adet"):
+            if sd["raw_to_buy"].get(u) or sd["raw_need_totals"].get(u):
+                ut = UNIT_TEXT.get(u, u)          # "litre" — PDF ve Alım listesiyle aynı söz
+                rr = _append_as_text(ws, [f"Alınacak hammadde — {ut} (alım birimine göre toplam)", ut,
+                                          sd["raw_need_totals"].get(u) or 0, sd["raw_to_buy"].get(u) or 0])
+                ws.cell(rr, 1).font = bold
+                for col in (3, 4):
+                    ws.cell(rr, col).number_format = _exec_qty_fmt(u)
+                    ws.cell(rr, col).font = bold
+        for blk in sd["raw_need"]:
+            u = blk["unit"]
+            for row in blk["rows"]:
+                rr = _append_as_text(ws, [row["name"], UNIT_TEXT.get(u, u), row["need"],
+                                          row["buy"] if row["buy"] else None])
+                for col in (3, 4):
+                    # Malzeme satırı Alım listesinin biçimiyle (1,25 → "1,25", orada
+                    # da öyle); "Diğer" toplamı 1 ondalık
+                    ws.cell(rr, col).number_format = _exec_qty_fmt(u) if row["other"] else _qty_fmt(u)
+                if row["other"]:
+                    ws.cell(rr, 1).font = Font(color=MUTED_COLOR)
+
+    # Fiyatı eksik kalemler
+    if sd["unpriced_groups"]:
+        head([f"Fiyatı eksik kalemler ({sd['unpriced_count']})", "Kalem", "Alınacak", "", "", "", "", "Örnekler"])
+        for g in sd["unpriced_groups"]:
+            ex = ", ".join(g["names"]) + (f" (+{g['more']} kalem daha)" if g["more"] else "")
+            _append_as_text(ws, [g["label"], g["count"], g["to_buy"], "", "", "", "", ex])
+        rr = _append_as_text(ws, [sd["howto"]])
+        ws.cell(rr, 1).font = Font(color=MUTED_COLOR)
+
+    # Uyarılar ve bekletilenler
+    if sd["warnings"] or sd["held"]:
+        head(["Uyarılar ve bekletilenler"])
+        for w in sd["warnings"]:
+            _append_as_text(ws, [w])
+        for h in sd["held"]:
+            t = f"{h['name']} ({h['buy_text']}) " + (
+                f"bekletiliyor: {(h.get('reason') or '').rstrip('. ')}" if h.get("reason") else "teyit bekliyor")
+            if h.get("amount") is not None and h.get("supplier"):
+                t += f" — alınırsa yaklaşık {money(h['amount'], sd['currency'])} ({h['supplier']})"
+            _append_as_text(ws, [t])
+        if sd["held"] and sd["held_what_if"]:
+            _append_as_text(ws, [f"Bekletilenlerin tamamı alınırsa yaklaşık "
+                                 f"{money(sd['held_what_if'], sd['currency'])} eklenir."])
+
+    for col, w in zip("ABCDEFGH", (46, 15, 15, 15, 15, 10, 10, 80)):
+        ws.column_dimensions[col].width = w
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=8):
+        for c in row[1:7]:
+            if isinstance(c.value, (int, float)):
+                c.alignment = Alignment(horizontal="right")
+        row[7].alignment = Alignment(wrap_text=True, vertical="top")
 
 
 def _qty_fmt(unit: Optional[str]) -> str:
     return "#,##0" if unit == "adet" else "#,##0.0##"
+
+
+# Yönetici Özeti TOPLAM miktarı ("Alınacak hammadde", "Diğer"): PDF `_amt` ile
+# aynı yazım — kg/litre 1 ondalık ("442.720,6"), 1'in altı 3 ondalığa kadar
+# (0,026 sıfır görünmesin).  Malzeme satırı Alım listesinin `_qty_fmt`'i (1,25)
+EXEC_QTY_FMT = "[<1]0.0##;#,##0.0"
+
+
+def _exec_qty_fmt(unit: Optional[str]) -> str:
+    return "#,##0" if unit == "adet" else EXEC_QTY_FMT
 
 
 def _rel_texts(m: dict):
@@ -208,8 +410,7 @@ def _sheet_list(wb, report: dict, secs: List[dict], cache: Dict[str, object]) ->
     open_on = bool(opts.get("subtract_open_orders"))
     bold = Font(bold=True)
 
-    ws = wb.active
-    ws.title = SHEET_LIST
+    ws = wb.create_sheet(SHEET_LIST)
     ws.append(["Bölüm", "Fiyat durumu", "Malzeme", "Gereken",
                "Elimizde (bilgi)" if gross else "Elimizde", "Yolda (bilgi)" if gross else "Yolda",
                "Alınacak", "Birim", "Seçilen tedarikçi", f"Birim fiyat ({sym})", f"Tutar ({sym})",
@@ -827,6 +1028,7 @@ def build_workbook(report: dict) -> bytes:
     list_cache: Dict[str, object] = {}
     stock_cache: Dict[str, object] = {}
     detail_cache: Dict[str, object] = {}
+    _sheet_exec(wb, report)                 # ilk sayfa (wb.active)
     _sheet_list(wb, report, secs, list_cache)
     _sheet_stock(wb, report, secs, stock_cache)
     _sheet_suppliers(wb, report, cur)
@@ -835,6 +1037,14 @@ def build_workbook(report: dict) -> bytes:
     _sheet_cost(wb, report, cost_cache)
     _sheet_detail(wb, report, detail_cache)
     _sheet_summary(wb, report, secs, cur)
+    title = _clean(meta.get("title")) or "Satın Alma Planı"
+    for name in wb.sheetnames:
+        text_sheet = name in (SHEET_EXEC, SHEET_SUMMARY)
+        # Süzgeç yalnız TEK bloklu sayfalarda: Alım listesi / Stoktan karşılananlar
+        # bölüm başlığı + sabit aralıklı ara toplam (=SUM(K2:K42)) satırları taşır;
+        # süzgeçten sıralamak ara toplamı veri arasına atar ve aralığı bozar.
+        _polish(wb[name], zebra=not text_sheet, filt=name in (SHEET_SUP, SHEET_PROD, SHEET_DETAIL))
+        _print_setup(wb[name], landscape=not text_sheet, title=title)
     wb.properties.title = _clean(meta.get("title")) or "Satın Alma Planı"
     wb.properties.creator = "Minerva 108"
     buf = BytesIO()

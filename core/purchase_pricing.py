@@ -1862,16 +1862,22 @@ def cost_summary_caveats(result: dict) -> List[str]:
     if not cs.get("applies"):
         return []
     out: List[str] = []
+    # "kısmen ya da tamamen": sayı yeterli satırları VE stoğu kısmen kullanılan
+    # alınacak satırları kapsar — KPI "Fiyatı eksik kalem" ile karışmasın
     if cs.get("stock_unpriced"):
-        out.append(f"Stoktan karşılanan {_unpriced_of(cs['stock_rows'], cs['stock_unpriced'])} fiyatı yok; "
-                   "değeri toplama girmedi.")
+        out.append(f"Stoktan kısmen ya da tamamen karşılanan {_unpriced_of(cs['stock_rows'], cs['stock_unpriced'])} "
+                   "fiyatı yok; bu stoğun değeri toplama girmedi.")
     if cs.get("open_unpriced"):
-        out.append(f"Yoldan karşılanan {_unpriced_of(cs['open_rows'], cs['open_unpriced'])} fiyatı yok; "
-                   "değeri toplama girmedi.")
-    parts = ([f"{cs['buy_unpriced']} alınacak kalem"] if cs.get("buy_unpriced") else []) + \
-            ([f"{cs['new_items']} yeni etiket / koli / palet kalemi"] if cs.get("new_items") else [])
-    if parts:
-        out.append("Fiyatı olmayan " + " ve ".join(parts) + " planın toplam maliyetine de girmedi.")
+        out.append(f"Yoldan kısmen ya da tamamen karşılanan {_unpriced_of(cs['open_rows'], cs['open_unpriced'])} "
+                   "fiyatı yok; değeri toplama girmedi.")
+    # "Alınacak kalem" = alınacak kart + yeni kalem (KPI ve özet kutusuyla aynı tanım)
+    bu, nw = cs.get("buy_unpriced") or 0, cs.get("new_items") or 0
+    if bu and nw:
+        out.append(f"Fiyatı olmayan {bu + nw} alınacak kalem ({bu} kart, {nw} yeni etiket / koli / palet kalemi) "
+                   "planın toplam maliyetine de girmedi.")
+    elif bu or nw:
+        out.append("Fiyatı olmayan " + (f"{bu} alınacak kalem" if bu else f"{nw} yeni etiket / koli / palet kalemi")
+                   + " planın toplam maliyetine de girmedi.")
     if cs.get("stock_rows") or cs.get("open_rows"):
         out.append("Stoktaki malzemenin değeri bugünkü teklif fiyatıyla hesaplandı (yenileme değeri), "
                    "alış maliyeti değil; yalnız bu planın kullanacağı miktar değerlendi, depodaki fazlası değil.")
@@ -2154,8 +2160,12 @@ def cost_overview_view(result: dict) -> Optional[dict]:
         "caveats": caveats,
         "unpriced_count": len(co["unpriced"]),
         "unpriced": [{"name": u["name"], "kind": KIND_TITLE.get(u["kind"], ""),
+                      # Stoğu yeten (alınmayacak) kalem ayrı söylenir — yoksa "tamamı
+                      # alınacak" satırıyla aynı görünüyordu (KPI'daki "yeterli kalem")
                       "need": u["need_text"] + (f" · alınacak {u['buy_text']}" if u.get("buy_text")
-                                                and u["buy_text"] != u["need_text"] else ""),
+                                                and u["buy_text"] != u["need_text"] else
+                                                " · stok yetiyor" if u.get("buy_text") is None
+                                                and not u["new"] else ""),
                       "link": u["link"], "new": u["new"], "finished": u.get("finished", False),
                       "note": UNPRICED_NOTE["new" if u["new"] else "finished" if u.get("finished")
                                             else "card"]} for u in co["unpriced"]],
@@ -2270,6 +2280,209 @@ def notes_lines(result: dict) -> List[str]:
     out.append(f"Stoklar {meta.get('stock_as_of_tr', '')} sistem kaydıdır.")
     out += [clean_text(n) for n in (opts.get("notes") or []) if clean_text(n)]
     return out
+
+
+# ─── Yönetici özeti verisi (16.10.2026) ──────────────────────────────────────
+
+SUMMARY_TOP_SUPPLIERS = 8      # tedarikçi tablosu / grafiği: ilk 8 + "Diğer"
+SUMMARY_TOP_RAW = 12           # hammadde ihtiyacı: birim başına ilk 12 + kalan
+SUMMARY_UNPRICED_NAMES = 3     # fiyatı eksik grup başına örnek ad sayısı
+SUMMARY_HOWTO = "Nasıl tamamlanır: Malzeme Fiyatları sayfası → “fiyatı olmayanlar” süzgeci."
+
+
+def summary_data(result: dict) -> dict:
+    """Yönetici özetinin verisi — PDF "Yönetici Özeti", detaylı raporun ilk
+    bölümü ve Excel "Yönetici Özeti" sayfası aynı sözlükten basar.  SAF
+    (DB yok); `pricing.totals` / `cost_summary` / `cost_overview` /
+    `suppliers.chosen` ile birebir aynı sayılar, yalnız yeniden gruplanır.
+
+    {currency, symbol, net, kpis: [{key, label, value, text}] (6 kutu),
+     categories: [{kind, label, buy, stock, open, total, priced, unpriced}],
+     categories_total, show_stock, show_open,
+     top_suppliers: [{name, count, total, contact_line, other}] (ilk 8 + "Diğer"),
+     suppliers_count,
+     raw_need: [{unit, rows: [{name, need, buy, need_text, buy_text, other}],
+                 need_total, buy_total, count}]  (kg ve l ayrı; ilk 12 + "Diğer
+                 (N kalem)"; *_text satırın Alım listesi metni, "Diğer"de yok),
+     raw_to_buy: {kg, l, adet}  (alınacak hammadde — `display.buy_num` toplamı,
+                 alım birimine göre; YENİ), raw_need_totals: {kg, l, adet},
+     unpriced_groups: [{kind, label, count, to_buy, names, more}] (tür sırası;
+                      önce alınacaklar; ada göre tekil), unpriced_count,
+     unpriced_split: {to_buy, new, stock}  (alınacak kart / yeni kalem / stoğu
+                     yeten — "Yeterli olanlar" — fiyatsız kart; KPI notu ve PDF
+                     özet kutusu aynı sayıları yazar), howto,
+     warnings: [str], held: [{name, buy_text, reason, amount, supplier}],
+     held_what_if, title, scope_text, stock_as_of_tr, generated_at, brands}."""
+    meta = result.get("meta") or {}
+    opts = meta.get("options") or {}
+    pr = result.get("pricing") or {}
+    cur = pr.get("currency") or opts.get("currency") or "USD"
+    sym = CURRENCY_SYMBOL.get(cur, cur)
+    net = opts.get("stock_mode", "net") == "net"
+    mats = result.get("materials") or []
+    to_buy = [m for m in mats if m.get("status") == "to_buy"]
+    co = pr.get("cost_overview") or {}
+    cs = pr.get("cost_summary") or {}
+    tot = pr.get("totals") or {}
+    counts = meta.get("counts") or {}
+    new_items = len(result.get("labels_new") or []) + len(result.get("manual_lines") or [])
+    applies = bool(cs.get("applies"))
+    units = float(counts.get("units") or sum(float(p.get("qty") or 0) for p in result.get("products") or []))
+    n_prod = counts.get("products", len(result.get("products") or []))
+
+    # Fiyatı eksik kalemler: maliyet özetinden; fiyatlanmamış raporda alınacaklardan
+    if co:
+        un = list(co.get("unpriced") or [])
+    else:
+        un = [{"name": m["name"], "kind": m["kind"], "need_text": (m.get("display") or {}).get("need_text") or "",
+               "buy_text": (m.get("display") or {}).get("buy_text"), "new": bool(m.get("is_new_item"))}
+              for m in to_buy if m.get("price") is None]
+        un += [{"name": lb["name"], "kind": "label", "need_text": f"{tr_num(lb.get('total') or 0)} adet",
+                "buy_text": None, "new": True} for lb in result.get("labels_new") or []]
+        un += [{"name": ml["name"], "kind": MANUAL_KIND.get(ml.get("section"), "packaging"),
+                "need_text": ml.get("qty_text") or "", "buy_text": None, "new": True}
+               for ml in result.get("manual_lines") or []]
+    unpriced_count = len(un)
+    unp_buy = sum(1 for u in un if u.get("buy_text") is not None)
+    unp_new = sum(1 for u in un if u.get("buy_text") is None and u.get("new"))
+    unpriced_split = {"to_buy": unp_buy, "new": unp_new, "stock": unpriced_count - unp_buy - unp_new}
+    if unpriced_count and (unp_new or unpriced_split["stock"]):
+        unp_note = " + ".join(t for t, n in ((f"{unp_buy} alınacak kart", unp_buy), (f"{unp_new} yeni kalem", unp_new),
+                                            (f"{unpriced_split['stock']} yeterli kalem", unpriced_split["stock"]))
+                              if n) + "; toplama girmedi"
+    else:
+        unp_note = "toplama girmedi; gerçek maliyet daha yüksek" if unpriced_count else None
+
+    kpis: List[dict] = []
+    if applies:
+        # Açık sipariş düşülünce plan = alınacak + stoktan + YOLDAN; yoldan kutusu
+        # yok — not söylemezse üç para kutusu birbirini tutmuyor görünür
+        open_t = cs.get("open_total") or 0
+        kpis.append({"key": "plan_total", "label": COST_LABELS["plan"], "value": cs.get("plan_total") or 0,
+                     "text": money(cs.get("plan_total") or 0, cur),
+                     "note": f"yoldan karşılanan {money(open_t, cur)} dahil" if open_t else None})
+    kpis.append({"key": "buy_total", "label": COST_LABELS["buy"], "value": tot.get("all") or 0,
+                 "text": money(tot.get("all") or 0, cur)})
+    if applies:
+        kpis.append({"key": "stock_total", "label": COST_LABELS["stock"], "value": cs.get("stock_total") or 0,
+                     "text": money(cs.get("stock_total") or 0, cur)})
+    kpis.append({"key": "to_buy", "label": "Alınacak kalem", "value": len(to_buy) + new_items,
+                 "text": f"{tr_num(len(to_buy) + new_items)} kalem",
+                 "note": (f"{len(to_buy)} kart + {new_items} yeni kalem" if new_items else None)})
+    kpis.append({"key": "unpriced", "label": "Fiyatı eksik kalem", "value": unpriced_count,
+                 "text": f"{tr_num(unpriced_count)} kalem", "note": unp_note})
+    kpis.append({"key": "products", "label": "Sipariş adedi", "value": units,
+                 "text": f"{tr_num(units)} adet", "note": f"{tr_num(n_prod)} ürün"})
+    if not applies:
+        held_amt = pr.get("held_what_if") or 0
+        kpis.append({"key": "held", "label": "Bekletilen kalem", "value": counts.get("held", 0),
+                     "text": f"{tr_num(counts.get('held', 0))} kalem",
+                     "note": f"alınırsa yaklaşık {money(held_amt, cur)}" if held_amt else None})
+    kpis = kpis[:6]
+
+    cats = [dict(c) for c in co.get("categories") or []]
+    cats_total = dict(co.get("total") or {}) if co else {}
+
+    chosen = (result.get("suppliers") or {}).get("chosen") or []
+    top = [{"name": b["name"], "count": b["count"], "total": b["total"], "contact_line": b.get("contact_line"),
+            "other": False} for b in chosen[:SUMMARY_TOP_SUPPLIERS]]
+    rest = chosen[SUMMARY_TOP_SUPPLIERS:]
+    if rest:
+        top.append({"name": f"Diğer ({len(rest)} firma)", "count": sum(b["count"] for b in rest),
+                    "total": sum(b["total"] for b in rest), "contact_line": None, "other": True})
+
+    raw_rows = [m for m in mats if m.get("kind") == "raw"]
+    raw_need: List[dict] = []
+    raw_to_buy = {"kg": 0.0, "l": 0.0, "adet": 0.0}
+    raw_need_totals = {"kg": 0.0, "l": 0.0, "adet": 0.0}
+    for m in raw_rows:
+        d = m.get("display") or {}
+        u = d.get("buy_unit") if d.get("buy_unit") in ("kg", "l") else "adet"
+        raw_need_totals[u] += float(d.get("need_num") or 0)
+        if m.get("status") == "to_buy":
+            raw_to_buy[u] += float(d.get("buy_num") or 0)
+    for unit in ("kg", "l"):
+        rows = []
+        for m in raw_rows:
+            d = m.get("display") or {}
+            if d.get("buy_unit") != unit or float(d.get("need_num") or 0) <= 0:
+                continue
+            buying = m.get("status") == "to_buy"
+            # Satırın kendi metni (Alım listesiyle AYNI: "1.250 gram" — 1,3 kg'a
+            # yuvarlanmasın); "Diğer" ve toplamlar sayıdan yazılır
+            rows.append({"name": m["name"], "need": float(d.get("need_num") or 0),
+                         "buy": float(d.get("buy_num") or 0) if buying else 0.0,
+                         "need_text": d.get("need_text"), "buy_text": d.get("buy_text") if buying else None,
+                         "other": False})
+        if not rows:
+            continue
+        rows.sort(key=lambda r: (-r["need"], alnum_fold(r["name"])))
+        head, tail = rows[:SUMMARY_TOP_RAW], rows[SUMMARY_TOP_RAW:]
+        if tail:
+            head.append({"name": f"Diğer ({len(tail)} kalem)", "need": sum(r["need"] for r in tail),
+                         "buy": sum(r["buy"] for r in tail), "other": True})
+        raw_need.append({"unit": unit, "rows": head, "need_total": sum(r["need"] for r in rows),
+                         "buy_total": sum(r["buy"] for r in rows), "count": len(rows)})
+
+    # Tür grupları: kalem TEKİL ANAHTARLA sayılır (iki "Koli" satırı iki kalem —
+    # grup toplamı = `unpriced_count` = KPI = Ek B); "Alınacak" = alınacak kart +
+    # yeni kalem (yeni etiket / koli / palet de alınacak — özet kutusundaki
+    # "N alınacak kalemin fiyatı yok" ile aynı sayı); örnek adlar ada göre tekil.
+    groups: List[dict] = []
+    for kind in COST_KINDS:
+        seen: set = set()
+        rows = []
+        for i, u in enumerate(un):
+            k = u.get("key") or (kind, i)
+            if u.get("kind") != kind or k in seen:
+                continue
+            seen.add(k)
+            rows.append(u)
+        if not rows:
+            continue
+        rows.sort(key=lambda u: (u.get("buy_text") is None, bool(u.get("new")), alnum_fold(u["name"])))
+        names: List[str] = []
+        for u in rows:
+            if u["name"] not in names:
+                names.append(u["name"])
+        names = names[:SUMMARY_UNPRICED_NAMES]
+        groups.append({"kind": kind, "label": KIND_TITLE[kind], "count": len(rows),
+                       "to_buy": sum(1 for u in rows if u.get("buy_text") is not None or u.get("new")),
+                       "names": names, "more": sum(1 for u in rows if u["name"] not in names)})
+
+    warnings: List[str] = []
+    fx = pr.get("fx") or {}
+    if fx.get("used") and (fx.get("warning") or fx.get("stale")):
+        warnings.append("Döviz kuru: " + (fx.get("warning") or "güncel kur alınamadı; son bilinen kur kullanıldı.")
+                        + " Tutarlar yaklaşıktır.")
+    if pr.get("package_warned"):
+        warnings.append(f"{pr['package_warned']} satırda seçilen fiyat alınacak miktardan çok farklı bir ambalaja "
+                        "ait (⚠); bu miktar için fiyat teyit edilmeli.")
+    recl = [p["name"] for p in result.get("products") or []
+            if any(c["code"] == "recipeless_product" for c in p.get("cautions") or [])]
+    if recl:
+        warnings.append("Sistemde reçetesi olmayan ürün: " + ", ".join(recl)
+                        + " — malzeme ihtiyacı hesaplanamadı, listeye katılmadı.")
+    est = counts.get("estimated") or 0
+    if est:
+        warnings.append(f"{est} ürün başka ürünün reçetesi / ölçekli reçeteyle hesaplandı (tahmini).")
+    warnings += [str(w) for w in meta.get("warnings") or []]
+    held = [{"name": h["name"], "buy_text": (h.get("display") or {}).get("buy_text") or "",
+             "reason": h.get("reason"), "amount": h.get("amount"), "supplier": h.get("supplier")}
+            for h in result.get("held") or []]
+    return {
+        "currency": cur, "symbol": sym, "net": net, "kpis": kpis,
+        "categories": cats, "categories_total": cats_total,
+        "show_stock": bool(co.get("net")) if co else False, "show_open": bool(co.get("open_on")) if co else False,
+        "top_suppliers": top, "suppliers_count": len(chosen),
+        "raw_need": raw_need, "raw_to_buy": raw_to_buy, "raw_need_totals": raw_need_totals,
+        "unpriced_groups": groups, "unpriced_count": unpriced_count, "unpriced_split": unpriced_split,
+        "howto": SUMMARY_HOWTO,
+        "warnings": warnings, "held": held, "held_what_if": pr.get("held_what_if") or 0,
+        "title": meta.get("title") or "Satın Alma Planı", "scope_text": meta.get("scope_text") or "",
+        "stock_as_of_tr": meta.get("stock_as_of_tr") or "", "generated_at": meta.get("generated_at"),
+        "brands": list(meta.get("brands") or []),
+    }
 
 
 def sections(result: dict) -> List[dict]:

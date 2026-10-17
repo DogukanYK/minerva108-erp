@@ -391,12 +391,15 @@ def plan_export(
     request: Request,
     req: PlanRequest,
     format: str = Query("pdf", pattern="^(pdf|xlsx)$"),
+    variant: str = Query("full", pattern="^(summary|full)$"),
     scenario_id: Optional[int] = Query(None, ge=1),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("reports", "view")),
     domain: str = Depends(active_domain),
 ):
-    """Aynı rapor PDF (yatay A4) ya da formüllü Excel olarak."""
+    """Aynı rapor PDF — `variant=summary` "Yönetici Özeti" (dikey, 2–4 sayfa) ya
+    da `full` "Detaylı Rapor" (kapak dikey + operasyon yatay; varsayılan) — ya
+    da formüllü Excel (ilk sayfası Yönetici Özeti) olarak."""
     from core.purchase_plan import PlanInputError
     from core.delivery_note import content_disposition
     try:
@@ -406,7 +409,7 @@ def plan_export(
     try:
         if format == "pdf":
             from core.purchase_plan_pdf import render_pdf
-            content, media = render_pdf(res), "application/pdf"
+            content, media = render_pdf(res, variant=variant), "application/pdf"
         else:
             from core.purchase_plan_xlsx import build_workbook
             content = build_workbook(res)
@@ -418,14 +421,16 @@ def plan_export(
     pr = res.get("pricing") or {}
     log_admin_event(db, request, actor=current_user, action="purchase_plan.export",
                     target_type="purchase_plan", target_id=scenario_id, target_name=title[:200],
-                    details={"format": format, "domain": domain, "lines": len(req.lines),
+                    details={"format": format, "variant": variant if format == "pdf" else None,
+                             "domain": domain, "lines": len(req.lines),
                              "materials": len(res.get("materials") or []),
                              "currency": pr.get("currency"), "total": (pr.get("totals") or {}).get("all")})
     db.commit()
     _touch_scenario(db, scenario_id, domain)
     # Başlık girilmediyse varsayılan "Satın Alma Planı" önekle aynı → tekrar yazılmaz
     slug = _slug(req.title)
-    fname = f"satin_alma_plani_{slug + '_' if slug else ''}{tr_now():%Y%m%d}.{format}"
+    stem = "satin_alma_ozeti" if (format == "pdf" and variant == "summary") else "satin_alma_plani"
+    fname = f"{stem}_{slug + '_' if slug else ''}{tr_now():%Y%m%d}.{format}"
     return StreamingResponse(io.BytesIO(content), media_type=media,
                              headers={"Content-Disposition": content_disposition(fname, inline=(format == "pdf"))})
 

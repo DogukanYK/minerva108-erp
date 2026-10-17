@@ -412,7 +412,7 @@ istek modeli `core/purchase_plan_models.py`, UI `templates/satin_alma.html` +
 `static/satin-alma.js`) — Rusya siparişi için yazılan tek seferlik betiklerin
 (`~/Desktop/Claude/Rusya-Siparis`) sistemleşmiş hâli: ürün × adet (+ ⚙ başka
 ürünün reçetesi / ölçek / ek ambalaj / etiket yüzü) → hangi malzemeden ne kadar,
-kimden, kaça; "Tedarikçili ve Fiyatlı Alım Listesi" PDF (yatay A4) + Excel
+kimden, kaça; iki PDF ("Yönetici Özeti" / "Detaylı Rapor", aşağıda) + Excel
 (formül + gömülü önbellek değeri). **Domain-scoped**, RBAC `reports.view` —
 fiyatlar raporu gören herkese açık (kullanıcı kararı 05.10.2026, rol bazlı
 gizleme YOK). Uçlar `/api/purchase-plan/*`: `GET /products` (aktif reçeteler
@@ -420,7 +420,10 @@ gizleme YOK). Uçlar `/api/purchase-plan/*`: `GET /products` (aktif reçeteler
 hariç; marka `core.brands`; varsayılan hariçler), `POST /preview` (rapor +
 `sections` — malzeme bölümlerinde satır yerine `row_keys`; satırda sunucu
 biçimli `ui.sup`/`ui.amount`, TR sayı biçimi JS'te yeniden yazılmasın),
-`POST /export?format=pdf|xlsx` (audit `purchase_plan.export`, 20/dk),
+`POST /export?format=pdf|xlsx&variant=summary|full` (`variant` yalnız PDF'te,
+varsayılan `full`; dosya `satin_alma_ozeti_<başlık>_<YYYYMMDD>.pdf` (özet) /
+`satin_alma_plani_…pdf|xlsx`; audit `purchase_plan.export` `details.variant`
+(xlsx'te null), 20/dk),
 `GET /history-fill` (`production_history_report.history_quantities` →
 `{target_item_id: adet}`), senaryo CRUD `/scenarios[/{id}]`. Akış
 `build_report`: `load_inputs` (TEK DB okuyucu; panel dışı id →
@@ -493,8 +496,9 @@ bölümü `total` + özet "N kalem, stoktaki değer X $ — K kalemin fiyatı yo
 `value`/`cover_text`/`value_basis` + `pricing.cost_summary.lines`/`.caveats`
 (sunucu biçimli): alım tablosunda Tutar altında soluk "stoktan X · yoldan Y",
 Yeterli sekmesinde "Değer" sütunu + Toplam, yeşil kutuda maliyet satırları.
-PDF: Tutar altı gri satır, Yeterli'de "Değer" (genişliği Not'tan), kutuda
-kısa blok (uzarsa ilk tablo sayfada bölünür), alt başlıkta dayanak cümlesi.
+PDF: Tutar altı gri satır, "Yeterli olanlar"da "Değer" + "Dayanağı" (dayanak +
+bilgi notları gri "Not: …"), özet kutusunda maliyet bloğu, kapsam cümlesinde
+dayanak.
 Excel: "Stoktan karşılananlar" sayfası (Alım listesi'nden hemen sonra,
 yalnız net + satır varsa; önce yeterli sonra kısmi; G = MIN(D,E), K =
 IF(J="","",ROUND(G*J,0)), açık siparişte L = MIN(F,ROUND(D−G,6)) + M — G/L
@@ -512,6 +516,107 @@ alış faturası fiyatları SONRAKİ AŞAMA. Testler `tests/test_purchase_plan_a
 (+ `_engine`, `_render`, `_acceptance` — sonuncusu `RUSYA_FIXTURE_DIR` ile
 açılır) ve `tests/test_purchase_pricing.py`.
 
+**Satın Alma Planı çıktıları — Yönetici Özeti / Detaylı Rapor** (16–17.10.2026;
+kullanıcı: "bir CFO'nun hazırlayacağı kadar güzel olsun"; plan
+`~/.claude/plans/76gr-m-2dolar-diye-glistening-sutton.md`). `render_pdf(report,
+variant)` — **`summary` "Yönetici Özeti"** (dikey A4, hedef ≤ 4 sayfa; Rusya 3):
+kapak bandı (logo, senaryo, stok tarihi, para birimi; oluşturma saati yalnız sayfa
+altında) → 3×2 KPI (açık siparişte plan kutusu notu "yoldan karşılanan X dahil" — üç
+para kutusu mutabık) → kapsam + uyarı kutusu + özet kutusu (İKİ çıktıda AYNI: tutar
+KPI adıyla, "N alınacak kalemin fiyatı yok", maliyet uyarıları; tür maddeleri YOK —
+eski detay kapağı 17 / 26 / 27 diye üç "ambalaj fiyatı yok" sayısı veriyordu) →
+"Maliyet — tür bazında" tablo + gruplu çubuk (yalnız tutarı olan türler; < 2 türde
+grafik yok — tablonun tekrarı) → "Alınacaklar — tedarikçi bazında" (ilk 8 + Diğer) +
+çubuk → "Hammadde ihtiyacı" (kg ve litre yan yana TEK tablo, ilk 12 + Diğer; satırda
+Alım listesi metni — "1.250 gram", `_amt` toplamlarda; devam sayfasına < 3 satır
+kalmaz (`_MinTailTable`); iki çubuk; ≥ 8× aykırı en büyük değer grafik dışı, altında
+yazılı) → "Fiyatı eksik kalemler" (tür bazında, ≤ 3 örnek) → "Uyarılar ve
+bekletilenler". **`full` "Detaylı Rapor"** (hedef ≤ 40 sayfa; Rusya 28, eski 67):
+aynı yönetici bölümü + içindekiler (dikey), sonra `NextPageTemplate("ops")` ile yatay
+operasyon bölümleri (`sections()` numaraları — UI/Excel ile aynı; boş bölüm yok):
+malzeme satırında yalnız seçilen teklif + "+N teklif · ayrıntı Ek A", uyarı düzeyi
+notlar ⚠ + dipnot (numara BELGE BOYUNCA kesintisiz — bölümler sayfa paylaşır; metin
+DÜZ verilir, `footnotes()` bir kez kaçışlar), PDF'e özel alt başlık ("Gri satırlar…"
+değil, Ek A'ya yönlendirir), ürünler + ürün başına maliyet tek tablo (eksik adlar
+dipnotta, düşülmeyen bitmiş stok "stok N", bilgi düzeyi ürün uyarısı — "Tahmini hesap:
+…" — ⚠'siz adın altında; fiyatsız raporda "Not" sütununda), "Yeterli olanlar" tek satır
++ bilgi notu, notlar gruplu; **Ek A** teklif/ilişki/ambalaj katı/bilgi notları, **Ek B**
+fiyatı eksikler (iki sütun, SATIR sırasıyla — sütun sırası sayfalar arası okumayı
+bozuyordu; stoğu yeten kalem "· stok yetiyor"; ilk 120 + "+N"; "tam liste Ek B'de" yalnız kırpılmadıysa, yoksa "ilk N
+kalem Ek B'de, tam liste Excel “Ürün maliyeti”"). Veri `purchase_pricing.summary_data()`
+(SAF; önizleme / Excel ile aynı sayılar; `unpriced_split` {to_buy, new, stock}: KPI
+"Fiyatı eksik kalem" = üçü; **"alınacak kalem" = alınacak kart + yeni kalem** HER
+yerde — özet kutusu "84 alınacak kalemin fiyatı yok", tür tablosunun "Alınacak"
+sütunu (`unpriced_groups[].to_buy`, yeni kalem dahil), maliyet uyarısı "84 alınacak
+kalem (53 kart, 31 yeni …)"; stoğu yeten fiyatsızlar kutuda ayrı cümle ("Stoğu yeten
+3 kalemin de fiyatı yok"; KPI notu "53 alınacak kart + 31 yeni kalem + 3 yeterli kalem"
+mutabık kılar — kutuda çıplak KPI toplamı yok), stok değerine etkisi ortak uyarıda "Stoktan kısmen ya da
+tamamen karşılanan N kalemden K…" (kısmen karşılanan alınacaklar dahil); tür grupları
+kalemi TEKİL ANAHTARLA sayar — aynı adlı iki "Koli" iki kalem, grup toplamı = KPI = Ek B). **Tasarım sistemi `core/report_theme.py`**: palet (marka
+lacivert/altın yalnız bant, başlık, KPI; grafik serileri `CHART_SERIES` #3B5BC4 ·
+#BD8A10 · #2A9D8F — dataviz `validate_palette.js --mode light` ALL CHECKS PASS,
+marka üçlüsü FAILED, sonuç modül başlığında), depodaki **Liberation Sans** (tek aile:
+her `TableStyle` başına `font_cmd`, madde imi `bulletFontName`, belge
+`initialFontName`, grafik `initialFontName` — PDF'te Helvetica/Times kaynağı YOK;
+`pdffonts` ile doğrula), stiller (gövde 9,5/13, h2 13, h3 11, en çok 3 düzey,
+başlık kalın), `Theme.table` (GRID'siz, başlık altında 0,8 pt çizgi, zebra, sağa
+yaslı sayılar, toplam satırı `NOSPLIT` ile son veri satırına bağlı),
+`hbar_chart` (çubuk ≤ 7 mm, yalnız en büyük çubuk etiketli — çok seride her serinin
+en büyüğü, `barLabelFormat` seri başına liste; `label_fmt` tabloyla
+aynı yazım — hammadde çubuğunda `_amt` ("200 gram", "344,6 kg"), eksen ondalığı ADIMDAN
+(`axis_places`: "0 0,05 0,10" — 1 haneyle "0 0,1 0,1 0,2" tekrar ediyordu; sıfır "0"),
+1 kg/litre altındaki hammadde bloğu gram/ml ölçeğinde, lejant örneği kenarsız
+(`strokeColor=None`; strokeWidth 0 PDF'te kıl çizgidir), kategori boşluğu veriden
+ölçülür ≤ %45, çok seride veriler TERS verilir: reportlab 0. seriyi grubun ALTINA
+çizer, lejant önce yazar; para grafiklerinin gri başlığı "Tutar ($) — tür bazında"
+grafikle tek KeepTogether — sayfa başına taşınan grafik başlıksız kalmaz), `callout`, `kpi_row`, `Bookmark` (yer imi + `showOutline` yalnız
+yer imi olan belgede — özet `/UseOutlines` değil), `TocPanel`, `ReportDoc`
+(`multiBuild`: "Sayfa X / Y" toplamı ve içindekiler sayfası önceki geçişten),
+`page_decorator` (üst altın kıl çizgi + rapor adı, alt sol metin + "Sayfa X / Y").
+**Sayfa düzeni kuralları:** KeepTogether yalnız başlık + tablo; İÇ İÇE KeepTogether
+YASAK (reportlab iç bloğu 0xffffff yükseklik sayar → dış blok sayfa başında değilse
+HER ZAMAN yeni sayfaya atlar: "Tedarikçi bilgi eksikleri" %70 boş sayfa bırakıyordu);
+grafik tablosundan ayrı akar (`CondPageBreak(grafik)`); uzun blok `keepWithNext` ile
+de bağlanmaz (reportlab onu KeepTogether'a çevirir); hücresinde tablo olan tek satırlık
+dış tablo bölünemez ve reportlab 4.2 `splitInRow` iç tabloda çöker → yan yana
+tablolar TEK tablo olarak kurulur (`_raw_tables`; iki taraf satır yüksekliğini
+paylaştığı için ad ölçülerek TEK satıra "…" ile kısaltılır). Sayılar TR biçimli
+(`tr_num`), miktar her yerde 1 ondalık + "litre"/"gram" (`_amt` = Alım listesi =
+Excel; YARIM YUKARI — Excel "#,##0.0" 1,25'i "1,3" gösterir, Python biçimi "1,2"
+yazıyordu), sayı ile birim U+00A0 ile bağlı (`_nb`: "170 ml" satır sonunda bölünmez;
+⚠ dipnot işareti de son sözcüğe bağlı; KPI notunda "3 yeterli kalem" `_nb_count`),
+Türkçe metinde “kıvrık tırnak”, en dash ve kesme işareti ’ (`report_theme.e` iki harf
+arasındaki ' → ’ — ortak veri "kg'lık" dahil; önizleme / Excel düz kalır; testlerin
+`_pdf_text`'i geri çevirir, tipografi ham metinle ayrı test). Kısıtlayan malzeme stoğu
+`_stock_amt` ("stok yok", "< 1 ml"; "0,0 kg" / "0 adet" yok).
+**Excel**: ilk sayfa "Yönetici Özeti" (aynı `summary_data`; toplam miktar biçimi
+`[<1]0.0##;#,##0.0`, malzeme satırı Alım listesi biçimi `#,##0.0##`, birim "litre"; tür tablosu sütunları PDF'teki gibi — Stoktan
+yalnız net, Yoldan yalnız açık siparişte), lacivert başlık,
+kıl çizgi, zebra, yazdırma ayarı; **otomatik süzgeç YALNIZ tek bloklu sayfalarda**
+(Tedarikçiler, Ürünler, Ürün detayı) — Alım listesi / Stoktan karşılananlar bölüm
+başlığı + sabit aralıklı ara toplam (`=SUM(K2:K42)`) / GENEL TOPLAM taşır, süzgeçten
+sıralama aralığı bozar. **Görsel QA (tasarım değişikliğinde ŞART):** Rusya fikstürü
+DB'siz kurulur — `RUSYA_FIXTURE_DIR=~/Desktop/Claude/Rusya-Siparis`,
+`tests/test_purchase_plan_acceptance.run_plan(label_faces=_label_layout())` →
+`render_pdf(res, "summary"|"full")` + `build_workbook(res)` scratchpad'e →
+`pdftoppm -r 60 -png` → özetin HER sayfası, detayın kapak/içindekiler, yönetici
+sayfaları, ilk malzeme tablosu, ambalaj, tedarikçiler, ürünler, maliyet, yeterli,
+bölüm 6→7 sınırı, Ek A, Ek B gözle; sayfa doluluğu (son koyu piksel satırı / içerik
+yüksekliği) ölçülür — ara sayfada ≥ %40 boşluk, öksüz başlık, taşan etiket, bozuk
+glif (İ ı ş ğ ç ö ü) olmamalı. **Testler** `tests/test_purchase_plan_render.py`:
+özet dikey ≤ 4, detay ilk sayfa dikey → yatay, "Sayfa 1 / N", içindekiler + yer
+imleri, Ek A/B, iç içe KeepTogether yok (akış `ReportDoc.multiBuild` casusuyla
+yakalanır), bölüm 6 → 7 aynı sayfa, özet `/UseOutlines` değil, dipnot numarası
+kesintisiz + tek kaçış, yeterli bilgi notu / eksik ad dipnotu / bitmiş stok, kapak
+"fiyatı yok" tutarlılığı (tür "Alınacak" toplamı = kutudaki sayı), `_amt` yazımı +
+yarım yukarı, grafik lejant sırası = çubuk sırası ve etiket ≤ boşluk, eksen hanesi
+adımdan (tekrarsız), lejant kenarsız, grafik başlıkları, gram ölçeği, `_nb`, Ek B satır
+sırası + "tam liste" yalnız kırpılmadıysa, tür grubu anahtarla sayar, ürün bilgi uyarısı,
+Excel süzgeci ara toplamı kapsamaz + tür sütunları moda göre, kapak kutusu iki çıktıda
+aynı, kesme işareti ’, açık sipariş KPI notu, Ek B "stok yetiyor", hammadde satır metni,
+`_MinTailTable`; Rusya: özet ≤ 3, yönetici bölümü ≤ 3 dikey sayfa, detay ≤ 40, Ek B tam
+liste.
+
 **Ambalaj uyarısı — iki yönlü** (16.10.2026; "76 gr'a 2 $ diye", ABD planında TIBBI
 LAVANTA UÇUCU YAĞI 26 g × 40,5 $/kg (25 kg ambalaj fiyatı) → 1 $). `_price_row` seçilen teklifin
 ambalajını `price_package` / `price_package_unit` (FİYAT biriminde) yazar;
@@ -523,15 +628,17 @@ fiyat alınmalı" + seçenek kapalıyken "(tam ambalaj alınırsa X $)"); **≥ 
 `package_large` ("… daha düşük olabilir — bu miktar için fiyat istenmeli"); tam 0,5×
 uyarısız, tam 2× uyarılı. `amount` / `totals` / GENEL TOPLAM DEĞİŞMEZ; satır notuna
 tek satır, `summary.warnings` yeniden sayılır, `pricing.package_warned`. Tutar'ın
-yanında ⚠ (`amount_warn(m)` metni): önizleme `ui.amount_warn` (title), PDF kırmızı ⚠
-(Arial'de glif yok → DejaVu → Apple Symbols → "!") + "Not:" satırı, Excel K turuncu
+yanında ⚠ (`amount_warn(m)` metni): önizleme `ui.amount_warn` (title), PDF Tutar'ın
+önünde kırmızı ⚠ + dipnot numarası, metin bölüm sonunda (Liberation'da glif yok →
+`warn_font`: DejaVu → Apple Symbols → kalın "!"), Excel K turuncu
 kalın + hücre yorumu + X "Not". "Ambalaj katına yuvarlanırsa" metni tek yerde
 (`pkg_round_text`).
 
 **Maliyet özeti** (16.10.2026, "Amerika siparişinin toplamı"; `pricing.cost_overview`
 = `cost_overview(result)`, metinler `cost_overview_view` — önizleme "Maliyet" sekmesi,
 PDF "Maliyet özeti" bölümü (sections `cost`, `products`'tan sonra, fiyatsız raporda
-yok), Excel "Ürün maliyeti" sayfası aynı metni basar). Tür bazında (hammadde / ambalaj /
+yok; ürün başına maliyet PDF'te ürün tablosunun sütunlarında, eksik adlar dipnotta,
+tam fiyatsız liste Ek B'de — ilk 120, fazlası Excel'de), Excel "Ürün maliyeti" sayfası aynı metni basar). Tür bazında (hammadde / ambalaj /
 etiket) alınacak + stoktan + yoldan; **Σ tür = `cost_summary.plan_total`** (brüt modda
 `totals.all`; brüt dilde "değer / yenileme değeri" YOK). Değer bugünkü teklif fiyatı
 (yenileme değeri). Sayılan satır = alınacak ya da bu planda stoktan/yoldan kullanılan;
