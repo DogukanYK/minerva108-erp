@@ -241,6 +241,7 @@ HELP_CASES = {
     "tedarikçi fiyat": "tedarikci_tercihleri_ve_fiyat",
     "tedarikçiyi bitirilecek yap": "tedarikci_tercihleri_ve_fiyat",
     "fiyatı olmayan malzemeleri nerede görürüm": "tedarikci_tercihleri_ve_fiyat",
+    "paraşüt faturası fiyat onayı": "tedarikci_tercihleri_ve_fiyat",
     "plandaki maliyet sekmesi": "satin_alma_plani",
     "satın alma planı": "satin_alma_plani",
     "alım listesi excel indir": "satin_alma_plani",
@@ -321,8 +322,10 @@ def test_search_help_no_match_weak_match_and_short_query():
     assert p == {"query": "uzay gemisi rotası", "topics": [], "others": [], "note": "rehberde bu konu yok"}
     weak = _help("fatura kes")                      # tek seyrek gövde eşleşmesi → konu değil
     assert weak["topics"] == [] and weak["note"] == "rehberde bu konu yok"
-    # Belge Oku rehberi de "fatura"yı anar (fatura okutma) — ikisi de yalnız aday
-    assert [o["id"] for o in weak["others"]] == ["belge_oku_metin_yaz", "teslimat_iade"]
+    # Belge Oku rehberi de "fatura"yı anar (fatura okutma), fiyat rehberi "Onay bekleyen
+    # fatura fiyatları" kartını (Paraşüt kuyruğu) — hepsi yalnız aday
+    assert [o["id"] for o in weak["others"]] == ["belge_oku_metin_yaz", "tedarikci_tercihleri_ve_fiyat",
+                                                 "teslimat_iade"]
     with pytest.raises(H.ToolError):
         _help(" a ")
     assert HD.query_tokens("nasıl yapılır") == []

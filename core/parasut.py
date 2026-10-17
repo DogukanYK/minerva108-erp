@@ -22,6 +22,7 @@ Env yoksa modül import edilebilir kalır; is_configured() False → akış atla
 """
 import logging
 import os
+import threading
 import time
 from datetime import datetime
 from typing import List, Optional
@@ -35,6 +36,10 @@ logger = logging.getLogger("minerva108.parasut")
 _BASE = "https://api.parasut.com"
 _RATE_SLEEP = 1.05          # 10 istek / 10 sn limiti — güvenli aralık
 _TIMEOUT = 25.0
+# Hız sınırı TEK hesap içindir: bu yazar modül (`_api`) ile salt-okuma alış
+# faturası istemcisi (`core.parasut_purchases.Api`) aynı kilidi paylaşır —
+# ikisi aynı anda çalışırken de çağrılar arası ≥ _RATE_SLEEP kalır.
+_RATE_LOCK = threading.Lock()
 
 # Nihai tüketici (TCKN'siz B2C) — GİB e-Arşiv konvansiyonu
 FINAL_CONSUMER_TCKN = "11111111111"
@@ -122,10 +127,11 @@ def _api(method: str, path: str, json: Optional[dict] = None,
     """Rate-limited JSON:API çağrısı. path company-relative ('/contacts' gibi)."""
     token = _get_access_token()
     url = f"{_BASE}/v4/{company_id()}{path}"
-    r = httpx.request(method, url, json=json, params=params, timeout=_TIMEOUT,
-                      headers={"Authorization": f"Bearer {token}",
-                               "Content-Type": "application/json"})
-    time.sleep(_RATE_SLEEP)
+    with _RATE_LOCK:
+        r = httpx.request(method, url, json=json, params=params, timeout=_TIMEOUT,
+                          headers={"Authorization": f"Bearer {token}",
+                                   "Content-Type": "application/json"})
+        time.sleep(_RATE_SLEEP)
     if r.status_code == 204:
         return {}
     if r.status_code >= 400:

@@ -295,6 +295,8 @@ def startup_event():
     # Trendyol senkronlarının kapanış bayrağı — önceki kapanıştan kalmasın.
     from core import trendyol as _T
     _T.reset_stop()
+    from core import parasut_purchases as _PP
+    _PP.reset_stop()
     # Test ortamında DISABLE_SCHEDULER=true → APScheduler atla.
     # Lifespan async cleanup'ı TestClient teardown'unda event loop
     # kapanırken hata atıyordu; testler için bu güvenli kapı.
@@ -311,6 +313,12 @@ def shutdown_event():
     try:
         from core import trendyol as _T
         _T.request_stop()
+    except Exception:
+        pass
+    # Paraşüt alış faturası okuması da bir istek / bekleme içinde dursun.
+    try:
+        from core import parasut_purchases as _PP
+        _PP.request_stop()
     except Exception:
         pass
 
@@ -375,6 +383,10 @@ app.include_router(assistant_router.router)
 # OKUMA senkron + eşleştirme/stok — core/trendyol.py).
 from routers import trendyol as trendyol_router   # noqa: E402
 app.include_router(trendyol_router.router)
+# Paraşüt alış faturası fiyat onay kuyruğu — /api/supplier-prices/parasut-queue
+# (reports.view görür, suppliers.prices onaylar/atlar; core/parasut_purchases.py).
+from routers import parasut_purchases as parasut_purchases_router   # noqa: E402
+app.include_router(parasut_purchases_router.router)
 
 
 # ─── Page-route helpers ─────────────────────────────────────────────────────

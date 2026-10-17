@@ -508,7 +508,8 @@ kontrol listesi sorumlusu senaryoda girilir (kişi adı SABİT YAZILMAZ).
 Raporlar'daki "Üretim Stok Analizi" paneli hızlı araç olarak kalır, başlığında
 "Gelişmiş: Satın Alma Planı →" bağlantısı var. Nav linki
 `scripts/add_satin_alma_nav.py` (idempotent, `reports.view` kapılı). Paraşüt
-alış faturası fiyatları SONRAKİ AŞAMA. Testler `tests/test_purchase_plan_api.py`
+alış faturası fiyatları: salt-okuma onay kuyruğu (bkz. "Paraşüt alış faturası
+fiyat kuyruğu"). Testler `tests/test_purchase_plan_api.py`
 (+ `_engine`, `_render`, `_acceptance` — sonuncusu `RUSYA_FIXTURE_DIR` ile
 açılır) ve `tests/test_purchase_pricing.py`.
 
@@ -1539,6 +1540,14 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   yenilenir; diğer lab ve elle fiyatlar korunur. Excel'de `Aktarım seçimi`
   sayfası varsa dış manifest zorunludur ve üç kimlik birebir eşleşmelidir.
   İlk kapsam 93 fiyat; A1-36-S1, C-s12-1, C-s12-2 birim/paket teyidi bekler.
+  **16.10.2026 ek kayıtlar:** 09.10 PDF'inin (SongulHanimFiyat2.pdf) yeni /
+  farklı değerleri `D-s*` (kaynak_sayfa "SongulHanimFiyat2.pdf s.N"; 7 kayıt:
+  Neowax, çinko oksit, lavanta hidrosolü, kakao, kayısı/Surya 14,53 ↔ 17,136
+  çelişkisi `guven: belirsiz`, Emulgade e-faturası 11.09.2025, Sodyum borat
+  proforması) ve 07.10 taramasının s.8 el yazısı kutusu / s.9 Doalin değeri
+  `H-s8-*` / `H-s9-1` (birimi yazmayan Doğasa TL değerleri `belirsiz`).  Yeni
+  tür **`el_notu`** (Songül Hanım'ın el yazısı değeri): içe aktarmada lab
+  tablosu önceliğinde (alım belgesi > el notu), `source` lab_notu; toplam 178 kayıt.
   Firma politikası: `scripts/apply_songul_supplier_policy_20261008.py
   [--commit]`, kuru varsayılan, tek transaction + kart bazında audit.
   UMAYCHEM/NATURALYA/YİĞİTOGLU KİMYA/DOGASA eşit `preferred`;
@@ -1547,10 +1556,120 @@ adding an endpoint that lists or creates domain-scoped data, **you must** add th
   açık malzeme tercihi işlemi durdurur. Yeni firma/stok/minimum değiştirmez.
   `import_prices` (Stok Son Durum) lab satırlarını silmez; aynı firmanın Excel
   satırını yalnız ELLE (`manual`) satır engeller — lab + Stok Son Durum yan yana kalır.
+  **Paraşüt alış faturası fiyat kuyruğu — SALT OKUMA** (16.10.2026;
+  `core/parasut_purchases.py`, `routers/parasut_purchases.py`, tablolar
+  `parasut_purchase_bills` / `parasut_purchase_lines` / `parasut_product_packs`,
+  migration `c4d6e8f0a2b4` + create_all).  Her gece 02:41 UTC
+  (`scheduler.parasut_purchases_sync`) — iş yalnız `parasut.is_configured()` ile
+  kayıtlı, gövdesi AppSetting **`parasut.purchases.enabled == "1"`** (varsayılan
+  KAPALI) ile kapılı — `GET /purchase_bills?sort=-issue_date&include=supplier,
+  details,details.product` (sayfa 25) okur; `Api` sınıfının tek HTTP metodu
+  `get`, yol izin listesi yalnız `purchase_bills`, `core.parasut._api`
+  KULLANILMAZ (yalnız `_get_access_token` + paylaşılan `_RATE_LOCK`; test
+  kaynak taramasıyla kilitler); 429 / 5xx sınırlı tekrar, 3xx hata, kapanış
+  bayrağı (`request_stop`) okumayı istek arasında durdurur.  **Paraşüt'e bu
+  akıştan hiçbir şey yazılmaz; gerçek API testlerden / betiklerden ASLA
+  çağrılmaz** (MockTransport).  **KVKK beyaz listesi:** tedarikçi yalnız id + ad
+  (e-posta / telefon / vergi no / adres saklanmaz, ham JSON yok).  Su işareti
+  `parasut.purchases.watermark` (en yeni fatura tarihi; sonraki okuma 30 gün
+  geriden, aynı fatura `parasut_id` ile tekrar yazılmaz).  Yeni satır
+  `pending` düşer; `suggest_item` (önce Belge Oku'nun `doc_key` / `score_item` /
+  `material_key` kuralı — `_item_candidates` DEĞİŞMEZ; onun kesin cevabı (tek, ≥60)
+  varsa öneri ODUR, ters kapsama onu EZMEZ: "CMC KARBOKSİ METİL SELÜLOZ TEKNİK" →
+  CMC kartı, METİL SELÜLOZ değil; "MEYAN KÖKÜ EKSTRAKT" → EKSTRAKTI kartı; tek
+  istisna `_forward_near_tie`: kısa metin birden çok kart adında geçip en kısa ad
+  0,1 puanla kazandıysa ("Kil" → MAVİ KİL 81,0 / BENTONİT KİL 80,9; ikisi ≥80, fark
+  <1, metin kartın kendi adı değil) öneri YOK — başka karta geçilmez.  Yoksa
+  **ters kapsama**: Paraşüt ürün adı çoğunlukla kart adını İÇERİR ("KARNAUBA MUMU
+  (CARNAUBA WAX)", "DUY.FRK-SE.07 AKGÜNLÜK UÇUÇU YAĞI (Boswellia serrata) 10 ml.";
+  canlı kartlarda TR adı boş), ≥2 kelime ve ≥6 karakterlik kart adı / TR adı
+  metinde bir kelime BAŞINDA geçiyor ve kelime sonunda ya da yalnız iyelik /
+  kesik yazım ekiyle bitiyorsa (`REVERSE_SUFFIXES`: PROTEİN → PROTEİNİ, GLUCOSİD →
+  GLUCOSIDE; "-lı/-li" DEĞİL — "GOLD KAPAKLI CAM KAVANOZ" kapak değildir, "-sız",
+  çoğul, rakam devamı da değil) 80 + kapsama; AMBALAJ kartının adından hemen
+  sonra parça başı geliyorsa (iyelikli isim — KAPAĞI / POMPASI / BİLYESİ / CONTASI
+  — ya da "İÇİN"; Türkçede baş isim sondadır: "50 ML CAM KAVANOZ KAPAĞI" kapaktır;
+  "-lı/-lu" sıfatı ve renk değil, `_part_head_after`) o geçiş sayılmaz; daha özgül
+  bir kartın (adı onunkini içeren ya da `doc_key`'i kapsayan, metinden daha
+  fazlasını karşılayan, metinle Jaccard ≥0,5) kapsadığı GENEL kart düşer
+  ("KARBOKSİ METİL SELÜLOZ (CMC)" metninde METİL SELÜLOZ); metindeki geçişi daha
+  uzun, anahtarı kesin kapsayan başka bir kapsanan kartın geçişinin İÇİNDE kalan
+  kart da düşer (`_covered_by_longer`: "DUY.LAV.01 TIBBİ LAVANTA UÇUCU YAĞI
+  (Lavandula angustifolia) 10 ml." → TIBBİ kartı); kalan iki kapsanan kart satırın
+  AYRI kalemleriyse ("+" arada ya da ortaksız anahtar: "100 ML CAM ŞİŞE + GOLD
+  SPREY POMPA") ya da kazanan kartın dışında "+" kalıyorsa (tek kalemi kartlı set:
+  "50 ML CAM KAVANOZ + 70 PP GOLD METALİZE KAPAK") öneri yok; aynı
+  malzemenin iki kartıysa (MİSK ADAÇAYI UCUCU YAĞ / UÇUCU YAĞI) yalnız faturanın
+  firması (+5) seçer, kapsama farkı seçtirmez; 3'ten az harfli metin ("1", "A") →
+  öneri yok) yalnız TEK ve ≥60 puanlı adayı önerir (eşit puan → yok), ASLA
+  otomatik bağlamaz; yöneticilere "N satır fiyat onayı bekliyor" push'u.
+  Bilinen sınır: daha özgül kart YOKSA nitelik sözcüğü ayırt edilmez ("GÜL SUYU
+  AROMASI" → GÜL SUYU önerilir) — öneri yalnız ön dolum, onayı insan verir.  Gider ipucu (kargo / seyahat / kiralama / ilan)
+  yalnız işaret.  Uçlar: `GET /api/supplier-prices/parasut-queue`
+  (reports.view + panel; `{count, pending:[{id, bill, product_name, quantity,
+  unit_price, discount_rate, vat_rate, suggestion, candidates, supplier, pack,
+  net_preview, stale, expense_hint}], enabled, watermark}`), `POST
+  …/{id}/approve {item_id, supplier_id|supplier_name, package_qty,
+  price_unit}` ve `…/{id}/skip` (suppliers.prices).  **Onay hesabı**
+  (`approve_line`): satırlar "Adet" geldiği için AMBALAJ şart — net = birim
+  fiyat × (1 − indirim) ÷ ambalaj; `vat_included=False` + satır KDV'si; para
+  birimi faturadan ("TRL" → "TRY"); `quoted_at` fatura tarihi;
+  `source='parasut'`, `source_label` "Paraşüt alış faturası <no> — gg.aa.yyyy";
+  (kart, firma) başına TEK satır, en yeni fatura kazanır (eski fatura mevcut
+  satırı EZMEZ, `kept_newer`); aynı firmanın elle fiyatı varsa 409
+  `manual_exists`; ambalaj Paraşüt ürünü başına hatırlanır; audit
+  `supplier_prices.parasut_approve`.  `approve_line` / `skip_line` COMMIT
+  ETMEZ (çağıran tek işlemde commit eder — kademe betiği hata olursa hiçbir
+  şey yazmaz).  Eşzamanlılık: kilit sırası kart → satır (`FOR UPDATE` +
+  `populate_existing`); iki sekme / kullanıcı / kademe betiği aynı anda
+  onaylarsa ikincisi 409 `not_pending` alır ya da aynı (kart, firma) satırını
+  yerinde günceller (çift parasut satırı yok); onay sürerken atlama 409; ambalaj
+  hafızası `ON CONFLICT DO UPDATE` (tekil indeks 500 vermez).  Tek işlemde
+  BİRDEN ÇOK satır onaylayan çağıran (kademe betiği) önce
+  `lock_for_approval` ile tüm kartları, sonra tüm satırları id sırasıyla
+  kilitler — yoksa "A: L1→X, sonra L2→Y" ile "arayüz: Y'yi tutar, L1'i bekler"
+  kilitlenme döngüsü kurulur.  Kalan nadir kilitlenme / kilit alınamadı
+  (`40P01` / `55P03`, `is_lock_busy`): uçlar rollback + 409 `busy` ("tekrar
+  deneyin"), betik `busy` hatası + rollback (hiçbir şey yazılmaz).  **Eski fatura koruması:** `purchase_pricing._offer_status`
+  `source == 'parasut'` ve `quoted_at` 365 günden eskiyse `status='stale'`,
+  `eligible=False`, metin "eski fatura (12 aydan eski)" (seçim kuralı kapalıyken
+  de); teklif sözlükleri `source` / `quoted_at` taşır, `pricing.stale_listed`;
+  fiyat sayfası aynı rozeti gösterir ve eski satırı "en ucuz"a sokmaz.
+  `/fiyatlar` kartı "Onay bekleyen fatura fiyatları (N)" (`#fpParasut`,
+  fiyatlar.js?v=2 / sw v49): kart seçici (items-cache datalist), firma (IMS
+  eşleşmesi ya da faturadaki ad), ambalaj + birim, net önizleme, Onayla / Atla
+  (yetkisiz salt görünüm); kaynak süzgeci `parasut`.  Testler
+  `tests/test_parasut_purchases.py`.
+  **Fiyat tamamlama kademesi** (`scripts/fiyat_tamamlama_20261016.py`, 16.10.2026;
+  kuru varsayılan).  Hedef = aktif reçetelerde geçen fiyatsız HAMMADDE kartları
+  (`price_overview.build_overview(has_price="unpriced")` kuralı: hammadde + "diğer";
+  ambalaj / etiket kademeye GİRMEZ, yalnız grup üzerinden fiyatlı kart formda
+  notlu).  Sıra: (1) Paraşüt BEKLEYEN satırları (`parasut_purchase_lines`; ya da
+  `--parasut-json DOSYA` — JSON:API yükü `parse_bill` ile, `parasut_read.py` düz
+  dökümü `bill_from_dump` beyaz listesiyle (`supplier_contact` ATILIR, indirim net
+  toplamdan türetilir; kimliksiz → yalnız kuru), DB'de olan döküm satırı atlanır)
+  `suggest_item` ile → "kesin" (tek ≥60) / "eşleşme belirsiz" (hedef yalnız adayda);
+  (2) Songül kayıtları içe aktarma betiğinin kendi `plan()`'ı ile (modül; kural
+  ikinci kez yazılmaz) → yazılabilir / ezildi / belirsiz / diğer; (3) kalan →
+  "Fiyat formu" (kart, birim, reçete sayısı, son alım tedarikçisi (son numune dışı
+  lot), doldurulacak fiyat / para birimi / birim / ambalaj / tedarikçi / tarih / not —
+  betikçe OKUNMAZ, dolu hücre commit'te uyarı).  Eski faturalı (12 ay+) kesin
+  Paraşüt satırı kartı "karşılanmış" saymaz.  Çalışma kitabı: Nasıl doldurulur ·
+  Paraşüt adayları · Songül adayları · Fiyat formu · Özet; onay YALNIZ E/H
+  (`lab._yes_no`), Paraşüt satırında Kart no / Ambalaj miktarı (ŞART) / Fiyat
+  birimi / IMS tedarikçi no girişleri, Songül satırında Kart no + IMS tedarikçi no
+  manifeste gider.  `--onayli X.xlsx --commit`: TEK işlem — `approve_line` (flush)
+  + içe aktarma betiğinin `apply(record_selection=…)`'ı (commit eder; hata →
+  rollback, Paraşüt onayları da geri alınır); her doğrulama hatasında (E/H dışı,
+  ambalaj yok, kart/firma yok, satır bekleyen değil, elle fiyat var, kazanan
+  değil) HİÇBİR ŞEY yazılmaz; idempotent (onaylı satır aynı kartla "zaten
+  yazılmış"); JSON:API dökümüyle commit faturayı aynı işlemde tablolara yazar;
+  audit `supplier_prices.fiyat_tamamlama`.  Paraşüt'e yazmaz, gerçek API
+  çağırmaz.  Testler `tests/test_fiyat_tamamlama.py`.
   **Malzeme Fiyatları sayfası** (`/fiyatlar`, 16.10.2026; `core/price_overview.py`,
   `templates/fiyatlar.html` + `static/fiyatlar.js`): rapor almadan fiyatlara bakış.
   `GET /api/supplier-prices/overview?currency=USD|EUR|TRY&q=&category=all|hammadde|
-  ambalaj|etiket|other&has_price=all|priced|unpriced&source=all|manual|stok_son_durum|lab`
+  ambalaj|etiket|other&has_price=all|priced|unpriced&source=all|manual|stok_son_durum|lab|parasut`
   (geçersiz süzgeç 400 metin `detail`, q>100 → 422); sayfa ve uç `reports.view` + panel,
   ekle/düzenle/sil `suppliers.prices` (paylaşılan `SupplierPriceForm`). Grup (≥2 görünür
   kart) → kart → satır; aktif, bitmiş ürün HARİÇ; elle fiyat aynı firmanın Excel/lab

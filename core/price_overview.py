@@ -58,31 +58,35 @@ from core.purchase_plan import tr_num
 from core.purchase_pricing import (CFG_SKIP_SUPPLIERS, CURRENCY_SYMBOL, UNIT_TEXT, OfferRec, PriceInputs,
                                    SupplierRec, _offer_status, _row_prefs, _status_ctx, offer_tags, price_text,
                                    supplier_index)
-from core.supplier_prices import (CURRENCIES, LITRE_KG_NOTE, SOURCE_MANUAL, SOURCE_STOK_SON_DURUM, firm_keys,
-                                  net_unit_price, normalize, price_per_purchase_unit, serialize_price, vat_label)
+from core.supplier_prices import (CURRENCIES, LITRE_KG_NOTE, SOURCE_MANUAL, SOURCE_PARASUT, SOURCE_STOK_SON_DURUM,
+                                  firm_keys, net_unit_price, normalize, price_per_purchase_unit, serialize_price,
+                                  vat_label)
 
 # Süzgeç sözlükleri — uç doğrulaması (routers/reports.py) ve sayfa aynı listeyi kullanır
 CATEGORY_FILTERS = ("all", "hammadde", "ambalaj", "etiket", "other")
 HAS_PRICE_FILTERS = ("all", "priced", "unpriced")
-SOURCE_FILTERS = ("all", "manual", "stok_son_durum", "lab")
+SOURCE_FILTERS = ("all", "manual", "stok_son_durum", "lab", "parasut")
 SOURCE_FILTER_LABELS = {"manual": "Elle girilen", "stok_son_durum": "Stok Son Durum listesi",
-                        "lab": "Lab fiyat notları / belge"}
+                        "lab": "Lab fiyat notları / belge", "parasut": "Paraşüt alış faturası"}
 HAS_PRICE_LABELS = {"all": "Hepsi", "priced": "Fiyatı olanlar", "unpriced": "Fiyatı olmayanlar"}
 # Fiyatsız listede gösterilen kovalar (bitmiş ürün ve "diğer" hariç)
 UNPRICED_BUCKETS = ("hammadde", "ambalaj", "etiket")
 _STATUS_KIND = {"preferred": "preferred", "phase_out": "blocked", "avoid": "blocked", "skip": "blocked",
-                "inactive": "inactive"}
+                "inactive": "inactive", "stale": "blocked"}
 
 
 def _source_bucket(source) -> str:
     """Fiyat satırının kaynak süzgeci: manual | stok_son_durum (boş eski satır
-    dahil — içe aktarma da onları Excel sayar) | lab (lab_notu / proforma /
-    fatura / siparis ve diğerleri)."""
+    dahil — içe aktarma da onları Excel sayar) | parasut (onaylanan Paraşüt
+    alış faturası satırı) | lab (lab_notu / proforma / fatura / siparis ve
+    diğerleri)."""
     s = (source or "").strip()
     if s == SOURCE_MANUAL:
         return "manual"
     if s in ("", SOURCE_STOK_SON_DURUM):
         return "stok_son_durum"
+    if s == SOURCE_PARASUT:
+        return "parasut"
     return "lab"
 
 
@@ -383,7 +387,9 @@ def build_overview(db: Session, domain: str, currency: str = "USD", q: Optional[
         rows = []
         for sp in kept.get(iid, []):
             name = disp_name(sp)
-            o = {"supplier_key": ix.key(name), "supplier_id": sp.supplier_id, "name": name}
+            # `source` / `quoted_at` planın eski fatura korumasına gider (parasut + 12 ay)
+            o = {"supplier_key": ix.key(name), "supplier_id": sp.supplier_id, "name": name,
+                 "source": sp.source, "quoted_at": sp.quoted_at}
             _offer_status(o, rp, sc, skip, pin)
             tags, blocked = offer_tags(o, vat=False)
             net = net_unit_price(sp)
@@ -450,7 +456,8 @@ def build_overview(db: Session, domain: str, currency: str = "USD", q: Optional[
         pu_card = _purchase_unit(it.unit)
         rows = rows_of[iid]
         # Karşılaştırma: pasif olmayan, alım birimine çevrilebilen fiyatlı satırlar
-        live = [r for r in rows if r["_raw"] is not None and r["status"] != "inactive"]
+        # Pasif firma ve eski fatura karşılaştırmaya / "en ucuz"a girmez (plan da seçmez)
+        live = [r for r in rows if r["_raw"] is not None and r["status"] not in ("inactive", "stale")]
         units = {r["_pu"] for r in live if r["_pu"]}
         curs = {r["_cur"] for r in live}
         compare_note = None

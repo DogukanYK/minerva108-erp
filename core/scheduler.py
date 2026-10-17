@@ -275,6 +275,34 @@ def _trendyol_job(kind: str) -> None:
         db.close()
 
 
+def parasut_purchases_sync() -> None:
+    """Her gece 02:41 UTC (05:41 TR): Paraşüt alış faturaları SALT OKUMA →
+    fiyat onay kuyruğu (core/parasut_purchases.py).  Yalnız Paraşüt kimliği
+    tanımlı VE AppSetting `parasut.purchases.enabled == "1"` (varsayılan
+    kapalı) ise okur; kapanış bayrağı okumayı istek arasında durdurur (hata
+    sayılmaz).  Paraşüt'e hiçbir şey yazılmaz."""
+    from core import parasut as P
+    from core import parasut_purchases as PP
+    if not P.is_configured():
+        return
+    db = SessionLocal()
+    try:
+        if not PP.get_enabled(db):
+            return
+        res = PP.run_sync(db)
+        if res.get("skipped"):
+            logger.info("parasut_purchases_sync atlandı: başka bir okuma çalışıyor")
+            return
+        logger.info("parasut_purchases_sync tamam: %s", {k: res.get(k) for k in
+                                                         ("bills", "bills_new", "lines_new", "pending", "watermark")})
+    except PP.ParasutPurchasesStopped:
+        logger.info("parasut_purchases_sync kapanışta durdu — sonraki gece kaldığı yerden sürer")
+    except Exception:
+        logger.exception("parasut_purchases_sync failed")   # scheduler'ı asla düşürme
+    finally:
+        db.close()
+
+
 def trendyol_orders_sync() -> None:
     """30 dk'da bir: lastModified penceresiyle artımlı sipariş senkronu."""
     _trendyol_job("orders")
@@ -423,6 +451,16 @@ def start_scheduler() -> None:
                 parasut_invoice_retry,
                 CronTrigger(minute="*/10"),       # her 10 dk — takılan faturaları dene
                 id="parasut_invoice_retry",
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+            )
+            # Alış faturası SALT OKUMA kuyruğu — iş kayıtlı, gövdesi AppSetting
+            # `parasut.purchases.enabled` ile kapılı (varsayılan kapalı).
+            scheduler.add_job(
+                parasut_purchases_sync,
+                CronTrigger(hour=2, minute=41),   # 02:41 UTC = 05:41 TR — Trendyol finansından sonra
+                id="parasut_purchases_sync",
                 replace_existing=True,
                 max_instances=1,
                 coalesce=True,

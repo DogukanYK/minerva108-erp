@@ -302,6 +302,100 @@ class SupplierPrice(Base):
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
 
 
+# ─── Paraşüt alış faturaları — SALT OKUMA fiyat onay kuyruğu ────────────────
+# (core/parasut_purchases.py, 16.10.2026).  Her gece Paraşüt'ten alış
+# faturaları okunur, satırlar "onay bekliyor" kuyruğuna düşer; onaylanan satır
+# `supplier_prices`'a source='parasut' ile yazılır.  Paraşüt'e HİÇBİR şey
+# yazılmaz.  Tablolar create_all ile gelir (migration c4d6e8f0a2b4 kayıt
+# için).  Cross-cutting: fatura panele ait değildir (domain kolonu YOK);
+# seçilen kart / yazılan fiyat aktif panelin kartıdır.  KVKK: tedarikçinin
+# yalnız Paraşüt id'si + adı tutulur — e-posta / telefon / vergi no / adres
+# SAKLANMAZ (parser alan beyaz listesi, ham JSON yok).
+
+class ParasutPurchaseBill(Base):
+    """Alış faturası başlığı (purchase_bills, item_type=purchase_bill).
+    `currency` IMS koduyla (Paraşüt "TRL" → "TRY").  `expense_hint`: kargo /
+    seyahat / kiralama / ilan gibi gider faturası ipucu — yalnız öneri,
+    satırlar yine kuyruğa düşer."""
+    __tablename__ = "parasut_purchase_bills"
+
+    id                  = Column(Integer, primary_key=True)
+    parasut_id          = Column(BigInteger, nullable=False, unique=True)
+    item_type           = Column(String(30), nullable=True)
+    invoice_no          = Column(String(60), nullable=True)
+    issue_date          = Column(Date, nullable=True, index=True)
+    due_date            = Column(Date, nullable=True)
+    currency            = Column(String(8), nullable=True)
+    exchange_rate       = Column(Float, nullable=True)
+    net_total           = Column(Float, nullable=True)
+    gross_total         = Column(Float, nullable=True)
+    description         = Column(String(250), nullable=True)
+    supplier_parasut_id = Column(BigInteger, nullable=True)
+    supplier_name       = Column(String(150), nullable=True)
+    expense_hint        = Column(Boolean, nullable=False, default=False)
+    first_seen_at       = Column(DateTime, default=datetime.utcnow)
+    synced_at           = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    lines = relationship("ParasutPurchaseLine", back_populates="bill", order_by="ParasutPurchaseLine.id",
+                         cascade="all, delete-orphan", passive_deletes=True)
+
+
+class ParasutPurchaseLine(Base):
+    """Fatura satırı + onay durumu.  `status` pending | approved | skipped.
+    `suggested_item_id` / `suggested_score`: senkronun önerisi (yalnız tek ve
+    ≥60 puanlı aday; ASLA otomatik bağlanmaz).  Onayda seçilen kart / firma /
+    ambalaj (fiyat biriminde) ve yazılan `supplier_prices` satırı tutulur.
+    `discount_rate` 0–1 kesir; net birim fiyat = unit_price × (1 − discount_rate)."""
+    __tablename__ = "parasut_purchase_lines"
+
+    id                   = Column(Integer, primary_key=True)
+    bill_id              = Column(Integer, ForeignKey("parasut_purchase_bills.id", ondelete="CASCADE"),
+                                  nullable=False, index=True)
+    parasut_detail_id    = Column(BigInteger, nullable=False, unique=True)
+    description          = Column(String(250), nullable=True)
+    product_parasut_id   = Column(BigInteger, nullable=True, index=True)
+    product_name         = Column(String(150), nullable=True)
+    product_unit         = Column(String(20), nullable=True)
+    quantity             = Column(Float, nullable=True)
+    unit_price           = Column(Float, nullable=True)
+    discount_rate        = Column(Float, nullable=True)
+    vat_rate             = Column(Float, nullable=True)
+    net_total            = Column(Float, nullable=True)
+    expense_hint         = Column(Boolean, nullable=False, default=False)
+    status               = Column(String(12), nullable=False, default="pending", index=True)
+    suggested_item_id    = Column(Integer, ForeignKey("items.id", ondelete="SET NULL"), nullable=True)
+    suggested_score      = Column(Float, nullable=True)
+    chosen_item_id       = Column(Integer, ForeignKey("items.id", ondelete="SET NULL"), nullable=True)
+    chosen_supplier_id   = Column(Integer, ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
+    chosen_supplier_name = Column(String(150), nullable=True)
+    package_qty          = Column(Float, nullable=True)
+    price_unit           = Column(String(8), nullable=True)
+    decided_by           = Column(String(100), nullable=True)
+    decided_at           = Column(DateTime, nullable=True)
+    decision_note        = Column(String(255), nullable=True)
+    supplier_price_id    = Column(Integer, ForeignKey("supplier_prices.id", ondelete="SET NULL"), nullable=True)
+    created_at           = Column(DateTime, default=datetime.utcnow)
+    updated_at           = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    bill = relationship("ParasutPurchaseBill", back_populates="lines")
+
+
+class ParasutProductPack(Base):
+    """Paraşüt ürün kaydı → ambalaj (fiyat biriminde): "KARNAUBA MUMU" 25 kg.
+    Satırlar "Adet" birimli geldiği için ambalaj bir kez onayda girilir,
+    sonraki faturalarda hatırlanır (öneri; onayda değiştirilebilir)."""
+    __tablename__ = "parasut_product_packs"
+
+    id                 = Column(Integer, primary_key=True)
+    product_parasut_id = Column(BigInteger, nullable=False, unique=True)
+    product_name       = Column(String(150), nullable=True)
+    package_qty        = Column(Float, nullable=False)
+    price_unit         = Column(String(8), nullable=False)
+    item_id            = Column(Integer, ForeignKey("items.id", ondelete="SET NULL"), nullable=True)
+    updated_by         = Column(String(100), nullable=True)
+    updated_at         = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class StockOrderFlag(Base):
     """Eksik Hammaddeler raporu — 'sipariş verildi' işareti.
 
@@ -4147,6 +4241,11 @@ def init_db():
         _backfill_perm_assistant()
     except Exception:
         pass
+
+    # Paraşüt alış faturası kuyruğu (16.10.2026): parasut_purchase_bills /
+    # parasut_purchase_lines / parasut_product_packs YENİ tablolar — yukarıdaki
+    # create_all ile gelir (migration c4d6e8f0a2b4 kayıt için); mevcut
+    # tablolara eklenen kolon yok, ALTER gerekmez.
 
     # Trendyol modülü: yeni `trendyol.*` — override'lı kullanıcılara rol
     # varsayılanı yalnız override'da finance.view varsa (ciro/kâr finans
