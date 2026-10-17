@@ -916,7 +916,7 @@ def supplier_prices_overview(
     (`currency` USD | EUR | TRY; kur yalnız gerekirse, sunucuda), en ucuz ve
     planın seçeceği teklif.  Süzgeçler: `q` (malzeme / tedarikçi / grup),
     `category` all | hammadde | ambalaj | etiket | other, `has_price`
-    all | priced | unpriced, `source` all | manual | stok_son_durum | lab.
+    all | priced | unpriced, `source` all | manual | stok_son_durum | lab | parasut.
     Geçersiz değer → 400.  Görüntüleme `reports.view` (fiyatlar raporu gören
     herkese açık, 05.10.2026); yazma uçları `suppliers.prices`."""
     from core.price_overview import build_overview

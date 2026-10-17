@@ -160,14 +160,18 @@ DOMAIN = "cosmetics"
 LABEL_PREFIX = "Lab fiyat notları 07.10.2026"
 ACTOR = "sistem (lab notları)"
 SOURCE_BY_TYPE = {"lab_tablo": "lab_notu", "proforma": "proforma", "fatura": "fatura",
-                  "siparis": "siparis"}
+                  "siparis": "siparis",
+                  # el_notu (16.10.2026): Songül Hanım'ın el yazısı değeri (09.10 PDF'inin
+                  # el notları D-s*, 07.10 taramasının s.8 kutusu / s.9 H-s*) — lab tablosu
+                  # gibi düşük öncelik (alım belgesi > el notu), kaynak 'lab_notu'.
+                  "el_notu": "lab_notu"}
 LAB_SOURCES = tuple(SOURCE_BY_TYPE.values())
 DOC_TYPES = ("proforma", "fatura", "siparis")
 # Yalnız bilgi olan türler — fiyatı YAZILMAZ (plan P1c: tedarikçi fiyat
 # listeleri D bu pakette yok); eşleşir, tercih önerisinde alternatif olabilir.
 REFERENCE_TYPES = ("fiyat_listesi",)
 TYPE_TEXT = {"lab_tablo": "lab tablosu", "proforma": "proforma", "fatura": "e-fatura",
-             "siparis": "satış siparişi", "fiyat_listesi": "fiyat listesi"}
+             "siparis": "satış siparişi", "fiyat_listesi": "fiyat listesi", "el_notu": "el yazısı not"}
 AUDIT_IMPORT = "supplier_prices.lab_notes"
 AUDIT_PREFS = "material_pref.lab_notes"
 PHASE_OUT_REASON = "Lab: küçük miktarlı satıcı — 07.10.2026 onayı"
@@ -342,8 +346,15 @@ def clean_doc_material(name) -> str:
     return s or " ".join((name or "").split())
 
 
+def page_text(page) -> str:
+    """Kaynak sayfa metni: 07.10 taramasının sayfa NUMARASI → "s.N"; başka
+    dosyanın kaydı zaten metin taşır ("SongulHanimFiyat2.pdf s.2") → olduğu gibi
+    (eskiden "s.SongulHanimFiyat2.pdf s.2" çift önek basılıyordu)."""
+    return page.strip() if isinstance(page, str) else f"s.{page}"
+
+
 def price_label(page) -> str:
-    return f"{LABEL_PREFIX} — s.{page}"[:120]
+    return f"{LABEL_PREFIX} — {page_text(page)}"[:120]
 
 
 def _yes_no(v) -> Optional[bool]:
@@ -952,7 +963,7 @@ def plan(db: Session, data: Optional[dict] = None, *, domain: str = DOMAIN) -> d
 
 
 def _write_note(r: dict) -> str:
-    bits = [f"[{r['id']}] {TYPE_TEXT[r['type']]} s.{r['page']}"
+    bits = [f"[{r['id']}] {TYPE_TEXT[r['type']]} {page_text(r['page'])}"
             + (" — SARI seçim (tercih önerisi, onaya bağlı)" if r["selected"] else "")]
     if r["note"]:
         bits.append(r["note"])

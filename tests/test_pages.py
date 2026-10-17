@@ -281,13 +281,16 @@ def test_fiyatlar_page_shell_and_edit_gate(client: TestClient):
 
     login("songul")                                              # LabLead: görür + yazar
     html = client.get("/fiyatlar").text
-    for frag in ('href="/fiyatlar" class="nav-link-item active"', '/static/fiyatlar.js?v=1',
+    for frag in ('href="/fiyatlar" class="nav-link-item active"', '/static/fiyatlar.js?v=2',
                  '/static/supplier-price-form.js?v=', '/static/idle-watch.js', '/static/assistant.js',
-                 'id="fpQ"', 'id="fpCur"', 'id="fpAdd"', 'id="fpList"'):
+                 'id="fpQ"', 'id="fpCur"', 'id="fpAdd"', 'id="fpList"',
+                 'id="fpParasut"', 'id="fpPqItems"', '<option value="parasut">'):
         assert frag in html, frag
+    assert "salt görünüm" not in html
     login("meltem")                                              # LabTech: reports.view var, prices yok
     html = client.get("/fiyatlar").text
     assert 'id="fpList"' in html and 'id="fpAdd"' not in html
+    assert 'id="fpParasut"' in html and "salt görünüm" in html     # kuyruk kartı salt görünüm
 
 
 def test_fiyatlar_js_builds_dom_without_html_strings():

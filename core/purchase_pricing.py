@@ -583,7 +583,8 @@ STATUS_TEXT = {"normal": "normal", "preferred": "tercih edilen", "phase_out": "b
 # Fiyat kaynağı metni (Excel "Fiyat kaynağı" sütunu + Notlar dipnotu ORTAK) —
 # etiket (`source_label`) yoksa kaynağa göre: elle girilen fiyat liste fiyatı
 # gibi görünmesin.
-SOURCE_TEXT = {"stok_son_durum": "Stok Son Durum fiyat listesi", "manual": "Elle girilen fiyat"}
+SOURCE_TEXT = {"stok_son_durum": "Stok Son Durum fiyat listesi", "manual": "Elle girilen fiyat",
+               "parasut": "Paraşüt alış faturası"}
 
 
 def source_text(source, label=None) -> str:
@@ -860,9 +861,38 @@ def _relations(m: dict, ri: _RelIndex) -> dict:
 
 
 # Teklif durumu — seçime etkisi ve etiketi.  Uygun olmayanlar SEÇİLMEZ.
-OFFER_BLOCKED = ("skip", "phase_out", "avoid", "inactive")
+OFFER_BLOCKED = ("skip", "phase_out", "avoid", "inactive", "stale")
 OFFER_BLOCKED_TEXT = {"phase_out": "bitirilecek, alma", "avoid": "bu malzemede alma",
-                      "skip": "atlanacaklar listesinde", "inactive": "pasif tedarikçi"}
+                      "skip": "atlanacaklar listesinde", "inactive": "pasif tedarikçi",
+                      "stale": "eski fatura (12 aydan eski)"}
+# Eski fatura koruması (16.10.2026): Paraşüt alış faturasından onaylanan fiyat
+# (`source == 'parasut'`) fatura tarihinden STALE_DAYS sonra seçilmez — 2024
+# faturasının TL fiyatı bugünkü planı yanıltmasın.  Liste / lab fiyatları
+# tarihten bağımsız (eskisi gibi).  `price_overview` aynı kuralı gösterir.
+STALE_DAYS = 365
+STALE_SOURCES = ("parasut",)
+
+
+def _today() -> date:
+    return date.today()
+
+
+def _stale_offer(o: dict) -> bool:
+    """Teklif sözlüğü (`source`, `quoted_at` ISO ya da date) 12 aydan eski bir
+    Paraşüt faturasından mı.  Tarihsiz parasut teklifi eski SAYILMAZ."""
+    if (o.get("source") or "") not in STALE_SOURCES:
+        return False
+    q = o.get("quoted_at")
+    if isinstance(q, datetime):
+        q = q.date()
+    elif isinstance(q, str):
+        try:
+            q = date.fromisoformat(q[:10])
+        except ValueError:
+            return False
+    if not isinstance(q, date):
+        return False
+    return (_today() - q).days > STALE_DAYS
 
 
 @dataclass
@@ -973,6 +1003,9 @@ def _offer_status(o: dict, rp: dict, sc: _StatusCtx, skip: Set[str], pin: PriceI
             else (sid in pin.suppliers and pin.suppliers[sid].is_active is False))
     if dead:
         o.update(status="inactive", eligible=False, tier=(9, 0))
+        return
+    if _stale_offer(o):                      # eski fatura — seçim kuralı kapalıyken de elenir
+        o.update(status="stale", eligible=False, tier=(9, 0))
         return
     if not sc.respect:
         return
@@ -1162,6 +1195,8 @@ def _price_row(m: dict, pin: PriceInputs, rates, currency: str, round_to_package
             flags["via_listed"] = True
         if o["status"] == "inactive":
             flags["inactive_listed"] = True
+        elif o["status"] == "stale":
+            flags["stale_listed"] = True        # tedarikçi durumu değil, tarih kuralı
         elif o["status"] not in ("normal", "equivalent"):
             flags["status_used"] = True
         skey, lkg = o.pop("_skey"), o.pop("_lkg")
@@ -1315,7 +1350,7 @@ def attach(result: dict, pin: PriceInputs, rates, *, currency: str = "USD",
     fx_used: Set[str] = set()
     sources: dict = {}
     flags = {"litre_kg": False, "status_used": False, "via_used": False, "via_listed": False,
-             "inactive_listed": False}
+             "inactive_listed": False, "stale_listed": False}
     ri = _RelIndex(pin, skip, ix)
     sc = _status_ctx(pin, ix, respect_status)
     for m in result.get("materials", []):
@@ -1386,6 +1421,7 @@ def attach(result: dict, pin: PriceInputs, rates, *, currency: str = "USD",
         "respect_status": bool(respect_status), "status_used": flags["status_used"],
         "via_used": flags["via_used"], "via_listed": flags["via_listed"],
         "inactive_listed": flags["inactive_listed"],
+        "stale_listed": flags["stale_listed"],
         "package_warned": sum(1 for m in all_mats if amount_warn(m)),
     }
     # Plan maliyet özeti (kategori / ürün başına / miktarlar) — `totals` DEĞİŞMEZ

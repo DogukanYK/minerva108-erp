@@ -20,6 +20,11 @@
  *    bağlantısı) — o zaman fiyat durumu "Hepsi" başlar ki fiyatsız kart da görünsün.
  *  • Para birimi tarayıcıda hatırlanır (localStorage, try/catch — özel pencere).
  *  • Sınıf öneki `fp-`; `btn-*` adı YASAK (Bootstrap gölgeleme tuzağı).
+ *  • Paraşüt onay kuyruğu (#fpParasut): GET /api/supplier-prices/parasut-queue
+ *    (reports.view) → satır başına kart seçici (items-cache), firma, ambalaj
+ *    (FİYAT BİRİMİNDE), birim, net önizleme; Onayla / Atla yalnız
+ *    suppliers.prices (POST …/{id}/approve | skip).  Hesap SUNUCUDA; buradaki
+ *    önizleme yalnız bilgi.  Paraşüt'e hiçbir şey yazılmaz.
  */
 (function () {
   'use strict';
@@ -329,6 +334,224 @@
       .catch(function () { toast('Silinemedi.'); });
   }
 
+  // ─── Paraşüt onay kuyruğu ───────────────────────────────────────────────
+  var PQ_API = '/api/supplier-prices/parasut-queue';
+  var pq = { items: null, byLabel: {}, loaded: false };
+
+  function pqItemLabel(it) { return it.name + (it.sku ? ' · ' + it.sku : ''); }
+  function pqLoadItems() {
+    if (pq.items) return Promise.resolve(pq.items);
+    var p = window.fetchItems ? window.fetchItems()
+      : fetch('/api/items').then(function (r) { return r.ok ? r.json() : []; });
+    return p.then(function (list) {
+      pq.items = (list || []).filter(function (i) { return i.category !== 'Bitmiş Ürün' && i.is_active !== false; });
+      pq.items = window.trSortBy ? window.trSortBy(pq.items, 'name') : pq.items;
+      pq.byLabel = {};
+      var dl = $('fpPqItems');
+      if (dl) {
+        clear(dl);
+        pq.items.forEach(function (it) {
+          var lbl = pqItemLabel(it);
+          pq.byLabel[lbl] = it;
+          var o = document.createElement('option');
+          o.value = lbl;
+          dl.appendChild(o);
+        });
+      }
+      return pq.items;
+    }).catch(function () { pq.items = []; return pq.items; });
+  }
+  function pqFindItem(text) {
+    var t = String(text || '').trim();
+    if (!t) return null;
+    if (pq.byLabel[t]) return pq.byLabel[t];
+    var hit = null, n = 0;
+    (pq.items || []).forEach(function (it) { if (it.name === t) { hit = it; n++; } });
+    return n === 1 ? hit : null;
+  }
+  function pqNum(v, d) {
+    if (v == null || v === '') return '—';
+    var n = Number(v);
+    return isFinite(n) ? n.toLocaleString('tr-TR', { maximumFractionDigits: d == null ? 4 : d }) : '—';
+  }
+  function pqUnitsFor(itemUnit) {
+    var spf = SPF();
+    if (spf && spf.priceUnitsFor) { try { return spf.priceUnitsFor(itemUnit); } catch (e) { /* düş */ } }
+    var u = String(itemUnit || '').trim().toLowerCase();
+    if (u === 'g' || u === 'gr' || u === 'kg' || u === 'ml' || u === 'l' || u === 'lt') return ['kg', 'l'];
+    return ['adet'];
+  }
+  function pqLoad() {
+    if (!$('fpParasut')) return Promise.resolve();
+    return fetch(PQ_API).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) { return { r: r, d: d }; });
+    }).then(function (res) {
+      if (!res.r.ok) { $('fpParasut').hidden = true; return; }
+      return pqRender(res.d || {});
+    }).catch(function () { $('fpParasut').hidden = true; });
+  }
+  function pqRender(d) {
+    var sec = $('fpParasut');
+    var count = d.count || 0;
+    if (!count && !d.enabled) { sec.hidden = true; return; }
+    sec.hidden = false;
+    $('fpPqTitle').textContent = 'Onay bekleyen fatura fiyatları (' + count + ')';
+    var list = $('fpPqList');
+    clear(list);
+    $('fpPqEmpty').hidden = count > 0;
+    var rows = d.pending || [];
+    if (!rows.length) return;
+    var p = CAN_EDIT ? pqLoadItems() : Promise.resolve([]);
+    return p.then(function () {
+      rows.forEach(function (ln) { list.appendChild(pqLineNode(ln)); });
+      if (count > rows.length) list.appendChild(el('div', 'fp-pq-ro', '… ve ' + (count - rows.length) + ' satır daha (onayladıkça gelir).'));
+    });
+  }
+  function pqLineNode(ln) {
+    var box = el('div', 'fp-pq-line');
+    box.dataset.lineId = ln.id;
+    var b = ln.bill || {};
+    var cur = ln.currency || b.currency || 'TRY';
+    box.appendChild(el('div', 'fp-pq-name', ln.product_name || ln.description || '—'));
+    var meta = [];
+    if (b.supplier_name) meta.push(b.supplier_name);
+    if (b.invoice_no) meta.push('fatura ' + b.invoice_no);
+    if (b.date_text) meta.push(b.date_text);
+    if (ln.description && ln.description !== ln.product_name) meta.push(ln.description);
+    var m = el('div', 'fp-pq-meta', meta.join(' · '));
+    box.appendChild(m);
+    var pills = el('div');
+    if (ln.expense_hint) pills.appendChild(pill('gider kalemi?', 'warn', 'Kargo / seyahat / kiralama gibi görünüyor — malzeme değilse Atla'));
+    if (ln.stale) pills.appendChild(pill('eski fatura (12 aydan eski)', 'off', 'Onaylansa da satın alma planı bu fiyatı seçmez'));
+    if (ln.suggestion) pills.appendChild(pill('öneri: ' + ln.suggestion.name, 'info', 'Kart önerisi (' + pqNum(ln.suggestion.score, 0) + ' puan) — onaylamadan kontrol edin'));
+    if (ln.supplier) pills.appendChild(pill('firma: ' + ln.supplier.name, 'ok', 'Faturadaki firma bu IMS kartıyla eşleşti'));
+    if (pills.firstChild) box.appendChild(pills);
+    var num = pqNum(ln.quantity) + ' ' + (ln.product_unit || 'adet') + ' × ' + pqNum(ln.unit_price) + ' ' + cur;
+    if (ln.discount_pct) num += ' · indirim %' + pqNum(ln.discount_pct, 2);
+    if (ln.vat_rate != null) num += ' · KDV %' + pqNum(ln.vat_rate, 2) + ' hariç';
+    if (ln.net_total != null) num += ' · satır net ' + pqNum(ln.net_total, 2) + ' ' + cur;
+    box.appendChild(el('div', 'fp-pq-num', num));
+    if (!CAN_EDIT) {
+      box.appendChild(el('div', 'fp-pq-ro', 'Onay / atlama: yönetici ya da lab sorumlusu.'));
+      return box;
+    }
+    box.appendChild(pqForm(ln, box));
+    return box;
+  }
+  function pqForm(ln, box) {
+    var b = ln.bill || {};
+    var cur = ln.currency || b.currency || 'TRY';
+    var form = el('div', 'fp-pq-form');
+    // Kart
+    var fCard = el('div', 'fp-field fp-pq-card');
+    var lab = el('label', 'fp-lbl', 'IMS kartı');
+    var inp = el('input', 'fp-in');
+    inp.type = 'text'; inp.setAttribute('list', 'fpPqItems'); inp.autocomplete = 'off';
+    inp.placeholder = 'Kart adı yazın…'; inp.maxLength = 160;
+    var sugItem = ln.suggestion ? pqFindItem(ln.suggestion.name) : null;
+    if (!sugItem && ln.suggestion) sugItem = (pq.items || []).filter(function (i) { return i.id === ln.suggestion.id; })[0] || null;
+    if (!sugItem && ln.pack && ln.pack.item_id) sugItem = (pq.items || []).filter(function (i) { return i.id === ln.pack.item_id; })[0] || null;
+    if (sugItem) inp.value = pqItemLabel(sugItem);
+    lab.htmlFor = inp.id = 'fpPqCard' + ln.id;
+    fCard.appendChild(lab); fCard.appendChild(inp);
+    form.appendChild(fCard);
+    // Firma
+    var fSup = el('div', 'fp-field');
+    var labS = el('label', 'fp-lbl', 'Firma');
+    var sel = el('select', 'fp-sel');
+    labS.htmlFor = sel.id = 'fpPqSup' + ln.id;
+    if (ln.supplier) {
+      var o1 = document.createElement('option'); o1.value = 'id:' + ln.supplier.id; o1.textContent = ln.supplier.name + ' (IMS kartı)';
+      sel.appendChild(o1);
+    }
+    var o2 = document.createElement('option'); o2.value = 'name'; o2.textContent = (b.supplier_name || '—') + ' (faturadaki ad)';
+    sel.appendChild(o2);
+    fSup.appendChild(labS); fSup.appendChild(sel);
+    form.appendChild(fSup);
+    // Ambalaj + birim
+    var fPkg = el('div', 'fp-field');
+    var labP = el('label', 'fp-lbl', 'Ambalaj (fiyat biriminde)');
+    var pkg = el('input', 'fp-in');
+    pkg.type = 'number'; pkg.step = 'any'; pkg.min = '0'; pkg.placeholder = 'ör. 25';
+    labP.htmlFor = pkg.id = 'fpPqPkg' + ln.id;
+    if (ln.pack && ln.pack.package_qty) pkg.value = String(ln.pack.package_qty);
+    fPkg.appendChild(labP); fPkg.appendChild(pkg);
+    form.appendChild(fPkg);
+    var fUnit = el('div', 'fp-field');
+    var labU = el('label', 'fp-lbl', 'Birim');
+    var unit = el('select', 'fp-sel');
+    labU.htmlFor = unit.id = 'fpPqUnit' + ln.id;
+    fUnit.appendChild(labU); fUnit.appendChild(unit);
+    form.appendChild(fUnit);
+    var preview = el('span', 'fp-pq-preview');
+    form.appendChild(preview);
+    var act = el('div', 'fp-pq-act');
+    var ok = el('button', 'fp-b fp-b-main fp-b-sm', 'Onayla'); ok.type = 'button';
+    var skip = el('button', 'fp-b fp-b-sm', 'Atla'); skip.type = 'button';
+    act.appendChild(ok); act.appendChild(skip);
+    form.appendChild(act);
+
+    function fillUnits() {
+      var it = pqFindItem(inp.value);
+      var units = pqUnitsFor(it ? it.unit : null);
+      var keep = unit.value;
+      clear(unit);
+      units.forEach(function (u) {
+        var o = document.createElement('option'); o.value = u; o.textContent = ({ kg: 'kg', l: 'litre', adet: 'adet' })[u] || u;
+        unit.appendChild(o);
+      });
+      var want = (ln.pack && ln.pack.price_unit) || keep;
+      if (want && units.indexOf(want) >= 0) unit.value = want;
+      else if (/\b(lt|l|ml|litre)\b/i.test(String(ln.product_name || '')) && units.indexOf('l') >= 0) unit.value = 'l';
+    }
+    function refresh() {
+      var it = pqFindItem(inp.value);
+      var q = Number(pkg.value);
+      inp.classList.toggle('is-invalid', !!inp.value && !it);
+      if (!(q > 0) || ln.unit_price == null) { preview.textContent = ''; return; }
+      var net = Number(ln.unit_price) * (1 - Number(ln.discount_rate || 0)) / q;
+      preview.textContent = '≈ ' + pqNum(net, 4) + ' ' + cur + '/' + unit.value + ' (KDV hariç)';
+      preview.classList.toggle('warn', !it);
+    }
+    inp.addEventListener('input', function () { fillUnits(); refresh(); });
+    inp.addEventListener('change', function () { fillUnits(); refresh(); });
+    pkg.addEventListener('input', refresh);
+    unit.addEventListener('change', refresh);
+    fillUnits(); refresh();
+
+    ok.addEventListener('click', function () {
+      var it = pqFindItem(inp.value);
+      if (!it) { toast('Önce listeden bir IMS kartı seçin.'); inp.focus(); return; }
+      var q = Number(pkg.value);
+      if (!(q > 0)) { toast('Ambalaj miktarını yazın (ör. 25 kg\'lık bidon → 25).'); pkg.focus(); return; }
+      var body = { item_id: it.id, package_qty: q, price_unit: unit.value };
+      if (sel.value.indexOf('id:') === 0) body.supplier_id = Number(sel.value.slice(3));
+      else body.supplier_name = b.supplier_name || '';
+      ok.disabled = skip.disabled = true;
+      fetch(PQ_API + '/' + encodeURIComponent(ln.id) + '/approve', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) {
+          if (r.ok) { toast(d.message || 'Fiyat yazıldı.', 'success'); box.classList.add('fp-pq-done'); pqLoad(); reload(); }
+          else { toast(typeof d.detail === 'string' ? d.detail : 'Onaylanamadı.'); ok.disabled = skip.disabled = false; }
+        });
+      }).catch(function () { toast('Onaylanamadı.'); ok.disabled = skip.disabled = false; });
+    });
+    skip.addEventListener('click', function () {
+      if (!window.confirm('«' + (ln.product_name || ln.description || '—') + '» satırı atlansın mı? (fiyat yazılmaz)')) return;
+      ok.disabled = skip.disabled = true;
+      fetch(PQ_API + '/' + encodeURIComponent(ln.id) + '/skip', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) {
+          if (r.ok) { toast('Satır atlandı.', 'success'); box.classList.add('fp-pq-done'); pqLoad(); }
+          else { toast(typeof d.detail === 'string' ? d.detail : 'Atlanamadı.'); ok.disabled = skip.disabled = false; }
+        });
+      }).catch(function () { toast('Atlanamadı.'); ok.disabled = skip.disabled = false; });
+    });
+    return form;
+  }
+
   function init() {
     var q = '';
     try { q = new URLSearchParams(window.location.search).get('q') || ''; } catch (e) { q = ''; }
@@ -346,6 +569,7 @@
     var add = $('fpAdd');
     if (add && CAN_EDIT) add.addEventListener('click', function () { mountForm($('fpForm'), { mode: 'create' }); });
     load();
+    pqLoad();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

@@ -1286,7 +1286,10 @@ def test_powder_form_goes_to_powder_card_only(db_session: Session):
 
 def test_real_data_file_plans_and_builds_excel(db_session: Session, tmp_path):
     d = lab.load_data()
-    assert len(d["kayitlar"]) == 160
+    # 160 (07.10 taraması) + 18 (16.10.2026: 09.10 PDF'inin yeni/farklı değerleri D-s* 7,
+    # s.8 el yazısı kutusu H-s8-* 10, s.9 Doalin lavanta hidrosolü H-s9-1)
+    assert len(d["kayitlar"]) == 178
+    assert sum(1 for r in d["kayitlar"] if r["tur"] == "el_notu") == 16
     names = sorted({r["malzeme"] for r in d["kayitlar"] if r["tur"] == "lab_tablo"})
     _items(db_session, *[(n, "g") for n in names])
     _sups(db_session, "PHARMATERM", "DOALİNN", "ULUDAĞ HERBAL", "VESER KİMYEVİ", "NATURALYA",
@@ -1294,7 +1297,7 @@ def test_real_data_file_plans_and_builds_excel(db_session: Session, tmp_path):
     db_session.commit()
     p = lab.plan(db_session, d)
     c = p["counts"]
-    assert c["kayit"] == 160 and sum(c[k] for k in lab.STATUS_TEXT) == 160
+    assert c["kayit"] == 178 and sum(c[k] for k in lab.STATUS_TEXT) == 178
     r = _by_id(p)
     # Pharmaterm KDV dahil uçucu yağlar (7) — yazılacak satırda KDV taşınır
     assert sum(1 for x in p["records"] if x["vat_included"] is True) == 7
@@ -1327,5 +1330,16 @@ def test_real_data_file_plans_and_builds_excel(db_session: Session, tmp_path):
     assert al[lab.normalize("Betaine 35")]["names"] == ["BETAİN 35"]
     assert al[lab.normalize("NAR ÇEKİDEĞİ YAGI")]["lab"]
     assert r["A2-01-S3"]["status"] == "belirsiz" and r["A2-01-S3"]["item"] is None
+    # 09.10 dosyasının kayıtları (D-s*) kaynak sayfayı METİN taşır → etikette çift "s." yok;
+    # 07.10 taramasının sayfa numarası (H-s8-*) eskisi gibi "s.8"
+    for rid in (x for x in r if x.startswith("D-s")):
+        page = r[rid]["page"]
+        assert isinstance(page, str) and page.startswith("SongulHanimFiyat2.pdf s."), rid
+        assert lab.price_label(page) == f"{lab.LABEL_PREFIX} — {page}", rid
+        assert f"] {lab.TYPE_TEXT[r[rid]['type']]} {page}" in r[rid]["write_note"], rid
+        assert "s.SongulHanim" not in r[rid]["write_note"] + lab.price_label(page), rid
+    assert lab.price_label(r["D-s2-1"]["page"]) == "Lab fiyat notları 07.10.2026 — SongulHanimFiyat2.pdf s.2"
+    assert lab.price_label(r["H-s8-1"]["page"]) == "Lab fiyat notları 07.10.2026 — s.8"
+    assert " s.8" in r["H-s8-1"]["write_note"]
     path = lab.build_xlsx(p, tmp_path / "gercek.xlsx")
     assert load_workbook(path).sheetnames == list(lab.SHEETS)

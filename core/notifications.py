@@ -329,6 +329,25 @@ def notify_trendyol_questions(count: int, samples) -> None:
     })
 
 
+def notify_parasut_queue(count: int, samples) -> None:
+    """Paraşüt alış faturası satırları fiyat onayı bekliyor → yöneticilere
+    (gece okuması yeni satır bulunca bir kez; core.parasut_purchases.run_sync).
+    `samples`: ilk birkaç ürün adı — kısaltılmış önizleme."""
+    if not count:
+        return
+    first = next((str(x).strip() for x in (samples or []) if str(x or "").strip()), "")
+    body = f"{count} fatura satırı fiyat onayı bekliyor"
+    if first:
+        body += f" — ilk: {first[:80]}"
+    _emit("info", "PARASUT-QUEUE", f"Paraşüt: {count} fatura satırı fiyat onayı bekliyor", count=count)
+    _send_push("managers", {
+        "title": "Paraşüt — fatura fiyatı onayı",
+        "body":  body[:240],
+        "tag":   "parasut-queue",
+        "url":   "/fiyatlar#parasut",
+    })
+
+
 def notify_export_order_manual(order_no: str, country: str) -> None:
     """Yurt dışı (ihracat) Shopify siparişi — otomatik fatura kesilmez, MANUEL."""
     _emit("warning", "SHOPIFY-EXPORT",

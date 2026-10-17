@@ -66,6 +66,11 @@ SOURCE_STOK_SON_DURUM = "stok_son_durum"
 # Lab'ın elle girdiği (ya da düzenlediği) satır — POST/PUT /api/supplier-prices.
 # İçe aktarma bu satırları SİLMEZ ve aynı firmanın teklifini üstüne yazmaz.
 SOURCE_MANUAL = "manual"
+# Paraşüt alış faturasından ONAYLANAN satır (core/parasut_purchases.approve_line):
+# (kart, firma) başına tek kayıt, en yeni fatura kazanır; aynı firmanın elle
+# satırı varsa yazılmaz.  12 aydan eski fatura satın alma planında seçilmez
+# (`purchase_pricing._offer_status` "eski fatura").
+SOURCE_PARASUT = "parasut"
 SOURCE_LABEL_MAX = 120
 VAT_RATE_MAX = 100.0
 
